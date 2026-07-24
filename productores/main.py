@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from auth import verificar_token
 
 from database import Base, engine, SessionLocal
 import models
@@ -33,7 +34,7 @@ def obtener_productor(productor_id: str, db: Session = Depends(get_db)):
     return productor
 
 @app.post("/productores")
-def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db)):
+def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     nuevo = models.Productor(**datos.dict())
     db.add(nuevo)
     db.commit()

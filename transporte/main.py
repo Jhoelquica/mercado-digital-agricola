@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from auth import verificar_token
 
 from database import Base, engine, SessionLocal
 import models
@@ -37,7 +38,7 @@ def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
     return envio
 
 @app.patch("/envios/{envio_id}/estado")
-def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db)):
+def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")

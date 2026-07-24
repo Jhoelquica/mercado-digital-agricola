@@ -5,3 +5,4 @@ psycopg2-binary
 python-dotenv
 httpx
 pika
+python-jose[cryptography]

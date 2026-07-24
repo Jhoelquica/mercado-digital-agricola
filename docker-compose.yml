@@ -33,6 +33,7 @@ services:
     environment:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productores
     depends_on:
       - db-productores
@@ -59,6 +60,7 @@ services:
     environment:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productos
       PRODUCTORES_URL: http://productores:8001
     depends_on:
@@ -87,6 +89,7 @@ services:
     environment:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-pedidos
       PRODUCTOS_URL: http://productos:8002
       RABBITMQ_HOST: rabbitmq
@@ -119,6 +122,7 @@ services:
     environment:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-transporte
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
@@ -149,6 +153,7 @@ services:
     environment:
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-notificaciones
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin

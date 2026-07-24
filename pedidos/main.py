@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from rabbitmq_publisher import publicar_evento
+from auth import verificar_token
 
 from database import Base, engine, SessionLocal
 import models
@@ -35,7 +36,7 @@ def salud():
     return {"estado": "ok", "servicio": "pedidos"}
 
 @app.post("/pedidos")
-def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db)):
+def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     items_validados = []
 
     with httpx.Client() as client:
