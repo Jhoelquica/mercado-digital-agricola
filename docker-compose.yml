@@ -1,0 +1,193 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+
+  db-productores:
+    image: postgres:16
+    container_name: db-productores
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: productores
+    ports:
+      - "5433:5432"
+    volumes:
+      - productores_data:/var/lib/postgresql/data
+
+  productores:
+    build: ./productores
+    container_name: productores
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-productores
+    depends_on:
+      - db-productores
+
+  db-productos:
+    image: postgres:16
+    container_name: db-productos
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: productos
+    ports:
+      - "5434:5432"
+    volumes:
+      - productos_data:/var/lib/postgresql/data
+
+  productos:
+    build: ./productos
+    container_name: productos
+    restart: unless-stopped
+    ports:
+      - "8002:8002"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-productos
+      PRODUCTORES_URL: http://productores:8001
+    depends_on:
+      - db-productos
+      - productores
+
+  db-pedidos:
+    image: postgres:16
+    container_name: db-pedidos
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: pedidos
+    ports:
+      - "5435:5432"
+    volumes:
+      - pedidos_data:/var/lib/postgresql/data
+
+  pedidos:
+    build: ./pedidos
+    container_name: pedidos
+    restart: unless-stopped
+    ports:
+      - "8003:8003"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-pedidos
+      PRODUCTOS_URL: http://productos:8002
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+    depends_on:
+    - db-pedidos
+    - productos
+    - rabbitmq
+
+  db-transporte:
+    image: postgres:16
+    container_name: db-transporte
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: transporte
+    ports:
+      - "5436:5432"
+    volumes:
+      - transporte_data:/var/lib/postgresql/data
+
+  transporte:
+    build: ./transporte
+    container_name: transporte
+    restart: unless-stopped
+    ports:
+      - "8004:8004"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-transporte
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+    depends_on:
+      - db-transporte
+      - rabbitmq
+
+  db-notificaciones:
+    image: postgres:16
+    container_name: db-notificaciones
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: notificaciones
+    ports:
+      - "5437:5432"
+    volumes:
+      - notificaciones_data:/var/lib/postgresql/data
+
+  notificaciones:
+    build: ./notificaciones
+    container_name: notificaciones
+    restart: unless-stopped
+    ports:
+      - "8005:8005"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-notificaciones
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+    depends_on:
+      - db-notificaciones
+      - rabbitmq
+
+  db-usuarios:
+    image: postgres:16
+    container_name: db-usuarios
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: usuarios
+    ports:
+      - "5438:5432"
+    volumes:
+      - usuarios_data:/var/lib/postgresql/data
+
+  usuarios:
+    build: ./usuarios
+    container_name: usuarios
+    restart: unless-stopped
+    ports:
+      - "8006:8006"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-usuarios
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      - db-usuarios
+    
+volumes:
+  productores_data:
+  productos_data:
+  pedidos_data:
+  transporte_data:
+  notificaciones_data:
+  usuarios_data:
