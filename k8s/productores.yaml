@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: productores
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: productores
+  template:
+    metadata:
+      labels:
+        app: productores
+    spec:
+      containers:
+        - name: productores
+          image: mercado_agricola-productores:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: DB_HOST
+              value: db-productores
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: JWT_SECRET
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: productores
+spec:
+  selector:
+    app: productores
+  ports:
+    - port: 8001
+      targetPort: 8001

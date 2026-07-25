@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pedidos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pedidos
+  template:
+    metadata:
+      labels:
+        app: pedidos
+    spec:
+      containers:
+        - name: pedidos
+          image: mercado_agricola-pedidos:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          env:
+            - name: DB_HOST
+              value: db-pedidos
+            - name: PRODUCTOS_URL
+              value: http://productos:8002
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_USER
+              value: admin
+            - name: RABBITMQ_PASSWORD
+              value: admin123
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: JWT_SECRET
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pedidos
+spec:
+  selector:
+    app: pedidos
+  ports:
+    - port: 8003
+      targetPort: 8003

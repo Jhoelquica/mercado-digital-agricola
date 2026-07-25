@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-productores-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-productores
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-productores
+  template:
+    metadata:
+      labels:
+        app: db-productores
+    spec:
+      containers:
+        - name: db-productores
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: productores
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db-productores-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-productores
+spec:
+  selector:
+    app: db-productores
+  ports:
+    - port: 5432
+      targetPort: 5432

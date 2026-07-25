@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-productos-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-productos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-productos
+  template:
+    metadata:
+      labels:
+        app: db-productos
+    spec:
+      containers:
+        - name: db-productos
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: productos
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db-productos-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-productos
+spec:
+  selector:
+    app: db-productos
+  ports:
+    - port: 5432
+      targetPort: 5432
