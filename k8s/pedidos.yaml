@@ -50,6 +50,7 @@ kind: Service
 metadata:
   name: pedidos
 spec:
+  type: LoadBalancer
   selector:
     app: pedidos
   ports:

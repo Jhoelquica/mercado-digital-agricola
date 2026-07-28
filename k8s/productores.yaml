@@ -42,6 +42,7 @@ kind: Service
 metadata:
   name: productores
 spec:
+  type: LoadBalancer
   selector:
     app: productores
   ports:

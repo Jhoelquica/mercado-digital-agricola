@@ -42,6 +42,7 @@ kind: Service
 metadata:
   name: usuarios
 spec:
+  type: LoadBalancer
   selector:
     app: usuarios
   ports:
