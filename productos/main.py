@@ -3,6 +3,7 @@ import httpx
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from auth import verificar_token
 
 from database import Base, engine, SessionLocal
@@ -11,6 +12,13 @@ import models
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 
@@ -27,6 +35,8 @@ class ProductoCrear(BaseModel):
     categoria: str | None = None
     precio: float
     stock: int = 0
+    unidad_medida: str = "kg"
+    imagen_url: str | None = None
 
 @app.get("/salud")
 def salud():
@@ -53,6 +63,8 @@ def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario:
         categoria=datos.categoria,
         precio=datos.precio,
         stock=datos.stock,
+        unidad_medida=datos.unidad_medida,
+        imagen_url=datos.imagen_url,
     )
     db.add(nuevo)
     db.commit()

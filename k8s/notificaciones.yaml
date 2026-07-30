@@ -15,7 +15,7 @@ spec:
       containers:
         - name: notificaciones
           image: mercado_agricola-notificaciones:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8005
           env:

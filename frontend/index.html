@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgroMercado — Mercado Digital Agrícola</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌱</text></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="toast-container" class="toast-container"></div>
+
+<header class="navbar">
+  <div class="navbar-inner">
+    <div class="brand" data-nav="catalogo">
+      <span class="brand-icon">🌱</span>
+      <span class="brand-text">Agro<strong>Mercado</strong></span>
+    </div>
+
+    <nav class="nav-links" id="nav-links">
+      <button class="nav-link active" data-nav="catalogo">Catálogo</button>
+      <button class="nav-link" data-nav="mis-pedidos">Mis Pedidos</button>
+      <button class="nav-link" data-nav="notificaciones">Notificaciones</button>
+      <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
+    </nav>
+
+    <div class="nav-actions">
+      <button class="btn btn-ghost cart-btn" id="btn-cart">
+        🛒 <span id="cart-count" class="cart-badge hidden">0</span>
+      </button>
+      <div id="auth-area" class="auth-area">
+        <button class="btn btn-outline" id="btn-open-login">Iniciar sesión</button>
+        <button class="btn btn-primary" id="btn-open-registro">Registrarse</button>
+      </div>
+      <div id="user-area" class="user-area hidden">
+        <span class="user-chip">
+          <span class="user-avatar" id="user-avatar">?</span>
+          <span class="user-name" id="user-name">Usuario</span>
+        </span>
+        <button class="btn btn-ghost" id="btn-logout">Salir</button>
+      </div>
+      <button class="hamburger" id="hamburger" aria-label="Menú">☰</button>
+    </div>
+  </div>
+</header>
+
+<main id="app-main">
+
+  <!-- CATALOGO -->
+  <section id="view-catalogo" class="view active">
+    <div class="hero">
+      <h1>Del campo peruano, directo a tu mesa 🥑🌽🍅</h1>
+      <p>Compra productos frescos de productores agrícolas locales, sin intermediarios.</p>
+    </div>
+
+    <div class="toolbar">
+      <div class="search-box">
+        <span class="search-icon">🔎</span>
+        <input type="text" id="input-buscar" placeholder="Buscar por producto, categoría o productor...">
+      </div>
+      <select id="select-categoria" class="select-categoria">
+        <option value="">Todas las categorías</option>
+      </select>
+      <button class="btn btn-outline" id="btn-refrescar-catalogo">↻ Refrescar</button>
+    </div>
+
+    <div id="productos-grid" class="grid"></div>
+    <div id="productos-empty" class="empty-state hidden">
+      <p>🌾 No se encontraron productos con esos filtros.</p>
+    </div>
+  </section>
+
+  <!-- MIS PEDIDOS -->
+  <section id="view-mis-pedidos" class="view">
+    <div class="section-header">
+      <h2>📦 Mis Pedidos</h2>
+      <button class="btn btn-outline" id="btn-refrescar-pedidos">↻ Refrescar</button>
+    </div>
+
+    <div class="lookup-box">
+      <input type="text" id="input-buscar-pedido" placeholder="Buscar pedido por ID...">
+      <button class="btn btn-primary" id="btn-buscar-pedido">Buscar</button>
+    </div>
+
+    <div id="pedidos-list" class="pedidos-list"></div>
+    <div id="pedidos-empty" class="empty-state hidden">
+      <p>🛍️ Aún no tienes pedidos registrados. ¡Explora el catálogo!</p>
+    </div>
+  </section>
+
+  <!-- NOTIFICACIONES -->
+  <section id="view-notificaciones" class="view">
+    <div class="section-header">
+      <h2>🔔 Notificaciones</h2>
+      <button class="btn btn-outline" id="btn-refrescar-notificaciones">↻ Refrescar</button>
+    </div>
+    <div id="notificaciones-list" class="notif-list"></div>
+    <div id="notificaciones-empty" class="empty-state hidden">
+      <p>📭 No hay notificaciones todavía.</p>
+    </div>
+  </section>
+
+  <!-- PANEL PRODUCTOR -->
+  <section id="view-panel-productor" class="view">
+    <div class="section-header">
+      <h2>🚜 Panel del Productor</h2>
+    </div>
+
+    <div id="productor-setup" class="card-panel hidden">
+      <h3>Completa tu perfil de productor</h3>
+      <p class="muted">Antes de publicar productos, cuéntanos un poco sobre tu emprendimiento.</p>
+      <form id="form-productor" class="form-grid">
+        <label>Nombre / Razón social
+          <input type="text" id="productor-nombre" required placeholder="Ej. Asociación Agrícola Sol Naciente">
+        </label>
+        <label>Comunidad / Región
+          <input type="text" id="productor-comunidad" placeholder="Ej. Valle del Mantaro, Junín">
+        </label>
+        <label>Contacto
+          <input type="text" id="productor-contacto" placeholder="Ej. 987654321">
+        </label>
+        <button type="submit" class="btn btn-primary">Crear perfil de productor</button>
+      </form>
+    </div>
+
+    <div id="productor-panel" class="hidden">
+      <div class="card-panel">
+        <h3>Publicar nuevo producto</h3>
+        <form id="form-producto" class="form-grid">
+          <label>Nombre del producto
+            <input type="text" id="producto-nombre" required placeholder="Ej. Palta Hass">
+          </label>
+          <label>Categoría
+            <input type="text" id="producto-categoria" placeholder="Ej. Frutas">
+          </label>
+          <label>Unidad de medida
+            <select id="producto-unidad" required>
+              <option value="kg">Kilogramo (kg)</option>
+              <option value="unidad">Unidad</option>
+              <option value="saco">Saco</option>
+              <option value="arroba">Arroba</option>
+            </select>
+          </label>
+          <label>Precio (S/)
+            <input type="number" id="producto-precio" min="0" step="0.01" required placeholder="0.00">
+          </label>
+          <label>Stock disponible
+            <input type="number" id="producto-stock" min="0" step="1" required placeholder="0">
+          </label>
+          <label>URL de la imagen del producto (opcional)
+            <input type="url" id="producto-imagen" placeholder="https://ejemplo.com/imagen.jpg">
+          </label>
+          <button type="submit" class="btn btn-primary">Publicar producto</button>
+        </form>
+      </div>
+
+      <div class="section-header inner">
+        <h3>Mis productos publicados</h3>
+        <button class="btn btn-outline" id="btn-refrescar-mis-productos">↻ Refrescar</button>
+      </div>
+      <div id="mis-productos-grid" class="grid"></div>
+      <div id="mis-productos-empty" class="empty-state hidden">
+        <p>🌱 Todavía no has publicado productos.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <p>🌾 AgroMercado — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
+</footer>
+
+<!-- MODAL: AUTH -->
+<div class="modal-overlay hidden" id="modal-auth">
+  <div class="modal modal-auth">
+    <button class="modal-close" data-close="modal-auth">✕</button>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="login">Iniciar sesión</button>
+      <button class="auth-tab" data-tab="registro">Registrarse</button>
+    </div>
+
+    <form id="form-login" class="auth-form">
+      <h3>Bienvenido de nuevo</h3>
+      <label>Correo electrónico
+        <input type="email" id="login-email" required placeholder="tucorreo@ejemplo.com">
+      </label>
+      <label>Contraseña
+        <input type="password" id="login-password" required placeholder="••••••••">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
+    </form>
+
+    <form id="form-registro" class="auth-form hidden">
+      <h3>Crea tu cuenta</h3>
+      <label>Nombre completo
+        <input type="text" id="registro-nombre" required placeholder="Ej. María Quispe">
+      </label>
+      <label>Correo electrónico
+        <input type="email" id="registro-email" required placeholder="tucorreo@ejemplo.com">
+      </label>
+      <label>Contraseña
+        <input type="password" id="registro-password" required minlength="4" placeholder="Mínimo 4 caracteres">
+      </label>
+      <label>Quiero registrarme como
+        <select id="registro-rol">
+          <option value="comprador">Comprador</option>
+          <option value="productor">Productor</option>
+        </select>
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL: CARRITO / CREAR PEDIDO -->
+<div class="modal-overlay hidden" id="modal-pedido">
+  <div class="modal modal-pedido">
+    <button class="modal-close" data-close="modal-pedido">✕</button>
+    <h3>🧺 Tu pedido</h3>
+    <div id="carrito-items" class="carrito-items"></div>
+    <div id="carrito-vacio" class="empty-state hidden">
+      <p>Tu carrito está vacío. Agrega productos desde el catálogo.</p>
+    </div>
+    <div class="carrito-total">
+      <span>Total estimado</span>
+      <strong id="carrito-total">S/ 0.00</strong>
+    </div>
+    <form id="form-pedido">
+      <label>Teléfono de contacto (opcional)
+        <input type="text" id="pedido-telefono" placeholder="Ej. 987654321">
+      </label>
+      <button type="submit" class="btn btn-primary btn-block" id="btn-confirmar-pedido">Confirmar pedido</button>
+    </form>
+  </div>
+</div>
+
+<!-- MODAL: DETALLE PRODUCTO -->
+<div class="modal-overlay hidden" id="modal-detalle-producto">
+  <div class="modal modal-detalle">
+    <button class="modal-close" data-close="modal-detalle-producto">✕</button>
+    <div id="detalle-producto-content"></div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

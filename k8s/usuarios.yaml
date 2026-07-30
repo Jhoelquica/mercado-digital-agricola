@@ -15,7 +15,7 @@ spec:
       containers:
         - name: usuarios
           image: mercado_agricola-usuarios:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8006
           env:

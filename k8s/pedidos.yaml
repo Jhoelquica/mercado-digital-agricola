@@ -15,7 +15,7 @@ spec:
       containers:
         - name: pedidos
           image: mercado_agricola-pedidos:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8003
           env:

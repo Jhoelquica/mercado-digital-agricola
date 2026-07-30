@@ -11,7 +11,9 @@ class Producto(Base):
     productor_id = Column(UUID(as_uuid=True), nullable=False)
     productor_nombre = Column(String, nullable=False)  # copia replicada
     nombre = Column(String, nullable=False)
+    imagen_url = Column(String, nullable=True)
     categoria = Column(String)
     precio = Column(Numeric(10, 2), nullable=False)
     stock = Column(Integer, default=0)
+    unidad_medida = Column(String, default="kg")
     fecha_publicacion = Column(DateTime, default=datetime.utcnow)

@@ -15,7 +15,7 @@ spec:
       containers:
         - name: productores
           image: mercado_agricola-productores:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8001
           env:

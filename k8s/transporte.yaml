@@ -15,7 +15,7 @@ spec:
       containers:
         - name: transporte
           image: mercado_agricola-transporte:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8004
           env:

@@ -15,7 +15,7 @@ spec:
       containers:
         - name: productos
           image: mercado_agricola-productos:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - containerPort: 8002
           env:
