@@ -1,4 +1,4 @@
-// Configuración de endpoints de los 6 microservicios
+// Configuración de endpoints de los microservicios
 const API_BASE = {
   usuarios: 'http://localhost:8006',
   productores: 'http://localhost:8001',
@@ -6,7 +6,11 @@ const API_BASE = {
   pedidos: 'http://localhost:8003',
   transporte: 'http://localhost:8004',
   notificaciones: 'http://localhost:8005',
+  pagos: 'http://localhost:8007',
 };
+
+// Llave pública de Culqi (modo test, segura de exponer en frontend)
+const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
 
 class ApiError extends Error {
   constructor(message, status) {
@@ -74,5 +78,9 @@ const Api = {
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),
     listarTodas: () => request('notificaciones', '/notificaciones', { auth: true }),
+  },
+  pagos: {
+    procesar: (datos) => request('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
+    obtener: (pedidoId) => request('pagos', `/pagos/${pedidoId}`, { auth: true }),
   },
 };

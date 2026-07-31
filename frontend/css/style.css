@@ -313,8 +313,8 @@ input, select { font-family: inherit; }
 }
 .badge-pendiente { background: #fff3cd; color: #8a6d1a; }
 .badge-en_camino, .badge-en_transito, .badge-en_ruta { background: #cfe8ff; color: #14538a; }
-.badge-entregado { background: var(--verde-pastel); color: var(--verde-oscuro); }
-.badge-cancelado { background: #ffe0da; color: #b3401f; }
+.badge-entregado, .badge-aprobado { background: var(--verde-pastel); color: var(--verde-oscuro); }
+.badge-cancelado, .badge-rechazado, .badge-error { background: #ffe0da; color: #b3401f; }
 .badge-default { background: #eee; color: #555; }
 
 .pedido-items { list-style: none; margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }

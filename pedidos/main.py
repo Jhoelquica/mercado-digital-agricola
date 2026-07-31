@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
+from rabbitmq_consumer import lanzar_consumidor_en_hilo
 
 from database import Base, engine, SessionLocal
 import models
@@ -13,6 +14,10 @@ import models
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+# evento de aranque
+@app.on_event("startup")
+def iniciar():
+    lanzar_consumidor_en_hilo()
 
 app.add_middleware(
     CORSMiddleware,

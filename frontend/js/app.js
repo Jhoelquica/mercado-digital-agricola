@@ -398,6 +398,7 @@ async function confirmarPedido(e) {
   btn.textContent = 'Enviando pedido...';
 
   try {
+    const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
     const datos = {
       comprador_nombre: Estado.nombre || 'Cliente AgroMercado',
       comprador_telefono: document.getElementById('pedido-telefono').value.trim() || null,
@@ -410,13 +411,65 @@ async function confirmarPedido(e) {
     renderCarrito();
     document.getElementById('form-pedido').reset();
     cerrarModal('modal-pedido');
-    toast('¡Pedido creado con éxito! 🎉 Revisa "Mis Pedidos" para el seguimiento.');
+    toast('¡Pedido creado con éxito! 🎉 Completa el pago para confirmarlo.');
     cambiarVista('catalogo');
+
+    abrirCheckoutCulqi(pedido.id, total);
   } catch (err) {
     manejarError(err, 'crear el pedido');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Confirmar pedido';
+    btn.textContent = 'Confirmar y pagar';
+  }
+}
+
+// ============ PAGO (CULQI) ============
+let pagoEnCurso = null; // { pedidoId, email }
+
+function abrirCheckoutCulqi(pedidoId, montoTotal) {
+  if (typeof Culqi === 'undefined') {
+    toast('No se pudo cargar la pasarela de pagos. Vuelve a intentar el pago desde "Mis Pedidos".', 'error');
+    return;
+  }
+
+  pagoEnCurso = { pedidoId, email: Estado.email };
+  Culqi.publicKey = CULQI_PUBLIC_KEY;
+  Culqi.settings({
+    title: 'AgroMercado',
+    currency: 'PEN',
+    amount: Math.round(montoTotal * 100),
+  });
+  Culqi.open();
+}
+
+window.culqi = function () {
+  if (!pagoEnCurso) return;
+
+  if (window.Culqi.token) {
+    procesarPagoCulqi(window.Culqi.token.id);
+  } else if (window.Culqi.error) {
+    toast(window.Culqi.error.user_message || 'Revisa los datos de tu tarjeta e intenta de nuevo.', 'error');
+  }
+};
+
+async function procesarPagoCulqi(tokenCulqi) {
+  const { pedidoId, email } = pagoEnCurso;
+  try {
+    const resultado = await Api.pagos.procesar({
+      pedido_id: pedidoId,
+      token_culqi: tokenCulqi,
+      email,
+    });
+    if (resultado.estado === 'aprobado') {
+      toast('¡Pago aprobado! 🎉 Tu pedido está confirmado.');
+    } else {
+      toast(`El pago no fue aprobado (estado: ${resultado.estado}).`, 'error');
+    }
+  } catch (err) {
+    manejarError(err, 'procesar el pago');
+  } finally {
+    pagoEnCurso = null;
+    cambiarVista('mis-pedidos');
   }
 }
 
@@ -481,10 +534,15 @@ async function cargarTarjetaPedido(pedidoId) {
     envio = await Api.transporte.obtenerEnvio(pedidoId);
   } catch { /* aún no tiene envío asignado */ }
 
-  return renderTarjetaPedido(pedido, envio);
+  let pago = null;
+  try {
+    pago = await Api.pagos.obtener(pedidoId);
+  } catch { /* aún no hay un pago registrado para este pedido */ }
+
+  return renderTarjetaPedido(pedido, envio, pago);
 }
 
-function renderTarjetaPedido(pedido, envio) {
+function renderTarjetaPedido(pedido, envio, pago) {
   const items = (pedido.items || []).map((i) => {
     const nombre = Estado.productos.find((p) => p.id === i.producto_id)?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`;
     return `<li><span>${i.cantidad} × ${nombre}</span><span>${formatearMoneda(i.precio_unitario * i.cantidad)}</span></li>`;
@@ -495,6 +553,10 @@ function renderTarjetaPedido(pedido, envio) {
   const envioHtml = envio
     ? `<div class="envio-track"><span class="icon">🚚</span> Envío: ${badgeEstadoEnvio(envio.estado)} ${envio.transportista ? `· Transportista: ${envio.transportista}` : ''}</div>`
     : `<div class="envio-track"><span class="icon">📦</span> Aún no se asignó transporte para este pedido.</div>`;
+
+  const pagoHtml = pago
+    ? `<div class="envio-track"><span class="icon">💳</span> Pago: ${badgeEstadoEnvio(pago.estado)}</div>`
+    : `<div class="envio-track"><span class="icon">💳</span> Pago: <span class="badge badge-default">pendiente</span></div>`;
 
   return `
     <div class="pedido-card">
@@ -507,6 +569,7 @@ function renderTarjetaPedido(pedido, envio) {
       </div>
       <ul class="pedido-items">${items}</ul>
       <div class="pedido-total">Total: ${formatearMoneda(total)}</div>
+      ${pagoHtml}
       ${envioHtml}
     </div>
   `;
