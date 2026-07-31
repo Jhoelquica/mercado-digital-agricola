@@ -166,6 +166,7 @@ function actualizarUIAuth() {
   document.getElementById('auth-area').classList.toggle('hidden', logueado);
   document.getElementById('user-area').classList.toggle('hidden', !logueado);
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
+  document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
 
   if (logueado) {
     const nombre = Estado.nombre || 'Usuario';
@@ -207,6 +208,7 @@ function cambiarVista(nombre) {
   if (nombre === 'mis-pedidos') cargarMisPedidos();
   if (nombre === 'notificaciones') cargarNotificaciones();
   if (nombre === 'panel-productor') iniciarPanelProductor();
+  if (nombre === 'gestion-envios') cargarGestionEnvios();
 }
 
 // ============ MODALES ============
@@ -738,6 +740,62 @@ async function cargarMisProductos() {
   }
 }
 
+// ============ GESTIÓN DE ENVÍOS (repartidor) ============
+async function cargarGestionEnvios() {
+  if (!Estado.token || Estado.rol !== 'repartidor') {
+    cambiarVista('catalogo');
+    return;
+  }
+
+  const cont = document.getElementById('envios-list');
+  const vacio = document.getElementById('envios-empty');
+  try {
+    const envios = await Api.transporte.listarTodos();
+    if (!envios.length) {
+      cont.innerHTML = '';
+      vacio.classList.remove('hidden');
+      return;
+    }
+    vacio.classList.add('hidden');
+    cont.innerHTML = envios.map(renderTarjetaEnvio).join('');
+  } catch (err) {
+    manejarError(err, 'cargar los envíos');
+  }
+}
+
+function renderTarjetaEnvio(envio) {
+  return `
+    <div class="pedido-card">
+      <div class="pedido-card-header">
+        <div>
+          <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
+          <div class="pedido-fecha">${formatearFecha(envio.fecha_creacion)}</div>
+        </div>
+        ${badgeEstadoEnvio(envio.estado)}
+      </div>
+      <div class="envio-track"><span class="icon">🧑‍✈️</span> Transportista: ${envio.transportista || 'Sin asignar'}</div>
+      <div class="envio-actualizar">
+        <select class="select-estado-envio" data-envio-id="${envio.id}">
+          <option value="pendiente" ${envio.estado === 'pendiente' ? 'selected' : ''}>Pendiente</option>
+          <option value="en_camino" ${envio.estado === 'en_camino' ? 'selected' : ''}>En camino</option>
+          <option value="entregado" ${envio.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
+        </select>
+        <button class="btn btn-primary btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
+      </div>
+    </div>
+  `;
+}
+
+async function actualizarEstadoEnvio(envioId, nuevoEstado) {
+  try {
+    await Api.transporte.actualizarEstado(envioId, nuevoEstado);
+    toast(`Estado del envío actualizado a "${nuevoEstado}" ✅`);
+    cargarGestionEnvios();
+  } catch (err) {
+    manejarError(err, 'actualizar el estado del envío');
+  }
+}
+
 // ============ AUTENTICACIÓN ============
 async function manejarLogin(e) {
   e.preventDefault();
@@ -855,6 +913,15 @@ function inicializarEventos() {
   document.getElementById('form-productor').addEventListener('submit', crearPerfilProductor);
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
+
+  document.getElementById('btn-refrescar-envios').addEventListener('click', cargarGestionEnvios);
+  document.getElementById('envios-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-actualizar-envio');
+    if (!btn) return;
+    const envioId = btn.dataset.envioId;
+    const select = document.querySelector(`.select-estado-envio[data-envio-id="${envioId}"]`);
+    actualizarEstadoEnvio(envioId, select.value);
+  });
 }
 
 function cambiarTabAuth(tab) {

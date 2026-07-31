@@ -26,6 +26,7 @@
       <button class="nav-link" data-nav="mis-pedidos">Mis Pedidos</button>
       <button class="nav-link" data-nav="notificaciones">Notificaciones</button>
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
+      <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
     </nav>
 
     <div class="nav-actions">
@@ -169,6 +170,18 @@
     </div>
   </section>
 
+  <!-- GESTIONAR ENVÍOS (solo repartidor) -->
+  <section id="view-gestion-envios" class="view">
+    <div class="section-header">
+      <h2>🚚 Gestionar Envíos</h2>
+      <button class="btn btn-outline" id="btn-refrescar-envios">↻ Refrescar</button>
+    </div>
+    <div id="envios-list" class="pedidos-list"></div>
+    <div id="envios-empty" class="empty-state hidden">
+      <p>📭 No hay envíos registrados todavía.</p>
+    </div>
+  </section>
+
 </main>
 
 <footer class="footer">
@@ -208,8 +221,9 @@
       </label>
       <label>Quiero registrarme como
         <select id="registro-rol">
-          <option value="comprador">Comprador</option>
-          <option value="productor">Productor</option>
+          <option value="comprador">Comprador (restaurante, mercado, persona)</option>
+          <option value="productor">Productor (agricultor)</option>
+          <option value="repartidor">Repartidor</option>
         </select>
       </label>
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>

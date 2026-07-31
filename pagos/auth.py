@@ -15,3 +15,13 @@ def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
     return payload
+
+def requiere_rol(*roles_permitidos):
+    def verificar(usuario: dict = Depends(verificar_token)):
+        if usuario.get("rol") not in roles_permitidos:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Esta acción requiere rol: {', '.join(roles_permitidos)}"
+            )
+        return usuario
+    return verificar

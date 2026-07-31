@@ -45,6 +45,9 @@ async function request(baseKey, path, { method = 'GET', body, auth = false } = {
   }
 
   if (!resp.ok) {
+    if (resp.status === 403) {
+      throw new ApiError('No tienes permiso para esta acción.', 403);
+    }
     const detail = (data && data.detail) ? data.detail : `Error ${resp.status} en ${baseKey}`;
     throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), resp.status);
   }
@@ -74,6 +77,8 @@ const Api = {
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`),
+    listarTodos: () => request('transporte', '/envios', { auth: true }),
+    actualizarEstado: (envioId, estado) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado }, auth: true }),
   },
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),

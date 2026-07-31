@@ -333,6 +333,21 @@ input, select { font-family: inherit; }
 }
 .envio-track .icon { font-size: 1.1rem; }
 
+.envio-actualizar {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.select-estado-envio {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--borde);
+  font-size: 0.88rem;
+  background: white;
+  color: var(--texto);
+}
+
 /* ---------- NOTIFICACIONES ---------- */
 .notif-card {
   background: white;

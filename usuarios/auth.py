@@ -16,6 +16,7 @@ def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
     return payload
 
+
 def requiere_rol(*roles_permitidos):
     def verificar(usuario: dict = Depends(verificar_token)):
         if usuario.get("rol") not in roles_permitidos:

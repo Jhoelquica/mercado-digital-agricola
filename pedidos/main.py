@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
+from auth import verificar_token, requiere_rol
 
 from database import Base, engine, SessionLocal
 import models
@@ -49,7 +50,7 @@ def salud():
     return {"estado": "ok", "servicio": "pedidos"}
 
 @app.post("/pedidos")
-def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
     items_validados = []
 
     with httpx.Client() as client:

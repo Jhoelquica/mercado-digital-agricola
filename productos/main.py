@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from auth import verificar_token
+from auth import verificar_token, requiere_rol
 
 from database import Base, engine, SessionLocal
 import models
@@ -43,7 +44,7 @@ def salud():
     return {"estado": "ok", "servicio": "productos"}
 
 @app.post("/productos")
-def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
     # Llamada síncrona real a Productores para validar que existe
     with httpx.Client() as client:
         try:

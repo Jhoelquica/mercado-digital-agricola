@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr
+from auth import verificar_token
 
 from database import Base, engine, SessionLocal
 import models
@@ -67,7 +68,7 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
     return {"access_token": token, "token_type": "bearer"}
 
 @app.get("/usuarios/{usuario_id}")
-def obtener_usuario(usuario_id: str, db: Session = Depends(get_db)):
+def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
