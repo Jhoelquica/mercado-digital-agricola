@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-pagos-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-pagos
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-pagos
+  template:
+    metadata:
+      labels:
+        app: db-pagos
+    spec:
+      containers:
+        - name: db-pagos
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: pagos
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db-pagos-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-pagos
+spec:
+  selector:
+    app: db-pagos
+  ports:
+    - port: 5432
+      targetPort: 5432

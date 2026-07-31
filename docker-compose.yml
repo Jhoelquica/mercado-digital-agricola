@@ -188,6 +188,38 @@ services:
       JWT_SECRET: ${JWT_SECRET}
     depends_on:
       - db-usuarios
+
+  db-pagos:
+    image: postgres:16
+    container_name: db-pagos
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: pagos
+    ports:
+      - "5439:5432"
+    volumes:
+      - pagos_data:/var/lib/postgresql/data
+
+  pagos:
+      build: ./pagos
+      container_name: pagos
+      restart: unless-stopped
+      ports:
+        - "8007:8007"
+      environment:
+        DB_USER: ${DB_USER}
+        DB_PASSWORD: ${DB_PASSWORD}
+        DB_HOST: db-pagos
+        RABBITMQ_HOST: rabbitmq
+        RABBITMQ_USER: admin
+        RABBITMQ_PASSWORD: admin123
+        JWT_SECRET: ${JWT_SECRET}
+        CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
+      depends_on:
+        - db-pagos
+        - rabbitmq
     
 volumes:
   productores_data:
@@ -196,3 +228,4 @@ volumes:
   transporte_data:
   notificaciones_data:
   usuarios_data:
+  pagos_data:

@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pagos
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: pagos
+  template:
+    metadata:
+      labels:
+        app: pagos
+    spec:
+      containers:
+        - name: pagos
+          image: mercado_agricola-pagos:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8007
+          env:
+            - name: DB_HOST
+              value: db-pagos
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_USER
+              value: admin
+            - name: RABBITMQ_PASSWORD
+              value: admin123
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: JWT_SECRET
+            - name: CULQI_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: CULQI_SECRET_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pagos
+  labels:
+    app: pagos
+spec:
+  type: LoadBalancer
+  selector:
+    app: pagos
+  ports:
+    - port: 8007
+      targetPort: 8007
