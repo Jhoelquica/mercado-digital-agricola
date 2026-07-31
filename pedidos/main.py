@@ -97,7 +97,11 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         "pedido_id": str(nuevo_pedido.id),
         "comprador_nombre": nuevo_pedido.comprador_nombre,
         "items": [
-            {"producto_id": str(i.producto_id), "cantidad": i.cantidad}
+            {
+                "producto_id": str(i.producto_id),
+                "cantidad": i.cantidad,
+                "precio_unitario": float(i.precio_unitario),
+            }
             for i in nuevo_pedido.items
         ],
     })

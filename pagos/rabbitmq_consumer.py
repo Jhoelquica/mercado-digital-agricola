@@ -13,10 +13,7 @@ RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
 def _calcular_monto(items: list) -> float:
-    # Nota: por ahora usamos un monto fijo de prueba, ya que el evento
-    # pedido_creado no trae los precios unitarios. Lo ajustamos en el
-    # siguiente paso si hace falta más precisión.
-    return sum(item.get("cantidad", 1) for item in items) * 3.5
+    return sum(item.get("cantidad", 1) * item.get("precio_unitario", 0) for item in items)
 
 
 def _procesar_mensaje(ch, method, properties, body):
