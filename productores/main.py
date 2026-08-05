@@ -30,6 +30,7 @@ class ProductorCrear(BaseModel):
     nombre: str
     comunidad: str | None = None
     contacto: str | None = None
+    ubicacion: str | None = None
 
 @app.get("/salud")
 def salud():

@@ -11,4 +11,5 @@ class Productor(Base):
     nombre = Column(String, nullable=False)
     comunidad = Column(String)
     contacto = Column(String)
+    ubicacion = Column(String, nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)

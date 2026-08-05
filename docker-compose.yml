@@ -63,6 +63,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productos
       PRODUCTORES_URL: http://productores:8001
+      USUARIOS_URL: http://usuarios:8006
     depends_on:
       - db-productos
       - productores

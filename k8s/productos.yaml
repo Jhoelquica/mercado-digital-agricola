@@ -38,6 +38,8 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
+            - name: USUARIOS_URL
+              value: http://usuarios:8006
 ---
 apiVersion: v1
 kind: Service
