@@ -2,8 +2,11 @@ import os
 import json
 import time
 import threading
-import pika
 
+from sqlalchemy.orm import Session
+
+import pika
+from logica_repartidores import proponer_envio_a_repartidor
 from database import SessionLocal
 import models
 
@@ -21,6 +24,7 @@ def _procesar_mensaje(ch, method, properties, body):
             nuevo_envio = models.Envio(pedido_id=datos["pedido_id"], estado="pendiente")
             db.add(nuevo_envio)
             db.commit()
+            proponer_envio_a_repartidor(nuevo_envio.id, db)
             print(f"[Transporte] Envío creado automáticamente para pedido {datos['pedido_id']}")
         finally:
             db.close()
