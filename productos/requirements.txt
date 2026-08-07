@@ -5,3 +5,5 @@ psycopg2-binary
 python-dotenv
 httpx
 python-jose[cryptography]
+minio
+python-multipart

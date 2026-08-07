@@ -40,6 +40,21 @@ spec:
                   key: JWT_SECRET
             - name: USUARIOS_URL
               value: http://usuarios:8006
+
+            - name: MINIO_ENDPOINT
+              value: minio:9000
+            - name: MINIO_PUBLIC_URL
+              value: http://localhost:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                   name: credenciales-app
+                   key: DB_PASSWORD
 ---
 apiVersion: v1
 kind: Service

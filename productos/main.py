@@ -10,6 +10,9 @@ from database import Base, engine, SessionLocal
 import models
 from sqlalchemy import func
 
+from fastapi import UploadFile, File
+from minio_client import subir_imagen
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
@@ -129,14 +132,18 @@ def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario:
     db.refresh(nuevo)
     return nuevo
 
-@app.post("/productos/{producto_id}/imagenes")
-def agregar_imagen(
+@app.post("/productos/{producto_id}/imagenes/subir")
+def subir_imagen_producto(
         producto_id: str,
-        datos: ImagenCrear,
+        archivo: UploadFile = File(...),
+        orden: int = 0,
         db: Session = Depends(get_db),
         usuario: dict = Depends(requiere_rol("productor")),
         credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
+    if archivo.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(status_code=422, detail="Solo se permiten imágenes JPEG, PNG o WEBP")
+
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -164,10 +171,15 @@ def agregar_imagen(
     if total_imagenes >= 5:
         raise HTTPException(status_code=409, detail="Este producto ya tiene el máximo de 5 imágenes")
 
+    try:
+        url_publica = subir_imagen(archivo.file, archivo.content_type)
+    except Exception:
+        raise HTTPException(status_code=502, detail="No se pudo subir la imagen al almacenamiento")
+
     nueva_imagen = models.ProductoImagen(
         producto_id=producto_id,
-        url=datos.url,
-        orden=datos.orden,
+        url=url_publica,
+        orden=orden,
     )
     db.add(nueva_imagen)
     db.commit()
