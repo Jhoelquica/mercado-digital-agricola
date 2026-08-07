@@ -130,10 +130,39 @@ def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario:
     return nuevo
 
 @app.post("/productos/{producto_id}/imagenes")
-def agregar_imagen(producto_id: str, datos: ImagenCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
+def agregar_imagen(
+        producto_id: str,
+        datos: ImagenCrear,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor para subir imágenes")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes modificar un producto que no te pertenece")
+
+    total_imagenes = db.query(models.ProductoImagen).filter(
+        models.ProductoImagen.producto_id == producto_id
+    ).count()
+    if total_imagenes >= 5:
+        raise HTTPException(status_code=409, detail="Este producto ya tiene el máximo de 5 imágenes")
 
     nueva_imagen = models.ProductoImagen(
         producto_id=producto_id,
@@ -146,10 +175,35 @@ def agregar_imagen(producto_id: str, datos: ImagenCrear, db: Session = Depends(g
     return nueva_imagen
 
 @app.delete("/productos/imagenes/{imagen_id}")
-def eliminar_imagen(imagen_id: str, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
+def eliminar_imagen(
+        imagen_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
     imagen = db.query(models.ProductoImagen).filter(models.ProductoImagen.id == imagen_id).first()
     if not imagen:
         raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == imagen.producto_id).first()
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes eliminar imágenes de un producto que no te pertenece")
+
     db.delete(imagen)
     db.commit()
     return {"mensaje": "Imagen eliminada"}
