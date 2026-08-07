@@ -66,7 +66,18 @@
       <select id="select-categoria" class="select-categoria">
         <option value="">Todas las categorías</option>
       </select>
+      <select id="select-ubicacion" class="select-categoria">
+        <option value="">Todas las ubicaciones</option>
+      </select>
       <button class="btn btn-outline" id="btn-refrescar-catalogo">↻ Refrescar</button>
+    </div>
+
+    <div class="filtro-precio">
+      <span class="filtro-precio-label">💰 Precio</span>
+      <input type="number" id="input-precio-min" class="input-precio" min="0" step="0.01" placeholder="Mín">
+      <span class="filtro-precio-sep">—</span>
+      <input type="number" id="input-precio-max" class="input-precio" min="0" step="0.01" placeholder="Máx">
+      <button class="btn btn-ghost btn-sm" id="btn-limpiar-filtros">Limpiar filtros</button>
     </div>
 
     <div id="productos-grid" class="grid"></div>
@@ -231,25 +242,76 @@
   </div>
 </div>
 
-<!-- MODAL: CARRITO / CREAR PEDIDO -->
+<!-- MODAL: CHECKOUT (RESUMEN → PAGO → CONFIRMACIÓN) -->
 <div class="modal-overlay hidden" id="modal-pedido">
-  <div class="modal modal-pedido">
+  <div class="modal modal-checkout">
     <button class="modal-close" data-close="modal-pedido">✕</button>
-    <h3>🧺 Tu pedido</h3>
-    <div id="carrito-items" class="carrito-items"></div>
-    <div id="carrito-vacio" class="empty-state hidden">
-      <p>Tu carrito está vacío. Agrega productos desde el catálogo.</p>
+
+    <div class="checkout-stepper">
+      <div class="checkout-step active" data-step="1">
+        <span class="checkout-step-circle">1</span>
+        <span class="checkout-step-label">Resumen</span>
+      </div>
+      <div class="checkout-step-line"></div>
+      <div class="checkout-step" data-step="2">
+        <span class="checkout-step-circle">2</span>
+        <span class="checkout-step-label">Pago</span>
+      </div>
+      <div class="checkout-step-line"></div>
+      <div class="checkout-step" data-step="3">
+        <span class="checkout-step-circle">3</span>
+        <span class="checkout-step-label">Confirmación</span>
+      </div>
     </div>
-    <div class="carrito-total">
-      <span>Total estimado</span>
-      <strong id="carrito-total">S/ 0.00</strong>
-    </div>
-    <form id="form-pedido">
+
+    <!-- PASO 1: RESUMEN -->
+    <div class="checkout-panel active" id="checkout-panel-1">
+      <h3>🧺 Resumen de tu pedido</h3>
+      <div id="carrito-items" class="carrito-items"></div>
+      <div id="carrito-vacio" class="empty-state hidden">
+        <p>Tu carrito está vacío. Agrega productos desde el catálogo.</p>
+      </div>
+      <div class="carrito-total">
+        <span>Total estimado</span>
+        <strong id="carrito-total">S/ 0.00</strong>
+      </div>
       <label>Teléfono de contacto (opcional)
         <input type="text" id="pedido-telefono" placeholder="Ej. 987654321">
       </label>
-      <button type="submit" class="btn btn-primary btn-block" id="btn-confirmar-pedido">Confirmar y pagar</button>
-    </form>
+      <button type="button" class="btn btn-primary btn-block" id="btn-checkout-paso1-siguiente">Continuar al pago →</button>
+    </div>
+
+    <!-- PASO 2: MÉTODO DE PAGO -->
+    <div class="checkout-panel" id="checkout-panel-2">
+      <h3>💳 Método de pago</h3>
+      <p class="muted">El cobro se procesa de forma segura con Culqi.</p>
+      <div class="metodo-pago-grid">
+        <label class="metodo-pago-card seleccionado">
+          <input type="radio" name="metodo-pago" value="tarjeta" checked>
+          <span class="metodo-pago-icon">💳</span>
+          <span class="metodo-pago-nombre">Tarjeta</span>
+        </label>
+        <label class="metodo-pago-card">
+          <input type="radio" name="metodo-pago" value="yape">
+          <span class="metodo-pago-icon">📱</span>
+          <span class="metodo-pago-nombre">Yape</span>
+        </label>
+      </div>
+      <div class="carrito-total">
+        <span>Total a pagar</span>
+        <strong id="checkout-total-paso2">S/ 0.00</strong>
+      </div>
+      <div class="checkout-actions">
+        <button type="button" class="btn btn-outline" id="btn-checkout-paso2-volver">← Volver</button>
+        <button type="button" class="btn btn-primary" id="btn-checkout-pagar">Confirmar y pagar</button>
+      </div>
+    </div>
+
+    <!-- PASO 3: CONFIRMACIÓN -->
+    <div class="checkout-panel" id="checkout-panel-3">
+      <div id="checkout-confirmacion" class="checkout-confirmacion"></div>
+      <button type="button" class="btn btn-primary btn-block" id="btn-checkout-finalizar">Ver mis pedidos</button>
+    </div>
   </div>
 </div>
 

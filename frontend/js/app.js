@@ -6,7 +6,7 @@ const Estado = {
   email: null,
   rol: null,
   productos: [],
-  productores: {},   // id -> nombre
+  productores: {},   // id -> { nombre, comunidad, contacto, ubicacion }
   carrito: [],        // {producto_id, nombre, precio, cantidad, stockDisponible}
   productorId: null,
 };
@@ -126,6 +126,13 @@ function unidadEtiqueta(codigo) {
   return infoUnidad(codigo).etiqueta;
 }
 
+function renderEstrellas(promedio) {
+  const llenas = Math.round(promedio || 0);
+  let html = '';
+  for (let i = 1; i <= 5; i++) html += i <= llenas ? '★' : '☆';
+  return html;
+}
+
 // ============ SESIÓN ============
 function guardarSesion() {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -224,9 +231,10 @@ async function cargarCatalogo() {
     ]);
     Estado.productos = productos;
     Estado.productores = {};
-    productores.forEach((p) => { Estado.productores[p.id] = p.nombre; });
+    productores.forEach((p) => { Estado.productores[p.id] = p; });
 
     poblarSelectCategorias(productos);
+    poblarSelectUbicaciones(productos);
     renderProductos(productos);
   } catch (err) {
     manejarError(err, 'cargar el catálogo');
@@ -242,6 +250,38 @@ function poblarSelectCategorias(productos) {
   select.value = actual;
 }
 
+function poblarSelectUbicaciones(productos) {
+  const select = document.getElementById('select-ubicacion');
+  const actual = select.value;
+  const ubicaciones = [...new Set(
+    productos
+      .map((p) => Estado.productores[p.productor_id]?.ubicacion)
+      .filter(Boolean)
+  )].sort();
+  select.innerHTML = '<option value="">Todas las ubicaciones</option>' +
+    ubicaciones.map((u) => `<option value="${escapeAttr(u)}">${u}</option>`).join('');
+  select.value = actual;
+}
+
+function renderTarjetaProductoCatalogo(p, { clickable = true } = {}) {
+  const stockBajo = p.stock <= 5;
+  return `
+    <div class="product-card" ${clickable ? `data-id="${p.id}"` : 'style="cursor:default"'}>
+      <div class="product-card-media">${renderMediaProducto(p, 'product-banner')}</div>
+      <div class="product-card-body">
+        <span class="product-tag">${p.categoria || 'General'}</span>
+        <h4>${p.nombre}</h4>
+        <span class="product-productor">👨‍🌾 ${p.productor_nombre || 'Productor local'}</span>
+        <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
+        <span class="product-stock ${stockBajo ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
+        ${clickable ? `
+        <button class="btn btn-primary btn-agregar" data-id="${p.id}" ${p.stock <= 0 ? 'disabled' : ''}>
+          ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
+        </button>` : ''}
+      </div>
+    </div>`;
+}
+
 function renderProductos(productos) {
   const grid = document.getElementById('productos-grid');
   const vacio = document.getElementById('productos-empty');
@@ -252,56 +292,195 @@ function renderProductos(productos) {
     return;
   }
   vacio.classList.add('hidden');
-
-  grid.innerHTML = productos.map((p) => {
-    const stockBajo = p.stock <= 5;
-    return `
-    <div class="product-card" data-id="${p.id}">
-      ${renderMediaProducto(p)}
-      <span class="product-tag">${p.categoria || 'General'}</span>
-      <h4>${p.nombre}</h4>
-      <span class="product-productor">👨‍🌾 ${p.productor_nombre || 'Productor local'}</span>
-      <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
-      <span class="product-stock ${stockBajo ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
-      <button class="btn btn-primary btn-agregar" data-id="${p.id}" ${p.stock <= 0 ? 'disabled' : ''}>
-        ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
-      </button>
-    </div>`;
-  }).join('');
+  grid.innerHTML = productos.map((p) => renderTarjetaProductoCatalogo(p)).join('');
 }
 
 function filtrarYRenderizar() {
   const texto = document.getElementById('input-buscar').value.trim().toLowerCase();
   const categoria = document.getElementById('select-categoria').value;
+  const ubicacion = document.getElementById('select-ubicacion').value;
+  const precioMin = parseFloat(document.getElementById('input-precio-min').value);
+  const precioMax = parseFloat(document.getElementById('input-precio-max').value);
 
   const filtrados = Estado.productos.filter((p) => {
     const coincideTexto = !texto || `${p.nombre} ${p.categoria || ''} ${p.productor_nombre || ''}`.toLowerCase().includes(texto);
     const coincideCategoria = !categoria || p.categoria === categoria;
-    return coincideTexto && coincideCategoria;
+    const ubicacionProducto = Estado.productores[p.productor_id]?.ubicacion;
+    const coincideUbicacion = !ubicacion || ubicacionProducto === ubicacion;
+    const precio = Number(p.precio);
+    const coincideMin = isNaN(precioMin) || precio >= precioMin;
+    const coincideMax = isNaN(precioMax) || precio <= precioMax;
+    return coincideTexto && coincideCategoria && coincideUbicacion && coincideMin && coincideMax;
   });
   renderProductos(filtrados);
 }
 
-function abrirDetalleProducto(id) {
-  const p = Estado.productos.find((x) => x.id === id);
-  if (!p) return;
+function limpiarFiltros() {
+  document.getElementById('input-buscar').value = '';
+  document.getElementById('select-categoria').value = '';
+  document.getElementById('select-ubicacion').value = '';
+  document.getElementById('input-precio-min').value = '';
+  document.getElementById('input-precio-max').value = '';
+  filtrarYRenderizar();
+}
+
+async function abrirDetalleProducto(id) {
+  const contenido = document.getElementById('detalle-producto-content');
+  contenido.innerHTML = '<p class="muted" style="padding:48px 0;text-align:center;">Cargando producto...</p>';
+  abrirModal('modal-detalle-producto');
+
+  let p;
+  try {
+    p = await Api.productos.obtener(id);
+  } catch (err) {
+    manejarError(err, 'cargar el producto');
+    cerrarModal('modal-detalle-producto');
+    return;
+  }
+
+  let resenas = [];
+  try {
+    resenas = await Api.productos.listarResenas(id);
+  } catch { /* sin reseñas disponibles por ahora */ }
+
+  renderDetalleProducto(p, resenas);
+}
+
+function renderGaleriaProducto(p) {
+  const imagenes = Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden) : [];
+  if (imagenes.length <= 1) {
+    return renderMediaProducto(p, 'producto-emoji-lg');
+  }
+
+  const emoji = emojiParaProducto(p);
+  const miniaturas = imagenes.map((img, i) => `
+    <div class="galeria-miniatura ${i === 0 ? 'active' : ''}" data-url="${escapeAttr(img.url)}">
+      <img src="${escapeAttr(img.url)}" alt="${escapeAttr(p.nombre || '')}" loading="lazy" onerror="this.style.opacity='0.25'">
+    </div>`).join('');
+
+  return `
+    <div class="galeria-producto">
+      <div class="galeria-principal" id="galeria-imagen-principal">
+        <img src="${escapeAttr(imagenes[0].url)}" alt="${escapeAttr(p.nombre || '')}" onerror="this.parentElement.textContent='${emoji}'">
+      </div>
+      <div class="galeria-miniaturas">${miniaturas}</div>
+    </div>`;
+}
+
+function cambiarImagenGaleria(url, emoji, miniaturas, seleccionada) {
+  const principal = document.getElementById('galeria-imagen-principal');
+  principal.innerHTML = `<img src="${escapeAttr(url)}" alt="" onerror="this.parentElement.textContent='${emoji}'">`;
+  miniaturas.forEach((m) => m.classList.toggle('active', m === seleccionada));
+}
+
+function renderResumenCalificacion(p) {
+  if (!p.calificacion_promedio || !p.total_resenas) {
+    return '<p class="rating-row"><span class="rating-count">Sin reseñas todavía — ¡sé el primero en opinar!</span></p>';
+  }
+  return `
+    <p class="rating-row">
+      <span class="rating-stars">${renderEstrellas(p.calificacion_promedio)}</span>
+      <span class="rating-value">${Number(p.calificacion_promedio).toFixed(1)}</span>
+      <span class="rating-count">(basado en ${p.total_resenas} reseña${p.total_resenas === 1 ? '' : 's'})</span>
+    </p>`;
+}
+
+function renderSeccionResenas(resenas) {
+  const listaHtml = resenas.length
+    ? resenas.map((r) => `
+        <div class="resena-card">
+          <div class="resena-header">
+            <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
+            <span class="rating-stars">${renderEstrellas(r.calificacion)}</span>
+          </div>
+          <div class="resena-fecha">${formatearFecha(r.fecha_creacion)}</div>
+          ${r.comentario ? `<p class="resena-comentario">${escapeAttr(r.comentario)}</p>` : ''}
+        </div>`).join('')
+    : '<p class="muted">Aún no hay reseñas para este producto.</p>';
+
+  const formularioHtml = Estado.token ? `
+    <form id="form-resena" class="resena-form">
+      <h4>Deja tu reseña</h4>
+      <div class="estrellas-selector">
+        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}">★</button>`).join('')}
+      </div>
+      <textarea placeholder="Cuéntanos qué te pareció (opcional)"></textarea>
+      <button type="submit" class="btn btn-primary">Publicar reseña</button>
+    </form>`
+    : '<p class="muted">🔒 Inicia sesión para dejar tu propia reseña.</p>';
+
+  return `
+    <div class="resenas-section">
+      <h3>⭐ Reseñas</h3>
+      <div class="resenas-lista">${listaHtml}</div>
+      ${formularioHtml}
+    </div>`;
+}
+
+function renderDetalleProducto(p, resenas) {
   const contenido = document.getElementById('detalle-producto-content');
   contenido.innerHTML = `
-    ${renderMediaProducto(p, 'producto-emoji-lg')}
+    ${renderGaleriaProducto(p)}
     <span class="product-tag">${p.categoria || 'General'}</span>
     <h2>${p.nombre}</h2>
     <p class="muted">Publicado por ${p.productor_nombre || 'Productor local'} · ${formatearFecha(p.fecha_publicacion)}</p>
+    ${renderResumenCalificacion(p)}
     <p class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></p>
     <p class="product-stock ${p.stock <= 5 ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock disponible'}</p>
     <button class="btn btn-primary btn-block" style="margin-top:16px" data-id="${p.id}" id="btn-agregar-detalle" ${p.stock <= 0 ? 'disabled' : ''}>
       ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
     </button>
+    ${renderSeccionResenas(resenas)}
   `;
-  abrirModal('modal-detalle-producto');
+
   document.getElementById('btn-agregar-detalle')?.addEventListener('click', () => {
     agregarAlCarrito(p.id);
     cerrarModal('modal-detalle-producto');
   });
+
+  const miniaturas = contenido.querySelectorAll('.galeria-miniatura');
+  const emoji = emojiParaProducto(p);
+  miniaturas.forEach((mini) => {
+    mini.addEventListener('click', () => cambiarImagenGaleria(mini.dataset.url, emoji, miniaturas, mini));
+  });
+
+  const formResena = document.getElementById('form-resena');
+  if (formResena) {
+    let calificacionSeleccionada = 0;
+    const botones = formResena.querySelectorAll('.estrellas-selector button');
+    botones.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        calificacionSeleccionada = Number(btn.dataset.valor);
+        botones.forEach((b) => b.classList.toggle('activa', Number(b.dataset.valor) <= calificacionSeleccionada));
+      });
+    });
+    formResena.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!calificacionSeleccionada) {
+        toast('Selecciona una calificación de 1 a 5 estrellas.', 'error');
+        return;
+      }
+      enviarResena(p.id, calificacionSeleccionada, formResena.querySelector('textarea').value.trim());
+    });
+  }
+}
+
+async function enviarResena(productoId, calificacion, comentario) {
+  const form = document.getElementById('form-resena');
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    await Api.productos.crearResena(productoId, { calificacion, comentario: comentario || null });
+    toast('¡Gracias por tu reseña! 🌟');
+    const [p, resenas] = await Promise.all([
+      Api.productos.obtener(productoId),
+      Api.productos.listarResenas(productoId),
+    ]);
+    renderDetalleProducto(p, resenas);
+  } catch (err) {
+    manejarError(err, 'publicar tu reseña');
+    btn.disabled = false;
+  }
 }
 
 // ============ CARRITO / PEDIDO ============
@@ -359,7 +538,7 @@ function renderCarrito() {
   const cont = document.getElementById('carrito-items');
   const vacio = document.getElementById('carrito-vacio');
   const totalEl = document.getElementById('carrito-total');
-  const btnConfirmar = document.getElementById('btn-confirmar-pedido');
+  const btnConfirmar = document.getElementById('btn-checkout-paso1-siguiente');
 
   if (!Estado.carrito.length) {
     cont.innerHTML = '';
@@ -391,11 +570,43 @@ function renderCarrito() {
   totalEl.textContent = formatearMoneda(total);
 }
 
-async function confirmarPedido(e) {
-  e.preventDefault();
-  if (!Estado.carrito.length) return;
+// ============ CHECKOUT POR PASOS ============
+function irPasoCheckout(paso) {
+  document.querySelectorAll('.checkout-panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === `checkout-panel-${paso}`);
+  });
+  document.querySelectorAll('.checkout-step').forEach((stepEl) => {
+    const n = Number(stepEl.dataset.step);
+    stepEl.classList.toggle('active', n === paso);
+    stepEl.classList.toggle('completado', n < paso);
+  });
+}
 
-  const btn = document.getElementById('btn-confirmar-pedido');
+function resetCheckout() {
+  irPasoCheckout(1);
+  resetearBotonPago();
+  document.querySelectorAll('input[name="metodo-pago"]').forEach((r) => { r.checked = r.value === 'tarjeta'; });
+  document.querySelectorAll('.metodo-pago-card').forEach((c) => {
+    c.classList.toggle('seleccionado', c.querySelector('input').value === 'tarjeta');
+  });
+}
+
+function irAPaso2() {
+  if (!Estado.carrito.length) return;
+  const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+  document.getElementById('checkout-total-paso2').textContent = formatearMoneda(total);
+  irPasoCheckout(2);
+}
+
+function resetearBotonPago() {
+  const btn = document.getElementById('btn-checkout-pagar');
+  btn.disabled = false;
+  btn.textContent = 'Confirmar y pagar';
+}
+
+async function confirmarYPagar() {
+  const btn = document.getElementById('btn-checkout-pagar');
+  const metodo = document.querySelector('input[name="metodo-pago"]:checked')?.value || 'tarjeta';
   btn.disabled = true;
   btn.textContent = 'Enviando pedido...';
 
@@ -411,35 +622,38 @@ async function confirmarPedido(e) {
 
     Estado.carrito = [];
     renderCarrito();
-    document.getElementById('form-pedido').reset();
-    cerrarModal('modal-pedido');
-    toast('¡Pedido creado con éxito! 🎉 Completa el pago para confirmarlo.');
-    cambiarVista('catalogo');
+    document.getElementById('pedido-telefono').value = '';
+    cargarCatalogo();
 
-    abrirCheckoutCulqi(pedido.id, total);
+    abrirCheckoutCulqi(pedido.id, total, metodo);
   } catch (err) {
     manejarError(err, 'crear el pedido');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Confirmar y pagar';
+    resetearBotonPago();
   }
 }
 
 // ============ PAGO (CULQI) ============
-let pagoEnCurso = null; // { pedidoId, email }
+let pagoEnCurso = null; // { pedidoId, email, monto }
 
-function abrirCheckoutCulqi(pedidoId, montoTotal) {
+function abrirCheckoutCulqi(pedidoId, montoTotal, metodo = 'tarjeta') {
   if (typeof Culqi === 'undefined') {
     toast('No se pudo cargar la pasarela de pagos. Vuelve a intentar el pago desde "Mis Pedidos".', 'error');
+    resetearBotonPago();
     return;
   }
 
-  pagoEnCurso = { pedidoId, email: Estado.email };
+  pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal };
   Culqi.publicKey = CULQI_PUBLIC_KEY;
   Culqi.settings({
     title: 'AgroMercado',
     currency: 'PEN',
     amount: Math.round(montoTotal * 100),
+  });
+  Culqi.options({
+    paymentMethods: {
+      tarjeta: metodo === 'tarjeta',
+      yape: metodo === 'yape',
+    },
   });
   Culqi.open();
 }
@@ -451,27 +665,51 @@ window.culqi = function () {
     procesarPagoCulqi(window.Culqi.token.id);
   } else if (window.Culqi.error) {
     toast(window.Culqi.error.user_message || 'Revisa los datos de tu tarjeta e intenta de nuevo.', 'error');
+    resetearBotonPago();
   }
 };
 
 async function procesarPagoCulqi(tokenCulqi) {
-  const { pedidoId, email } = pagoEnCurso;
+  const { pedidoId, email, monto } = pagoEnCurso;
+  let resultado = null;
+  let errorMsg = null;
   try {
-    const resultado = await Api.pagos.procesar({
+    resultado = await Api.pagos.procesar({
       pedido_id: pedidoId,
       token_culqi: tokenCulqi,
       email,
     });
-    if (resultado.estado === 'aprobado') {
-      toast('¡Pago aprobado! 🎉 Tu pedido está confirmado.');
-    } else {
-      toast(`El pago no fue aprobado (estado: ${resultado.estado}).`, 'error');
-    }
   } catch (err) {
-    manejarError(err, 'procesar el pago');
-  } finally {
-    pagoEnCurso = null;
-    cambiarVista('mis-pedidos');
+    errorMsg = err.message;
+  }
+
+  mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg });
+  pagoEnCurso = null;
+  resetearBotonPago();
+  irPasoCheckout(3);
+}
+
+function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
+  const cont = document.getElementById('checkout-confirmacion');
+  const aprobado = resultado?.estado === 'aprobado';
+  const idCorto = String(pedidoId).slice(0, 8);
+
+  if (aprobado) {
+    cont.innerHTML = `
+      <div class="icono-grande">🎉</div>
+      <h3>¡Pago aprobado!</h3>
+      <p>Tu pedido <strong>#${idCorto}</strong> está confirmado.</p>
+      <p>Total pagado: <strong>${formatearMoneda(monto)}</strong></p>`;
+  } else {
+    const pareceJson = errorMsg && (errorMsg.trim().startsWith('[') || errorMsg.trim().startsWith('{'));
+    const motivo = (errorMsg && !pareceJson)
+      ? errorMsg
+      : `El pago quedó en estado "${resultado?.estado || 'pendiente'}".`;
+    cont.innerHTML = `
+      <div class="icono-grande">⚠️</div>
+      <h3>No se pudo confirmar el pago</h3>
+      <p>${escapeAttr(motivo)}</p>
+      <p>Tu pedido <strong>#${idCorto}</strong> quedó registrado — puedes reintentar el pago más tarde.</p>`;
   }
 }
 
@@ -726,15 +964,7 @@ async function cargarMisProductos() {
       return;
     }
     vacio.classList.add('hidden');
-    grid.innerHTML = mios.map((p) => `
-      <div class="product-card" style="cursor:default">
-        ${renderMediaProducto(p)}
-        <span class="product-tag">${p.categoria || 'General'}</span>
-        <h4>${p.nombre}</h4>
-        <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
-        <span class="product-stock ${p.stock <= 5 ? 'low' : ''}">${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} en stock</span>
-      </div>
-    `).join('');
+    grid.innerHTML = mios.map((p) => renderTarjetaProductoCatalogo(p, { clickable: false })).join('');
   } catch (err) {
     manejarError(err, 'cargar tus productos');
   }
@@ -879,6 +1109,10 @@ function inicializarEventos() {
 
   document.getElementById('input-buscar').addEventListener('input', filtrarYRenderizar);
   document.getElementById('select-categoria').addEventListener('change', filtrarYRenderizar);
+  document.getElementById('select-ubicacion').addEventListener('change', filtrarYRenderizar);
+  document.getElementById('input-precio-min').addEventListener('input', filtrarYRenderizar);
+  document.getElementById('input-precio-max').addEventListener('input', filtrarYRenderizar);
+  document.getElementById('btn-limpiar-filtros').addEventListener('click', limpiarFiltros);
   document.getElementById('btn-refrescar-catalogo').addEventListener('click', cargarCatalogo);
 
   document.getElementById('productos-grid').addEventListener('click', (e) => {
@@ -891,8 +1125,10 @@ function inicializarEventos() {
     if (card) abrirDetalleProducto(card.dataset.id);
   });
 
-  document.getElementById('btn-cart').addEventListener('click', () => abrirModal('modal-pedido'));
-  document.getElementById('form-pedido').addEventListener('submit', confirmarPedido);
+  document.getElementById('btn-cart').addEventListener('click', () => {
+    resetCheckout();
+    abrirModal('modal-pedido');
+  });
   document.getElementById('carrito-items').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-accion]');
     if (!btn) return;
@@ -900,6 +1136,21 @@ function inicializarEventos() {
     if (accion === 'mas') cambiarCantidadCarrito(id, 1);
     if (accion === 'menos') cambiarCantidadCarrito(id, -1);
     if (accion === 'quitar') quitarDelCarrito(id);
+  });
+
+  document.getElementById('btn-checkout-paso1-siguiente').addEventListener('click', irAPaso2);
+  document.getElementById('btn-checkout-paso2-volver').addEventListener('click', () => irPasoCheckout(1));
+  document.getElementById('btn-checkout-pagar').addEventListener('click', confirmarYPagar);
+  document.getElementById('btn-checkout-finalizar').addEventListener('click', () => {
+    cerrarModal('modal-pedido');
+    resetCheckout();
+    cambiarVista('mis-pedidos');
+  });
+  document.querySelectorAll('input[name="metodo-pago"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.metodo-pago-card').forEach((c) => c.classList.remove('seleccionado'));
+      radio.closest('.metodo-pago-card').classList.add('seleccionado');
+    });
   });
 
   document.getElementById('btn-refrescar-pedidos').addEventListener('click', cargarMisPedidos);

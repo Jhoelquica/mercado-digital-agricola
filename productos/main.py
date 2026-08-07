@@ -4,8 +4,6 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from auth import verificar_token
-from auth import verificar_token, requiere_rol
 from auth import verificar_token, requiere_rol, security
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
@@ -33,7 +31,6 @@ def get_db():
         db.close()
 
 class ProductoCrear(BaseModel):
-    productor_id: str
     nombre: str
     categoria: str | None = None
     precio: float
@@ -65,45 +62,43 @@ def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
         models.Resena.producto_id == producto_id
     ).order_by(models.Resena.fecha_creacion.desc()).all()
 
-@app.post("/productos/{producto_id}/resenas")
-def crear_resena(
-        producto_id: str,
-        datos: ResenaCrear,
+@app.post("/productos")
+def crear_producto(
+        datos: ProductoCrear,
         db: Session = Depends(get_db),
-        usuario: dict = Depends(verificar_token),
+        usuario: dict = Depends(requiere_rol("productor")),
         credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
-    if datos.calificacion < 1 or datos.calificacion > 5:
-        raise HTTPException(status_code=422, detail="La calificación debe ser entre 1 y 5")
-
-    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
-    if not producto:
-        raise HTTPException(status_code=404, detail="Producto no encontrado")
-
-    usuario_id = usuario.get("sub")
     with httpx.Client() as client:
         try:
             resp = client.get(
-                f"{USUARIOS_URL}/usuarios/{usuario_id}",
+                f"{PRODUCTORES_URL}/productores/me",
                 headers={"Authorization": f"Bearer {credenciales.credentials}"},
                 timeout=5,
             )
         except httpx.RequestError:
-            usuario_nombre = "Usuario"
-        else:
-            usuario_nombre = resp.json().get("nombre", "Usuario") if resp.status_code == 200 else "Usuario"
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
 
-    nueva_resena = models.Resena(
-        producto_id=producto_id,
-        usuario_id=usuario_id,
-        usuario_nombre=usuario_nombre,
-        calificacion=datos.calificacion,
-        comentario=datos.comentario,
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de publicar productos")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="No se pudo verificar tu perfil de productor")
+
+    productor = resp.json()
+
+    nuevo = models.Producto(
+        productor_id=productor["id"],
+        productor_nombre=productor["nombre"],
+        nombre=datos.nombre,
+        categoria=datos.categoria,
+        precio=datos.precio,
+        stock=datos.stock,
+        unidad_medida=datos.unidad_medida,
     )
-    db.add(nueva_resena)
+    db.add(nuevo)
     db.commit()
-    db.refresh(nueva_resena)
-    return nueva_resena
+    db.refresh(nuevo)
+    return nuevo
 
 @app.post("/productos")
 def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):

@@ -70,6 +70,8 @@ const Api = {
     listar: () => request('productos', '/productos'),
     obtener: (id) => request('productos', `/productos/${id}`),
     crear: (datos) => request('productos', '/productos', { method: 'POST', body: datos, auth: true }),
+    listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
+    crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
   },
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),

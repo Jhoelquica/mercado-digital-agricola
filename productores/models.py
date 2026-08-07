@@ -8,6 +8,7 @@ class Productor(Base):
     __tablename__ = "productores"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usuario_id = Column(UUID(as_uuid=True), nullable=True, unique=True)
     nombre = Column(String, nullable=False)
     comunidad = Column(String)
     contacto = Column(String)
