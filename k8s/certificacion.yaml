@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: certificacion
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: certificacion
+  template:
+    metadata:
+      labels:
+        app: certificacion
+    spec:
+      containers:
+        - name: certificacion
+          image: mercado_agricola-certificacion:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8008
+          env:
+            - name: DB_HOST
+              value: db-certificacion
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: JWT_SECRET
+            - name: FRONTEND_URL
+              value: http://localhost:63342/mercado_agricola/frontend
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: certificacion
+  labels:
+    app: certificacion
+spec:
+  type: LoadBalancer
+  selector:
+    app: certificacion
+  ports:
+    - port: 8008
+      targetPort: 8008

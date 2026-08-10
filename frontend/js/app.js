@@ -263,7 +263,7 @@ function poblarSelectUbicaciones(productos) {
   select.value = actual;
 }
 
-function renderTarjetaProductoCatalogo(p, { clickable = true } = {}) {
+function renderTarjetaProductoCatalogo(p, { clickable = true, mostrarQr = false } = {}) {
   const stockBajo = p.stock <= 5;
   return `
     <div class="product-card" ${clickable ? `data-id="${p.id}"` : 'style="cursor:default"'}>
@@ -278,6 +278,7 @@ function renderTarjetaProductoCatalogo(p, { clickable = true } = {}) {
         <button class="btn btn-primary btn-agregar" data-id="${p.id}" ${p.stock <= 0 ? 'disabled' : ''}>
           ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
         </button>` : ''}
+        ${mostrarQr ? `<button type="button" class="btn btn-outline btn-ver-qr" data-id="${p.id}">🔗 Ver código QR</button>` : ''}
       </div>
     </div>`;
 }
@@ -964,7 +965,7 @@ async function cargarMisProductos() {
       return;
     }
     vacio.classList.add('hidden');
-    grid.innerHTML = mios.map((p) => renderTarjetaProductoCatalogo(p, { clickable: false })).join('');
+    grid.innerHTML = mios.map((p) => renderTarjetaProductoCatalogo(p, { clickable: false, mostrarQr: true })).join('');
   } catch (err) {
     manejarError(err, 'cargar tus productos');
   }
@@ -1164,6 +1165,11 @@ function inicializarEventos() {
   document.getElementById('form-productor').addEventListener('submit', crearPerfilProductor);
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
+  document.getElementById('mis-productos-grid').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-ver-qr');
+    if (!btn) return;
+    window.open(Api.certificacion.qrUrl(btn.dataset.id), '_blank', 'noopener');
+  });
 
   document.getElementById('btn-refrescar-envios').addEventListener('click', cargarGestionEnvios);
   document.getElementById('envios-list').addEventListener('click', (e) => {

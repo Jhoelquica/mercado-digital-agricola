@@ -225,7 +225,33 @@ services:
       depends_on:
         - db-pagos
         - rabbitmq
-    
+  db-certificacion:
+    image: postgres:16
+    container_name: db-certificacion
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: certificacion
+    ports:
+      - "5440:5432"
+    volumes:
+      - certificacion_data:/var/lib/postgresql/data
+
+  certificacion:
+      build: ./certificacion
+      container_name: certificacion
+      restart: unless-stopped
+      ports:
+        - "8008:8008"
+      environment:
+        DB_USER: ${DB_USER}
+        DB_PASSWORD: ${DB_PASSWORD}
+        DB_HOST: db-certificacion
+        JWT_SECRET: ${JWT_SECRET}
+        FRONTEND_URL: http://localhost:63342/mercado_agricola/frontend
+      depends_on:
+        - db-certificacion
 volumes:
   productores_data:
   productos_data:
@@ -234,3 +260,4 @@ volumes:
   notificaciones_data:
   usuarios_data:
   pagos_data:
+  certificacion_data:

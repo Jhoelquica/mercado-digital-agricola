@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-certificacion-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-certificacion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db-certificacion
+  template:
+    metadata:
+      labels:
+        app: db-certificacion
+    spec:
+      containers:
+        - name: db-certificacion
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: POSTGRES_DB
+              value: certificacion
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: db-certificacion-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-certificacion
+spec:
+  selector:
+    app: db-certificacion
+  ports:
+    - port: 5432
+      targetPort: 5432

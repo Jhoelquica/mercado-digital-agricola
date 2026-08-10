@@ -7,6 +7,7 @@ const API_BASE = {
   transporte: 'http://localhost:8004',
   notificaciones: 'http://localhost:8005',
   pagos: 'http://localhost:8007',
+  certificacion: 'http://localhost:8008',
 };
 
 // Llave pública de Culqi (modo test, segura de exponer en frontend)
@@ -89,5 +90,10 @@ const Api = {
   pagos: {
     procesar: (datos) => request('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
     obtener: (pedidoId) => request('pagos', `/pagos/${pedidoId}`, { auth: true }),
+  },
+  certificacion: {
+    verificar: (productoId) => request('certificacion', `/certificacion/${productoId}/verificar`),
+    historial: (productoId) => request('certificacion', `/certificacion/${productoId}/historial`),
+    qrUrl: (productoId) => `${API_BASE.certificacion}/certificacion/${productoId}/qr`,
   },
 };

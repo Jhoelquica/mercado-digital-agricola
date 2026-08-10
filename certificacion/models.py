@@ -1,0 +1,17 @@
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
+from database import Base
+
+class Bloque(Base):
+    __tablename__ = "bloques"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    producto_id = Column(UUID(as_uuid=True), nullable=False)
+    indice = Column(Integer, nullable=False)  # posición dentro de la cadena de ESE producto
+    evento = Column(String, nullable=False)   # cosecha_registrada, certificado_productor, verificado_punto_venta
+    datos = Column(String, nullable=True)     # descripción libre del evento
+    fecha = Column(DateTime, default=datetime.utcnow)
+    hash_anterior = Column(String, nullable=False)
+    hash_actual = Column(String, nullable=False)
