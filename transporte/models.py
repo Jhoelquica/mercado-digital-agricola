@@ -13,6 +13,8 @@ class Envio(Base):
     estado = Column(String, default="pendiente")
     transportista = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    repartidor_latitud = Column(String, nullable=True)
+    repartidor_longitud = Column(String, nullable=True)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"

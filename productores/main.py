@@ -30,6 +30,8 @@ class ProductorCrear(BaseModel):
     comunidad: str | None = None
     contacto: str | None = None
     ubicacion: str | None = None
+    latitud: str | None = None
+    longitud: str | None = None
 
 @app.get("/salud")
 def salud():
@@ -70,7 +72,10 @@ def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuari
         comunidad=datos.comunidad,
         contacto=datos.contacto,
         ubicacion=datos.ubicacion,
+        latitud=datos.latitud,
+        longitud=datos.longitud,
     )
+    
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)

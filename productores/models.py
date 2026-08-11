@@ -14,3 +14,5 @@ class Productor(Base):
     contacto = Column(String)
     ubicacion = Column(String, nullable=True)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+    latitud = Column(String, nullable=True)
+    longitud = Column(String, nullable=True)

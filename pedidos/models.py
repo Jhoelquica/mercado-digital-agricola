@@ -15,6 +15,8 @@ class Pedido(Base):
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 
     items = relationship("PedidoItem", backref="pedido")
+    destino_latitud = Column(String, nullable=True)
+    destino_longitud = Column(String, nullable=True)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"

@@ -43,6 +43,8 @@ class ItemPedido(BaseModel):
 class PedidoCrear(BaseModel):
     comprador_nombre: str
     comprador_telefono: str | None = None
+    destino_latitud: str | None = None
+    destino_longitud: str | None = None
     items: list[ItemPedido]
 
 @app.get("/salud")
@@ -73,6 +75,8 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         nuevo_pedido = models.Pedido(
             comprador_nombre=datos.comprador_nombre,
             comprador_telefono=datos.comprador_telefono,
+            destino_latitud=datos.destino_latitud,
+            destino_longitud=datos.destino_longitud,
         )
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía

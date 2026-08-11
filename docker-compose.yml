@@ -132,6 +132,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
+      PEDIDOS_URL: http://pedidos:8003
     depends_on:
       - db-transporte
       - rabbitmq

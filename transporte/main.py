@@ -1,3 +1,6 @@
+import os
+
+import httpx
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -9,6 +12,7 @@ import models
 from logica_repartidores import proponer_envio_a_repartidor
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
+import math
 
 Base.metadata.create_all(bind=engine)
 
@@ -32,6 +36,15 @@ def get_db():
     finally:
         db.close()
 
+def calcular_distancia_km(lat1, lon1, lat2, lon2):
+    lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+    R = 6371  # radio de la Tierra en km
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+    return round(R * c, 2)
+
 #clases esquemas de entrada
 
 class EstadoEnvio(BaseModel):
@@ -40,6 +53,10 @@ class EstadoEnvio(BaseModel):
 class RepartidorCrear(BaseModel):
     nombre: str
     dni: str
+
+class UbicacionActualizar(BaseModel):
+    latitud: str
+    longitud: str
 
 #endpoint
 
@@ -65,6 +82,42 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
         models.Envio.estado == "propuesto"
     ).all()
 
+PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
+
+@app.get("/envios/{envio_id}/ruta")
+def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+
+    with httpx.Client() as client:
+        try:
+            resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/{envio.pedido_id}", timeout=5)
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Pedidos no disponible")
+
+    if resp_pedido.status_code != 200:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    pedido = resp_pedido.json()
+
+    if not pedido.get("destino_latitud") or not pedido.get("destino_longitud"):
+        return {"disponible": False, "mensaje": "Este pedido no tiene coordenadas de destino registradas"}
+
+    if not envio.repartidor_latitud or not envio.repartidor_longitud:
+        return {"disponible": False, "mensaje": "El repartidor aún no ha compartido su ubicación"}
+
+    distancia = calcular_distancia_km(
+        envio.repartidor_latitud, envio.repartidor_longitud,
+        pedido["destino_latitud"], pedido["destino_longitud"],
+    )
+
+    return {
+        "disponible": True,
+        "distancia_km": distancia,
+        "tiempo_estimado_min": round(distancia / 25 * 60),  # asumiendo ~25 km/h promedio urbano/rural
+        "origen": {"latitud": envio.repartidor_latitud, "longitud": envio.repartidor_longitud},
+        "destino": {"latitud": pedido["destino_latitud"], "longitud": pedido["destino_longitud"]},
+    }
 @app.post("/envios/{envio_id}/aceptar")
 def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
@@ -170,3 +223,25 @@ def mi_perfil_repartidor(db: Session = Depends(get_db), usuario: dict = Depends(
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor. Créalo primero.")
     return repartidor
+
+@app.patch("/envios/{envio_id}/ubicacion")
+def actualizar_ubicacion(envio_id: str, datos: UbicacionActualizar, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    repartidor = db.query(models.Repartidor).filter(
+        models.Repartidor.usuario_id == usuario.get("sub")
+    ).first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
+
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+    if str(envio.repartidor_id) != str(repartidor.id):
+        raise HTTPException(status_code=403, detail="No puedes actualizar la ubicación de un envío que no es tuyo")
+    if envio.estado not in ["asignado", "en_camino"]:
+        raise HTTPException(status_code=409, detail="Este envío no está en un estado que permita actualizar ubicación")
+
+    envio.repartidor_latitud = datos.latitud
+    envio.repartidor_longitud = datos.longitud
+    db.commit()
+    db.refresh(envio)
+    return envio
