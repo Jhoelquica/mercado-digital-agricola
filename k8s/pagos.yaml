@@ -47,6 +47,13 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: CULQI_SECRET_KEY
+            - name: SERVICIO_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SERVICIO_SECRETO
+            - name: PRODUCTOS_URL
+              value: http://productos:8002
 ---
 apiVersion: v1
 kind: Service

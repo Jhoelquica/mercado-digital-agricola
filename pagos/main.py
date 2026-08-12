@@ -2,6 +2,9 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+import os
+import json
+import httpx
 
 from database import Base, engine, SessionLocal
 import models
@@ -9,6 +12,9 @@ from auth import verificar_token
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
+
+PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 
 Base.metadata.create_all(bind=engine)
 
@@ -30,6 +36,25 @@ def get_db():
         yield db
     finally:
         db.close()
+
+def compensar_stock(items_json: str):
+    if not items_json:
+        print("[Pagos] No hay items guardados para este pago, no se puede compensar stock")
+        return
+
+    items = json.loads(items_json)
+    with httpx.Client() as client:
+        for item in items:
+            try:
+                client.post(
+                    f"{PRODUCTOS_URL}/productos/{item['producto_id']}/stock/reponer",
+                    json={"cantidad": item["cantidad"]},
+                    headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                    timeout=5,
+                )
+                print(f"[Pagos] Stock repuesto: {item['cantidad']} unidades de {item['producto_id']}")
+            except httpx.RequestError as e:
+                print(f"[Pagos] ERROR al compensar stock de {item['producto_id']}: {e}")
 
 class ProcesarPago(BaseModel):
     pedido_id: str
@@ -74,11 +99,12 @@ def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: d
     else:
         pago.estado = "rechazado"
         db.commit()
+        compensar_stock(pago.items)
         publicar_evento({
             "evento": "pago_rechazado",
             "pedido_id": str(pago.pedido_id),
-        })
-        raise HTTPException(
-            status_code=402,
-            detail=resultado["data"].get("user_message", "El pago fue rechazado"),
-        )
+    })
+    raise HTTPException(
+        status_code=402,
+        detail=resultado["data"].get("user_message", "El pago fue rechazado"),
+    )

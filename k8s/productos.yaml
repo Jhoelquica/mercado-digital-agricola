@@ -55,6 +55,11 @@ spec:
                 secretKeyRef:
                    name: credenciales-app
                    key: DB_PASSWORD
+            - name: SERVICIO_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SERVICIO_SECRETO
 ---
 apiVersion: v1
 kind: Service

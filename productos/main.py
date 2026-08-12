@@ -9,11 +9,15 @@ from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
 import models
 from sqlalchemy import func
+from fastapi import FastAPI, Depends, HTTPException, Header
 
 from fastapi import UploadFile, File
 from minio_client import subir_imagen
+import pybreaker
+
 
 Base.metadata.create_all(bind=engine)
+breaker_productores = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 
 app = FastAPI()
 
@@ -52,6 +56,19 @@ class ResenaCrear(BaseModel):
 class DescontarStock(BaseModel):
     cantidad: int
 
+class ReponerStock(BaseModel):
+    cantidad: int
+
+@breaker_productores
+def llamar_productores_me(token: str):
+    with httpx.Client() as client:
+        resp = client.get(
+            f"{PRODUCTORES_URL}/productores/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        return resp
 
 @app.get("/salud")
 def salud():
@@ -65,6 +82,22 @@ def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
         models.Resena.producto_id == producto_id
     ).order_by(models.Resena.fecha_creacion.desc()).all()
 
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+
+@app.post("/productos/{producto_id}/stock/reponer")
+def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    producto.stock += datos.cantidad
+    db.commit()
+    db.refresh(producto)
+    return producto
+
 @app.post("/productos")
 def crear_producto(
         datos: ProductoCrear,
@@ -72,23 +105,18 @@ def crear_producto(
         usuario: dict = Depends(requiere_rol("productor")),
         credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
-
-    if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de publicar productos")
-    if resp.status_code != 200:
+    try:
+        resp = llamar_productores_me(credenciales.credentials)
+    except pybreaker.CircuitBreakerError:
+        raise HTTPException(status_code=503, detail="Servicio de Productores no disponible temporalmente, intenta en unos segundos")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de publicar productos")
         raise HTTPException(status_code=502, detail="No se pudo verificar tu perfil de productor")
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
 
     productor = resp.json()
-
     nuevo = models.Producto(
         productor_id=productor["id"],
         productor_nombre=productor["nombre"],
@@ -97,35 +125,6 @@ def crear_producto(
         precio=datos.precio,
         stock=datos.stock,
         unidad_medida=datos.unidad_medida,
-    )
-    db.add(nuevo)
-    db.commit()
-    db.refresh(nuevo)
-    return nuevo
-
-@app.post("/productos")
-def crear_producto(datos: ProductoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
-    # Llamada síncrona real a Productores para validar que existe
-    with httpx.Client() as client:
-        try:
-            resp = client.get(f"{PRODUCTORES_URL}/productores/{datos.productor_id}", timeout=5)
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=404, detail="El productor no existe")
-
-    productor = resp.json()
-
-    nuevo = models.Producto(
-        productor_id=datos.productor_id,
-        productor_nombre=productor["nombre"],  # aquí se guarda la réplica
-        nombre=datos.nombre,
-        categoria=datos.categoria,
-        precio=datos.precio,
-        stock=datos.stock,
-        unidad_medida=datos.unidad_medida,
-        imagen_url=datos.imagen_url,
     )
     db.add(nuevo)
     db.commit()

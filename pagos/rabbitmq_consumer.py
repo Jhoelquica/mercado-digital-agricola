@@ -27,6 +27,7 @@ def _procesar_mensaje(ch, method, properties, body):
                 pedido_id=datos["pedido_id"],
                 monto=monto,
                 estado="pendiente",
+                items=json.dumps(datos.get("items", [])),
             )
             db.add(nuevo_pago)
             db.commit()

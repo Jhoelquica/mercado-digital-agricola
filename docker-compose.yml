@@ -68,6 +68,7 @@ services:
       MINIO_ACCESS_KEY: ${DB_USER}
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
+      SERVICIO_SECRETO: clave-interna-servicios
     depends_on:
       - db-productos
       - productores
@@ -223,6 +224,8 @@ services:
         RABBITMQ_PASSWORD: admin123
         JWT_SECRET: ${JWT_SECRET}
         CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
+        SERVICIO_SECRETO: clave-interna-servicios
+        PRODUCTOS_URL: http://productos:8002
       depends_on:
         - db-pagos
         - rabbitmq
