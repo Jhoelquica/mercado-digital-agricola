@@ -67,7 +67,8 @@ input, select { font-family: inherit; }
   cursor: pointer;
   white-space: nowrap;
 }
-.brand-icon { font-size: 1.5rem; }
+.brand-icon { width: 26px; height: 26px; flex-shrink: 0; }
+.brand-icon svg { width: 100%; height: 100%; display: block; }
 .brand strong { color: var(--verde-medio); }
 
 .nav-links {
@@ -405,6 +406,86 @@ input, select { font-family: inherit; }
   background: white;
   color: var(--texto);
 }
+
+/* ---------- MAPAS (LEAFLET) ---------- */
+.mapa-mini {
+  width: 100%;
+  height: 180px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--borde);
+  background: var(--verde-fondo);
+}
+.mapa-seleccionable {
+  width: 100%;
+  height: 220px;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1.5px solid var(--borde);
+  cursor: crosshair;
+  background: var(--verde-fondo);
+}
+.mapa-bloque { margin-top: 14px; }
+.mapa-bloque-neutro {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--verde-fondo);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+  margin-top: 14px;
+}
+.mapa-titulo { font-size: 1.02rem; margin: 20px 0 10px; }
+.ruta-datos {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--verde-oscuro);
+}
+.mapa-selector-bloque { margin: 4px 0 6px; }
+.mapa-selector-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--texto);
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.mapa-ayuda { font-size: 0.78rem; color: var(--texto-suave); margin-top: 6px; }
+.mapa-ayuda.confirmado { color: var(--verde-principal); font-weight: 600; }
+
+.marcador-mapa-wrap { background: transparent !important; border: none !important; }
+.marcador-mapa {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(27, 67, 50, 0.4), 0 0 0 2px white;
+  font-size: 15px;
+}
+
+.ubicacion-estado { margin-bottom: 18px; }
+.ubicacion-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.ubicacion-ok { background: var(--verde-pastel); color: var(--verde-oscuro); }
+.ubicacion-error { background: #fff0ee; color: #8a2f1c; }
+.ubicacion-espera { background: #fff3cd; color: #8a6d1a; }
 
 /* ---------- NOTIFICACIONES ---------- */
 .notif-card {

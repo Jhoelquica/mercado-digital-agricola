@@ -124,7 +124,7 @@ function renderPagina(producto, verificacion, historial) {
       🔒 <strong>¿Qué significa esto?</strong> Cada evento queda enlazado matemáticamente al anterior mediante un hash — si alguien intentara alterar un registro pasado, la cadena completa dejaría de coincidir y la alteración quedaría expuesta automáticamente.
     </div>
     <div class="verificar-footer">
-      <span class="brand-icon">🌱</span> Verificado por AgroMercado
+      <span class="brand-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M22 40 L78 40 L70 82 Q50 90 30 82 Z" fill="#2d6a4f"/><path d="M28 56 L72 56" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M30 70 L70 70" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M50 40 Q50 28 50 18" stroke="#40916c" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M50 22 Q40 14 44 6 Q56 10 50 22 Z" fill="#74c69d"/><path d="M50 18 Q60 10 56 2 Q46 6 50 18 Z" fill="#95d5b2"/></svg></span> Verificado por Chakra Shop
     </div>
   `;
 }

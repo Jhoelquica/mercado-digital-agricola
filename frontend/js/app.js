@@ -9,6 +9,8 @@ const Estado = {
   productores: {},   // id -> { nombre, comunidad, contacto, ubicacion }
   carrito: [],        // {producto_id, nombre, precio, cantidad, stockDisponible}
   productorId: null,
+  repartidorId: null,
+  enviosRepartidor: [],
 };
 
 const SESSION_KEY = 'agro_sesion';
@@ -133,6 +135,116 @@ function renderEstrellas(promedio) {
   return html;
 }
 
+// ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
+const MAPA_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+const MAPA_CENTRO_PERU = [-9.19, -75.015];
+
+function hayCoordenadas(lat, lng) {
+  return lat != null && lng != null && lat !== '' && lng !== '' && !isNaN(Number(lat)) && !isNaN(Number(lng));
+}
+
+function crearIconoMarcador(emoji, color) {
+  return L.divIcon({
+    className: 'marcador-mapa-wrap',
+    html: `<span class="marcador-mapa" style="background:${color}">${emoji}</span>`,
+    iconSize: [30, 30],
+    iconAnchor: [15, 15],
+    popupAnchor: [0, -18],
+  });
+}
+
+function agregarCapaBase(mapa) {
+  L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19 }).addTo(mapa);
+}
+
+function crearMapaSoloLectura(contenedorId, lat, lng, emoji, color, popupTexto) {
+  const el = document.getElementById(contenedorId);
+  if (!el || typeof L === 'undefined') return null;
+  const mapa = L.map(el, { scrollWheelZoom: false }).setView([Number(lat), Number(lng)], 14);
+  agregarCapaBase(mapa);
+  const marcador = L.marker([Number(lat), Number(lng)], { icon: crearIconoMarcador(emoji, color) }).addTo(mapa);
+  if (popupTexto) marcador.bindPopup(popupTexto);
+  setTimeout(() => mapa.invalidateSize(), 80);
+  return mapa;
+}
+
+function crearMapaSeleccionable(contenedorId, { latInicial, lngInicial, emoji = '📍', color = '#e76f51', onSeleccionar } = {}) {
+  const el = document.getElementById(contenedorId);
+  if (!el || typeof L === 'undefined') return null;
+
+  const tieneInicial = hayCoordenadas(latInicial, lngInicial);
+  const centro = tieneInicial ? [Number(latInicial), Number(lngInicial)] : MAPA_CENTRO_PERU;
+  const mapa = L.map(el).setView(centro, tieneInicial ? 14 : 5);
+  agregarCapaBase(mapa);
+
+  let marcador = tieneInicial
+    ? L.marker(centro, { icon: crearIconoMarcador(emoji, color) }).addTo(mapa)
+    : null;
+
+  mapa.on('click', (e) => {
+    const { lat, lng } = e.latlng;
+    if (marcador) marcador.setLatLng([lat, lng]);
+    else marcador = L.marker([lat, lng], { icon: crearIconoMarcador(emoji, color) }).addTo(mapa);
+    onSeleccionar?.(lat, lng);
+  });
+
+  setTimeout(() => mapa.invalidateSize(), 150);
+
+  return {
+    mapa,
+    moverMarcador(lat, lng) {
+      mapa.setView([lat, lng], 15);
+      if (marcador) marcador.setLatLng([lat, lng]);
+      else marcador = L.marker([lat, lng], { icon: crearIconoMarcador(emoji, color) }).addTo(mapa);
+    },
+  };
+}
+
+function crearMapaRuta(contenedorId, origen, destino) {
+  const el = document.getElementById(contenedorId);
+  if (!el || typeof L === 'undefined') return null;
+  if (!hayCoordenadas(origen?.latitud, origen?.longitud) || !hayCoordenadas(destino?.latitud, destino?.longitud)) return null;
+
+  const puntoOrigen = [Number(origen.latitud), Number(origen.longitud)];
+  const puntoDestino = [Number(destino.latitud), Number(destino.longitud)];
+
+  const mapa = L.map(el, { scrollWheelZoom: false });
+  mapa.fitBounds([puntoOrigen, puntoDestino], { padding: [28, 28], maxZoom: 15 });
+  agregarCapaBase(mapa);
+
+  const marcadorOrigen = L.marker(puntoOrigen, { icon: crearIconoMarcador('🛵', '#2d6a4f') }).addTo(mapa).bindPopup('Repartidor');
+  L.marker(puntoDestino, { icon: crearIconoMarcador('📍', '#e76f51') }).addTo(mapa).bindPopup('Destino');
+  const linea = L.polyline([puntoOrigen, puntoDestino], { color: '#40916c', weight: 3, dashArray: '6 8' }).addTo(mapa);
+
+  setTimeout(() => mapa.invalidateSize(), 80);
+
+  return { mapa, marcadorOrigen, linea };
+}
+
+// ---- Geolocalización del navegador ----
+function mensajeErrorGeolocalizacion(err) {
+  if (!err) return 'No se pudo obtener tu ubicación.';
+  if (err.code === err.PERMISSION_DENIED) return 'Denegaste el permiso de ubicación. Puedes marcar el punto manualmente en el mapa.';
+  if (err.code === err.POSITION_UNAVAILABLE) return 'No se pudo determinar tu ubicación actual.';
+  if (err.code === err.TIMEOUT) return 'Se agotó el tiempo esperando tu ubicación.';
+  return 'No se pudo obtener tu ubicación.';
+}
+
+function obtenerUbicacionActual() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Tu navegador no soporta geolocalización.'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => reject(new Error(mensajeErrorGeolocalizacion(err))),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
+
 // ============ SESIÓN ============
 function guardarSesion() {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -204,6 +316,8 @@ async function iniciarSesionConToken(token) {
 
 // ============ NAVEGACIÓN ============
 function cambiarVista(nombre) {
+  detenerPollingRutas();
+  detenerSeguimientoRepartidor();
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
   document.getElementById(`view-${nombre}`).classList.add('active');
   document.querySelectorAll('.nav-link').forEach((btn) => {
@@ -340,11 +454,24 @@ async function abrirDetalleProducto(id) {
   }
 
   let resenas = [];
+  let productor = null;
   try {
     resenas = await Api.productos.listarResenas(id);
   } catch { /* sin reseñas disponibles por ahora */ }
+  try {
+    productor = await Api.productores.obtener(p.productor_id);
+  } catch { /* no se pudo cargar el productor, seguimos sin mapa */ }
 
-  renderDetalleProducto(p, resenas);
+  renderDetalleProducto(p, resenas, productor);
+}
+
+function renderMapaProductor(productor) {
+  if (!hayCoordenadas(productor?.latitud, productor?.longitud)) return '';
+  return `
+    <div class="mapa-bloque">
+      <h3 class="mapa-titulo">📍 Ubicación del productor</h3>
+      <div id="mapa-productor-detalle" class="mapa-mini"></div>
+    </div>`;
 }
 
 function renderGaleriaProducto(p) {
@@ -418,7 +545,7 @@ function renderSeccionResenas(resenas) {
     </div>`;
 }
 
-function renderDetalleProducto(p, resenas) {
+function renderDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   contenido.innerHTML = `
     ${renderGaleriaProducto(p)}
@@ -431,6 +558,7 @@ function renderDetalleProducto(p, resenas) {
     <button class="btn btn-primary btn-block" style="margin-top:16px" data-id="${p.id}" id="btn-agregar-detalle" ${p.stock <= 0 ? 'disabled' : ''}>
       ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
     </button>
+    ${renderMapaProductor(productor)}
     ${renderSeccionResenas(resenas)}
   `;
 
@@ -438,6 +566,10 @@ function renderDetalleProducto(p, resenas) {
     agregarAlCarrito(p.id);
     cerrarModal('modal-detalle-producto');
   });
+
+  if (hayCoordenadas(productor?.latitud, productor?.longitud)) {
+    crearMapaSoloLectura('mapa-productor-detalle', productor.latitud, productor.longitud, '🧺', '#2d6a4f', escapeAttr(productor.nombre || 'Productor'));
+  }
 
   const miniaturas = contenido.querySelectorAll('.galeria-miniatura');
   const emoji = emojiParaProducto(p);
@@ -590,6 +722,57 @@ function resetCheckout() {
   document.querySelectorAll('.metodo-pago-card').forEach((c) => {
     c.classList.toggle('seleccionado', c.querySelector('input').value === 'tarjeta');
   });
+  inicializarMapaDestino();
+}
+
+// ---- Selector de destino (mapa del checkout) ----
+let mapaDestinoPedido = null;
+let destinoSeleccionado = null; // { lat, lng }
+
+function inicializarMapaDestino() {
+  if (mapaDestinoPedido) {
+    try { mapaDestinoPedido.mapa.remove(); } catch { /* ya estaba destruido */ }
+    mapaDestinoPedido = null;
+  }
+  destinoSeleccionado = null;
+  const ayuda = document.getElementById('mapa-destino-ayuda');
+  if (ayuda) {
+    ayuda.textContent = 'Toca el mapa para marcar dónde quieres recibir tu pedido.';
+    ayuda.classList.remove('confirmado');
+  }
+
+  mapaDestinoPedido = crearMapaSeleccionable('mapa-destino-pedido', {
+    emoji: '📍',
+    color: '#e76f51',
+    onSeleccionar: (lat, lng) => {
+      destinoSeleccionado = { lat, lng };
+      actualizarAyudaDestino();
+    },
+  });
+}
+
+function actualizarAyudaDestino() {
+  const ayuda = document.getElementById('mapa-destino-ayuda');
+  if (!ayuda || !destinoSeleccionado) return;
+  ayuda.textContent = `📍 Destino marcado (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
+  ayuda.classList.add('confirmado');
+}
+
+async function usarMiUbicacionDestino() {
+  const btn = document.getElementById('btn-usar-mi-ubicacion');
+  btn.disabled = true;
+  btn.textContent = 'Obteniendo ubicación...';
+  try {
+    const { lat, lng } = await obtenerUbicacionActual();
+    mapaDestinoPedido?.moverMarcador(lat, lng);
+    destinoSeleccionado = { lat, lng };
+    actualizarAyudaDestino();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Usar mi ubicación';
+  }
 }
 
 function irAPaso2() {
@@ -614,8 +797,10 @@ async function confirmarYPagar() {
   try {
     const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
     const datos = {
-      comprador_nombre: Estado.nombre || 'Cliente AgroMercado',
+      comprador_nombre: Estado.nombre || 'Cliente Chakra Shop',
       comprador_telefono: document.getElementById('pedido-telefono').value.trim() || null,
+      destino_latitud: destinoSeleccionado ? String(destinoSeleccionado.lat) : null,
+      destino_longitud: destinoSeleccionado ? String(destinoSeleccionado.lng) : null,
       items: Estado.carrito.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
     };
     const pedido = await Api.pedidos.crear(datos);
@@ -646,7 +831,7 @@ function abrirCheckoutCulqi(pedidoId, montoTotal, metodo = 'tarjeta') {
   pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal };
   Culqi.publicKey = CULQI_PUBLIC_KEY;
   Culqi.settings({
-    title: 'AgroMercado',
+    title: 'Chakra Shop',
     currency: 'PEN',
     amount: Math.round(montoTotal * 100),
   });
@@ -738,6 +923,7 @@ function guardarPedidoTrackeado(id) {
 }
 
 async function cargarMisPedidos() {
+  detenerPollingRutas();
   const cont = document.getElementById('pedidos-list');
   const vacio = document.getElementById('pedidos-empty');
 
@@ -758,16 +944,21 @@ async function cargarMisPedidos() {
   vacio.classList.add('hidden');
   cont.innerHTML = '<p class="muted">Cargando pedidos...</p>';
 
-  const tarjetas = await Promise.all(ids.map((id) => cargarTarjetaPedido(id)));
-  cont.innerHTML = tarjetas.filter(Boolean).join('') || '<p class="muted">No se pudieron cargar los pedidos.</p>';
+  const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
+  const validos = datos.filter(Boolean);
+  cont.innerHTML = validos.map((d) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta)).join('') || '<p class="muted">No se pudieron cargar los pedidos.</p>';
+
+  validos.forEach((d) => {
+    if (d.envio && d.ruta?.disponible) iniciarMapaRutaPedido(d.envio.id, d.ruta);
+  });
 }
 
-async function cargarTarjetaPedido(pedidoId) {
+async function cargarDatosPedido(pedidoId) {
   let pedido;
   try {
     pedido = await Api.pedidos.obtener(pedidoId);
   } catch {
-    return '';
+    return null;
   }
 
   let envio = null;
@@ -780,10 +971,33 @@ async function cargarTarjetaPedido(pedidoId) {
     pago = await Api.pagos.obtener(pedidoId);
   } catch { /* aún no hay un pago registrado para este pedido */ }
 
-  return renderTarjetaPedido(pedido, envio, pago);
+  let ruta = null;
+  if (envio) {
+    try {
+      ruta = await Api.transporte.ruta(envio.id);
+    } catch { /* seguimiento de ruta no disponible por ahora */ }
+  }
+
+  return { pedido, envio, pago, ruta };
 }
 
-function renderTarjetaPedido(pedido, envio, pago) {
+function renderBloqueRuta(envio, ruta) {
+  if (!envio) return '';
+  if (!ruta || !ruta.disponible) {
+    const mensaje = ruta?.mensaje || 'El seguimiento en mapa aún no está disponible para este envío.';
+    return `<div class="mapa-bloque-neutro"><span class="icon">🗺️</span> ${escapeAttr(mensaje)}</div>`;
+  }
+  return `
+    <div class="mapa-bloque">
+      <div id="mapa-ruta-${envio.id}" class="mapa-mini"></div>
+      <div class="ruta-datos" id="ruta-datos-${envio.id}">
+        <span>📏 ${ruta.distancia_km} km</span>
+        <span>⏱️ ~${ruta.tiempo_estimado_min} min</span>
+      </div>
+    </div>`;
+}
+
+function renderTarjetaPedido(pedido, envio, pago, ruta) {
   const items = (pedido.items || []).map((i) => {
     const nombre = Estado.productos.find((p) => p.id === i.producto_id)?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`;
     return `<li><span>${i.cantidad} × ${nombre}</span><span>${formatearMoneda(i.precio_unitario * i.cantidad)}</span></li>`;
@@ -812,8 +1026,48 @@ function renderTarjetaPedido(pedido, envio, pago) {
       <div class="pedido-total">Total: ${formatearMoneda(total)}</div>
       ${pagoHtml}
       ${envioHtml}
+      ${renderBloqueRuta(envio, ruta)}
     </div>
   `;
+}
+
+// ---- Mapa de ruta con polling cada 15s ----
+const mapasRutaActivos = {}; // envioId -> { mapa, marcadorOrigen, linea }
+let intervalosPollingRuta = [];
+
+function iniciarMapaRutaPedido(envioId, ruta) {
+  const resultado = crearMapaRuta(`mapa-ruta-${envioId}`, ruta.origen, ruta.destino);
+  if (!resultado) return;
+  mapasRutaActivos[envioId] = resultado;
+
+  const intervalId = setInterval(async () => {
+    try {
+      const actualizada = await Api.transporte.ruta(envioId);
+      const activo = mapasRutaActivos[envioId];
+      if (!activo || !actualizada.disponible) return;
+
+      const puntoOrigen = [Number(actualizada.origen.latitud), Number(actualizada.origen.longitud)];
+      const puntoDestino = [Number(actualizada.destino.latitud), Number(actualizada.destino.longitud)];
+      activo.marcadorOrigen.setLatLng(puntoOrigen);
+      activo.linea.setLatLngs([puntoOrigen, puntoDestino]);
+
+      const datosEl = document.getElementById(`ruta-datos-${envioId}`);
+      if (datosEl) {
+        datosEl.innerHTML = `<span>📏 ${actualizada.distancia_km} km</span><span>⏱️ ~${actualizada.tiempo_estimado_min} min</span>`;
+      }
+    } catch { /* se reintenta en el siguiente ciclo */ }
+  }, 15000);
+
+  intervalosPollingRuta.push(intervalId);
+}
+
+function detenerPollingRutas() {
+  intervalosPollingRuta.forEach(clearInterval);
+  intervalosPollingRuta = [];
+  Object.keys(mapasRutaActivos).forEach((id) => {
+    try { mapasRutaActivos[id].mapa.remove(); } catch { /* ya estaba destruido */ }
+    delete mapasRutaActivos[id];
+  });
 }
 
 async function buscarPedidoPorId() {
@@ -821,15 +1075,17 @@ async function buscarPedidoPorId() {
   const id = input.value.trim();
   if (!id) return;
 
+  detenerPollingRutas();
   const cont = document.getElementById('pedidos-list');
   document.getElementById('pedidos-empty').classList.add('hidden');
   cont.innerHTML = '<p class="muted">Buscando pedido...</p>';
 
   try {
-    const tarjeta = await cargarTarjetaPedido(id);
-    if (!tarjeta) throw new Error('No se encontró un pedido con ese ID.');
-    cont.innerHTML = tarjeta;
+    const d = await cargarDatosPedido(id);
+    if (!d) throw new Error('No se encontró un pedido con ese ID.');
+    cont.innerHTML = renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta);
     guardarPedidoTrackeado(id);
+    if (d.envio && d.ruta?.disponible) iniciarMapaRutaPedido(d.envio.id, d.ruta);
   } catch (err) {
     manejarError(err, 'buscar el pedido');
     cargarMisPedidos();
@@ -905,6 +1161,57 @@ async function iniciarPanelProductor() {
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
+    inicializarMapaUbicacionProductor();
+  }
+}
+
+// ---- Selector de ubicación (mapa del perfil del productor) ----
+let mapaUbicacionProductor = null;
+let ubicacionProductorSeleccionada = null; // { lat, lng }
+
+function inicializarMapaUbicacionProductor() {
+  if (mapaUbicacionProductor) {
+    try { mapaUbicacionProductor.mapa.remove(); } catch { /* ya estaba destruido */ }
+    mapaUbicacionProductor = null;
+  }
+  ubicacionProductorSeleccionada = null;
+  const ayuda = document.getElementById('mapa-productor-ayuda');
+  if (ayuda) {
+    ayuda.textContent = 'Toca el mapa para marcar dónde está tu parcela.';
+    ayuda.classList.remove('confirmado');
+  }
+
+  mapaUbicacionProductor = crearMapaSeleccionable('mapa-ubicacion-productor', {
+    emoji: '🧺',
+    color: '#2d6a4f',
+    onSeleccionar: (lat, lng) => {
+      ubicacionProductorSeleccionada = { lat, lng };
+      actualizarAyudaUbicacionProductor();
+    },
+  });
+}
+
+function actualizarAyudaUbicacionProductor() {
+  const ayuda = document.getElementById('mapa-productor-ayuda');
+  if (!ayuda || !ubicacionProductorSeleccionada) return;
+  ayuda.textContent = `📍 Ubicación marcada (${ubicacionProductorSeleccionada.lat.toFixed(5)}, ${ubicacionProductorSeleccionada.lng.toFixed(5)})`;
+  ayuda.classList.add('confirmado');
+}
+
+async function usarMiUbicacionProductor() {
+  const btn = document.getElementById('btn-ubicacion-productor');
+  btn.disabled = true;
+  btn.textContent = 'Obteniendo ubicación...';
+  try {
+    const { lat, lng } = await obtenerUbicacionActual();
+    mapaUbicacionProductor?.moverMarcador(lat, lng);
+    ubicacionProductorSeleccionada = { lat, lng };
+    actualizarAyudaUbicacionProductor();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Usar mi ubicación';
   }
 }
 
@@ -915,6 +1222,8 @@ async function crearPerfilProductor(e) {
       nombre: document.getElementById('productor-nombre').value.trim(),
       comunidad: document.getElementById('productor-comunidad').value.trim() || null,
       contacto: document.getElementById('productor-contacto').value.trim() || null,
+      latitud: ubicacionProductorSeleccionada ? String(ubicacionProductorSeleccionada.lat) : null,
+      longitud: ubicacionProductorSeleccionada ? String(ubicacionProductorSeleccionada.lng) : null,
     };
     const productor = await Api.productores.crear(datos);
     Estado.productorId = productor.id;
@@ -978,19 +1287,69 @@ async function cargarGestionEnvios() {
     return;
   }
 
+  detenerSeguimientoRepartidor();
+
+  const setup = document.getElementById('repartidor-setup');
+  const panel = document.getElementById('repartidor-panel');
+
+  let miRepartidor;
+  try {
+    miRepartidor = await Api.repartidores.miPerfil();
+  } catch (err) {
+    if (err.status === 404) {
+      setup.classList.remove('hidden');
+      panel.classList.add('hidden');
+      return;
+    }
+    manejarError(err, 'cargar tu perfil de repartidor');
+    return;
+  }
+
+  setup.classList.add('hidden');
+  panel.classList.remove('hidden');
+  Estado.repartidorId = miRepartidor.id;
+
+  await cargarListaEnvios(miRepartidor.id);
+  iniciarSeguimientoRepartidor();
+}
+
+async function crearPerfilRepartidor(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const datos = {
+      nombre: document.getElementById('repartidor-nombre').value.trim(),
+      dni: document.getElementById('repartidor-dni').value.trim(),
+    };
+    await Api.repartidores.crear(datos);
+    toast('¡Perfil de repartidor creado! 🚚');
+    document.getElementById('form-repartidor').reset();
+    cargarGestionEnvios();
+  } catch (err) {
+    manejarError(err, 'crear tu perfil de repartidor');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function cargarListaEnvios(miRepartidorId) {
   const cont = document.getElementById('envios-list');
   const vacio = document.getElementById('envios-empty');
   try {
-    const envios = await Api.transporte.listarTodos();
-    if (!envios.length) {
+    const todos = await Api.transporte.listarTodos();
+    const mios = todos.filter((e) => String(e.repartidor_id) === String(miRepartidorId));
+    Estado.enviosRepartidor = mios;
+
+    if (!mios.length) {
       cont.innerHTML = '';
       vacio.classList.remove('hidden');
       return;
     }
     vacio.classList.add('hidden');
-    cont.innerHTML = envios.map(renderTarjetaEnvio).join('');
+    cont.innerHTML = mios.map(renderTarjetaEnvio).join('');
   } catch (err) {
-    manejarError(err, 'cargar los envíos');
+    manejarError(err, 'cargar tus envíos');
   }
 }
 
@@ -1021,10 +1380,73 @@ async function actualizarEstadoEnvio(envioId, nuevoEstado) {
   try {
     await Api.transporte.actualizarEstado(envioId, nuevoEstado);
     toast(`Estado del envío actualizado a "${nuevoEstado}" ✅`);
-    cargarGestionEnvios();
+    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
   } catch (err) {
     manejarError(err, 'actualizar el estado del envío');
   }
+}
+
+// ---- Seguimiento de ubicación en vivo (geolocalización del repartidor) ----
+let watchIdRepartidor = null;
+let intervalUbicacionRepartidor = null;
+let ultimaPosicionRepartidor = null;
+
+function renderEstadoUbicacion(tipo, mensaje) {
+  const iconos = { ok: '📍', error: '⚠️', espera: '🔄' };
+  return `<span class="ubicacion-chip ubicacion-${tipo}">${iconos[tipo] || '📍'} ${escapeAttr(mensaje)}</span>`;
+}
+
+function iniciarSeguimientoRepartidor() {
+  detenerSeguimientoRepartidor();
+
+  const estadoEl = document.getElementById('ubicacion-estado');
+  if (!estadoEl) return;
+
+  if (!navigator.geolocation) {
+    estadoEl.innerHTML = renderEstadoUbicacion('error', 'Tu navegador no soporta geolocalización.');
+    return;
+  }
+
+  estadoEl.innerHTML = renderEstadoUbicacion('espera', 'Buscando tu ubicación...');
+
+  watchIdRepartidor = navigator.geolocation.watchPosition(
+    (pos) => {
+      ultimaPosicionRepartidor = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      const el = document.getElementById('ubicacion-estado');
+      if (el) el.innerHTML = renderEstadoUbicacion('ok', 'Compartiendo tu ubicación en tiempo real.');
+    },
+    (err) => {
+      const el = document.getElementById('ubicacion-estado');
+      if (el) el.innerHTML = renderEstadoUbicacion('error', mensajeErrorGeolocalizacion(err));
+    },
+    { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+  );
+
+  intervalUbicacionRepartidor = setInterval(enviarUbicacionActual, 15000);
+}
+
+async function enviarUbicacionActual() {
+  if (!ultimaPosicionRepartidor) return;
+  const trackeables = (Estado.enviosRepartidor || []).filter((e) => ['asignado', 'en_camino'].includes(e.estado));
+  if (!trackeables.length) return;
+
+  for (const envio of trackeables) {
+    try {
+      await Api.transporte.actualizarUbicacion(envio.id, ultimaPosicionRepartidor.lat, ultimaPosicionRepartidor.lng);
+    } catch { /* se reintenta en el siguiente ciclo de 15s */ }
+  }
+}
+
+function detenerSeguimientoRepartidor() {
+  if (watchIdRepartidor != null) {
+    navigator.geolocation?.clearWatch(watchIdRepartidor);
+    watchIdRepartidor = null;
+  }
+  if (intervalUbicacionRepartidor != null) {
+    clearInterval(intervalUbicacionRepartidor);
+    intervalUbicacionRepartidor = null;
+  }
+  ultimaPosicionRepartidor = null;
 }
 
 // ============ AUTENTICACIÓN ============
@@ -1064,7 +1486,7 @@ async function manejarRegistro(e) {
 
     document.getElementById('form-registro').reset();
     cerrarModal('modal-auth');
-    toast(`¡Cuenta creada! Bienvenido a AgroMercado, ${nombre} 🎉`);
+    toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     manejarError(err, 'crear la cuenta');
   } finally {
@@ -1127,8 +1549,8 @@ function inicializarEventos() {
   });
 
   document.getElementById('btn-cart').addEventListener('click', () => {
-    resetCheckout();
     abrirModal('modal-pedido');
+    resetCheckout();
   });
   document.getElementById('carrito-items').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-accion]');
@@ -1139,6 +1561,7 @@ function inicializarEventos() {
     if (accion === 'quitar') quitarDelCarrito(id);
   });
 
+  document.getElementById('btn-usar-mi-ubicacion').addEventListener('click', usarMiUbicacionDestino);
   document.getElementById('btn-checkout-paso1-siguiente').addEventListener('click', irAPaso2);
   document.getElementById('btn-checkout-paso2-volver').addEventListener('click', () => irPasoCheckout(1));
   document.getElementById('btn-checkout-pagar').addEventListener('click', confirmarYPagar);
@@ -1163,6 +1586,7 @@ function inicializarEventos() {
   document.getElementById('btn-refrescar-notificaciones').addEventListener('click', cargarNotificaciones);
 
   document.getElementById('form-productor').addEventListener('submit', crearPerfilProductor);
+  document.getElementById('btn-ubicacion-productor').addEventListener('click', usarMiUbicacionProductor);
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
   document.getElementById('mis-productos-grid').addEventListener('click', (e) => {
@@ -1171,6 +1595,7 @@ function inicializarEventos() {
     window.open(Api.certificacion.qrUrl(btn.dataset.id), '_blank', 'noopener');
   });
 
+  document.getElementById('form-repartidor').addEventListener('submit', crearPerfilRepartidor);
   document.getElementById('btn-refrescar-envios').addEventListener('click', cargarGestionEnvios);
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-actualizar-envio');

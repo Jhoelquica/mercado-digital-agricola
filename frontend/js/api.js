@@ -82,6 +82,12 @@ const Api = {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`),
     listarTodos: () => request('transporte', '/envios', { auth: true }),
     actualizarEstado: (envioId, estado) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado }, auth: true }),
+    ruta: (envioId) => request('transporte', `/envios/${envioId}/ruta`),
+    actualizarUbicacion: (envioId, latitud, longitud) => request('transporte', `/envios/${envioId}/ubicacion`, { method: 'PATCH', body: { latitud: String(latitud), longitud: String(longitud) }, auth: true }),
+  },
+  repartidores: {
+    miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),
+    crear: (datos) => request('transporte', '/repartidores', { method: 'POST', body: datos, auth: true }),
   },
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),
