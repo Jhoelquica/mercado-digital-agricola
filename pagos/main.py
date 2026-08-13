@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -19,6 +20,9 @@ SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

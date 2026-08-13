@@ -6,3 +6,4 @@ python-dotenv
 pika
 httpx
 python-jose[cryptography]
+prometheus-fastapi-instrumentator

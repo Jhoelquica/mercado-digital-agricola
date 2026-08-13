@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 import os
 
 import httpx
@@ -17,6 +18,8 @@ import math
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,

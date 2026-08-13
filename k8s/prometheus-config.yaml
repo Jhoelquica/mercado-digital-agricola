@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: 'usuarios'
+        static_configs:
+          - targets: ['usuarios:8006']
+      - job_name: 'productores'
+        static_configs:
+          - targets: ['productores:8001']
+      - job_name: 'productos'
+        static_configs:
+          - targets: ['productos:8002']
+      - job_name: 'pedidos'
+        static_configs:
+          - targets: ['pedidos:8003']
+      - job_name: 'transporte'
+        static_configs:
+          - targets: ['transporte:8004']
+      - job_name: 'notificaciones'
+        static_configs:
+          - targets: ['notificaciones:8005']
+      - job_name: 'pagos'
+        static_configs:
+          - targets: ['pagos:8007']
+      - job_name: 'certificacion'
+        static_configs:
+          - targets: ['certificacion:8008']

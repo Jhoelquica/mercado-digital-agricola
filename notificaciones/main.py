@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -10,6 +11,8 @@ from rabbitmq_consumer import lanzar_consumidor_en_hilo
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import httpx
 from sqlalchemy.orm import Session
@@ -20,6 +21,8 @@ Base.metadata.create_all(bind=engine)
 breaker_productores = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
 
 app.add_middleware(
     CORSMiddleware,

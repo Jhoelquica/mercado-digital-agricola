@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import httpx
 from fastapi import FastAPI, Depends, HTTPException
@@ -15,6 +16,9 @@ import models
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
+
 # evento de aranque
 @app.on_event("startup")
 def iniciar():

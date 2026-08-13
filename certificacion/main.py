@@ -1,3 +1,4 @@
+from prometheus_fastapi_instrumentator import Instrumentator
 import os
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -16,6 +17,9 @@ from auth import requiere_rol
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
+
+Instrumentator().instrument(app).expose(app)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
