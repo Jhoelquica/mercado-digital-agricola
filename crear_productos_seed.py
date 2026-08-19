@@ -1,7 +1,7 @@
 import httpx
+import os
 
-TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZGNjYzg3OS1jM2U4LTRmZmYtYjBmMy01MjIyN2YzMGE1NzMiLCJyb2wiOiJwcm9kdWN0b3IiLCJleHAiOjE3ODcxNzgyMjh9.4ONhe8Q_MeyjqOHx1-jdH2f37MdXJsxBZoZHsOyyhPs"
-
+TOKEN = os.getenv("SEED_TOKEN", "PEGA_AQUI_TU_TOKEN_ANTES_DE_CORRER")
 productos = [
     {"nombre": "chirimoya", "categoria": "fruta", "precio": 6.0, "stock": 20, "unidad_medida": "kg"},
     {"nombre": "fresa", "categoria": "fruta", "precio": 8.0, "stock": 20, "unidad_medida": "kg"},
