@@ -17,7 +17,7 @@
 
 <header class="navbar">
   <div class="navbar-inner">
-    <div class="brand" data-nav="catalogo">
+    <div class="brand" data-nav="inicio">
       <span class="brand-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M22 40 L78 40 L70 82 Q50 90 30 82 Z" fill="#2d6a4f"/><path d="M28 56 L72 56" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M30 70 L70 70" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M50 40 Q50 28 50 18" stroke="#40916c" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M50 22 Q40 14 44 6 Q56 10 50 22 Z" fill="#74c69d"/><path d="M50 18 Q60 10 56 2 Q46 6 50 18 Z" fill="#95d5b2"/></svg></span>
       <span class="brand-text">Chakra<strong>Shop</strong></span>
     </div>
@@ -52,8 +52,73 @@
 
 <main id="app-main">
 
+  <!-- LANDING (INVITADOS) -->
+  <section id="view-landing" class="view active">
+    <div class="landing-hero">
+      <div class="landing-hero-content">
+        <span class="landing-kicker">📍 Hecho en Ayacucho, Perú</span>
+        <h1>Del productor a tu mesa,<br>sin intermediarios</h1>
+        <p>Compra productos frescos directo de productores agrícolas locales — frutas, verduras, granos, lácteos y más — con trazabilidad verificada en cada pedido.</p>
+        <div class="landing-hero-actions">
+          <button class="btn btn-primary btn-lg" data-landing-cta="registro">Crear cuenta gratis</button>
+          <button class="btn btn-outline btn-lg" data-landing-cta="explorar">Explorar catálogo →</button>
+        </div>
+        <div class="landing-hero-stats">
+          <div><strong id="landing-stat-productos">—</strong><span>productos frescos</span></div>
+          <div><strong id="landing-stat-productores">—</strong><span>productores locales</span></div>
+          <div><strong>🔗</strong><span>Trazabilidad blockchain</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-header">
+      <h2>🧺 Productos destacados</h2>
+      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
+    </div>
+    <div id="landing-productos-grid" class="grid"></div>
+
+    <div class="landing-roles">
+      <h2>Una plataforma, tres roles</h2>
+      <div class="landing-roles-grid">
+        <div class="landing-role-card">
+          <span class="landing-role-icon">🛒</span>
+          <h3>Comprador</h3>
+          <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
+          <button class="btn btn-outline btn-sm" data-landing-registro="comprador">Registrarme como comprador</button>
+        </div>
+        <div class="landing-role-card">
+          <span class="landing-role-icon">🚜</span>
+          <h3>Productor</h3>
+          <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
+          <button class="btn btn-outline btn-sm" data-landing-registro="productor">Registrarme como productor</button>
+        </div>
+        <div class="landing-role-card">
+          <span class="landing-role-icon">🚚</span>
+          <h3>Repartidor</h3>
+          <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
+          <button class="btn btn-outline btn-sm" data-landing-registro="repartidor">Registrarme como repartidor</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="landing-confianza">
+      <div class="landing-confianza-item">
+        <span class="landing-confianza-icon">📍</span>
+        <div><strong>Hecho en Ayacucho, Perú</strong><p>Conectamos comunidades agrícolas locales con compradores urbanos, sin cadenas de intermediarios.</p></div>
+      </div>
+      <div class="landing-confianza-item">
+        <span class="landing-confianza-icon">🛡️</span>
+        <div><strong>Trazabilidad garantizada</strong><p>Cada producto certificado tiene su historial verificado con blockchain, desde la chakra hasta tu mesa.</p></div>
+      </div>
+      <div class="landing-confianza-item">
+        <span class="landing-confianza-icon">⭐</span>
+        <div><strong>Reseñas reales</strong><p>Calificaciones y comentarios de compradores verificados en cada producto.</p></div>
+      </div>
+    </div>
+  </section>
+
   <!-- CATALOGO -->
-  <section id="view-catalogo" class="view active">
+  <section id="view-catalogo" class="view">
     <div class="hero">
       <h1>Del campo peruano, directo a tu mesa 🥑🌽🍅</h1>
       <p>Compra productos frescos de productores agrícolas locales, sin intermediarios.</p>
@@ -149,34 +214,51 @@
     </div>
 
     <div id="productor-panel" class="hidden">
-      <div class="card-panel">
-        <h3>Publicar nuevo producto</h3>
-        <form id="form-producto" class="form-grid">
-          <label>Nombre del producto
-            <input type="text" id="producto-nombre" required placeholder="Ej. Palta Hass">
-          </label>
-          <label>Categoría
-            <input type="text" id="producto-categoria" placeholder="Ej. Frutas">
-          </label>
-          <label>Unidad de medida
-            <select id="producto-unidad" required>
-              <option value="kg">Kilogramo (kg)</option>
-              <option value="unidad">Unidad</option>
-              <option value="saco">Saco</option>
-              <option value="arroba">Arroba</option>
-            </select>
-          </label>
-          <label>Precio (S/)
-            <input type="number" id="producto-precio" min="0" step="0.01" required placeholder="0.00">
-          </label>
-          <label>Stock disponible
-            <input type="number" id="producto-stock" min="0" step="1" required placeholder="0">
-          </label>
-          <label>URL de la imagen del producto (opcional)
-            <input type="url" id="producto-imagen" placeholder="https://ejemplo.com/imagen.jpg">
-          </label>
-          <button type="submit" class="btn btn-primary">Publicar producto</button>
-        </form>
+      <div class="card-panel card-panel-publicar">
+        <h3 id="titulo-form-producto">🌱 Publicar nuevo producto</h3>
+        <p class="muted">Completa los datos y mira cómo se verá en el catálogo.</p>
+
+        <div class="publicar-layout">
+          <form id="form-producto" class="form-grid">
+            <label>Nombre del producto
+              <input type="text" id="producto-nombre" required maxlength="80" placeholder="Ej. Palta Hass">
+            </label>
+            <label>Categoría
+              <select id="producto-categoria" required>
+                <option value="">Elige una categoría</option>
+              </select>
+            </label>
+            <label>Unidad de medida
+              <select id="producto-unidad" required>
+                <option value="kg">Kilogramo (kg)</option>
+                <option value="unidad">Unidad</option>
+                <option value="saco">Saco</option>
+                <option value="arroba">Arroba</option>
+              </select>
+            </label>
+            <label>Precio (S/)
+              <input type="number" id="producto-precio" min="0" step="0.01" required placeholder="0.00">
+            </label>
+            <label>Stock disponible
+              <input type="number" id="producto-stock" min="0" step="1" required placeholder="0">
+            </label>
+            <button type="submit" class="btn btn-primary">Publicar producto</button>
+          </form>
+
+          <div class="publicar-preview">
+            <span class="publicar-preview-label">👁️ Vista previa</span>
+            <div id="preview-producto-card"></div>
+          </div>
+        </div>
+
+        <div id="producto-fotos-bloque" class="fotos-upload-bloque hidden">
+          <div class="fotos-upload-header">
+            <h4>📷 Sube fotos de tu producto</h4>
+          </div>
+          <p class="muted">La primera foto será la principal en el catálogo. Formatos: JPG, PNG o WEBP.</p>
+          <div id="gestor-fotos-nuevo"></div>
+          <button type="button" class="btn btn-primary btn-block" id="btn-terminar-publicacion">Listo, ver mis productos</button>
+        </div>
       </div>
 
       <div class="section-header inner">
@@ -185,7 +267,10 @@
       </div>
       <div id="mis-productos-grid" class="grid"></div>
       <div id="mis-productos-empty" class="empty-state hidden">
-        <p>🌱 Todavía no has publicado productos.</p>
+        <span class="empty-state-icon">🌱</span>
+        <p><strong>Aún no tienes productos publicados</strong></p>
+        <p class="muted">Completa el formulario de arriba para publicar tu primer producto y empezar a vender sin intermediarios.</p>
+        <button type="button" class="btn btn-primary" id="btn-empezar-publicar">Publicar mi primer producto</button>
       </div>
     </div>
   </section>
@@ -212,10 +297,24 @@
     </div>
 
     <div id="repartidor-panel" class="hidden">
+      <div id="disponibilidad-banner"></div>
       <div id="ubicacion-estado" class="ubicacion-estado"></div>
+
+      <div id="propuestas-section" class="propuestas-section hidden">
+        <div class="section-header inner">
+          <h3>📨 Propuestas pendientes <span id="propuestas-badge" class="badge-contador hidden">0</span></h3>
+        </div>
+        <div id="propuestas-list" class="propuestas-list"></div>
+      </div>
+
+      <div class="section-header inner">
+        <h3>📋 Mis envíos</h3>
+      </div>
       <div id="envios-list" class="pedidos-list"></div>
       <div id="envios-empty" class="empty-state hidden">
-        <p>📭 No tienes envíos asignados todavía.</p>
+        <span class="empty-state-icon">🌤️</span>
+        <p><strong>Todo tranquilo por ahora</strong></p>
+        <p class="muted">No tienes propuestas ni envíos activos en este momento.</p>
       </div>
     </div>
   </section>
@@ -223,6 +322,14 @@
 </main>
 
 <footer class="footer">
+  <div class="footer-ctas" id="footer-ctas">
+    <p class="footer-ctas-title">¿Listo para empezar?</p>
+    <div class="footer-ctas-buttons">
+      <button class="btn btn-primary btn-sm" data-landing-registro="comprador">🛒 Soy comprador</button>
+      <button class="btn btn-primary btn-sm" data-landing-registro="productor">🚜 Soy productor</button>
+      <button class="btn btn-primary btn-sm" data-landing-registro="repartidor">🚚 Soy repartidor</button>
+    </div>
+  </div>
   <p>🌾 Chakra Shop — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
 </footer>
 
@@ -347,6 +454,14 @@
       <div id="checkout-confirmacion" class="checkout-confirmacion"></div>
       <button type="button" class="btn btn-primary btn-block" id="btn-checkout-finalizar">Ver mis pedidos</button>
     </div>
+  </div>
+</div>
+
+<!-- MODAL: CERTIFICACIÓN (TRAZABILIDAD BLOCKCHAIN) -->
+<div class="modal-overlay hidden" id="modal-certificacion">
+  <div class="modal modal-certificacion">
+    <button class="modal-close" data-close="modal-certificacion">✕</button>
+    <div id="certificacion-content"></div>
   </div>
 </div>
 

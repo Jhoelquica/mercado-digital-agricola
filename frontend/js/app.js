@@ -11,6 +11,7 @@ const Estado = {
   productorId: null,
   repartidorId: null,
   enviosRepartidor: [],
+  imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
 };
 
 const SESSION_KEY = 'agro_sesion';
@@ -57,25 +58,191 @@ function formatearMoneda(valor) {
   return `S/ ${n.toFixed(2)}`;
 }
 
-const EMOJIS_CATEGORIA = [
-  { claves: ['palta', 'fruta', 'manzana', 'platano', 'plátano', 'mango', 'naranja', 'fresa'], emoji: '🍎' },
-  { claves: ['verdura', 'lechuga', 'brócoli', 'brocoli', 'espinaca', 'zanahoria'], emoji: '🥦' },
-  { claves: ['papa', 'tuber', 'yuca', 'camote'], emoji: '🥔' },
-  { claves: ['maiz', 'maíz', 'grano', 'quinua', 'trigo', 'cereal'], emoji: '🌽' },
-  { claves: ['leche', 'queso', 'lacteo', 'lácteo', 'yogurt'], emoji: '🥛' },
-  { claves: ['cafe', 'café'], emoji: '☕' },
-  { claves: ['miel'], emoji: '🍯' },
-  { claves: ['huevo'], emoji: '🥚' },
-  { claves: ['tomate', 'jitomate'], emoji: '🍅' },
-  { claves: ['flor'], emoji: '🌷' },
-];
+function hashCorto(hash) {
+  if (!hash) return '—';
+  return hash.length > 16 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : hash;
+}
 
-function emojiParaProducto(producto) {
-  const texto = `${producto.nombre || ''} ${producto.categoria || ''}`.toLowerCase();
-  for (const grupo of EMOJIS_CATEGORIA) {
-    if (grupo.claves.some((c) => texto.includes(c))) return grupo.emoji;
+const EVENTOS_CERTIFICACION = {
+  cosecha_registrada: { emoji: '🌾', texto: 'Cosecha registrada' },
+  certificado_productor: { emoji: '✅', texto: 'Certificado por el productor' },
+  verificado_punto_venta: { emoji: '🏪', texto: 'Verificado en punto de venta' },
+};
+
+function labelEventoCertificacion(evento) {
+  return EVENTOS_CERTIFICACION[evento] || { emoji: '📦', texto: evento };
+}
+
+function renderLineaTiempoCertificacion(historial) {
+  if (!historial.length) {
+    return '<p class="muted" style="text-align:center;padding:12px 0 28px;">Aún no hay eventos registrados para este producto.</p>';
   }
-  return '🌿';
+  return `
+    <div class="timeline">
+      ${historial.map((b) => {
+        const info = labelEventoCertificacion(b.evento);
+        return `
+          <div class="timeline-item">
+            <div class="timeline-marker">${info.emoji}</div>
+            <div class="timeline-content">
+              <div class="timeline-header">
+                <strong>${escapeAttr(info.texto)}</strong>
+                <span class="timeline-indice">Bloque #${b.indice}</span>
+              </div>
+              <div class="timeline-fecha">${formatearFecha(b.fecha)}</div>
+              ${b.datos ? `<p class="timeline-datos">${escapeAttr(b.datos)}</p>` : ''}
+              <div class="timeline-hash">Hash: <code>${escapeAttr(hashCorto(b.hash_actual))}</code></div>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+async function abrirModalCertificacion(productoId) {
+  abrirModal('modal-certificacion');
+  const cont = document.getElementById('certificacion-content');
+  cont.innerHTML = `<div class="verificar-cargando"><div class="spinner"></div><p>Cargando certificación...</p></div>`;
+
+  try {
+    const [historial, producto] = await Promise.all([
+      Api.certificacion.historial(productoId),
+      Api.productos.obtener(productoId),
+    ]);
+    cont.innerHTML = `
+      <h3>🔗 Certificación de trazabilidad</h3>
+      <p class="muted">${escapeAttr(producto.nombre)}</p>
+      <div class="certificacion-qr-bloque">
+        <img src="${escapeAttr(Api.certificacion.qrUrl(productoId))}" alt="Código QR de certificación" class="certificacion-qr" id="certificacion-qr-img">
+        <p class="muted certificacion-qr-nota">Comparte este QR con tus compradores para que verifiquen el origen del producto.</p>
+      </div>
+      <h4 class="timeline-titulo">Historial de la cadena</h4>
+      ${renderLineaTiempoCertificacion(historial)}
+    `;
+    document.getElementById('certificacion-qr-img')?.addEventListener('error', function () {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'No se pudo cargar el código QR.';
+      this.replaceWith(p);
+    });
+  } catch (err) {
+    cont.innerHTML = `
+      <div class="verificar-banner banner-error">
+        <span class="banner-icon">⚠️</span>
+        <div>
+          <strong>No se pudo cargar la certificación</strong>
+          <p>${escapeAttr(err.message)}</p>
+        </div>
+      </div>`;
+  }
+}
+
+// Las 8 categorías fijas del catálogo, cada una con su ícono propio.
+const ICONOS_CATEGORIA = {
+  fruta: '🍎',
+  verdura: '🥬',
+  tuberculo: '🥔',
+  grano: '🌾',
+  legumbre: '🫘',
+  lacteo: '🥛',
+  huevo: '🥚',
+  hierba: '🌿',
+};
+
+const NOMBRE_CATEGORIA = {
+  fruta: 'Fruta',
+  verdura: 'Verdura',
+  tuberculo: 'Tubérculo',
+  grano: 'Grano',
+  legumbre: 'Legumbre',
+  lacteo: 'Lácteo',
+  huevo: 'Huevo',
+  hierba: 'Hierba',
+};
+
+// Normaliza variantes/typos de datos existentes (p.ej. "tuberculos", "cereales") a la categoría canónica.
+function normalizarCategoria(categoria) {
+  const c = String(categoria || '').toLowerCase().trim();
+  if (c.startsWith('tuber')) return 'tuberculo';
+  if (c.startsWith('cerea') || c.startsWith('gran')) return 'grano';
+  if (c.startsWith('verdur')) return 'verdura';
+  if (c.startsWith('frut')) return 'fruta';
+  if (c.startsWith('legum')) return 'legumbre';
+  if (c.startsWith('lact')) return 'lacteo';
+  if (c.startsWith('huev')) return 'huevo';
+  if (c.startsWith('hierb')) return 'hierba';
+  return ICONOS_CATEGORIA[c] ? c : null;
+}
+
+function iconoCategoria(categoria) {
+  const cat = normalizarCategoria(categoria);
+  return (cat && ICONOS_CATEGORIA[cat]) || '🧺';
+}
+
+function nombreCategoria(categoria) {
+  const cat = normalizarCategoria(categoria);
+  return (cat && NOMBRE_CATEGORIA[cat]) || categoria || 'General';
+}
+
+// El emoji de respaldo de un producto (cuando no tiene foto) es el ícono de su categoría.
+function emojiParaProducto(producto) {
+  return iconoCategoria(producto?.categoria);
+}
+
+// ---- Favoritos (localStorage, por cuenta) ----
+function claveFavoritos() {
+  return `agro_favoritos_${Estado.usuarioId || 'invitado'}`;
+}
+
+function obtenerFavoritos() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(claveFavoritos())) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function esFavorito(productoId) {
+  return obtenerFavoritos().has(productoId);
+}
+
+function alternarFavorito(productoId) {
+  const favoritos = obtenerFavoritos();
+  const yaEstaba = favoritos.has(productoId);
+  if (yaEstaba) favoritos.delete(productoId);
+  else favoritos.add(productoId);
+  localStorage.setItem(claveFavoritos(), JSON.stringify([...favoritos]));
+  return !yaEstaba;
+}
+
+function manejarClickFavorito(boton) {
+  const ahoraFavorito = alternarFavorito(boton.dataset.id);
+  boton.classList.toggle('activo', ahoraFavorito);
+  boton.setAttribute('aria-pressed', String(ahoraFavorito));
+  boton.classList.remove('favorito-pop');
+  void boton.offsetWidth; // reinicia la animación aunque se haga click varias veces seguidas
+  boton.classList.add('favorito-pop');
+  if (boton.classList.contains('btn-favorito-detalle')) {
+    boton.innerHTML = ahoraFavorito ? '❤️ Guardado' : '🤍 Guardar';
+  } else {
+    boton.textContent = ahoraFavorito ? '❤️' : '🤍';
+  }
+}
+
+// ---- Micro-feedback visual en botones de acción ----
+function destellarBoton(boton, textoExito, duracion = 900) {
+  if (!boton) return;
+  const textoOriginal = boton.innerHTML;
+  const anchoOriginal = boton.offsetWidth;
+  boton.style.minWidth = `${anchoOriginal}px`;
+  boton.disabled = true;
+  boton.classList.add('destello-exito');
+  boton.innerHTML = textoExito;
+  setTimeout(() => {
+    boton.classList.remove('destello-exito');
+    boton.innerHTML = textoOriginal;
+    boton.style.minWidth = '';
+    boton.disabled = false;
+  }, duracion);
 }
 
 function escapeAttr(valor) {
@@ -89,7 +256,7 @@ function escapeAttr(valor) {
 
 function renderMediaProducto(producto, contenedorClase = 'product-emoji') {
   const emoji = emojiParaProducto(producto);
-  const url = (producto.imagen_url || '').trim();
+  const url = (producto.imagen_url || producto.imagen_principal || '').trim();
   if (!url) return `<div class="${contenedorClase}">${emoji}</div>`;
 
   return `
@@ -99,9 +266,143 @@ function renderMediaProducto(producto, contenedorClase = 'product-emoji') {
     </div>`;
 }
 
+// ---- Gestor de fotos de producto (subida + eliminación, hasta 5 por producto) ----
+const TIPOS_IMAGEN_VALIDOS = ['image/jpeg', 'image/png', 'image/webp'];
+
+function renderGestorFotosHTML(productoId, imagenes) {
+  const n = imagenes.length;
+  const lleno = n >= 5;
+  const ordenadas = [...imagenes].sort((a, b) => a.orden - b.orden);
+  return `
+    <div class="gestor-fotos" data-producto-id="${escapeAttr(productoId)}">
+      <div class="fotos-upload-header">
+        <span class="fotos-contador">${n}/5 fotos</span>
+      </div>
+      <div class="upload-zona ${lleno ? 'deshabilitada' : ''}">
+        <input type="file" class="upload-input" accept="image/jpeg,image/png,image/webp" multiple ${lleno ? 'disabled' : ''} hidden>
+        <span class="upload-zona-icono">📤</span>
+        <span>${lleno ? 'Alcanzaste el máximo de 5 fotos' : 'Arrastra tus fotos aquí o <strong>haz clic para elegir</strong>'}</span>
+      </div>
+      ${n ? `
+      <div class="upload-miniaturas">
+        ${ordenadas.map((img, i) => `
+          <div class="upload-miniatura">
+            ${i === 0 ? '<span class="miniatura-badge-principal">Principal</span>' : ''}
+            <img src="${escapeAttr(img.url)}" alt="" loading="lazy">
+            <button type="button" class="upload-miniatura-quitar" data-imagen-id="${img.id}" aria-label="Quitar foto">✕</button>
+            <div class="upload-miniatura-mover">
+              <button type="button" class="miniatura-mover-btn" data-imagen-id="${img.id}" data-direccion="izq" aria-label="Mover foto a la izquierda" ${i === 0 ? 'disabled' : ''}>‹</button>
+              <button type="button" class="miniatura-mover-btn" data-imagen-id="${img.id}" data-direccion="der" aria-label="Mover foto a la derecha" ${i === ordenadas.length - 1 ? 'disabled' : ''}>›</button>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
+function rerenderGestorFotos(productoId) {
+  const imagenes = Estado.imagenesPorProducto[productoId] || [];
+  document.querySelectorAll(`.gestor-fotos[data-producto-id="${productoId}"]`).forEach((el) => {
+    el.outerHTML = renderGestorFotosHTML(productoId, imagenes);
+  });
+  document.querySelectorAll(`.btn-toggle-fotos[data-id="${productoId}"]`).forEach((btn) => {
+    btn.textContent = `📷 Fotos (${imagenes.length}/5)`;
+  });
+}
+
+async function subirFotosProducto(productoId, fileList) {
+  const actuales = Estado.imagenesPorProducto[productoId] || [];
+  const disponibles = 5 - actuales.length;
+  if (disponibles <= 0) {
+    toast('Ya tienes el máximo de 5 fotos para este producto.', 'error');
+    return;
+  }
+
+  const archivos = Array.from(fileList).slice(0, disponibles);
+  for (const archivo of archivos) {
+    if (!TIPOS_IMAGEN_VALIDOS.includes(archivo.type)) {
+      toast(`"${archivo.name}" no es una imagen JPG, PNG o WEBP.`, 'error');
+      continue;
+    }
+    try {
+      const nuevaImagen = await Api.productos.subirImagen(productoId, archivo, actuales.length);
+      actuales.push(nuevaImagen);
+      Estado.imagenesPorProducto[productoId] = [...actuales];
+      rerenderGestorFotos(productoId);
+    } catch (err) {
+      manejarError(err, 'subir la foto');
+    }
+  }
+}
+
+async function eliminarFotoProducto(productoId, imagenId) {
+  try {
+    await Api.productos.eliminarImagen(imagenId);
+    Estado.imagenesPorProducto[productoId] = (Estado.imagenesPorProducto[productoId] || []).filter((img) => img.id !== imagenId);
+    rerenderGestorFotos(productoId);
+    toast('Foto eliminada.');
+  } catch (err) {
+    manejarError(err, 'eliminar la foto');
+  }
+}
+
+async function moverFotoProducto(productoId, imagenId, direccion) {
+  const lista = Estado.imagenesPorProducto[productoId];
+  if (!lista) return;
+
+  const ordenadas = [...lista].sort((a, b) => a.orden - b.orden);
+  const indice = ordenadas.findIndex((img) => img.id === imagenId);
+  const destino = direccion === 'izq' ? indice - 1 : indice + 1;
+  if (indice === -1 || destino < 0 || destino >= ordenadas.length) return;
+
+  const snapshot = lista.map((img) => ({ ...img }));
+
+  const actual = ordenadas[indice];
+  const vecino = ordenadas[destino];
+  const ordenTemp = actual.orden;
+  actual.orden = vecino.orden;
+  vecino.orden = ordenTemp;
+
+  Estado.imagenesPorProducto[productoId] = [...lista];
+  rerenderGestorFotos(productoId);
+
+  try {
+    await Promise.all([
+      Api.productos.actualizarOrdenImagen(actual.id, actual.orden),
+      Api.productos.actualizarOrdenImagen(vecino.id, vecino.orden),
+    ]);
+  } catch (err) {
+    Estado.imagenesPorProducto[productoId] = snapshot;
+    rerenderGestorFotos(productoId);
+    manejarError(err, 'reordenar las fotos');
+  }
+}
+
+const ICONOS_ESTADO = {
+  pendiente: '⏳',
+  pendiente_asignacion: '⏳',
+  propuesto: '📨',
+  asignado: '📋',
+  en_camino: '🚚',
+  en_transito: '🚚',
+  en_ruta: '🚚',
+  entregado: '✅',
+  cancelado: '✖️',
+  rechazado: '✖️',
+  aprobado: '✅',
+  error: '⚠️',
+};
+
+const ESTADOS_BADGE_CONOCIDOS = new Set([
+  'pendiente', 'pendiente_asignacion', 'propuesto', 'asignado',
+  'en_camino', 'en_transito', 'en_ruta', 'entregado', 'aprobado',
+  'cancelado', 'rechazado', 'error',
+]);
+
 function badgeEstadoEnvio(estado) {
-  const clase = `badge-${(estado || 'pendiente').toLowerCase().replace(/\s+/g, '_')}`;
-  return `<span class="badge ${clase} badge-default">${estado || 'pendiente'}</span>`;
+  const clave = (estado || 'pendiente').toLowerCase().replace(/\s+/g, '_');
+  const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `badge-${clave}` : 'badge-default';
+  const icono = ICONOS_ESTADO[clave] || '•';
+  return `<span class="badge ${clase}">${icono} ${estado || 'pendiente'}</span>`;
 }
 
 const UNIDADES_MEDIDA = {
@@ -133,6 +434,41 @@ function renderEstrellas(promedio) {
   let html = '';
   for (let i = 1; i <= 5; i++) html += i <= llenas ? '★' : '☆';
   return html;
+}
+
+// ============ SKELETON LOADERS ============
+function renderSkeletonProductos(n = 8) {
+  const tarjeta = `
+    <div class="product-card skeleton-card">
+      <div class="skeleton skeleton-media"></div>
+      <div class="skeleton-body">
+        <div class="skeleton skeleton-line w-40"></div>
+        <div class="skeleton skeleton-line tall w-70"></div>
+        <div class="skeleton skeleton-line w-60"></div>
+        <div class="skeleton skeleton-line w-40"></div>
+        <div class="skeleton skeleton-btn"></div>
+      </div>
+    </div>`;
+  return tarjeta.repeat(n);
+}
+
+function renderSkeletonDetalle() {
+  return `
+    <div class="skeleton" style="height:220px;border-radius:20px;margin-bottom:16px;"></div>
+    <div class="skeleton skeleton-line w-40" style="margin-bottom:10px;"></div>
+    <div class="skeleton skeleton-line tall w-70" style="margin-bottom:10px;"></div>
+    <div class="skeleton skeleton-line w-60" style="margin-bottom:16px;"></div>
+    <div class="skeleton skeleton-btn"></div>`;
+}
+
+function renderSkeletonFilas(n = 3) {
+  const fila = `
+    <div class="skeleton-row-card">
+      <div class="skeleton skeleton-line w-40"></div>
+      <div class="skeleton skeleton-line tall w-70"></div>
+      <div class="skeleton skeleton-line w-60"></div>
+    </div>`;
+  return fila.repeat(n);
 }
 
 // ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
@@ -276,7 +612,7 @@ function cerrarSesion() {
   localStorage.removeItem(SESSION_KEY);
   actualizarUIAuth();
   renderCarrito();
-  cambiarVista('catalogo');
+  cambiarVista('landing');
   toast('Sesión cerrada. ¡Hasta pronto! 👋');
 }
 
@@ -286,6 +622,7 @@ function actualizarUIAuth() {
   document.getElementById('user-area').classList.toggle('hidden', !logueado);
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
+  document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
   if (logueado) {
     const nombre = Estado.nombre || 'Usuario';
@@ -316,6 +653,8 @@ async function iniciarSesionConToken(token) {
 
 // ============ NAVEGACIÓN ============
 function cambiarVista(nombre) {
+  if (nombre === 'inicio') nombre = Estado.token ? 'catalogo' : 'landing';
+
   detenerPollingRutas();
   detenerSeguimientoRepartidor();
   document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
@@ -325,6 +664,7 @@ function cambiarVista(nombre) {
   });
   document.getElementById('nav-links').classList.remove('open');
 
+  if (nombre === 'landing') cargarLanding();
   if (nombre === 'catalogo') cargarCatalogo();
   if (nombre === 'mis-pedidos') cargarMisPedidos();
   if (nombre === 'notificaciones') cargarNotificaciones();
@@ -332,12 +672,51 @@ function cambiarVista(nombre) {
   if (nombre === 'gestion-envios') cargarGestionEnvios();
 }
 
+function abrirRegistroConRol(rol) {
+  cambiarTabAuth('registro');
+  const select = document.getElementById('registro-rol');
+  if (rol) select.value = rol;
+  abrirModal('modal-auth');
+}
+
 // ============ MODALES ============
 function abrirModal(id) { document.getElementById(id).classList.remove('hidden'); }
 function cerrarModal(id) { document.getElementById(id).classList.add('hidden'); }
 
+// ============ LANDING (INVITADOS) ============
+async function cargarLanding() {
+  const grid = document.getElementById('landing-productos-grid');
+  grid.innerHTML = renderSkeletonProductos(6);
+  try {
+    const productos = await Api.productos.listar();
+    Estado.productos = productos;
+
+    document.getElementById('landing-stat-productos').textContent = productos.length;
+    const productoresUnicos = new Set(productos.map((p) => p.productor_id)).size;
+    document.getElementById('landing-stat-productores').textContent = productoresUnicos;
+
+    const esProductoDePrueba = (p) => /\btest\b|\bqa\b/i.test(`${p.nombre} ${p.categoria}`);
+    const candidatos = productos.filter((p) => !esProductoDePrueba(p));
+    const fuente = candidatos.length >= 3 ? candidatos : productos;
+
+    const destacados = [...fuente]
+      .sort((a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0))
+      .slice(0, 6);
+
+    grid.innerHTML = destacados.length
+      ? destacados.map((p, i) => renderTarjetaProductoCatalogo(p, { indice: i })).join('')
+      : '<p class="empty-state">🌾 Todavía no hay productos publicados.</p>';
+  } catch (err) {
+    grid.innerHTML = '';
+    manejarError(err, 'cargar los productos destacados');
+  }
+}
+
 // ============ CATÁLOGO ============
 async function cargarCatalogo() {
+  const grid = document.getElementById('productos-grid');
+  document.getElementById('productos-empty').classList.add('hidden');
+  grid.innerHTML = renderSkeletonProductos();
   try {
     const [productos, productores] = await Promise.all([
       Api.productos.listar(),
@@ -359,8 +738,8 @@ function poblarSelectCategorias(productos) {
   const select = document.getElementById('select-categoria');
   const actual = select.value;
   const categorias = [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort();
-  select.innerHTML = '<option value="">Todas las categorías</option>' +
-    categorias.map((c) => `<option value="${c}">${c}</option>`).join('');
+  select.innerHTML = '<option value="">🗂️ Todas las categorías</option>' +
+    categorias.map((c) => `<option value="${escapeAttr(c)}">${iconoCategoria(c)} ${nombreCategoria(c)}</option>`).join('');
   select.value = actual;
 }
 
@@ -377,13 +756,26 @@ function poblarSelectUbicaciones(productos) {
   select.value = actual;
 }
 
-function renderTarjetaProductoCatalogo(p, { clickable = true, mostrarQr = false } = {}) {
+function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {}) {
   const stockBajo = p.stock <= 5;
+  const favorito = clickable && esFavorito(p.id);
+  const tieneCalificacion = p.calificacion_promedio != null && p.total_resenas > 0;
+  const retraso = Math.min(indice, 12) * 35;
+  const estilo = `animation-delay:${retraso}ms${clickable ? '' : ';cursor:default'}`;
   return `
-    <div class="product-card" ${clickable ? `data-id="${p.id}"` : 'style="cursor:default"'}>
-      <div class="product-card-media">${renderMediaProducto(p, 'product-banner')}</div>
+    <div class="product-card" style="${estilo}" ${clickable ? `data-id="${p.id}"` : ''}>
+      <div class="product-card-media">
+        ${renderMediaProducto(p, 'product-banner')}
+        ${clickable ? `
+        <button type="button" class="btn-favorito ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
+          ${favorito ? '❤️' : '🤍'}
+        </button>` : ''}
+      </div>
       <div class="product-card-body">
-        <span class="product-tag">${p.categoria || 'General'}</span>
+        <div class="product-card-top">
+          <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+          ${tieneCalificacion ? `<span class="product-rating"><span class="rating-stars">★</span> ${Number(p.calificacion_promedio).toFixed(1)} <span class="rating-count-mini">(${p.total_resenas})</span></span>` : ''}
+        </div>
         <h4>${p.nombre}</h4>
         <span class="product-productor">👨‍🌾 ${p.productor_nombre || 'Productor local'}</span>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
@@ -392,9 +784,26 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, mostrarQr = false 
         <button class="btn btn-primary btn-agregar" data-id="${p.id}" ${p.stock <= 0 ? 'disabled' : ''}>
           ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
         </button>` : ''}
-        ${mostrarQr ? `<button type="button" class="btn btn-outline btn-ver-qr" data-id="${p.id}">🔗 Ver código QR</button>` : ''}
       </div>
     </div>`;
+}
+
+function manejarClickGrid(e) {
+  const btnFavorito = e.target.closest('.btn-favorito');
+  if (btnFavorito) {
+    e.stopPropagation();
+    manejarClickFavorito(btnFavorito);
+    return;
+  }
+  const btnAgregar = e.target.closest('.btn-agregar');
+  if (btnAgregar) {
+    e.stopPropagation();
+    agregarAlCarrito(btnAgregar.dataset.id);
+    destellarBoton(btnAgregar, '✓ Agregado');
+    return;
+  }
+  const card = e.target.closest('.product-card');
+  if (card) abrirDetalleProducto(card.dataset.id);
 }
 
 function renderProductos(productos) {
@@ -407,7 +816,7 @@ function renderProductos(productos) {
     return;
   }
   vacio.classList.add('hidden');
-  grid.innerHTML = productos.map((p) => renderTarjetaProductoCatalogo(p)).join('');
+  grid.innerHTML = productos.map((p, i) => renderTarjetaProductoCatalogo(p, { indice: i })).join('');
 }
 
 function filtrarYRenderizar() {
@@ -441,7 +850,7 @@ function limpiarFiltros() {
 
 async function abrirDetalleProducto(id) {
   const contenido = document.getElementById('detalle-producto-content');
-  contenido.innerHTML = '<p class="muted" style="padding:48px 0;text-align:center;">Cargando producto...</p>';
+  contenido.innerHTML = renderSkeletonDetalle();
   abrirModal('modal-detalle-producto');
 
   let p;
@@ -545,11 +954,35 @@ function renderSeccionResenas(resenas) {
     </div>`;
 }
 
+function renderResenasSoloLectura(resenas) {
+  if (!resenas.length) {
+    return '<p class="muted" style="padding-top:6px;">Aún no hay reseñas para este producto.</p>';
+  }
+  return `
+    <div class="resenas-lista" style="margin-top:10px;">
+      ${resenas.map((r) => `
+        <div class="resena-card">
+          <div class="resena-header">
+            <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
+            <span class="rating-stars">${renderEstrellas(r.calificacion)}</span>
+          </div>
+          <div class="resena-fecha">${formatearFecha(r.fecha_creacion)}</div>
+          ${r.comentario ? `<p class="resena-comentario">${escapeAttr(r.comentario)}</p>` : ''}
+        </div>`).join('')}
+    </div>`;
+}
+
 function renderDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
+  const favorito = esFavorito(p.id);
   contenido.innerHTML = `
     ${renderGaleriaProducto(p)}
-    <span class="product-tag">${p.categoria || 'General'}</span>
+    <div class="detalle-encabezado">
+      <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+      <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
+        ${favorito ? '❤️ Guardado' : '🤍 Guardar'}
+      </button>
+    </div>
     <h2>${p.nombre}</h2>
     <p class="muted">Publicado por ${p.productor_nombre || 'Productor local'} · ${formatearFecha(p.fecha_publicacion)}</p>
     ${renderResumenCalificacion(p)}
@@ -562,9 +995,14 @@ function renderDetalleProducto(p, resenas, productor) {
     ${renderSeccionResenas(resenas)}
   `;
 
-  document.getElementById('btn-agregar-detalle')?.addEventListener('click', () => {
+  document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => {
     agregarAlCarrito(p.id);
-    cerrarModal('modal-detalle-producto');
+    destellarBoton(e.currentTarget, '✓ Agregado');
+    setTimeout(() => cerrarModal('modal-detalle-producto'), 700);
+  });
+
+  contenido.querySelector('.btn-favorito-detalle')?.addEventListener('click', (e) => {
+    manejarClickFavorito(e.currentTarget);
   });
 
   if (hayCoordenadas(productor?.latitud, productor?.longitud)) {
@@ -602,17 +1040,20 @@ async function enviarResena(productoId, calificacion, comentario) {
   const form = document.getElementById('form-resena');
   const btn = form.querySelector('button[type="submit"]');
   btn.disabled = true;
+  btn.textContent = 'Publicando...';
   try {
     await Api.productos.crearResena(productoId, { calificacion, comentario: comentario || null });
     toast('¡Gracias por tu reseña! 🌟');
-    const [p, resenas] = await Promise.all([
-      Api.productos.obtener(productoId),
+    const p = await Api.productos.obtener(productoId);
+    const [resenas, productor] = await Promise.all([
       Api.productos.listarResenas(productoId),
+      Api.productores.obtener(p.productor_id).catch(() => null),
     ]);
-    renderDetalleProducto(p, resenas);
+    renderDetalleProducto(p, resenas, productor);
   } catch (err) {
     manejarError(err, 'publicar tu reseña');
     btn.disabled = false;
+    btn.textContent = 'Publicar reseña';
   }
 }
 
@@ -665,6 +1106,11 @@ function quitarDelCarrito(productoId) {
 function renderCarrito() {
   const cantidadTotal = Estado.carrito.reduce((acc, i) => acc + i.cantidad, 0);
   const badge = document.getElementById('cart-count');
+  if (badge.textContent !== String(cantidadTotal) && cantidadTotal > 0) {
+    badge.classList.remove('bump');
+    void badge.offsetWidth;
+    badge.classList.add('bump');
+  }
   badge.textContent = cantidadTotal;
   badge.classList.toggle('hidden', cantidadTotal === 0);
 
@@ -712,6 +1158,8 @@ function irPasoCheckout(paso) {
     const n = Number(stepEl.dataset.step);
     stepEl.classList.toggle('active', n === paso);
     stepEl.classList.toggle('completado', n < paso);
+    const circulo = stepEl.querySelector('.checkout-step-circle');
+    circulo.textContent = n < paso ? '✓' : String(n);
   });
 }
 
@@ -942,7 +1390,7 @@ async function cargarMisPedidos() {
     return;
   }
   vacio.classList.add('hidden');
-  cont.innerHTML = '<p class="muted">Cargando pedidos...</p>';
+  cont.innerHTML = renderSkeletonFilas(Math.min(ids.length, 3));
 
   const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
   const validos = datos.filter(Boolean);
@@ -981,6 +1429,12 @@ async function cargarDatosPedido(pedidoId) {
   return { pedido, envio, pago, ruta };
 }
 
+function renderStatsRuta(ruta) {
+  return `
+    <div class="ruta-stat"><span class="ruta-stat-icon">📏</span><div><strong>${ruta.distancia_km} km</strong><span>distancia</span></div></div>
+    <div class="ruta-stat"><span class="ruta-stat-icon">⏱️</span><div><strong>~${ruta.tiempo_estimado_min} min</strong><span>tiempo estimado</span></div></div>`;
+}
+
 function renderBloqueRuta(envio, ruta) {
   if (!envio) return '';
   if (!ruta || !ruta.disponible) {
@@ -990,10 +1444,7 @@ function renderBloqueRuta(envio, ruta) {
   return `
     <div class="mapa-bloque">
       <div id="mapa-ruta-${envio.id}" class="mapa-mini"></div>
-      <div class="ruta-datos" id="ruta-datos-${envio.id}">
-        <span>📏 ${ruta.distancia_km} km</span>
-        <span>⏱️ ~${ruta.tiempo_estimado_min} min</span>
-      </div>
+      <div class="ruta-stats" id="ruta-datos-${envio.id}">${renderStatsRuta(ruta)}</div>
     </div>`;
 }
 
@@ -1052,9 +1503,7 @@ function iniciarMapaRutaPedido(envioId, ruta) {
       activo.linea.setLatLngs([puntoOrigen, puntoDestino]);
 
       const datosEl = document.getElementById(`ruta-datos-${envioId}`);
-      if (datosEl) {
-        datosEl.innerHTML = `<span>📏 ${actualizada.distancia_km} km</span><span>⏱️ ~${actualizada.tiempo_estimado_min} min</span>`;
-      }
+      if (datosEl) datosEl.innerHTML = renderStatsRuta(actualizada);
     } catch { /* se reintenta en el siguiente ciclo */ }
   }, 15000);
 
@@ -1104,6 +1553,8 @@ async function cargarNotificaciones() {
     return;
   }
 
+  vacio.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(3);
   try {
     const ids = new Set(obtenerPedidosTrackeados());
     const todas = await Api.notificaciones.listarTodas();
@@ -1157,12 +1608,51 @@ async function iniciarPanelProductor() {
   if (Estado.productorId) {
     setup.classList.add('hidden');
     panel.classList.remove('hidden');
+    poblarSelectCategoriaProducto();
+    reiniciarFormularioProducto();
     cargarMisProductos();
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
     inicializarMapaUbicacionProductor();
   }
+}
+
+// ---- Categorías fijas (mismo catálogo de 8 usado en toda la app) ----
+const CATEGORIAS_PRODUCTO = ['fruta', 'verdura', 'tuberculo', 'grano', 'legumbre', 'lacteo', 'huevo', 'hierba'];
+
+function poblarSelectCategoriaProducto() {
+  const select = document.getElementById('producto-categoria');
+  if (!select || select.dataset.poblado) return;
+  select.innerHTML = '<option value="">Elige una categoría</option>' +
+    CATEGORIAS_PRODUCTO.map((c) => `<option value="${c}">${ICONOS_CATEGORIA[c]} ${NOMBRE_CATEGORIA[c]}</option>`).join('');
+  select.dataset.poblado = '1';
+}
+
+// ---- Vista previa en vivo de la tarjeta mientras se llena el formulario ----
+function leerBorradorProducto() {
+  return {
+    nombre: document.getElementById('producto-nombre').value.trim() || 'Nombre del producto',
+    categoria: document.getElementById('producto-categoria').value,
+    unidad_medida: document.getElementById('producto-unidad').value,
+    precio: parseFloat(document.getElementById('producto-precio').value) || 0,
+    stock: parseInt(document.getElementById('producto-stock').value, 10) || 0,
+    productor_nombre: Estado.nombre || 'Tu emprendimiento',
+  };
+}
+
+function actualizarVistaPreviaProducto() {
+  const cont = document.getElementById('preview-producto-card');
+  if (!cont) return;
+  cont.innerHTML = renderTarjetaProductoCatalogo(leerBorradorProducto(), { clickable: false, indice: 0 });
+}
+
+function reiniciarFormularioProducto() {
+  document.getElementById('form-producto')?.reset();
+  document.getElementById('producto-fotos-bloque')?.classList.add('hidden');
+  document.getElementById('form-producto')?.classList.remove('hidden');
+  document.getElementById('titulo-form-producto').textContent = '🌱 Publicar nuevo producto';
+  actualizarVistaPreviaProducto();
 }
 
 // ---- Selector de ubicación (mapa del perfil del productor) ----
@@ -1243,15 +1733,22 @@ async function publicarProducto(e) {
     const datos = {
       productor_id: Estado.productorId,
       nombre: document.getElementById('producto-nombre').value.trim(),
-      categoria: document.getElementById('producto-categoria').value.trim() || null,
+      categoria: document.getElementById('producto-categoria').value || null,
       unidad_medida: document.getElementById('producto-unidad').value,
       precio: parseFloat(document.getElementById('producto-precio').value),
       stock: parseInt(document.getElementById('producto-stock').value, 10),
-      imagen_url: document.getElementById('producto-imagen').value.trim() || null,
     };
-    await Api.productos.crear(datos);
-    document.getElementById('form-producto').reset();
+    const nuevoProducto = await Api.productos.crear(datos);
     toast('Producto publicado con éxito 🎉');
+
+    document.getElementById('form-producto').classList.add('hidden');
+    document.getElementById('titulo-form-producto').textContent = `✅ ${nuevoProducto.nombre}`;
+    Estado.imagenesPorProducto[nuevoProducto.id] = [];
+    const bloqueFotos = document.getElementById('producto-fotos-bloque');
+    bloqueFotos.classList.remove('hidden');
+    bloqueFotos.dataset.productoId = nuevoProducto.id;
+    document.getElementById('gestor-fotos-nuevo').innerHTML = renderGestorFotosHTML(nuevoProducto.id, []);
+
     cargarMisProductos();
   } catch (err) {
     manejarError(err, 'publicar el producto');
@@ -1260,9 +1757,91 @@ async function publicarProducto(e) {
   }
 }
 
+function renderTarjetaProductorProducto(p, indice) {
+  const stockBajo = p.stock > 0 && p.stock <= 5;
+  const sinStock = p.stock <= 0;
+  const tieneCalificacion = p.calificacion_promedio != null && p.total_resenas > 0;
+  const retraso = Math.min(indice, 12) * 35;
+
+  return `
+    <div class="product-card productor-card" style="animation-delay:${retraso}ms;cursor:default">
+      <div class="product-card-media">
+        ${renderMediaProducto(p, 'product-banner')}
+        ${sinStock ? '<span class="badge-flotante badge-stock-bajo">Sin stock</span>' : ''}
+        ${!sinStock && stockBajo ? '<span class="badge-flotante badge-stock-bajo">⚠️ Poco stock</span>' : ''}
+      </div>
+      <div class="product-card-body">
+        <div class="product-card-top">
+          <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+        </div>
+        <h4>${p.nombre}</h4>
+        <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
+        <span class="product-stock ${stockBajo || sinStock ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
+
+        <div class="productor-card-acciones">
+          <button type="button" class="btn btn-outline btn-sm btn-toggle-resenas" data-id="${p.id}">
+            ⭐ ${tieneCalificacion ? `${p.total_resenas} reseña${p.total_resenas === 1 ? '' : 's'}` : 'Reseñas'}
+          </button>
+          <button type="button" class="btn btn-outline btn-sm btn-toggle-fotos" data-id="${p.id}">📷 Fotos</button>
+          <button type="button" class="btn btn-outline btn-sm btn-ver-certificacion" data-id="${p.id}">🔗 Certificación</button>
+        </div>
+
+        <div class="productor-expandible hidden" data-panel="resenas" data-id="${p.id}"></div>
+        <div class="productor-expandible hidden" data-panel="fotos" data-id="${p.id}"></div>
+      </div>
+    </div>`;
+}
+
+async function alternarResenasProductor(id) {
+  const panel = document.querySelector(`.productor-expandible[data-panel="resenas"][data-id="${id}"]`);
+  if (!panel) return;
+  document.querySelector(`.productor-expandible[data-panel="fotos"][data-id="${id}"]`)?.classList.add('hidden');
+
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  if (panel.dataset.cargado) return;
+
+  panel.innerHTML = renderSkeletonFilas(2);
+  try {
+    const resenas = await Api.productos.listarResenas(id);
+    panel.innerHTML = renderResenasSoloLectura(resenas);
+    panel.dataset.cargado = '1';
+  } catch {
+    panel.innerHTML = '<p class="muted">No se pudieron cargar las reseñas.</p>';
+  }
+}
+
+async function alternarFotosProductor(id) {
+  const panel = document.querySelector(`.productor-expandible[data-panel="fotos"][data-id="${id}"]`);
+  if (!panel) return;
+  document.querySelector(`.productor-expandible[data-panel="resenas"][data-id="${id}"]`)?.classList.add('hidden');
+
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+
+  if (!Estado.imagenesPorProducto[id]) {
+    panel.innerHTML = '<p class="muted">Cargando fotos...</p>';
+    try {
+      const detalle = await Api.productos.obtener(id);
+      Estado.imagenesPorProducto[id] = (detalle.imagenes || []).slice().sort((a, b) => a.orden - b.orden);
+    } catch {
+      Estado.imagenesPorProducto[id] = [];
+    }
+  }
+  panel.innerHTML = renderGestorFotosHTML(id, Estado.imagenesPorProducto[id]);
+}
+
 async function cargarMisProductos() {
   const grid = document.getElementById('mis-productos-grid');
   const vacio = document.getElementById('mis-productos-empty');
+  vacio.classList.add('hidden');
+  grid.innerHTML = renderSkeletonProductos(3);
   try {
     const todos = await Api.productos.listar();
     const mios = todos.filter((p) => p.productor_id === Estado.productorId);
@@ -1274,13 +1853,32 @@ async function cargarMisProductos() {
       return;
     }
     vacio.classList.add('hidden');
-    grid.innerHTML = mios.map((p) => renderTarjetaProductoCatalogo(p, { clickable: false, mostrarQr: true })).join('');
+    grid.innerHTML = mios.map((p, i) => renderTarjetaProductorProducto(p, i)).join('');
   } catch (err) {
     manejarError(err, 'cargar tus productos');
   }
 }
 
 // ============ GESTIÓN DE ENVÍOS (repartidor) ============
+const DISPONIBILIDAD_INFO = {
+  disponible: { texto: 'Disponible', clase: 'disponibilidad-verde', icono: '🟢', detalle: 'Puedes recibir nuevas propuestas de envío.' },
+  ocupado: { texto: 'Ocupado', clase: 'disponibilidad-ambar', icono: '🟠', detalle: 'Estás atendiendo un envío en este momento.' },
+  desconectado: { texto: 'Desconectado', clase: 'disponibilidad-gris', icono: '⚪', detalle: 'No recibirás nuevas propuestas hasta que te conectes.' },
+};
+
+function renderBannerDisponibilidad(estado) {
+  const clave = (estado || 'desconectado').toLowerCase();
+  const info = DISPONIBILIDAD_INFO[clave] || DISPONIBILIDAD_INFO.desconectado;
+  return `
+    <div class="disponibilidad-banner ${info.clase}">
+      <span class="disponibilidad-icono">${info.icono}</span>
+      <div>
+        <strong>${info.texto}</strong>
+        <span>${info.detalle}</span>
+      </div>
+    </div>`;
+}
+
 async function cargarGestionEnvios() {
   if (!Estado.token || Estado.rol !== 'repartidor') {
     cambiarVista('catalogo');
@@ -1288,6 +1886,7 @@ async function cargarGestionEnvios() {
   }
 
   detenerSeguimientoRepartidor();
+  detenerPollingRutas();
 
   const setup = document.getElementById('repartidor-setup');
   const panel = document.getElementById('repartidor-panel');
@@ -1308,6 +1907,7 @@ async function cargarGestionEnvios() {
   setup.classList.add('hidden');
   panel.classList.remove('hidden');
   Estado.repartidorId = miRepartidor.id;
+  document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(miRepartidor.estado_disponibilidad);
 
   await cargarListaEnvios(miRepartidor.id);
   iniciarSeguimientoRepartidor();
@@ -1333,29 +1933,28 @@ async function crearPerfilRepartidor(e) {
   }
 }
 
-async function cargarListaEnvios(miRepartidorId) {
-  const cont = document.getElementById('envios-list');
-  const vacio = document.getElementById('envios-empty');
-  try {
-    const todos = await Api.transporte.listarTodos();
-    const mios = todos.filter((e) => String(e.repartidor_id) === String(miRepartidorId));
-    Estado.enviosRepartidor = mios;
-
-    if (!mios.length) {
-      cont.innerHTML = '';
-      vacio.classList.remove('hidden');
-      return;
-    }
-    vacio.classList.add('hidden');
-    cont.innerHTML = mios.map(renderTarjetaEnvio).join('');
-  } catch (err) {
-    manejarError(err, 'cargar tus envíos');
-  }
+function renderTarjetaPropuesta(envio) {
+  return `
+    <div class="propuesta-card">
+      <div class="pedido-card-header">
+        <div>
+          <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
+          <div class="pedido-fecha">${formatearFecha(envio.fecha_creacion)}</div>
+        </div>
+        ${badgeEstadoEnvio(envio.estado || 'propuesto')}
+      </div>
+      <div class="propuesta-actions">
+        <button type="button" class="btn btn-outline btn-rechazar-propuesta" data-envio-id="${envio.id}">✕ Rechazar</button>
+        <button type="button" class="btn btn-primary btn-aceptar-propuesta" data-envio-id="${envio.id}">✓ Aceptar envío</button>
+      </div>
+    </div>`;
 }
 
-function renderTarjetaEnvio(envio) {
+function renderTarjetaEnvio(envio, ruta) {
+  const activo = ['asignado', 'en_camino'].includes(envio.estado);
+  const finalizado = ['entregado', 'cancelado', 'rechazado'].includes(envio.estado);
   return `
-    <div class="pedido-card">
+    <div class="pedido-card ${activo ? 'pedido-card-activo' : ''}">
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
@@ -1363,17 +1962,82 @@ function renderTarjetaEnvio(envio) {
         </div>
         ${badgeEstadoEnvio(envio.estado)}
       </div>
-      <div class="envio-track"><span class="icon">🧑‍✈️</span> Transportista: ${envio.transportista || 'Sin asignar'}</div>
+      ${activo ? renderBloqueRuta(envio, ruta) : ''}
+      ${!finalizado ? `
       <div class="envio-actualizar">
         <select class="select-estado-envio" data-envio-id="${envio.id}">
-          <option value="pendiente" ${envio.estado === 'pendiente' ? 'selected' : ''}>Pendiente</option>
+          <option value="asignado" ${envio.estado === 'asignado' ? 'selected' : ''}>Asignado</option>
           <option value="en_camino" ${envio.estado === 'en_camino' ? 'selected' : ''}>En camino</option>
           <option value="entregado" ${envio.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
         </select>
         <button class="btn btn-primary btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
-      </div>
+      </div>` : ''}
     </div>
   `;
+}
+
+async function cargarListaEnvios(miRepartidorId) {
+  detenerPollingRutas();
+
+  const propuestasSeccion = document.getElementById('propuestas-section');
+  const propuestasCont = document.getElementById('propuestas-list');
+  const propuestasBadge = document.getElementById('propuestas-badge');
+  const cont = document.getElementById('envios-list');
+  const vacio = document.getElementById('envios-empty');
+
+  vacio.classList.add('hidden');
+  propuestasSeccion.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(2);
+
+  let propuestas = [];
+  try {
+    propuestas = await Api.transporte.propuestas();
+  } catch { /* si falla, seguimos mostrando al menos los envíos ya asignados */ }
+
+  let mios = [];
+  try {
+    const todos = await Api.transporte.listarTodos();
+    const idsPropuestas = new Set(propuestas.map((p) => p.id));
+    mios = todos.filter((e) => String(e.repartidor_id) === String(miRepartidorId) && !idsPropuestas.has(e.id));
+    Estado.enviosRepartidor = mios;
+  } catch (err) {
+    manejarError(err, 'cargar tus envíos');
+    cont.innerHTML = '';
+    return;
+  }
+
+  if (propuestas.length) {
+    propuestasSeccion.classList.remove('hidden');
+    propuestasCont.innerHTML = propuestas.map(renderTarjetaPropuesta).join('');
+    propuestasBadge.textContent = propuestas.length;
+    propuestasBadge.classList.toggle('hidden', propuestas.length <= 1);
+  }
+
+  if (!mios.length && !propuestas.length) {
+    cont.innerHTML = '';
+    vacio.classList.remove('hidden');
+    return;
+  }
+  vacio.classList.add('hidden');
+
+  if (!mios.length) {
+    cont.innerHTML = '';
+    return;
+  }
+
+  const activos = mios.filter((e) => ['asignado', 'en_camino'].includes(e.estado));
+  const rutasPorEnvio = {};
+  await Promise.all(activos.map(async (e) => {
+    try {
+      rutasPorEnvio[e.id] = await Api.transporte.ruta(e.id);
+    } catch { /* seguimiento de ruta no disponible por ahora */ }
+  }));
+
+  cont.innerHTML = mios.map((e) => renderTarjetaEnvio(e, rutasPorEnvio[e.id])).join('');
+  activos.forEach((e) => {
+    const ruta = rutasPorEnvio[e.id];
+    if (ruta?.disponible) iniciarMapaRutaPedido(e.id, ruta);
+  });
 }
 
 async function actualizarEstadoEnvio(envioId, nuevoEstado) {
@@ -1383,6 +2047,21 @@ async function actualizarEstadoEnvio(envioId, nuevoEstado) {
     if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
   } catch (err) {
     manejarError(err, 'actualizar el estado del envío');
+  }
+}
+
+async function responderPropuesta(envioId, accion) {
+  const boton = document.querySelector(`.btn-${accion}-propuesta[data-envio-id="${envioId}"]`);
+  const card = boton?.closest('.propuesta-card');
+  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    if (accion === 'aceptar') await Api.transporte.aceptar(envioId);
+    else await Api.transporte.rechazar(envioId);
+    toast(accion === 'aceptar' ? 'Envío aceptado, ¡buen viaje! 🚚' : 'Envío rechazado.');
+    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
+  } catch (err) {
+    manejarError(err, `${accion} el envío`);
+    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -1461,6 +2140,7 @@ async function manejarLogin(e) {
     await iniciarSesionConToken(resp.access_token);
     document.getElementById('form-login').reset();
     cerrarModal('modal-auth');
+    cambiarVista('catalogo');
     toast(`¡Bienvenido de nuevo, ${Estado.nombre}! 🌱`);
   } catch (err) {
     manejarError(err, 'iniciar sesión');
@@ -1486,6 +2166,7 @@ async function manejarRegistro(e) {
 
     document.getElementById('form-registro').reset();
     cerrarModal('modal-auth');
+    cambiarVista('catalogo');
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     manejarError(err, 'crear la cuenta');
@@ -1538,14 +2219,17 @@ function inicializarEventos() {
   document.getElementById('btn-limpiar-filtros').addEventListener('click', limpiarFiltros);
   document.getElementById('btn-refrescar-catalogo').addEventListener('click', cargarCatalogo);
 
-  document.getElementById('productos-grid').addEventListener('click', (e) => {
-    const btnAgregar = e.target.closest('.btn-agregar');
-    if (btnAgregar) {
-      agregarAlCarrito(btnAgregar.dataset.id);
-      return;
-    }
-    const card = e.target.closest('.product-card');
-    if (card) abrirDetalleProducto(card.dataset.id);
+  document.getElementById('productos-grid').addEventListener('click', manejarClickGrid);
+  document.getElementById('landing-productos-grid').addEventListener('click', manejarClickGrid);
+
+  document.querySelectorAll('[data-landing-cta]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.landingCta === 'registro') abrirRegistroConRol();
+      if (btn.dataset.landingCta === 'explorar') cambiarVista('catalogo');
+    });
+  });
+  document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
   });
 
   document.getElementById('btn-cart').addEventListener('click', () => {
@@ -1589,10 +2273,73 @@ function inicializarEventos() {
   document.getElementById('btn-ubicacion-productor').addEventListener('click', usarMiUbicacionProductor);
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
+
+  ['producto-nombre', 'producto-categoria', 'producto-unidad', 'producto-precio', 'producto-stock'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', actualizarVistaPreviaProducto);
+    document.getElementById(id).addEventListener('change', actualizarVistaPreviaProducto);
+  });
+
+  document.getElementById('btn-terminar-publicacion').addEventListener('click', reiniciarFormularioProducto);
+  document.getElementById('btn-empezar-publicar').addEventListener('click', () => {
+    const campo = document.getElementById('producto-nombre');
+    campo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    campo.focus({ preventScroll: true });
+  });
+
   document.getElementById('mis-productos-grid').addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn-ver-qr');
-    if (!btn) return;
-    window.open(Api.certificacion.qrUrl(btn.dataset.id), '_blank', 'noopener');
+    const btnResenas = e.target.closest('.btn-toggle-resenas');
+    if (btnResenas) { alternarResenasProductor(btnResenas.dataset.id); return; }
+    const btnFotos = e.target.closest('.btn-toggle-fotos');
+    if (btnFotos) { alternarFotosProductor(btnFotos.dataset.id); return; }
+    const btnCert = e.target.closest('.btn-ver-certificacion');
+    if (btnCert) { abrirModalCertificacion(btnCert.dataset.id); return; }
+  });
+
+  // ---- Gestor de fotos: subida/eliminación delegadas (se usan tanto al publicar como en "Mis productos") ----
+  document.addEventListener('click', (e) => {
+    const mover = e.target.closest('.miniatura-mover-btn');
+    if (mover) {
+      if (mover.disabled) return;
+      const productoId = mover.closest('.gestor-fotos')?.dataset.productoId;
+      if (productoId) moverFotoProducto(productoId, mover.dataset.imagenId, mover.dataset.direccion);
+      return;
+    }
+    const quitar = e.target.closest('.upload-miniatura-quitar');
+    if (quitar) {
+      const productoId = quitar.closest('.gestor-fotos')?.dataset.productoId;
+      if (productoId) eliminarFotoProducto(productoId, quitar.dataset.imagenId);
+      return;
+    }
+    const zona = e.target.closest('.upload-zona');
+    if (zona && !zona.classList.contains('deshabilitada') && !e.target.closest('.upload-input')) {
+      zona.querySelector('.upload-input')?.click();
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    if (!e.target.matches('.upload-input')) return;
+    const productoId = e.target.closest('.gestor-fotos')?.dataset.productoId;
+    if (productoId && e.target.files.length) subirFotosProducto(productoId, e.target.files);
+    e.target.value = '';
+  });
+
+  document.addEventListener('dragover', (e) => {
+    const zona = e.target.closest('.upload-zona');
+    if (zona && !zona.classList.contains('deshabilitada')) {
+      e.preventDefault();
+      zona.classList.add('dragover');
+    }
+  });
+  document.addEventListener('dragleave', (e) => {
+    e.target.closest('.upload-zona')?.classList.remove('dragover');
+  });
+  document.addEventListener('drop', (e) => {
+    const zona = e.target.closest('.upload-zona');
+    if (!zona || zona.classList.contains('deshabilitada')) return;
+    e.preventDefault();
+    zona.classList.remove('dragover');
+    const productoId = zona.closest('.gestor-fotos')?.dataset.productoId;
+    if (productoId && e.dataTransfer.files.length) subirFotosProducto(productoId, e.dataTransfer.files);
   });
 
   document.getElementById('form-repartidor').addEventListener('submit', crearPerfilRepartidor);
@@ -1603,6 +2350,12 @@ function inicializarEventos() {
     const envioId = btn.dataset.envioId;
     const select = document.querySelector(`.select-estado-envio[data-envio-id="${envioId}"]`);
     actualizarEstadoEnvio(envioId, select.value);
+  });
+  document.getElementById('propuestas-list').addEventListener('click', (e) => {
+    const aceptar = e.target.closest('.btn-aceptar-propuesta');
+    if (aceptar) { responderPropuesta(aceptar.dataset.envioId, 'aceptar'); return; }
+    const rechazar = e.target.closest('.btn-rechazar-propuesta');
+    if (rechazar) { responderPropuesta(rechazar.dataset.envioId, 'rechazar'); return; }
   });
 }
 
@@ -1617,7 +2370,7 @@ function iniciar() {
   cargarSesionGuardada();
   actualizarUIAuth();
   inicializarEventos();
-  cargarCatalogo();
+  cambiarVista(Estado.token ? 'catalogo' : 'landing');
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);

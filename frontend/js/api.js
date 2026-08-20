@@ -56,6 +56,38 @@ async function request(baseKey, path, { method = 'GET', body, auth = false } = {
   return data;
 }
 
+async function requestFormData(baseKey, path, formData) {
+  const token = Estado.token;
+  if (!token) throw new ApiError('Debes iniciar sesión para continuar.', 401);
+
+  let resp;
+  try {
+    resp = await fetch(`${API_BASE[baseKey]}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData,
+    });
+  } catch (err) {
+    throw new ApiError(`No se pudo conectar con el servicio de ${baseKey}. ¿Está corriendo?`, 0);
+  }
+
+  let data = null;
+  const text = await resp.text();
+  if (text) {
+    try { data = JSON.parse(text); } catch { data = null; }
+  }
+
+  if (!resp.ok) {
+    if (resp.status === 403) {
+      throw new ApiError('No tienes permiso para esta acción.', 403);
+    }
+    const detail = (data && data.detail) ? data.detail : `Error ${resp.status} en ${baseKey}`;
+    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), resp.status);
+  }
+
+  return data;
+}
+
 const Api = {
   usuarios: {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
@@ -73,6 +105,13 @@ const Api = {
     crear: (datos) => request('productos', '/productos', { method: 'POST', body: datos, auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
+    subirImagen: (id, archivo, orden = 0) => {
+      const formData = new FormData();
+      formData.append('archivo', archivo);
+      return requestFormData('productos', `/productos/${id}/imagenes/subir?orden=${orden}`, formData);
+    },
+    eliminarImagen: (imagenId) => request('productos', `/productos/imagenes/${imagenId}`, { method: 'DELETE', auth: true }),
+    actualizarOrdenImagen: (imagenId, orden) => request('productos', `/productos/imagenes/${imagenId}/orden`, { method: 'PATCH', body: { orden }, auth: true }),
   },
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),
@@ -84,6 +123,9 @@ const Api = {
     actualizarEstado: (envioId, estado) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado }, auth: true }),
     ruta: (envioId) => request('transporte', `/envios/${envioId}/ruta`),
     actualizarUbicacion: (envioId, latitud, longitud) => request('transporte', `/envios/${envioId}/ubicacion`, { method: 'PATCH', body: { latitud: String(latitud), longitud: String(longitud) }, auth: true }),
+    propuestas: () => request('transporte', '/envios/propuestas', { auth: true }),
+    aceptar: (envioId) => request('transporte', `/envios/${envioId}/aceptar`, { method: 'POST', auth: true }),
+    rechazar: (envioId) => request('transporte', `/envios/${envioId}/rechazar`, { method: 'POST', auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

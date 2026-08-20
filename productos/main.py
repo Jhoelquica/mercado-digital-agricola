@@ -62,6 +62,9 @@ class DescontarStock(BaseModel):
 class ReponerStock(BaseModel):
     cantidad: int
 
+class OrdenImagen(BaseModel):
+    orden: int
+
 @breaker_productores
 def llamar_productores_me(token: str):
     with httpx.Client() as client:
@@ -84,6 +87,46 @@ def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
     return db.query(models.Resena).filter(
         models.Resena.producto_id == producto_id
     ).order_by(models.Resena.fecha_creacion.desc()).all()
+
+@app.post("/productos/{producto_id}/resenas")
+def crear_resena(
+        producto_id: str,
+        datos: ResenaCrear,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(verificar_token),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    if datos.calificacion < 1 or datos.calificacion > 5:
+        raise HTTPException(status_code=422, detail="La calificación debe ser entre 1 y 5")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    usuario_id = usuario.get("sub")
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{USUARIOS_URL}/usuarios/{usuario_id}",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            usuario_nombre = "Usuario"
+        else:
+            usuario_nombre = resp.json().get("nombre", "Usuario") if resp.status_code == 200 else "Usuario"
+
+    nueva_resena = models.Resena(
+        producto_id=producto_id,
+        usuario_id=usuario_id,
+        usuario_nombre=usuario_nombre,
+        calificacion=datos.calificacion,
+        comentario=datos.comentario,
+    )
+    db.add(nueva_resena)
+    db.commit()
+    db.refresh(nueva_resena)
+    return nueva_resena
 
 SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 
@@ -224,7 +267,43 @@ def eliminar_imagen(
 
 @app.get("/productos")
 def listar_productos(db: Session = Depends(get_db)):
-    return db.query(models.Producto).all()
+    productos = db.query(models.Producto).all()
+
+    imagenes = db.query(models.ProductoImagen).order_by(models.ProductoImagen.orden).all()
+    primera_imagen_por_producto = {}
+    for img in imagenes:
+        pid = str(img.producto_id)
+        if pid not in primera_imagen_por_producto:
+            primera_imagen_por_producto[pid] = img.url
+
+    stats_resenas = db.query(
+        models.Resena.producto_id,
+        func.avg(models.Resena.calificacion),
+        func.count(models.Resena.id),
+    ).group_by(models.Resena.producto_id).all()
+    stats_por_producto = {
+        str(pid): (round(float(promedio), 1), total)
+        for pid, promedio, total in stats_resenas
+    }
+
+    return [
+        {
+            "id": p.id,
+            "productor_id": p.productor_id,
+            "productor_nombre": p.productor_nombre,
+            "nombre": p.nombre,
+            "categoria": p.categoria,
+            "precio": p.precio,
+            "stock": p.stock,
+            "unidad_medida": p.unidad_medida,
+            "imagen_url": p.imagen_url,
+            "fecha_publicacion": p.fecha_publicacion,
+            "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
+            "calificacion_promedio": stats_por_producto.get(str(p.id), (None, 0))[0],
+            "total_resenas": stats_por_producto.get(str(p.id), (None, 0))[1],
+        }
+        for p in productos
+    ]
 
 @app.get("/productos/{producto_id}")
 def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
@@ -271,3 +350,39 @@ def descontar_stock(producto_id: str, datos: DescontarStock, db: Session = Depen
     db.commit()
     db.refresh(producto)
     return producto
+
+@app.patch("/productos/imagenes/{imagen_id}/orden")
+def actualizar_orden_imagen(
+        imagen_id: str,
+        datos: OrdenImagen,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    imagen = db.query(models.ProductoImagen).filter(models.ProductoImagen.id == imagen_id).first()
+    if not imagen:
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == imagen.producto_id).first()
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes modificar imágenes de un producto que no te pertenece")
+
+    imagen.orden = datos.orden
+    db.commit()
+    db.refresh(imagen)
+    return imagen
