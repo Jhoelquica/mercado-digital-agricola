@@ -92,11 +92,12 @@ const Api = {
   usuarios: {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
     login: (datos) => request('usuarios', '/usuarios/login', { method: 'POST', body: datos }),
-    obtener: (id) => request('usuarios', `/usuarios/${id}`),
+    obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
   },
   productores: {
     listar: () => request('productores', '/productores'),
     obtener: (id) => request('productores', `/productores/${id}`),
+    miPerfil: () => request('productores', '/productores/me', { auth: true }),
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),
   },
   productos: {

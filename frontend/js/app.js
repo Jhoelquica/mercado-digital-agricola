@@ -670,6 +670,7 @@ function cambiarVista(nombre) {
   if (nombre === 'notificaciones') cargarNotificaciones();
   if (nombre === 'panel-productor') iniciarPanelProductor();
   if (nombre === 'gestion-envios') cargarGestionEnvios();
+  if (nombre === 'perfil') cargarPerfil();
 }
 
 function abrirRegistroConRol(rol) {
@@ -1166,11 +1167,36 @@ function irPasoCheckout(paso) {
 function resetCheckout() {
   irPasoCheckout(1);
   resetearBotonPago();
+  pedidoReintento = null;
   document.querySelectorAll('input[name="metodo-pago"]').forEach((r) => { r.checked = r.value === 'tarjeta'; });
   document.querySelectorAll('.metodo-pago-card').forEach((c) => {
     c.classList.toggle('seleccionado', c.querySelector('input').value === 'tarjeta');
   });
   inicializarMapaDestino();
+}
+
+// ---- Reintentar el pago de un pedido ya existente (rechazado) ----
+let pedidoReintento = null; // { id, monto }
+
+function reintentarPago(pedidoId, monto) {
+  pedidoReintento = { id: pedidoId, monto };
+  abrirModal('modal-pedido');
+  document.getElementById('checkout-total-paso2').textContent = formatearMoneda(monto);
+  irPasoCheckout(2);
+}
+
+async function manejarClickPagar() {
+  if (pedidoReintento) {
+    const { id, monto } = pedidoReintento;
+    const metodo = document.querySelector('input[name="metodo-pago"]:checked')?.value || 'tarjeta';
+    const btn = document.getElementById('btn-checkout-pagar');
+    btn.disabled = true;
+    btn.textContent = 'Enviando pedido...';
+    pedidoReintento = null;
+    abrirCheckoutCulqi(id, monto, metodo);
+    return;
+  }
+  await confirmarYPagar();
 }
 
 // ---- Selector de destino (mapa del checkout) ----
@@ -1370,35 +1396,132 @@ function guardarPedidoTrackeado(id) {
   }
 }
 
+let pedidosCargados = []; // caché de {pedido, envio, pago, ruta} para filtrar por tab sin refetch
+let filtroPedidoActual = 'todos';
+
+function esPedidoEntregado(d) {
+  return d.envio ? d.envio.estado === 'entregado' : d.pedido?.estado === 'entregado';
+}
+
+function renderEmptyPedidos(tipo) {
+  const vacio = document.getElementById('pedidos-empty');
+  const plantillas = {
+    'no-sesion': `
+      <span class="empty-state-icon">🔒</span>
+      <p><strong>Inicia sesión para ver tus pedidos</strong></p>
+      <p class="muted">Necesitas una cuenta para hacer seguimiento de tus compras.</p>
+      <button type="button" class="btn btn-primary" id="btn-vacio-login">Iniciar sesión</button>`,
+    'sin-pedidos': `
+      <span class="empty-state-icon">🛍️</span>
+      <p><strong>Aún no tienes pedidos</strong></p>
+      <p class="muted">Explora el catálogo y arma tu primer pedido directo de productores locales.</p>
+      <button type="button" class="btn btn-primary" id="btn-vacio-catalogo">Explorar catálogo</button>`,
+    'sin-en-curso': `
+      <span class="empty-state-icon">✅</span>
+      <p><strong>No tienes pedidos en curso</strong></p>
+      <p class="muted">Todos tus pedidos ya fueron entregados.</p>`,
+    'sin-entregados': `
+      <span class="empty-state-icon">📭</span>
+      <p><strong>Aún no tienes pedidos entregados</strong></p>
+      <p class="muted">Aquí verás el historial una vez que se complete una entrega.</p>`,
+  };
+  vacio.innerHTML = plantillas[tipo] || plantillas['sin-pedidos'];
+  vacio.classList.remove('hidden');
+  document.getElementById('btn-vacio-login')?.addEventListener('click', () => {
+    cambiarTabAuth('login');
+    abrirModal('modal-auth');
+  });
+  document.getElementById('btn-vacio-catalogo')?.addEventListener('click', () => cambiarVista('catalogo'));
+}
+
 async function cargarMisPedidos() {
   detenerPollingRutas();
   const cont = document.getElementById('pedidos-list');
   const vacio = document.getElementById('pedidos-empty');
+  vacio.classList.add('hidden');
 
   if (!Estado.token) {
     cont.innerHTML = '';
-    vacio.classList.remove('hidden');
-    vacio.querySelector('p').textContent = '🔒 Inicia sesión para ver tus pedidos.';
+    renderEmptyPedidos('no-sesion');
     return;
   }
 
   const ids = obtenerPedidosTrackeados();
   if (!ids.length) {
     cont.innerHTML = '';
-    vacio.classList.remove('hidden');
-    vacio.querySelector('p').textContent = '🛍️ Aún no tienes pedidos registrados. ¡Explora el catálogo!';
+    renderEmptyPedidos('sin-pedidos');
     return;
   }
-  vacio.classList.add('hidden');
   cont.innerHTML = renderSkeletonFilas(Math.min(ids.length, 3));
 
-  const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
-  const validos = datos.filter(Boolean);
-  cont.innerHTML = validos.map((d) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta)).join('') || '<p class="muted">No se pudieron cargar los pedidos.</p>';
+  if (!Estado.productos.length) {
+    try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin fotos si falla */ }
+  }
 
-  validos.forEach((d) => {
-    if (d.envio && d.ruta?.disponible) iniciarMapaRutaPedido(d.envio.id, d.ruta);
+  const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
+  pedidosCargados = datos.filter(Boolean);
+
+  if (!pedidosCargados.length) {
+    cont.innerHTML = '<p class="muted">No se pudieron cargar los pedidos.</p>';
+    return;
+  }
+
+  filtrarYRenderizarPedidos();
+}
+
+function filtrarYRenderizarPedidos() {
+  const cont = document.getElementById('pedidos-list');
+
+  document.querySelectorAll('.pedidos-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.filtro === filtroPedidoActual);
   });
+
+  let filtrados = pedidosCargados;
+  if (filtroPedidoActual === 'en_curso') filtrados = pedidosCargados.filter((d) => !esPedidoEntregado(d));
+  if (filtroPedidoActual === 'entregados') filtrados = pedidosCargados.filter(esPedidoEntregado);
+
+  detenerPollingRutas();
+
+  if (!filtrados.length) {
+    cont.innerHTML = '';
+    renderEmptyPedidos(
+      filtroPedidoActual === 'en_curso' ? 'sin-en-curso' :
+      filtroPedidoActual === 'entregados' ? 'sin-entregados' : 'sin-pedidos'
+    );
+    return;
+  }
+  document.getElementById('pedidos-empty').classList.add('hidden');
+  cont.innerHTML = filtrados.map((d) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta)).join('');
+
+  filtrados.forEach((d) => {
+    if (d.envio && ['asignado', 'en_camino'].includes(d.envio.estado) && d.ruta?.disponible) {
+      iniciarMapaRutaPedido(d.envio.id, d.ruta);
+    }
+  });
+
+  cargarEstadosResenaPedidos(filtrados);
+}
+
+async function cargarEstadosResenaPedidos(filtrados) {
+  for (const d of filtrados.filter(esPedidoEntregado)) {
+    const contenedor = document.querySelector(`.pedido-card[data-pedido-id="${d.pedido.id}"] .resena-cta`);
+    if (!contenedor) continue;
+
+    const pendientes = [];
+    for (const item of (d.pedido.items || [])) {
+      try {
+        const resenas = await Api.productos.listarResenas(item.producto_id);
+        if (!resenas.some((r) => String(r.usuario_id) === String(Estado.usuarioId))) pendientes.push(item.producto_id);
+      } catch { /* si falla la consulta, no mostramos el CTA para ese producto */ }
+    }
+
+    if (pendientes.length) {
+      contenedor.innerHTML = pendientes.map((pid) => {
+        const nombre = Estado.productos.find((p) => p.id === pid)?.nombre || 'este producto';
+        return `<button type="button" class="btn btn-outline btn-sm btn-calificar-producto" data-producto-id="${pid}">⭐ Califica ${escapeAttr(nombre)}</button>`;
+      }).join('');
+    }
+  }
 }
 
 async function cargarDatosPedido(pedidoId) {
@@ -1449,35 +1572,46 @@ function renderBloqueRuta(envio, ruta) {
 }
 
 function renderTarjetaPedido(pedido, envio, pago, ruta) {
-  const items = (pedido.items || []).map((i) => {
-    const nombre = Estado.productos.find((p) => p.id === i.producto_id)?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`;
-    return `<li><span>${i.cantidad} × ${nombre}</span><span>${formatearMoneda(i.precio_unitario * i.cantidad)}</span></li>`;
-  }).join('');
+  const items = (pedido.items || []).map((i) => ({ ...i, producto: Estado.productos.find((p) => p.id === i.producto_id) }));
+  const total = items.reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
 
-  const total = (pedido.items || []).reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
+  const itemsHtml = items.map((i) => `
+    <li class="pedido-item-linea">
+      <div class="pedido-item-media">${renderMediaProducto(i.producto || { categoria: null, nombre: '' }, 'pedido-item-thumb')}</div>
+      <span class="pedido-item-nombre">${i.cantidad} × ${escapeAttr(i.producto?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`)}</span>
+      <span class="pedido-item-precio">${formatearMoneda(i.precio_unitario * i.cantidad)}</span>
+    </li>`).join('');
 
-  const envioHtml = envio
-    ? `<div class="envio-track"><span class="icon">🚚</span> Envío: ${badgeEstadoEnvio(envio.estado)} ${envio.transportista ? `· Transportista: ${envio.transportista}` : ''}</div>`
-    : `<div class="envio-track"><span class="icon">📦</span> Aún no se asignó transporte para este pedido.</div>`;
-
-  const pagoHtml = pago
-    ? `<div class="envio-track"><span class="icon">💳</span> Pago: ${badgeEstadoEnvio(pago.estado)}</div>`
-    : `<div class="envio-track"><span class="icon">💳</span> Pago: <span class="badge badge-default">pendiente</span></div>`;
+  const activo = envio && ['asignado', 'en_camino'].includes(envio.estado);
+  const entregado = esPedidoEntregado({ pedido, envio });
+  const pagoRechazado = pago?.estado === 'rechazado';
 
   return `
-    <div class="pedido-card">
+    <div class="pedido-card" data-pedido-id="${pedido.id}">
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Pedido #${String(pedido.id).slice(0, 8)}</div>
           <div class="pedido-fecha">${formatearFecha(pedido.fecha_creacion)}</div>
         </div>
-        ${badgeEstadoEnvio(pedido.estado)}
+        <div class="pedido-total-header">${formatearMoneda(total)}</div>
       </div>
-      <ul class="pedido-items">${items}</ul>
-      <div class="pedido-total">Total: ${formatearMoneda(total)}</div>
-      ${pagoHtml}
-      ${envioHtml}
-      ${renderBloqueRuta(envio, ruta)}
+
+      <div class="estado-badges-row">
+        <div class="estado-badge-item"><span class="estado-badge-label">Pedido</span>${badgeEstadoEnvio(pedido.estado)}</div>
+        <div class="estado-badge-item"><span class="estado-badge-label">Pago</span>${pago ? badgeEstadoEnvio(pago.estado) : '<span class="badge badge-default">—</span>'}</div>
+        <div class="estado-badge-item"><span class="estado-badge-label">Envío</span>${envio ? badgeEstadoEnvio(envio.estado) : '<span class="badge badge-default">—</span>'}</div>
+      </div>
+
+      <ul class="pedido-items">${itemsHtml}</ul>
+
+      ${pagoRechazado ? `
+      <div class="pago-rechazado-aviso">
+        <span>⚠️ Tu pago fue rechazado.</span>
+        <button type="button" class="btn btn-outline btn-sm btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
+      </div>` : ''}
+
+      ${activo ? renderBloqueRuta(envio, ruta) : ''}
+      ${entregado ? '<div class="resena-cta"></div>' : ''}
     </div>
   `;
 }
@@ -1532,9 +1666,15 @@ async function buscarPedidoPorId() {
   try {
     const d = await cargarDatosPedido(id);
     if (!d) throw new Error('No se encontró un pedido con ese ID.');
+    if (!Estado.productos.length) {
+      try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin fotos si falla */ }
+    }
     cont.innerHTML = renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta);
     guardarPedidoTrackeado(id);
-    if (d.envio && d.ruta?.disponible) iniciarMapaRutaPedido(d.envio.id, d.ruta);
+    if (d.envio && ['asignado', 'en_camino'].includes(d.envio.estado) && d.ruta?.disponible) {
+      iniciarMapaRutaPedido(d.envio.id, d.ruta);
+    }
+    cargarEstadosResenaPedidos([d]);
   } catch (err) {
     manejarError(err, 'buscar el pedido');
     cargarMisPedidos();
@@ -2128,6 +2268,148 @@ function detenerSeguimientoRepartidor() {
   ultimaPosicionRepartidor = null;
 }
 
+// ============ MI PERFIL ============
+const ROL_INFO_PERFIL = {
+  comprador: { icono: '🛒', texto: 'Comprador' },
+  productor: { icono: '🚜', texto: 'Productor' },
+  repartidor: { icono: '🚚', texto: 'Repartidor' },
+};
+
+function ocultarDni(dni) {
+  if (!dni) return '—';
+  if (dni.length < 6) return dni;
+  const centro = Math.max(0, dni.length - 6);
+  return `${dni.slice(0, 4)}${'*'.repeat(centro)}${dni.slice(-2)}`;
+}
+
+function renderSkeletonPerfil() {
+  return `
+    <div class="perfil-header card-panel">
+      <div class="skeleton" style="width:64px;height:64px;border-radius:50%;flex-shrink:0;"></div>
+      <div style="flex:1">
+        <div class="skeleton skeleton-line w-40" style="margin-bottom:10px;"></div>
+        <div class="skeleton skeleton-line w-60"></div>
+      </div>
+    </div>
+    <div class="card-panel">
+      <div class="skeleton skeleton-line w-40" style="margin-bottom:14px;"></div>
+      <div class="skeleton skeleton-line tall w-70" style="margin-bottom:10px;"></div>
+      <div class="skeleton skeleton-line w-60"></div>
+    </div>`;
+}
+
+function renderPerfilComprador() {
+  return `
+    <div class="card-panel">
+      <h3>🛒 Comprador</h3>
+      <p class="muted">Explora el catálogo y haz seguimiento de tus compras.</p>
+      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-pedidos">Ir a Mis Pedidos →</button>
+    </div>`;
+}
+
+function renderPerfilProductor(extra) {
+  if (!extra) {
+    return `
+      <div class="perfil-cta-completar">
+        <span class="empty-state-icon">🚜</span>
+        <p><strong>Aún no completaste tu perfil de productor</strong></p>
+        <p class="muted">Créalo para empezar a publicar productos sin intermediarios.</p>
+        <button type="button" class="btn btn-primary" id="btn-perfil-ir-panel">Completar perfil de productor</button>
+      </div>`;
+  }
+  return `
+    <div class="card-panel">
+      <h3>🚜 Datos de productor</h3>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(extra.comunidad || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${escapeAttr(extra.contacto || '—')}</span></div>
+      </div>
+      ${hayCoordenadas(extra.latitud, extra.longitud) ? `
+      <div class="mapa-bloque">
+        <h4 class="mapa-titulo">📍 Ubicación de tu chakra</h4>
+        <div id="mapa-perfil-productor" class="mapa-mini"></div>
+      </div>` : `<div class="mapa-bloque-neutro"><span class="icon">📍</span> No has marcado la ubicación de tu chakra todavía.</div>`}
+      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
+    </div>`;
+}
+
+function renderPerfilRepartidor(extra) {
+  if (!extra) {
+    return `
+      <div class="perfil-cta-completar">
+        <span class="empty-state-icon">🚚</span>
+        <p><strong>Aún no completaste tu perfil de repartidor</strong></p>
+        <p class="muted">Créalo para empezar a recibir propuestas de envío.</p>
+        <button type="button" class="btn btn-primary" id="btn-perfil-ir-envios">Completar perfil de repartidor</button>
+      </div>`;
+  }
+  return `
+    <div class="card-panel">
+      <h3>🚚 Datos de repartidor</h3>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">DNI</span><span class="perfil-dato-valor perfil-dato-mono">${escapeAttr(ocultarDni(extra.dni))}</span></div>
+      </div>
+      ${renderBannerDisponibilidad(extra.estado_disponibilidad)}
+      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-envios" style="margin-top:16px;">Ir a Gestionar Envíos →</button>
+    </div>`;
+}
+
+function renderPerfil(usuario, extra) {
+  const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '👤', texto: usuario.rol || 'Usuario' };
+
+  const headerHtml = `
+    <div class="perfil-header card-panel">
+      <div class="perfil-avatar">${escapeAttr((usuario.nombre || '?').charAt(0).toUpperCase())}</div>
+      <div class="perfil-header-info">
+        <h3>${escapeAttr(usuario.nombre)}</h3>
+        <span class="perfil-email">${escapeAttr(usuario.email)}</span>
+        <span class="perfil-rol-badge">${rolInfo.icono} ${rolInfo.texto}</span>
+      </div>
+    </div>`;
+
+  let seccionRol = renderPerfilComprador();
+  if (usuario.rol === 'productor') seccionRol = renderPerfilProductor(extra);
+  else if (usuario.rol === 'repartidor') seccionRol = renderPerfilRepartidor(extra);
+
+  return `
+    ${headerHtml}
+    ${seccionRol}
+    <div class="card-panel">
+      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-logout">🚪 Cerrar sesión</button>
+    </div>`;
+}
+
+async function cargarPerfil() {
+  if (!Estado.token) {
+    cambiarVista('catalogo');
+    return;
+  }
+  const cont = document.getElementById('perfil-contenido');
+  cont.innerHTML = renderSkeletonPerfil();
+
+  let usuario;
+  try {
+    usuario = await Api.usuarios.obtener(Estado.usuarioId);
+  } catch (err) {
+    manejarError(err, 'cargar tu perfil');
+    cont.innerHTML = '<p class="muted">No se pudo cargar tu perfil.</p>';
+    return;
+  }
+
+  let extra = null;
+  if (usuario.rol === 'productor') {
+    try { extra = await Api.productores.miPerfil(); } catch { /* aún no tiene perfil de productor */ }
+  } else if (usuario.rol === 'repartidor') {
+    try { extra = await Api.repartidores.miPerfil(); } catch { /* aún no tiene perfil de repartidor */ }
+  }
+
+  cont.innerHTML = renderPerfil(usuario, extra);
+
+  if (usuario.rol === 'productor' && extra && hayCoordenadas(extra.latitud, extra.longitud)) {
+    crearMapaSoloLectura('mapa-perfil-productor', extra.latitud, extra.longitud, '🧺', '#2d6a4f', escapeAttr(extra.nombre || 'Tu chakra'));
+  }
+}
+
 // ============ AUTENTICACIÓN ============
 async function manejarLogin(e) {
   e.preventDefault();
@@ -2248,7 +2530,7 @@ function inicializarEventos() {
   document.getElementById('btn-usar-mi-ubicacion').addEventListener('click', usarMiUbicacionDestino);
   document.getElementById('btn-checkout-paso1-siguiente').addEventListener('click', irAPaso2);
   document.getElementById('btn-checkout-paso2-volver').addEventListener('click', () => irPasoCheckout(1));
-  document.getElementById('btn-checkout-pagar').addEventListener('click', confirmarYPagar);
+  document.getElementById('btn-checkout-pagar').addEventListener('click', manejarClickPagar);
   document.getElementById('btn-checkout-finalizar').addEventListener('click', () => {
     cerrarModal('modal-pedido');
     resetCheckout();
@@ -2265,6 +2547,18 @@ function inicializarEventos() {
   document.getElementById('btn-buscar-pedido').addEventListener('click', buscarPedidoPorId);
   document.getElementById('input-buscar-pedido').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); buscarPedidoPorId(); }
+  });
+  document.getElementById('pedidos-tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.pedidos-tab');
+    if (!tab) return;
+    filtroPedidoActual = tab.dataset.filtro;
+    filtrarYRenderizarPedidos();
+  });
+  document.getElementById('pedidos-list').addEventListener('click', (e) => {
+    const calificar = e.target.closest('.btn-calificar-producto');
+    if (calificar) { abrirDetalleProducto(calificar.dataset.productoId); return; }
+    const reintentar = e.target.closest('.btn-reintentar-pago');
+    if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto)); return; }
   });
 
   document.getElementById('btn-refrescar-notificaciones').addEventListener('click', cargarNotificaciones);
@@ -2356,6 +2650,13 @@ function inicializarEventos() {
     if (aceptar) { responderPropuesta(aceptar.dataset.envioId, 'aceptar'); return; }
     const rechazar = e.target.closest('.btn-rechazar-propuesta');
     if (rechazar) { responderPropuesta(rechazar.dataset.envioId, 'rechazar'); return; }
+  });
+
+  document.getElementById('perfil-contenido').addEventListener('click', (e) => {
+    if (e.target.closest('#btn-perfil-logout')) { cerrarSesion(); return; }
+    if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
+    if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
+    if (e.target.closest('#btn-perfil-ir-pedidos')) { cambiarVista('mis-pedidos'); return; }
   });
 }
 

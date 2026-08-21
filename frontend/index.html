@@ -28,6 +28,7 @@
       <button class="nav-link" data-nav="notificaciones">Notificaciones</button>
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
       <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
+      <button class="nav-link" data-nav="perfil">Mi Perfil</button>
     </nav>
 
     <div class="nav-actions">
@@ -39,7 +40,7 @@
         <button class="btn btn-primary" id="btn-open-registro">Registrarse</button>
       </div>
       <div id="user-area" class="user-area hidden">
-        <span class="user-chip">
+        <span class="user-chip" id="user-chip" data-nav="perfil" role="button" tabindex="0">
           <span class="user-avatar" id="user-avatar">?</span>
           <span class="user-name" id="user-name">Usuario</span>
         </span>
@@ -164,10 +165,14 @@
       <button class="btn btn-primary" id="btn-buscar-pedido">Buscar</button>
     </div>
 
-    <div id="pedidos-list" class="pedidos-list"></div>
-    <div id="pedidos-empty" class="empty-state hidden">
-      <p>🛍️ Aún no tienes pedidos registrados. ¡Explora el catálogo!</p>
+    <div class="pedidos-tabs" id="pedidos-tabs">
+      <button type="button" class="pedidos-tab active" data-filtro="todos">Todos</button>
+      <button type="button" class="pedidos-tab" data-filtro="en_curso">En curso</button>
+      <button type="button" class="pedidos-tab" data-filtro="entregados">Entregados</button>
     </div>
+
+    <div id="pedidos-list" class="pedidos-list"></div>
+    <div id="pedidos-empty" class="empty-state hidden"></div>
   </section>
 
   <!-- NOTIFICACIONES -->
@@ -317,6 +322,14 @@
         <p class="muted">No tienes propuestas ni envíos activos en este momento.</p>
       </div>
     </div>
+  </section>
+
+  <!-- MI PERFIL -->
+  <section id="view-perfil" class="view">
+    <div class="section-header">
+      <h2>👤 Mi Perfil</h2>
+    </div>
+    <div id="perfil-contenido"></div>
   </section>
 
 </main>
