@@ -9,6 +9,7 @@ class Pedido(Base):
     __tablename__ = "pedidos"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usuario_id = Column(UUID(as_uuid=True), nullable=True)
     comprador_nombre = Column(String, nullable=False)
     comprador_telefono = Column(String)
     estado = Column(String, default="pendiente")

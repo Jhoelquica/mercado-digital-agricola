@@ -8,6 +8,7 @@ class Notificacion(Base):
     __tablename__ = "notificaciones"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usuario_id = Column(UUID(as_uuid=True), nullable=True)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)
     tipo = Column(String, nullable=False)       # pedido_creado, envio_actualizado
     mensaje = Column(String, nullable=False)

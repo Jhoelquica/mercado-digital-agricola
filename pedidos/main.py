@@ -77,6 +77,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
 
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(
+            usuario_id=usuario.get("sub"),
             comprador_nombre=datos.comprador_nombre,
             comprador_telefono=datos.comprador_telefono,
             destino_latitud=datos.destino_latitud,
@@ -104,6 +105,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
     publicar_evento({
         "evento": "pedido_creado",
         "pedido_id": str(nuevo_pedido.id),
+        "usuario_id": str(usuario.get("sub")),
         "comprador_nombre": nuevo_pedido.comprador_nombre,
         "items": [
             {

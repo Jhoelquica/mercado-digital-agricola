@@ -43,4 +43,6 @@ def historial_por_pedido(pedido_id: str, db: Session = Depends(get_db), usuario:
 
 @app.get("/notificaciones")
 def listar_todas(db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
-    return db.query(models.Notificacion).order_by(models.Notificacion.fecha_envio.desc()).all()
+    return db.query(models.Notificacion).filter(
+        models.Notificacion.usuario_id == usuario.get("sub")
+    ).order_by(models.Notificacion.fecha_envio.desc()).all()

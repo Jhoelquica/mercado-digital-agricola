@@ -12,10 +12,16 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
-def _guardar_notificacion(pedido_id: str, tipo: str, mensaje: str):
+def _guardar_notificacion(pedido_id: str, tipo: str, mensaje: str, usuario_id: str = None):
     db = SessionLocal()
     try:
-        nueva = models.Notificacion(pedido_id=pedido_id, tipo=tipo, mensaje=mensaje)
+        if usuario_id is None:
+            anterior = db.query(models.Notificacion).filter(
+                models.Notificacion.pedido_id == pedido_id
+            ).first()
+            usuario_id = anterior.usuario_id if anterior else None
+
+        nueva = models.Notificacion(pedido_id=pedido_id, tipo=tipo, mensaje=mensaje, usuario_id=usuario_id)
         db.add(nueva)
         db.commit()
         print(f"[Notificaciones] {mensaje}")
@@ -32,6 +38,7 @@ def _procesar_mensaje(ch, method, properties, body):
             pedido_id=datos["pedido_id"],
             tipo="pedido_creado",
             mensaje=f"Hola {datos.get('comprador_nombre')}, tu pedido fue registrado y está pendiente.",
+            usuario_id=datos.get("usuario_id"),
         )
     elif evento == "envio_actualizado":
         _guardar_notificacion(
@@ -52,13 +59,11 @@ def _iniciar_consumo():
             )
             channel = connection.channel()
 
-            # Suscripción al primer exchange: pedidos
             channel.exchange_declare(exchange="eventos_pedidos", exchange_type="fanout", durable=True)
             channel.queue_declare(queue="notificaciones_pedidos", durable=True)
             channel.queue_bind(exchange="eventos_pedidos", queue="notificaciones_pedidos")
             channel.basic_consume(queue="notificaciones_pedidos", on_message_callback=_procesar_mensaje)
 
-            # Suscripción al segundo exchange: envíos
             channel.exchange_declare(exchange="eventos_envios", exchange_type="fanout", durable=True)
             channel.queue_declare(queue="notificaciones_envios", durable=True)
             channel.queue_bind(exchange="eventos_envios", queue="notificaciones_envios")

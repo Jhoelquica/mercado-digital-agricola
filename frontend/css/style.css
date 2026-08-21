@@ -896,8 +896,21 @@ input, select { font-family: inherit; }
   display: flex;
   gap: 14px;
   align-items: flex-start;
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.notif-icon { font-size: 1.4rem; }
+@media (prefers-reduced-motion: reduce) {
+  .notif-card { animation: none; }
+}
+.notif-icon {
+  width: 42px; height: 42px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+  background: var(--verde-pastel);
+}
+.notif-icon.tipo-envio_actualizado { background: #cfe8ff; }
+.notif-icon.tipo-pedido_creado { background: #fde9d9; }
 .notif-msg { font-weight: 500; }
 .notif-meta { font-size: 0.78rem; color: var(--texto-suave); margin-top: 4px; }
 
