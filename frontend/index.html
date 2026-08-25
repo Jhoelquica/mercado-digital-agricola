@@ -23,6 +23,17 @@
     </div>
 
     <nav class="nav-links" id="nav-links">
+      <div class="nav-mega" id="nav-mega-categorias">
+        <button type="button" class="nav-link nav-mega-trigger" id="btn-mega-categorias" aria-expanded="false" aria-haspopup="true">
+          Categorías <span class="nav-mega-chevron">▾</span>
+        </button>
+        <div class="nav-mega-panel" id="mega-panel-categorias">
+          <div class="nav-mega-panel-inner">
+            <div class="nav-mega-tabs" id="mega-tabs-categorias"></div>
+            <div class="nav-mega-productos" id="mega-productos-categorias"></div>
+          </div>
+        </div>
+      </div>
       <button class="nav-link active" data-nav="catalogo">Catálogo</button>
       <button class="nav-link" data-nav="mis-pedidos">Mis Pedidos</button>
       <button class="nav-link" data-nav="notificaciones">Notificaciones</button>
@@ -56,6 +67,14 @@
   <!-- LANDING (INVITADOS) -->
   <section id="view-landing" class="view active">
     <div class="landing-hero">
+      <img
+        class="landing-hero-bg"
+        src="assets/hero-valle-andino-1600.jpg"
+        srcset="assets/hero-valle-andino-800.jpg 800w, assets/hero-valle-andino-1600.jpg 1600w, assets/hero-valle-andino-2400.jpg 2400w"
+        sizes="(min-width: 1280px) 1232px, 100vw"
+        alt="Valle andino con terrazas de cultivo agrícola"
+        width="2400" height="1595"
+        loading="eager" fetchpriority="high">
       <div class="landing-hero-content">
         <span class="landing-kicker">📍 Hecho en Ayacucho, Perú</span>
         <h1>Del productor a tu mesa,<br>sin intermediarios</h1>

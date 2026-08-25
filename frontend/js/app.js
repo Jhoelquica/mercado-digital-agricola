@@ -735,6 +735,82 @@ async function cargarCatalogo() {
   }
 }
 
+// ============ MEGA-DROPDOWN DE CATEGORÍAS (NAVBAR) ============
+// Reutiliza CATEGORIAS_PRODUCTO (definida más abajo, junto al Panel Productor) — mismas 8 categorías fijas de toda la app.
+let megaCategoriaActiva = null;
+let megaCerrarTimeout = null;
+const megaCacheCategorias = {}; // categoria -> productos[] (evita refetch al reabrir la misma pestaña)
+
+function renderMegaTabs() {
+  const cont = document.getElementById('mega-tabs-categorias');
+  cont.innerHTML = CATEGORIAS_PRODUCTO.map((c) => `
+    <button type="button" class="nav-mega-tab ${c === megaCategoriaActiva ? 'active' : ''}" data-categoria="${c}">
+      ${ICONOS_CATEGORIA[c]} ${NOMBRE_CATEGORIA[c]}
+    </button>`).join('');
+}
+
+function renderSkeletonMega(n = 4) {
+  const item = `
+    <div class="nav-mega-producto">
+      <div class="skeleton" style="aspect-ratio:1/1;border-radius:10px;"></div>
+      <div class="skeleton skeleton-line w-70"></div>
+      <div class="skeleton skeleton-line w-40"></div>
+    </div>`;
+  return item.repeat(n);
+}
+
+function renderProductoMega(p) {
+  return `
+    <button type="button" class="nav-mega-producto" data-id="${p.id}">
+      ${renderMediaProducto(p, 'nav-mega-producto-img')}
+      <span class="nav-mega-producto-nombre">${escapeAttr(p.nombre)}</span>
+      <span class="nav-mega-producto-precio">${formatearMoneda(p.precio)}</span>
+    </button>`;
+}
+
+function pintarProductosMega(productos) {
+  const cont = document.getElementById('mega-productos-categorias');
+  cont.innerHTML = productos.length
+    ? productos.map(renderProductoMega).join('')
+    : '<p class="muted" style="grid-column:1/-1;margin:0;">Sin productos en esta categoría por ahora.</p>';
+}
+
+async function mostrarCategoriaMega(categoria) {
+  megaCategoriaActiva = categoria;
+  renderMegaTabs();
+
+  if (megaCacheCategorias[categoria]) {
+    pintarProductosMega(megaCacheCategorias[categoria]);
+    return;
+  }
+
+  document.getElementById('mega-productos-categorias').innerHTML = renderSkeletonMega();
+  if (!Estado.productos.length) {
+    try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin preview si falla */ }
+  }
+  const delCategoria = Estado.productos.filter((p) => normalizarCategoria(p.categoria) === categoria).slice(0, 4);
+  megaCacheCategorias[categoria] = delCategoria;
+
+  if (megaCategoriaActiva === categoria) pintarProductosMega(delCategoria);
+}
+
+function abrirMegaCategorias() {
+  clearTimeout(megaCerrarTimeout);
+  document.getElementById('nav-mega-categorias').classList.add('open');
+  document.getElementById('btn-mega-categorias').setAttribute('aria-expanded', 'true');
+  if (!megaCategoriaActiva) mostrarCategoriaMega(CATEGORIAS_PRODUCTO[0]);
+}
+
+function cerrarMegaCategorias() {
+  document.getElementById('nav-mega-categorias').classList.remove('open');
+  document.getElementById('btn-mega-categorias').setAttribute('aria-expanded', 'false');
+}
+
+function cerrarMegaCategoriasConDelay() {
+  clearTimeout(megaCerrarTimeout);
+  megaCerrarTimeout = setTimeout(cerrarMegaCategorias, 180);
+}
+
 function poblarSelectCategorias(productos) {
   const select = document.getElementById('select-categoria');
   const actual = select.value;
@@ -875,12 +951,22 @@ async function abrirDetalleProducto(id) {
   renderDetalleProducto(p, resenas, productor);
 }
 
-function renderMapaProductor(productor) {
-  if (!hayCoordenadas(productor?.latitud, productor?.longitud)) return '';
+function renderBloqueProductor(p, productor) {
+  const nombre = productor?.nombre || p.productor_nombre || 'Productor local';
+  const ubicacionTexto = productor?.comunidad || productor?.ubicacion || null;
+  const tieneMapa = hayCoordenadas(productor?.latitud, productor?.longitud);
+
   return `
-    <div class="mapa-bloque">
-      <h3 class="mapa-titulo">📍 Ubicación del productor</h3>
-      <div id="mapa-productor-detalle" class="mapa-mini"></div>
+    <div class="detalle-productor-card">
+      <div class="detalle-productor-header">
+        <span class="detalle-productor-icono">🧑‍🌾</span>
+        <div class="detalle-productor-info">
+          <span class="detalle-productor-label">Cultivado por</span>
+          <h3 class="detalle-productor-nombre">${escapeAttr(nombre)}</h3>
+          ${ubicacionTexto ? `<span class="detalle-productor-ubicacion">📍 ${escapeAttr(ubicacionTexto)}</span>` : ''}
+        </div>
+      </div>
+      ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini"></div>` : ''}
     </div>`;
 }
 
@@ -949,7 +1035,7 @@ function renderSeccionResenas(resenas) {
 
   return `
     <div class="resenas-section">
-      <h3>⭐ Reseñas</h3>
+      <h3>⭐ Reseñas ${resenas.length ? `(${resenas.length})` : ''}</h3>
       <div class="resenas-lista">${listaHtml}</div>
       ${formularioHtml}
     </div>`;
@@ -976,6 +1062,9 @@ function renderResenasSoloLectura(resenas) {
 function renderDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   const favorito = esFavorito(p.id);
+  const stockBajo = p.stock > 0 && p.stock <= 5;
+  const sinStock = p.stock <= 0;
+
   contenido.innerHTML = `
     ${renderGaleriaProducto(p)}
     <div class="detalle-encabezado">
@@ -984,20 +1073,51 @@ function renderDetalleProducto(p, resenas, productor) {
         ${favorito ? '❤️ Guardado' : '🤍 Guardar'}
       </button>
     </div>
-    <h2>${p.nombre}</h2>
-    <p class="muted">Publicado por ${p.productor_nombre || 'Productor local'} · ${formatearFecha(p.fecha_publicacion)}</p>
-    ${renderResumenCalificacion(p)}
-    <p class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></p>
-    <p class="product-stock ${p.stock <= 5 ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock disponible'}</p>
-    <button class="btn btn-primary btn-block" style="margin-top:16px" data-id="${p.id}" id="btn-agregar-detalle" ${p.stock <= 0 ? 'disabled' : ''}>
-      ${p.stock <= 0 ? 'Agotado' : '+ Agregar al pedido'}
-    </button>
-    ${renderMapaProductor(productor)}
+
+    <div class="detalle-cabecera">
+      <h2>${escapeAttr(p.nombre)}</h2>
+      ${renderResumenCalificacion(p)}
+      <div class="detalle-precio-row">
+        <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
+        <span class="product-stock ${stockBajo ? 'low' : ''}">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
+      </div>
+    </div>
+
+    <div class="detalle-accion-principal">
+      ${!sinStock ? `
+      <div class="carrito-qty detalle-cantidad-selector">
+        <button type="button" id="btn-cantidad-menos" aria-label="Disminuir cantidad">−</button>
+        <span id="detalle-cantidad-valor">1</span>
+        <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
+      </div>` : ''}
+      <button class="btn btn-primary btn-lg btn-block" data-id="${p.id}" id="btn-agregar-detalle" ${sinStock ? 'disabled' : ''}>
+        ${sinStock ? 'Agotado' : '+ Agregar al pedido'}
+      </button>
+    </div>
+
+    ${renderBloqueProductor(p, productor)}
     ${renderSeccionResenas(resenas)}
   `;
 
+  let cantidadSeleccionada = 1;
+  const cantidadValorEl = document.getElementById('detalle-cantidad-valor');
+  document.getElementById('btn-cantidad-menos')?.addEventListener('click', () => {
+    if (cantidadSeleccionada > 1) {
+      cantidadSeleccionada--;
+      cantidadValorEl.textContent = cantidadSeleccionada;
+    }
+  });
+  document.getElementById('btn-cantidad-mas')?.addEventListener('click', () => {
+    if (cantidadSeleccionada < p.stock) {
+      cantidadSeleccionada++;
+      cantidadValorEl.textContent = cantidadSeleccionada;
+    } else {
+      toast('Alcanzaste el stock disponible.', 'error');
+    }
+  });
+
   document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => {
-    agregarAlCarrito(p.id);
+    agregarAlCarrito(p.id, cantidadSeleccionada);
     destellarBoton(e.currentTarget, '✓ Agregado');
     setTimeout(() => cerrarModal('modal-detalle-producto'), 700);
   });
@@ -1059,7 +1179,7 @@ async function enviarResena(productoId, calificacion, comentario) {
 }
 
 // ============ CARRITO / PEDIDO ============
-function agregarAlCarrito(productoId) {
+function agregarAlCarrito(productoId, cantidad = 1) {
   if (!Estado.token) {
     toast('Inicia sesión para armar tu pedido 🌱', 'error');
     abrirModal('modal-auth');
@@ -1070,14 +1190,15 @@ function agregarAlCarrito(productoId) {
 
   const existente = Estado.carrito.find((i) => i.producto_id === productoId);
   if (existente) {
-    if (existente.cantidad < producto.stock) existente.cantidad += 1;
-    else toast('No hay más stock disponible de este producto.', 'error');
+    const nuevaCantidad = Math.min(existente.cantidad + cantidad, producto.stock);
+    if (nuevaCantidad === existente.cantidad) toast('No hay más stock disponible de este producto.', 'error');
+    existente.cantidad = nuevaCantidad;
   } else {
     Estado.carrito.push({
       producto_id: producto.id,
       nombre: producto.nombre,
       precio: Number(producto.precio),
-      cantidad: 1,
+      cantidad: Math.min(cantidad, producto.stock),
       stockDisponible: producto.stock,
       unidad_medida: producto.unidad_medida,
     });
@@ -2504,6 +2625,34 @@ function inicializarEventos() {
 
   document.getElementById('hamburger').addEventListener('click', () => {
     document.getElementById('nav-links').classList.toggle('open');
+  });
+
+  // ---- Mega-dropdown de categorías: hover en escritorio, tap en táctil (nunca ambos a la vez, se pisarían) ----
+  const navMega = document.getElementById('nav-mega-categorias');
+  if (window.matchMedia('(hover: hover)').matches) {
+    navMega.addEventListener('mouseenter', abrirMegaCategorias);
+    navMega.addEventListener('mouseleave', cerrarMegaCategoriasConDelay);
+  } else {
+    document.getElementById('btn-mega-categorias').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (navMega.classList.contains('open')) cerrarMegaCategorias();
+      else abrirMegaCategorias();
+    });
+  }
+  document.getElementById('mega-tabs-categorias').addEventListener('click', (e) => {
+    const tab = e.target.closest('.nav-mega-tab');
+    if (tab) mostrarCategoriaMega(tab.dataset.categoria);
+  });
+  document.getElementById('mega-productos-categorias').addEventListener('click', (e) => {
+    const btn = e.target.closest('.nav-mega-producto');
+    if (!btn) return;
+    cerrarMegaCategorias();
+    document.getElementById('nav-links').classList.remove('open');
+    cambiarVista('catalogo');
+    abrirDetalleProducto(btn.dataset.id);
+  });
+  document.addEventListener('click', (e) => {
+    if (!navMega.contains(e.target)) cerrarMegaCategorias();
   });
 
   document.getElementById('btn-open-login').addEventListener('click', () => {
