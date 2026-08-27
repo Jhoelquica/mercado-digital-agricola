@@ -29,6 +29,8 @@ productos = [
     {"nombre": "cebolla", "categoria": "verdura", "precio": 2.5, "stock": 30, "unidad_medida": "kg"},
     {"nombre": "lechuga", "categoria": "verdura", "precio": 2.0, "stock": 20, "unidad_medida": "kg"},
     {"nombre": "zanahoria", "categoria": "verdura", "precio": 2.5, "stock": 25, "unidad_medida": "kg"},
+    {"nombre": "papa blanca", "categoria": "tuberculo", "precio": 2.5, "stock": 18, "unidad_medida": "kg"},
+    {"nombre": "espinaca", "categoria": "verdura", "precio": 1.0, "stock": 15, "unidad_medida": "kg"},
 ]
 
 headers = {"Authorization": f"Bearer {TOKEN}"}

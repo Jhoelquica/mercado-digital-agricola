@@ -63,6 +63,7 @@ class UbicacionActualizar(BaseModel):
 
 #endpoint
 
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "transporte"}
@@ -181,11 +182,48 @@ def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Envío no encontrado para ese pedido")
     return envio
 
+def notificar_entrega_a_certificacion(pedido_id: str):
+    try:
+        respuesta_pedido = httpx.get(f"{PEDIDOS_URL}/pedidos/{pedido_id}", timeout=5)
+    except httpx.RequestError:
+        print(f"No se pudo consultar el pedido {pedido_id} para certificación")
+        return
+
+    if respuesta_pedido.status_code != 200:
+        print(f"Pedido {pedido_id} no encontrado al intentar certificar entrega")
+        return
+
+    pedido = respuesta_pedido.json()
+    items = pedido.get("items", [])
+
+    for item in items:
+        producto_id = item.get("producto_id")
+        if not producto_id:
+            continue
+        try:
+            httpx.post(
+                f"{CERTIFICACION_URL}/certificacion/{producto_id}/eventos-internos",
+                json={"evento": "verificado_punto_venta", "datos": f"pedido {pedido_id} entregado"},
+                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                timeout=5
+            )
+        except httpx.RequestError:
+            print(f"No se pudo certificar el producto {producto_id} del pedido {pedido_id}")
+
 @app.patch("/envios/{envio_id}/estado")
 def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    repartidor = db.query(models.Repartidor).filter(
+        models.Repartidor.usuario_id == usuario.get("sub")
+    ).first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
+
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
+    if str(envio.repartidor_id) != str(repartidor.id):
+        raise HTTPException(status_code=403, detail="No puedes actualizar el estado de un envío que no es tuyo")
+
     envio.estado = datos.estado
     db.commit()
     db.refresh(envio)
@@ -195,6 +233,16 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
         "pedido_id": str(envio.pedido_id),
         "estado": envio.estado,
     })
+
+    if datos.estado == "entregado":
+        # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
+        # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/SERVICIO_SECRETO sin definir)
+        # tumbe la respuesta al repartidor; el error queda en logs para investigarlo después de la entrega.
+        try:
+            notificar_entrega_a_certificacion(str(envio.pedido_id))
+        except Exception as e:
+            print(f"[Transporte] No se pudo notificar a Certificación: {e}")
+
     return envio
 
 @app.post("/repartidores")
@@ -248,3 +296,5 @@ def actualizar_ubicacion(envio_id: str, datos: UbicacionActualizar, db: Session 
     db.commit()
     db.refresh(envio)
     return envio
+
+

@@ -6,3 +6,4 @@ python-dotenv
 python-jose[cryptography]
 qrcode[pil]
 prometheus-fastapi-instrumentator
+httpx

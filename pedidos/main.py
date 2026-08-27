@@ -32,6 +32,7 @@ app.add_middleware(
 )
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 
 def get_db():
     db = SessionLocal()
@@ -90,6 +91,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             client.patch(
                 f"{PRODUCTOS_URL}/productos/{item.producto_id}/stock",
                 json={"cantidad": item.cantidad},
+                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
                 timeout=5,
             )
             nuevo_item = models.PedidoItem(

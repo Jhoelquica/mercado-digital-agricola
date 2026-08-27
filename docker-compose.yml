@@ -134,6 +134,8 @@ services:
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
       PEDIDOS_URL: http://pedidos:8003
+      CERTIFICACION_URL: http://certificacion:8008
+      SERVICIO_SECRETO: clave-interna-servicios
     depends_on:
       - db-transporte
       - rabbitmq
@@ -254,6 +256,8 @@ services:
         DB_HOST: db-certificacion
         JWT_SECRET: ${JWT_SECRET}
         FRONTEND_URL: http://localhost:63342/mercado_agricola/frontend
+        PRODUCTORES_URL: http://productores:8001
+        SERVICIO_SECRETO: clave-interna-servicios
       depends_on:
         - db-certificacion
 volumes:

@@ -11,8 +11,10 @@ from fastapi.responses import StreamingResponse
 
 from database import Base, engine, SessionLocal
 import models
-from logica_cadena import crear_bloque, verificar_cadena
-from auth import requiere_rol
+from logica_cadena import crear_bloque, verificar_cadena, validar_geofencing
+from auth import requiere_rol, security
+from fastapi.security import HTTPAuthorizationCredentials
+from fastapi import Header
 
 Base.metadata.create_all(bind=engine)
 
@@ -34,18 +36,64 @@ def get_db():
     finally:
         db.close()
 
+
 class EventoCrear(BaseModel):
     evento: str
     datos: str | None = None
+    latitud: str | None = None
+    longitud: str | None = None
+
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+
+class EventoInterno(BaseModel):
+    evento: str
+    datos: str | None = None
+
+@app.post("/certificacion/{producto_id}/eventos-internos")
+def registrar_evento_interno(
+        producto_id: str,
+        datos: EventoInterno,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None)
+):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    if datos.evento != "verificado_punto_venta":
+        raise HTTPException(status_code=422, detail="Este endpoint solo acepta el evento verificado_punto_venta")
+
+    bloque = crear_bloque(db, producto_id, datos.evento, datos.datos)
+    return bloque
 
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "certificacion"}
 
 @app.post("/certificacion/{producto_id}/eventos")
-def registrar_evento(producto_id: str, datos: EventoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
-    if datos.evento not in ["cosecha_registrada", "certificado_productor", "verificado_punto_venta"]:
+def registrar_evento(
+        producto_id: str,
+        datos: EventoCrear,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor", "verificador")),
+        credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    if datos.evento not in ["cosecha_registrada", "certificado_productor"]:
         raise HTTPException(status_code=422, detail="Tipo de evento no válido")
+
+    rol = usuario.get("rol")
+
+    if datos.evento == "cosecha_registrada" and rol != "productor":
+        raise HTTPException(status_code=403, detail="Solo un productor puede registrar la cosecha")
+
+    if datos.evento == "certificado_productor" and rol != "verificador":
+        raise HTTPException(status_code=403, detail="Solo un verificador puede certificar el producto")
+
+    if datos.evento == "cosecha_registrada":
+        if not datos.latitud or not datos.longitud:
+            raise HTTPException(status_code=422, detail="Latitud y longitud son requeridas para registrar la cosecha")
+
+        token = credentials.credentials
+        validar_geofencing(token, datos.latitud, datos.longitud)
 
     bloque = crear_bloque(db, producto_id, datos.evento, datos.datos)
     return bloque
@@ -76,3 +124,38 @@ def generar_qr(producto_id: str):
     buffer.seek(0)
 
     return StreamingResponse(buffer, media_type="image/png")
+
+
+class VerificadorCrear(BaseModel):
+    nombre: str
+    credencial: str
+
+@app.post("/verificadores")
+def crear_verificador(datos: VerificadorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("verificador"))):
+    if not datos.credencial.strip():
+        raise HTTPException(status_code=422, detail="La credencial no puede estar vacía")
+
+    usuario_id = usuario.get("sub")
+    existente = db.query(models.Verificador).filter(models.Verificador.usuario_id == usuario_id).first()
+    if existente:
+        raise HTTPException(status_code=409, detail="Ya tienes un perfil de verificador registrado")
+
+    nuevo = models.Verificador(
+        usuario_id=usuario_id,
+        nombre=datos.nombre,
+        credencial=datos.credencial,
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return nuevo
+
+
+@app.get("/verificadores/me")
+def mi_perfil_verificador(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("verificador"))):
+    verificador = db.query(models.Verificador).filter(
+        models.Verificador.usuario_id == usuario.get("sub")
+    ).first()
+    if not verificador:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de verificador. Créalo primero.")
+    return verificador

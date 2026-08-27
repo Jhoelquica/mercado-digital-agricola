@@ -340,7 +340,10 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
     }
 
 @app.patch("/productos/{producto_id}/stock")
-def descontar_stock(producto_id: str, datos: DescontarStock, db: Session = Depends(get_db)):
+def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")

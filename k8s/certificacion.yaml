@@ -38,6 +38,13 @@ spec:
                   key: JWT_SECRET
             - name: FRONTEND_URL
               value: http://localhost:63342/mercado_agricola/frontend
+            - name: PRODUCTORES_URL
+              value: http://productores:8001
+            - name: SERVICIO_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SERVICIO_SECRETO
 
 ---
 apiVersion: v1

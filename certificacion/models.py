@@ -8,6 +8,7 @@ class Bloque(Base):
     __tablename__ = "bloques"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    verificador_id = Column(UUID(as_uuid=True), nullable=True)
     producto_id = Column(UUID(as_uuid=True), nullable=False)
     indice = Column(Integer, nullable=False)  # posición dentro de la cadena de ESE producto
     evento = Column(String, nullable=False)   # cosecha_registrada, certificado_productor, verificado_punto_venta
@@ -15,3 +16,12 @@ class Bloque(Base):
     fecha = Column(DateTime, default=datetime.utcnow)
     hash_anterior = Column(String, nullable=False)
     hash_actual = Column(String, nullable=False)
+
+class Verificador(Base):
+    __tablename__ = "verificadores"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usuario_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    nombre = Column(String, nullable=False)
+    credencial = Column(String, nullable=False)  # ej. número de colegiatura o código interno
+    fecha_registro = Column(DateTime, default=datetime.utcnow)

@@ -44,6 +44,13 @@ spec:
                   key: JWT_SECRET
             - name: PEDIDOS_URL
               value: http://pedidos:8003
+            - name: CERTIFICACION_URL
+              value: http://certificacion:8008
+            - name: SERVICIO_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SERVICIO_SECRETO
 ---
 apiVersion: v1
 kind: Service
