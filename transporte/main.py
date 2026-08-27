@@ -87,6 +87,8 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
     ).all()
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
+CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://certificacion:8008")
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 
 @app.get("/envios/{envio_id}/ruta")
 def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
@@ -235,6 +237,13 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
     })
 
     if datos.estado == "entregado":
+        repartidor_envio = db.query(models.Repartidor).filter(
+            models.Repartidor.id == envio.repartidor_id
+        ).first()
+        if repartidor_envio:
+            repartidor_envio.estado_disponibilidad = "disponible"
+            db.commit()
+
         # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
         # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/SERVICIO_SECRETO sin definir)
         # tumbe la respuesta al repartidor; el error queda en logs para investigarlo después de la entrega.
