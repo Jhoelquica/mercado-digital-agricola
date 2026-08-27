@@ -54,7 +54,7 @@ def calcular_hash(indice, producto_id, evento, datos, fecha, hash_anterior) -> s
     return hashlib.sha256(contenido.encode()).hexdigest()
 
 
-def crear_bloque(db, producto_id: str, evento: str, datos: str = None) -> models.Bloque:
+def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificador_id: str = None) -> models.Bloque:
     ultimo = db.query(models.Bloque).filter(
         models.Bloque.producto_id == producto_id
     ).order_by(models.Bloque.indice.desc()).first()
@@ -77,12 +77,12 @@ def crear_bloque(db, producto_id: str, evento: str, datos: str = None) -> models
         fecha=fecha,
         hash_anterior=hash_anterior,
         hash_actual=hash_actual,
+        verificador_id=verificador_id,
     )
     db.add(nuevo_bloque)
     db.commit()
     db.refresh(nuevo_bloque)
     return nuevo_bloque
-
 
 def verificar_cadena(db, producto_id: str) -> dict:
     bloques = db.query(models.Bloque).filter(

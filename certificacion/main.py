@@ -95,7 +95,16 @@ def registrar_evento(
         token = credentials.credentials
         validar_geofencing(token, datos.latitud, datos.longitud)
 
-    bloque = crear_bloque(db, producto_id, datos.evento, datos.datos)
+    verificador_id = None
+    if datos.evento == "certificado_productor":
+        verificador = db.query(models.Verificador).filter(
+            models.Verificador.usuario_id == usuario.get("sub")
+        ).first()
+        if not verificador:
+            raise HTTPException(status_code=404, detail="Aún no tienes un perfil de verificador. Créalo primero.")
+        verificador_id = verificador.id
+
+    bloque = crear_bloque(db, producto_id, datos.evento, datos.datos, verificador_id)
     return bloque
 
 @app.get("/certificacion/{producto_id}/historial")
