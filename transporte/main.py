@@ -2,7 +2,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import os
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -184,6 +184,19 @@ def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Envío no encontrado para ese pedido")
     return envio
 
+@app.delete("/envios/{envio_id}")
+def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+
+    db.delete(envio)
+    db.commit()
+    return {"mensaje": "Envío eliminado"}
+
 def notificar_entrega_a_certificacion(pedido_id: str):
     try:
         respuesta_pedido = httpx.get(f"{PEDIDOS_URL}/pedidos/{pedido_id}", timeout=5)
@@ -197,11 +210,13 @@ def notificar_entrega_a_certificacion(pedido_id: str):
 
     pedido = respuesta_pedido.json()
     items = pedido.get("items", [])
+    productos_ids = []
 
     for item in items:
         producto_id = item.get("producto_id")
         if not producto_id:
             continue
+        productos_ids.append(producto_id)
         try:
             httpx.post(
                 f"{CERTIFICACION_URL}/certificacion/{producto_id}/eventos-internos",
@@ -211,6 +226,17 @@ def notificar_entrega_a_certificacion(pedido_id: str):
             )
         except httpx.RequestError:
             print(f"No se pudo certificar el producto {producto_id} del pedido {pedido_id}")
+
+    if productos_ids:
+        try:
+            httpx.post(
+                f"{CERTIFICACION_URL}/certificacion/pedido/{pedido_id}/certificado",
+                json={"productos_ids": productos_ids},
+                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                timeout=5
+            )
+        except httpx.RequestError:
+            print(f"No se pudo generar el certificado Merkle para el pedido {pedido_id}")
 
 @app.patch("/envios/{envio_id}/estado")
 def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
@@ -283,6 +309,26 @@ def mi_perfil_repartidor(db: Session = Depends(get_db), usuario: dict = Depends(
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor. Créalo primero.")
     return repartidor
+
+@app.delete("/repartidores/{repartidor_id}")
+def eliminar_repartidor(repartidor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Repartidor no encontrado")
+
+    envios_activos = db.query(models.Envio).filter(
+        models.Envio.repartidor_id == repartidor_id,
+        models.Envio.estado.in_(["asignado", "en_camino"])
+    ).count()
+    if envios_activos > 0:
+        raise HTTPException(status_code=409, detail="Este repartidor tiene envíos activos, no se puede eliminar")
+
+    db.delete(repartidor)
+    db.commit()
+    return {"mensaje": "Repartidor eliminado"}
 
 @app.patch("/envios/{envio_id}/ubicacion")
 def actualizar_ubicacion(envio_id: str, datos: UbicacionActualizar, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):

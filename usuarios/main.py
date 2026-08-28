@@ -1,5 +1,7 @@
+import os
+
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -40,6 +42,8 @@ class UsuarioLogin(BaseModel):
     email: EmailStr
     password: str
 
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "usuarios"}
@@ -76,3 +80,16 @@ def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dic
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol}
+
+@app.delete("/usuarios/{usuario_id}")
+def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    db.delete(usuario)
+    db.commit()
+    return {"mensaje": "Usuario eliminado"}

@@ -21,6 +21,8 @@ spec:
           env:
             - name: DB_HOST
               value: db-productores
+            - name: PRODUCTOS_URL
+              value: http://productos:8002
             - name: DB_USER
               valueFrom:
                 secretKeyRef:

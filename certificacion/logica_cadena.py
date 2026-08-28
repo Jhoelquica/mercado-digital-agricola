@@ -107,3 +107,44 @@ def verificar_cadena(db, producto_id: str) -> dict:
         hash_esperado = bloque.hash_actual
 
     return {"valido": True, "total_bloques": len(bloques), "mensaje": "Cadena íntegra, sin alteraciones"}
+
+def construir_arbol_merkle(hashes: list[str]) -> str:
+    if not hashes:
+        return HASH_GENESIS
+
+    nivel = hashes[:]
+    while len(nivel) > 1:
+        if len(nivel) % 2 == 1:
+            nivel.append(nivel[-1])  # duplica el último si es impar
+
+        siguiente_nivel = []
+        for i in range(0, len(nivel), 2):
+            combinado = nivel[i] + nivel[i + 1]
+            siguiente_nivel.append(hashlib.sha256(combinado.encode()).hexdigest())
+        nivel = siguiente_nivel
+
+    return nivel[0]
+
+
+def generar_certificado_pedido(db, pedido_id: str, productos_ids: list[str]) -> dict:
+    detalle = []
+    for producto_id in productos_ids:
+        ultimo_bloque = db.query(models.Bloque).filter(
+            models.Bloque.producto_id == producto_id
+        ).order_by(models.Bloque.indice.desc()).first()
+
+        if not ultimo_bloque:
+            continue  # producto sin historial de certificación aún, se omite
+
+        detalle.append({
+            "producto_id": str(producto_id),
+            "hash": ultimo_bloque.hash_actual,
+        })
+
+    if not detalle:
+        raise HTTPException(status_code=422, detail="Ninguno de los productos del pedido tiene historial de certificación")
+
+    hashes = [item["hash"] for item in detalle]
+    raiz = construir_arbol_merkle(hashes)
+
+    return {"merkle_root": raiz, "detalle": detalle}

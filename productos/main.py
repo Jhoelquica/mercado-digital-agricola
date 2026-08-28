@@ -265,6 +265,21 @@ def eliminar_imagen(
     db.commit()
     return {"mensaje": "Imagen eliminada"}
 
+@app.delete("/productos/{producto_id}")
+def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    db.query(models.ProductoImagen).filter(models.ProductoImagen.producto_id == producto_id).delete()
+    db.query(models.Resena).filter(models.Resena.producto_id == producto_id).delete()
+    db.delete(producto)
+    db.commit()
+    return {"mensaje": "Producto eliminado"}
+
 @app.get("/productos")
 def listar_productos(db: Session = Depends(get_db)):
     productos = db.query(models.Producto).all()

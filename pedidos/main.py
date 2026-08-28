@@ -1,7 +1,7 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import httpx
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -127,3 +127,17 @@ def obtener_pedido(pedido_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
     pedido.items  # fuerza la carga de la relación para que se incluya en la respuesta
     return pedido
+
+@app.delete("/pedidos/{pedido_id}")
+def eliminar_pedido(pedido_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+
+    db.query(models.PedidoItem).filter(models.PedidoItem.pedido_id == pedido_id).delete()
+    db.delete(pedido)
+    db.commit()
+    return {"mensaje": "Pedido eliminado"}

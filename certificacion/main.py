@@ -11,10 +11,11 @@ from fastapi.responses import StreamingResponse
 
 from database import Base, engine, SessionLocal
 import models
-from logica_cadena import crear_bloque, verificar_cadena, validar_geofencing
+from logica_cadena import crear_bloque, verificar_cadena, validar_geofencing, generar_certificado_pedido
 from auth import requiere_rol, security
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi import Header
+import json
 
 Base.metadata.create_all(bind=engine)
 
@@ -48,6 +49,53 @@ SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
 class EventoInterno(BaseModel):
     evento: str
     datos: str | None = None
+
+class CertificadoPedidoCrear(BaseModel):
+    productos_ids: list[str]
+
+@app.post("/certificacion/pedido/{pedido_id}/certificado")
+def crear_certificado_pedido(
+        pedido_id: str,
+        datos: CertificadoPedidoCrear,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None)
+):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    existente = db.query(models.CertificadoPedido).filter(
+        models.CertificadoPedido.pedido_id == pedido_id
+    ).first()
+    if existente:
+        return existente  # idempotente: si ya se generó, se devuelve el mismo
+
+    resultado = generar_certificado_pedido(db, pedido_id, datos.productos_ids)
+
+    nuevo_certificado = models.CertificadoPedido(
+        pedido_id=pedido_id,
+        merkle_root=resultado["merkle_root"],
+        detalle=json.dumps(resultado["detalle"]),
+    )
+    db.add(nuevo_certificado)
+    db.commit()
+    db.refresh(nuevo_certificado)
+    return nuevo_certificado
+
+
+@app.get("/certificacion/pedido/{pedido_id}/certificado")
+def obtener_certificado_pedido(pedido_id: str, db: Session = Depends(get_db)):
+    certificado = db.query(models.CertificadoPedido).filter(
+        models.CertificadoPedido.pedido_id == pedido_id
+    ).first()
+    if not certificado:
+        raise HTTPException(status_code=404, detail="Este pedido aún no tiene certificado generado")
+
+    return {
+        "pedido_id": str(certificado.pedido_id),
+        "merkle_root": certificado.merkle_root,
+        "detalle": json.loads(certificado.detalle),
+        "fecha_generado": certificado.fecha_generado,
+    }
 
 @app.post("/certificacion/{producto_id}/eventos-internos")
 def registrar_evento_interno(
@@ -168,3 +216,16 @@ def mi_perfil_verificador(db: Session = Depends(get_db), usuario: dict = Depends
     if not verificador:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de verificador. Créalo primero.")
     return verificador
+
+@app.delete("/verificadores/{verificador_id}")
+def eliminar_verificador(verificador_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    verificador = db.query(models.Verificador).filter(models.Verificador.id == verificador_id).first()
+    if not verificador:
+        raise HTTPException(status_code=404, detail="Verificador no encontrado")
+
+    db.delete(verificador)
+    db.commit()
+    return {"mensaje": "Verificador eliminado"}

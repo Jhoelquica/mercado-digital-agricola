@@ -1,5 +1,7 @@
+import os
+
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from auth import verificar_token
@@ -32,9 +34,24 @@ def get_db():
     finally:
         db.close()
 
+SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "notificaciones"}
+
+@app.delete("/notificaciones/{notificacion_id}")
+def eliminar_notificacion(notificacion_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    notificacion = db.query(models.Notificacion).filter(models.Notificacion.id == notificacion_id).first()
+    if not notificacion:
+        raise HTTPException(status_code=404, detail="Notificación no encontrada")
+
+    db.delete(notificacion)
+    db.commit()
+    return {"mensaje": "Notificación eliminada"}
 
 @app.get("/notificaciones/{pedido_id}")
 def historial_por_pedido(pedido_id: str, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):

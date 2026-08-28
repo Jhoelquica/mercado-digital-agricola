@@ -1,5 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -75,6 +75,19 @@ def obtener_pago(pedido_id: str, db: Session = Depends(get_db)):
     if not pago:
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     return pago
+
+@app.delete("/pagos/{pago_id}")
+def eliminar_pago(pago_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if x_servicio_secreto != SERVICIO_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    pago = db.query(models.Pago).filter(models.Pago.id == pago_id).first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+
+    db.delete(pago)
+    db.commit()
+    return {"mensaje": "Pago eliminado"}
 
 @app.post("/pagos/procesar")
 def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):

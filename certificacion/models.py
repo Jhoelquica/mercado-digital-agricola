@@ -25,3 +25,12 @@ class Verificador(Base):
     nombre = Column(String, nullable=False)
     credencial = Column(String, nullable=False)  # ej. número de colegiatura o código interno
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+
+class CertificadoPedido(Base):
+    __tablename__ = "certificados_pedido"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pedido_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    merkle_root = Column(String, nullable=False)
+    detalle = Column(String, nullable=False)  # JSON serializado: [{"producto_id": ..., "hash": ...}, ...]
+    fecha_generado = Column(DateTime, default=datetime.utcnow)
