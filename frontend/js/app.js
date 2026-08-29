@@ -90,12 +90,21 @@ function renderLineaTiempoCertificacion(historial) {
                 <span class="timeline-indice">Bloque #${b.indice}</span>
               </div>
               <div class="timeline-fecha">${formatearFecha(b.fecha)}</div>
+              ${renderVerificadorLinea(b)}
               ${b.datos ? `<p class="timeline-datos">${escapeAttr(b.datos)}</p>` : ''}
               <div class="timeline-hash">Hash: <code>${escapeAttr(hashCorto(b.hash_actual))}</code></div>
             </div>
           </div>`;
       }).join('')}
     </div>`;
+}
+
+// Solo aplica al evento certificado_productor; el backend ya resuelve el nombre en /historial
+// (verificador_nombre puede venir null si el verificador fue borrado, ahí caemos al id truncado).
+function renderVerificadorLinea(b) {
+  if (b.evento !== 'certificado_productor' || !b.verificador_id) return '';
+  const nombre = b.verificador_nombre || `verificador ${String(b.verificador_id).slice(0, 8)}`;
+  return `<p class="timeline-verificador">👤 Certificado por: ${escapeAttr(nombre)}</p>`;
 }
 
 async function abrirModalCertificacion(productoId) {
@@ -1733,8 +1742,59 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
 
       ${activo ? renderBloqueRuta(envio, ruta) : ''}
       ${entregado ? '<div class="resena-cta"></div>' : ''}
+      ${entregado ? `
+      <div class="pedido-certificado-cta">
+        <button type="button" class="btn btn-outline btn-sm btn-ver-certificado-pedido" data-pedido-id="${pedido.id}">🔗 Ver certificado de compra</button>
+        <div class="productor-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
+      </div>` : ''}
     </div>
   `;
+}
+
+function renderCertificadoPedido(cert) {
+  const detalle = Array.isArray(cert.detalle) ? cert.detalle : [];
+  const filas = detalle.map((item) => {
+    const producto = Estado.productos.find((p) => p.id === item.producto_id);
+    const nombre = producto?.nombre || `Producto ${String(item.producto_id).slice(0, 8)}`;
+    return `
+      <div class="certificado-producto-linea">
+        <span>${escapeAttr(nombre)} — <code>${escapeAttr(hashCorto(item.hash))}</code></span>
+        <a href="verificar.html?producto_id=${encodeURIComponent(item.producto_id)}" target="_blank" rel="noopener" class="certificado-link-cadena">Ver cadena completa →</a>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="certificado-pedido">
+      <p class="certificado-pedido-hash">Certificado: <code>${escapeAttr(hashCorto(cert.merkle_root))}</code></p>
+      ${filas}
+      <p class="muted certificado-pedido-nota">🔒 Verificado mediante blockchain</p>
+    </div>`;
+}
+
+async function alternarCertificadoPedido(pedidoId) {
+  const panel = document.querySelector(`.productor-expandible[data-panel="certificado-pedido"][data-pedido-id="${pedidoId}"]`);
+  if (!panel) return;
+
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  if (panel.dataset.cargado) return;
+
+  panel.innerHTML = '<p class="muted">Cargando certificado...</p>';
+  try {
+    const cert = await Api.certificacion.certificadoPedido(pedidoId);
+    panel.innerHTML = renderCertificadoPedido(cert);
+    panel.dataset.cargado = '1';
+  } catch (err) {
+    if (err.status === 404) {
+      panel.innerHTML = '<p class="muted">Certificado en proceso, vuelve a intentar en un momento.</p>';
+    } else {
+      panel.innerHTML = '<p class="muted">No se pudo cargar el certificado por ahora.</p>';
+    }
+    // no marcamos data-cargado: al volver a abrir el acordeón se reintenta el fetch
+  }
 }
 
 // ---- Mapa de ruta con polling cada 15s ----
@@ -2747,6 +2807,8 @@ function inicializarEventos() {
     if (calificar) { abrirDetalleProducto(calificar.dataset.productoId); return; }
     const reintentar = e.target.closest('.btn-reintentar-pago');
     if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto)); return; }
+    const certPedido = e.target.closest('.btn-ver-certificado-pedido');
+    if (certPedido) { alternarCertificadoPedido(certPedido.dataset.pedidoId); return; }
   });
 
   document.getElementById('btn-refrescar-notificaciones').addEventListener('click', cargarNotificaciones);

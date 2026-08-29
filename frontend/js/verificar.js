@@ -30,6 +30,14 @@ function labelEvento(evento) {
   return EVENTOS_LABEL[evento] || { emoji: '📦', texto: evento };
 }
 
+// Solo aplica al evento certificado_productor; el backend ya resuelve el nombre en /historial
+// (verificador_nombre puede venir null si el verificador fue borrado, ahí caemos al id truncado).
+function renderVerificadorLinea(b) {
+  if (b.evento !== 'certificado_productor' || !b.verificador_id) return '';
+  const nombre = b.verificador_nombre || `verificador ${String(b.verificador_id).slice(0, 8)}`;
+  return `<p class="timeline-verificador">👤 Certificado por: ${escapeHtml(nombre)}</p>`;
+}
+
 function obtenerProductoIdDeUrl() {
   const params = new URLSearchParams(window.location.search);
   return (params.get('producto_id') || '').trim();
@@ -103,6 +111,7 @@ function renderLineaTiempo(historial) {
                 <span class="timeline-indice">Bloque #${b.indice}</span>
               </div>
               <div class="timeline-fecha">${formatearFecha(b.fecha)}</div>
+              ${renderVerificadorLinea(b)}
               ${b.datos ? `<p class="timeline-datos">${escapeHtml(b.datos)}</p>` : ''}
               <div class="timeline-hash">Hash: <code>${escapeHtml(hashCorto(b.hash_actual))}</code></div>
             </div>

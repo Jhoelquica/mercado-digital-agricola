@@ -144,5 +144,6 @@ const Api = {
     verificar: (productoId) => request('certificacion', `/certificacion/${productoId}/verificar`),
     historial: (productoId) => request('certificacion', `/certificacion/${productoId}/historial`),
     qrUrl: (productoId) => `${API_BASE.certificacion}/certificacion/${productoId}/qr`,
+    certificadoPedido: (pedidoId) => request('certificacion', `/certificacion/pedido/${pedidoId}/certificado`),
   },
 };

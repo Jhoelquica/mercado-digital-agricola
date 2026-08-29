@@ -157,9 +157,33 @@ def registrar_evento(
 
 @app.get("/certificacion/{producto_id}/historial")
 def historial(producto_id: str, db: Session = Depends(get_db)):
-    return db.query(models.Bloque).filter(
+    bloques = db.query(models.Bloque).filter(
         models.Bloque.producto_id == producto_id
     ).order_by(models.Bloque.indice).all()
+
+    verificador_ids = {b.verificador_id for b in bloques if b.verificador_id}
+    nombres_por_id = {}
+    if verificador_ids:
+        verificadores = db.query(models.Verificador).filter(
+            models.Verificador.id.in_(verificador_ids)
+        ).all()
+        nombres_por_id = {str(v.id): v.nombre for v in verificadores}
+
+    return [
+        {
+            "id": b.id,
+            "producto_id": b.producto_id,
+            "indice": b.indice,
+            "evento": b.evento,
+            "datos": b.datos,
+            "fecha": b.fecha,
+            "hash_anterior": b.hash_anterior,
+            "hash_actual": b.hash_actual,
+            "verificador_id": b.verificador_id,
+            "verificador_nombre": nombres_por_id.get(str(b.verificador_id)) if b.verificador_id else None,
+        }
+        for b in bloques
+    ]
 
 @app.get("/certificacion/{producto_id}/verificar")
 def verificar(producto_id: str, db: Session = Depends(get_db)):
