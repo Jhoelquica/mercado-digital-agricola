@@ -23,23 +23,9 @@
     </div>
 
     <nav class="nav-links" id="nav-links">
-      <div class="nav-mega" id="nav-mega-categorias">
-        <button type="button" class="nav-link nav-mega-trigger" id="btn-mega-categorias" aria-expanded="false" aria-haspopup="true">
-          Categorías <span class="nav-mega-chevron">▾</span>
-        </button>
-        <div class="nav-mega-panel" id="mega-panel-categorias">
-          <div class="nav-mega-panel-inner">
-            <div class="nav-mega-tabs" id="mega-tabs-categorias"></div>
-            <div class="nav-mega-productos" id="mega-productos-categorias"></div>
-          </div>
-        </div>
-      </div>
-      <button class="nav-link active" data-nav="catalogo">Catálogo</button>
-      <button class="nav-link" data-nav="mis-pedidos">Mis Pedidos</button>
-      <button class="nav-link" data-nav="notificaciones">Notificaciones</button>
+      <div class="nav-categorias" id="nav-categorias"></div>
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
       <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
-      <button class="nav-link" data-nav="perfil">Mi Perfil</button>
     </nav>
 
     <div class="nav-actions">
@@ -51,11 +37,18 @@
         <button class="btn btn-primary" id="btn-open-registro">Registrarse</button>
       </div>
       <div id="user-area" class="user-area hidden">
-        <span class="user-chip" id="user-chip" data-nav="perfil" role="button" tabindex="0">
-          <span class="user-avatar" id="user-avatar">?</span>
-          <span class="user-name" id="user-name">Usuario</span>
-        </span>
-        <button class="btn btn-ghost" id="btn-logout">Salir</button>
+        <div class="nav-account" id="nav-account">
+          <button type="button" class="nav-account-trigger" id="btn-account" aria-haspopup="true" aria-expanded="false" aria-label="Mi cuenta">👤</button>
+          <div class="nav-account-panel" id="nav-account-panel">
+            <div class="nav-account-panel-inner">
+              <div class="nav-account-saludo">Hola, <strong id="user-name">Usuario</strong></div>
+              <button type="button" class="nav-account-item" data-nav="mis-pedidos">📦 Mis Pedidos</button>
+              <button type="button" class="nav-account-item" data-nav="notificaciones">🔔 Notificaciones</button>
+              <button type="button" class="nav-account-item" data-nav="perfil">👤 Mi Perfil</button>
+              <button type="button" class="nav-account-item nav-account-logout" id="btn-logout">🚪 Cerrar sesión</button>
+            </div>
+          </div>
+        </div>
       </div>
       <button class="hamburger" id="hamburger" aria-label="Menú">☰</button>
     </div>

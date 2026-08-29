@@ -634,9 +634,7 @@ function actualizarUIAuth() {
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
   if (logueado) {
-    const nombre = Estado.nombre || 'Usuario';
-    document.getElementById('user-name').textContent = nombre;
-    document.getElementById('user-avatar').textContent = nombre.charAt(0).toUpperCase();
+    document.getElementById('user-name').textContent = Estado.nombre || 'Usuario';
   }
 }
 
@@ -744,18 +742,25 @@ async function cargarCatalogo() {
   }
 }
 
-// ============ MEGA-DROPDOWN DE CATEGORÍAS (NAVBAR) ============
-// Reutiliza CATEGORIAS_PRODUCTO (definida más abajo, junto al Panel Productor) — mismas 8 categorías fijas de toda la app.
-let megaCategoriaActiva = null;
-let megaCerrarTimeout = null;
-const megaCacheCategorias = {}; // categoria -> productos[] (evita refetch al reabrir la misma pestaña)
+// ============ BARRA DE CATEGORÍAS (NAVBAR, estilo Samsung Shop) ============
+// Un botón por categoría en la barra; cada uno abre su propio dropdown ya filtrado a ESA categoría
+// (sin niveles anidados: a diferencia del mega-dropdown genérico anterior, aquí no hace falta un
+// clic interno sobre una pestaña para recién cargar contenido, que es lo que causaba el bug de cierre).
+// Reutiliza CATEGORIAS_PRODUCTO/ICONOS_CATEGORIA/NOMBRE_CATEGORIA (definidas más abajo, junto al Panel Productor).
+const navCatCache = {}; // categoria -> productos[] (evita refetch al reabrir la misma categoría)
+const navCatCerrarTimeouts = {}; // categoria -> timeoutId (delay de cierre en hover, evita parpadeo al mover el mouse)
 
-function renderMegaTabs() {
-  const cont = document.getElementById('mega-tabs-categorias');
+function renderNavCategorias() {
+  const cont = document.getElementById('nav-categorias');
   cont.innerHTML = CATEGORIAS_PRODUCTO.map((c) => `
-    <button type="button" class="nav-mega-tab ${c === megaCategoriaActiva ? 'active' : ''}" data-categoria="${c}">
-      ${ICONOS_CATEGORIA[c]} ${NOMBRE_CATEGORIA[c]}
-    </button>`).join('');
+    <div class="nav-cat" data-categoria="${c}">
+      <button type="button" class="nav-link nav-cat-trigger" aria-haspopup="true" aria-expanded="false">${NOMBRE_CATEGORIA[c]}</button>
+      <div class="nav-cat-panel">
+        <div class="nav-cat-panel-inner">
+          <div class="nav-mega-productos" id="nav-cat-productos-${c}"></div>
+        </div>
+      </div>
+    </div>`).join('');
 }
 
 function renderSkeletonMega(n = 4) {
@@ -777,47 +782,83 @@ function renderProductoMega(p) {
     </button>`;
 }
 
-function pintarProductosMega(productos) {
-  const cont = document.getElementById('mega-productos-categorias');
+function pintarProductosNavCat(categoria, productos) {
+  const cont = document.getElementById(`nav-cat-productos-${categoria}`);
+  if (!cont) return;
   cont.innerHTML = productos.length
     ? productos.map(renderProductoMega).join('')
     : '<p class="muted" style="grid-column:1/-1;margin:0;">Sin productos en esta categoría por ahora.</p>';
 }
 
-async function mostrarCategoriaMega(categoria) {
-  megaCategoriaActiva = categoria;
-  renderMegaTabs();
-
-  if (megaCacheCategorias[categoria]) {
-    pintarProductosMega(megaCacheCategorias[categoria]);
+async function cargarProductosNavCat(categoria) {
+  if (navCatCache[categoria]) {
+    pintarProductosNavCat(categoria, navCatCache[categoria]);
     return;
   }
 
-  document.getElementById('mega-productos-categorias').innerHTML = renderSkeletonMega();
+  const cont = document.getElementById(`nav-cat-productos-${categoria}`);
+  if (cont) cont.innerHTML = renderSkeletonMega();
+
   if (!Estado.productos.length) {
     try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin preview si falla */ }
   }
   const delCategoria = Estado.productos.filter((p) => normalizarCategoria(p.categoria) === categoria).slice(0, 4);
-  megaCacheCategorias[categoria] = delCategoria;
-
-  if (megaCategoriaActiva === categoria) pintarProductosMega(delCategoria);
+  navCatCache[categoria] = delCategoria;
+  pintarProductosNavCat(categoria, delCategoria);
 }
 
-function abrirMegaCategorias() {
-  clearTimeout(megaCerrarTimeout);
-  document.getElementById('nav-mega-categorias').classList.add('open');
-  document.getElementById('btn-mega-categorias').setAttribute('aria-expanded', 'true');
-  if (!megaCategoriaActiva) mostrarCategoriaMega(CATEGORIAS_PRODUCTO[0]);
+function cerrarTodosLosNavCat(excepto = null) {
+  document.querySelectorAll('.nav-cat.open').forEach((el) => {
+    if (el.dataset.categoria === excepto) return;
+    el.classList.remove('open');
+    el.querySelector('.nav-cat-trigger')?.setAttribute('aria-expanded', 'false');
+  });
 }
 
-function cerrarMegaCategorias() {
-  document.getElementById('nav-mega-categorias').classList.remove('open');
-  document.getElementById('btn-mega-categorias').setAttribute('aria-expanded', 'false');
+function abrirNavCat(categoria) {
+  clearTimeout(navCatCerrarTimeouts[categoria]);
+  cerrarTodosLosNavCat(categoria);
+  cerrarNavAccount();
+  const el = document.querySelector(`.nav-cat[data-categoria="${categoria}"]`);
+  if (!el) return;
+  el.classList.add('open');
+  el.querySelector('.nav-cat-trigger')?.setAttribute('aria-expanded', 'true');
+  cargarProductosNavCat(categoria);
 }
 
-function cerrarMegaCategoriasConDelay() {
-  clearTimeout(megaCerrarTimeout);
-  megaCerrarTimeout = setTimeout(cerrarMegaCategorias, 180);
+function cerrarNavCat(categoria) {
+  const el = document.querySelector(`.nav-cat[data-categoria="${categoria}"]`);
+  if (!el) return;
+  el.classList.remove('open');
+  el.querySelector('.nav-cat-trigger')?.setAttribute('aria-expanded', 'false');
+}
+
+function cerrarNavCatConDelay(categoria) {
+  clearTimeout(navCatCerrarTimeouts[categoria]);
+  navCatCerrarTimeouts[categoria] = setTimeout(() => cerrarNavCat(categoria), 180);
+}
+
+// ============ ÍCONO DE CUENTA (NAVBAR) ============
+// Mismo patrón hover/tap que la barra de categorías, un solo nivel (ícono -> menú), sin anidar.
+let navAccountCerrarTimeout = null;
+
+function abrirNavAccount() {
+  clearTimeout(navAccountCerrarTimeout);
+  cerrarTodosLosNavCat();
+  const el = document.getElementById('nav-account');
+  el.classList.add('open');
+  document.getElementById('btn-account').setAttribute('aria-expanded', 'true');
+}
+
+function cerrarNavAccount() {
+  const el = document.getElementById('nav-account');
+  el.classList.remove('open');
+  document.getElementById('btn-account').setAttribute('aria-expanded', 'false');
+}
+
+function cerrarNavAccountConDelay() {
+  clearTimeout(navAccountCerrarTimeout);
+  navAccountCerrarTimeout = setTimeout(cerrarNavAccount, 180);
 }
 
 function poblarSelectCategorias(productos) {
@@ -2687,32 +2728,50 @@ function inicializarEventos() {
     document.getElementById('nav-links').classList.toggle('open');
   });
 
-  // ---- Mega-dropdown de categorías: hover en escritorio, tap en táctil (nunca ambos a la vez, se pisarían) ----
-  const navMega = document.getElementById('nav-mega-categorias');
-  if (window.matchMedia('(hover: hover)').matches) {
-    navMega.addEventListener('mouseenter', abrirMegaCategorias);
-    navMega.addEventListener('mouseleave', cerrarMegaCategoriasConDelay);
-  } else {
-    document.getElementById('btn-mega-categorias').addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (navMega.classList.contains('open')) cerrarMegaCategorias();
-      else abrirMegaCategorias();
-    });
-  }
-  document.getElementById('mega-tabs-categorias').addEventListener('click', (e) => {
-    const tab = e.target.closest('.nav-mega-tab');
-    if (tab) mostrarCategoriaMega(tab.dataset.categoria);
+  // ---- Barra de categorías + ícono de cuenta: hover en escritorio, tap en táctil ----
+  // (nunca ambos a la vez, se pisarían; mismo criterio que ya usaba el mega-dropdown anterior)
+  const esTactil = !window.matchMedia('(hover: hover)').matches;
+
+  document.querySelectorAll('.nav-cat').forEach((navCat) => {
+    const categoria = navCat.dataset.categoria;
+    if (!esTactil) {
+      navCat.addEventListener('mouseenter', () => abrirNavCat(categoria));
+      navCat.addEventListener('mouseleave', () => cerrarNavCatConDelay(categoria));
+    } else {
+      navCat.querySelector('.nav-cat-trigger').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (navCat.classList.contains('open')) cerrarNavCat(categoria);
+        else abrirNavCat(categoria);
+      });
+    }
   });
-  document.getElementById('mega-productos-categorias').addEventListener('click', (e) => {
+  document.getElementById('nav-categorias').addEventListener('click', (e) => {
     const btn = e.target.closest('.nav-mega-producto');
     if (!btn) return;
-    cerrarMegaCategorias();
+    cerrarTodosLosNavCat();
     document.getElementById('nav-links').classList.remove('open');
     cambiarVista('catalogo');
     abrirDetalleProducto(btn.dataset.id);
   });
+
+  const navAccount = document.getElementById('nav-account');
+  if (!esTactil) {
+    navAccount.addEventListener('mouseenter', abrirNavAccount);
+    navAccount.addEventListener('mouseleave', cerrarNavAccountConDelay);
+  } else {
+    document.getElementById('btn-account').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (navAccount.classList.contains('open')) cerrarNavAccount();
+      else abrirNavAccount();
+    });
+  }
+  document.getElementById('nav-account-panel').addEventListener('click', (e) => {
+    if (e.target.closest('.nav-account-item')) cerrarNavAccount();
+  });
+
   document.addEventListener('click', (e) => {
-    if (!navMega.contains(e.target)) cerrarMegaCategorias();
+    if (!e.target.closest('.nav-cat')) cerrarTodosLosNavCat();
+    if (!e.target.closest('.nav-account')) cerrarNavAccount();
   });
 
   document.getElementById('btn-open-login').addEventListener('click', () => {
@@ -2924,6 +2983,7 @@ function cambiarTabAuth(tab) {
 function iniciar() {
   cargarSesionGuardada();
   actualizarUIAuth();
+  renderNavCategorias();
   inicializarEventos();
   cambiarVista(Estado.token ? 'catalogo' : 'landing');
 }
