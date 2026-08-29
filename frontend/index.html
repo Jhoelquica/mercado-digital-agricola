@@ -32,15 +32,15 @@
       <button class="btn btn-ghost cart-btn" id="btn-cart">
         🛒 <span id="cart-count" class="cart-badge hidden">0</span>
       </button>
-      <div id="auth-area" class="auth-area">
-        <button class="btn btn-outline" id="btn-open-login">Iniciar sesión</button>
-        <button class="btn btn-primary" id="btn-open-registro">Registrarse</button>
-      </div>
-      <div id="user-area" class="user-area hidden">
-        <div class="nav-account" id="nav-account">
-          <button type="button" class="nav-account-trigger" id="btn-account" aria-haspopup="true" aria-expanded="false" aria-label="Mi cuenta">👤</button>
-          <div class="nav-account-panel" id="nav-account-panel">
-            <div class="nav-account-panel-inner">
+      <div class="nav-account" id="nav-account">
+        <button type="button" class="nav-account-trigger" id="btn-account" aria-haspopup="true" aria-expanded="false" aria-label="Mi cuenta">👤</button>
+        <div class="nav-account-panel" id="nav-account-panel">
+          <div class="nav-account-panel-inner">
+            <div id="nav-account-guest">
+              <button type="button" class="nav-account-item" id="btn-open-login">🔑 Iniciar sesión</button>
+              <button type="button" class="nav-account-item" id="btn-open-registro">📝 Registrarse</button>
+            </div>
+            <div id="nav-account-user" class="hidden">
               <div class="nav-account-saludo">Hola, <strong id="user-name">Usuario</strong></div>
               <button type="button" class="nav-account-item" data-nav="mis-pedidos">📦 Mis Pedidos</button>
               <button type="button" class="nav-account-item" data-nav="notificaciones">🔔 Notificaciones</button>

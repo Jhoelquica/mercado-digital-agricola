@@ -627,8 +627,9 @@ function cerrarSesion() {
 
 function actualizarUIAuth() {
   const logueado = !!Estado.token;
-  document.getElementById('auth-area').classList.toggle('hidden', logueado);
-  document.getElementById('user-area').classList.toggle('hidden', !logueado);
+  // El ícono de cuenta (#nav-account) siempre está visible; solo cambia el contenido de su dropdown.
+  document.getElementById('nav-account-guest').classList.toggle('hidden', logueado);
+  document.getElementById('nav-account-user').classList.toggle('hidden', !logueado);
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);

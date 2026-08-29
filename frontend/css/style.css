@@ -54,6 +54,7 @@ input, select { font-family: inherit; }
   padding: 14px 24px;
   display: flex;
   align-items: center;
+  justify-content: space-between; /* sin esto, con .nav-links colapsado (móvil), .nav-actions no queda pegado al borde derecho */
   gap: 24px;
 }
 
@@ -73,10 +74,16 @@ input, select { font-family: inherit; }
 
 .nav-links {
   display: flex;
+  align-items: center;
   gap: 4px;
   flex: 1;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0; /* permite que el flex-item se encoja y active overflow-x en vez de forzar el ancho del padre */
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox: fallback de scroll invisible, sigue siendo desplazable con trackpad/rueda */
+  -ms-overflow-style: none;
 }
+.nav-links::-webkit-scrollbar { display: none; }
 
 .nav-link {
   background: transparent;
@@ -85,13 +92,16 @@ input, select { font-family: inherit; }
   font-weight: 600;
   font-size: 0.92rem;
   color: var(--texto-suave);
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.2s ease;
 }
 .nav-link:hover { background: var(--verde-pastel); color: var(--verde-oscuro); }
 .nav-link.active { background: var(--verde-principal); color: white; }
 
 /* ---------- BARRA DE CATEGORÍAS (estilo Samsung Shop: un botón = una categoría = un dropdown propio) ---------- */
-.nav-categorias { display: flex; gap: 4px; flex-wrap: wrap; }
+.nav-categorias { display: flex; gap: 2px; flex-wrap: nowrap; flex-shrink: 0; }
+.nav-cat-trigger { padding: 9px 10px; font-size: 0.86rem; }
 .nav-cat { position: relative; }
 
 .nav-cat-panel {
@@ -213,8 +223,6 @@ input, select { font-family: inherit; }
   50% { transform: scale(1.4); }
   100% { transform: scale(1); }
 }
-
-.auth-area, .user-area { display: flex; align-items: center; gap: 10px; }
 
 /* ---------- ÍCONO DE CUENTA (estilo Samsung Shop: ícono junto al carrito, dropdown por hover) ---------- */
 .nav-account { position: relative; }
@@ -1807,7 +1815,7 @@ input, select { font-family: inherit; }
   .nav-link { text-align: left; }
   .nav-categorias { flex-direction: column; gap: 0; width: 100%; }
   .hamburger { display: block; }
-  .auth-area .btn, .user-name { font-size: 0.8rem; }
+  .user-name { font-size: 0.8rem; }
 
   .nav-cat-panel {
     position: static;
@@ -1832,7 +1840,6 @@ input, select { font-family: inherit; }
   .product-banner { height: 120px; font-size: 2.6rem; }
   .hero { padding: 28px 8px 20px; }
   .modal { padding: 20px; }
-  .auth-area .btn { padding: 8px 12px; }
   .filtro-precio { padding: 10px 12px; }
   .btn-sm { margin-left: 0; }
   .checkout-step-label { display: none; }
