@@ -84,11 +84,68 @@
       </div>
     </div>
 
+    <!-- BANNER: FRUTAS (sin fila de tarjetas) -->
+    <div class="landing-banner-grupo">
+      <section class="landing-banner landing-banner-standalone">
+        <div class="landing-banner-bg" data-nombres="platano,chirimoya"></div>
+        <div class="landing-banner-content">
+          <h2>Frutas de temporada</h2>
+          <p>Plátano de temporada, cosecha reciente de Ayacucho</p>
+          <button type="button" class="btn btn-primary" data-landing-categoria="fruta">Ver categoría →</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- BANNER: SABOR DE LA SIERRA (sin fila de tarjetas) -->
+    <div class="landing-banner-grupo">
+      <section class="landing-banner landing-banner-standalone">
+        <div class="landing-banner-bg" data-nombres="maiz morado,kiwicha"></div>
+        <div class="landing-banner-content">
+          <h2>Sabor de la sierra</h2>
+          <p>Granos y tubérculos andinos, tradición en cada cosecha</p>
+          <button type="button" class="btn btn-primary" data-landing-categoria="grano">Ver categoría →</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- GRID ESTÁTICO DE 8 PRODUCTOS (mismo criterio que ya usaba "Productos destacados": QA fuera, orden por calificación) -->
     <div class="section-header">
       <h2>🧺 Productos destacados</h2>
       <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
     </div>
-    <div id="landing-productos-grid" class="grid"></div>
+    <div id="landing-grid-8" class="landing-grid-8"></div>
+
+    <!-- BANNER: LÁCTEOS (único que conserva su fila de 4 tarjetas) -->
+    <div class="landing-banner-grupo">
+      <section class="landing-banner">
+        <div class="landing-banner-bg" data-nombres="queso,leche fresca"></div>
+        <div class="landing-banner-content">
+          <h2>Lácteos frescos</h2>
+          <p>Lácteos frescos, directo de la comunidad de Acco</p>
+          <button type="button" class="btn btn-primary" data-landing-categoria="lacteo">Ver categoría →</button>
+        </div>
+      </section>
+      <div class="landing-banner-tarjetas">
+        <div class="landing-banner-tarjeta hidden" data-nombres="yogurt natural"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="huevo de campo"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="huevo de codorniz"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="queso"></div>
+      </div>
+    </div>
+
+    <!-- RECOMENDADO PARA TI: carrusel horizontal (antes "Productos destacados") -->
+    <div class="section-header">
+      <h2>✨ Recomendado para ti</h2>
+      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
+    </div>
+    <div class="landing-carousel-wrap">
+      <button type="button" class="landing-carousel-arrow landing-carousel-arrow-prev" id="landing-carousel-prev" aria-label="Ver productos anteriores">‹</button>
+      <div class="landing-carousel" id="landing-productos-carousel"></div>
+      <button type="button" class="landing-carousel-arrow landing-carousel-arrow-next" id="landing-carousel-next" aria-label="Ver más productos">›</button>
+    </div>
+    <div class="landing-carousel-progreso">
+      <div class="landing-carousel-progreso-barra" id="landing-carousel-progreso-barra"></div>
+    </div>
 
     <div class="landing-roles">
       <h2>Una plataforma, tres roles</h2>

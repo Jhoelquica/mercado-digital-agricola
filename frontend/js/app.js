@@ -693,9 +693,17 @@ function abrirModal(id) { document.getElementById(id).classList.remove('hidden')
 function cerrarModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 // ============ LANDING (INVITADOS) ============
+// Compartida con los banners de categoría del hero (cargarBannersCategoriaFijos) — un solo criterio
+// de "esto es dato de QA/pruebas" en toda la app.
+function esProductoDePrueba(p) {
+  return /\btest\b|\bqa\b/i.test(`${p.nombre} ${p.categoria}`);
+}
+
 async function cargarLanding() {
-  const grid = document.getElementById('landing-productos-grid');
-  grid.innerHTML = renderSkeletonProductos(6);
+  const grid8 = document.getElementById('landing-grid-8');
+  const carrusel = document.getElementById('landing-productos-carousel');
+  grid8.innerHTML = renderSkeletonProductos(8);
+  carrusel.innerHTML = renderSkeletonProductos(6);
   try {
     const productos = await Api.productos.listar();
     Estado.productos = productos;
@@ -704,21 +712,114 @@ async function cargarLanding() {
     const productoresUnicos = new Set(productos.map((p) => p.productor_id)).size;
     document.getElementById('landing-stat-productores').textContent = productoresUnicos;
 
-    const esProductoDePrueba = (p) => /\btest\b|\bqa\b/i.test(`${p.nombre} ${p.categoria}`);
     const candidatos = productos.filter((p) => !esProductoDePrueba(p));
     const fuente = candidatos.length >= 3 ? candidatos : productos;
 
-    const destacados = [...fuente]
-      .sort((a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0))
-      .slice(0, 6);
+    // Mismo criterio de siempre para "lo destacado": mejor calificado primero (sin calificaciones
+    // aún, el sort es estable y conserva el orden del catálogo).
+    const ordenados = [...fuente]
+      .sort((a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0));
 
-    grid.innerHTML = destacados.length
-      ? destacados.map((p, i) => renderTarjetaProductoCatalogo(p, { indice: i })).join('')
+    const destacados8 = ordenados.slice(0, 8);
+    grid8.innerHTML = destacados8.length
+      ? destacados8.map((p) => `<div class="landing-grid-8-tarjeta" data-id="${p.id}">${renderContenidoTarjetaSimple(p)}</div>`).join('')
       : '<p class="empty-state">🌾 Todavía no hay productos publicados.</p>';
+
+    // El carrusel arranca donde termina el grid de 8 para no repetir exactamente los mismos
+    // productos en dos secciones seguidas; si no alcanzan, se completa desde el principio.
+    const resto = ordenados.slice(8);
+    const recomendados = (resto.length >= 10 ? resto : ordenados).slice(0, 30);
+    carrusel.innerHTML = recomendados.length
+      ? renderCarruselProductos(recomendados)
+      : '<p class="empty-state">🌾 Todavía no hay productos publicados.</p>';
+    actualizarProgresoCarrusel();
+
+    cargarBannersCategoriaFijos(productos);
   } catch (err) {
-    grid.innerHTML = '';
+    grid8.innerHTML = '';
+    carrusel.innerHTML = '';
     manejarError(err, 'cargar los productos destacados');
   }
+}
+
+// Tarjeta simplificada compartida por las 3 secciones nuevas de esta sesión (banner con tarjetas,
+// grid de 8, carrusel): solo imagen + nombre + botón "Comprar" que navega al detalle ya existente.
+// La tarjeta completa del catálogo (renderTarjetaProductoCatalogo, con precio/calificación/stock)
+// es un componente aparte, usado en el catálogo y "Mis productos" — no se toca.
+function renderContenidoTarjetaSimple(p) {
+  return `
+    ${renderMediaProducto(p, 'producto-simple-img')}
+    <span class="producto-simple-nombre">${escapeAttr(p.nombre)}</span>
+    <button type="button" class="btn btn-primary btn-sm producto-simple-comprar" data-id="${p.id}">Comprar</button>`;
+}
+
+// ============ CARRUSEL "RECOMENDADO PARA TI" (LANDING) ============
+function renderCarruselProductos(productos) {
+  return productos.map((p) => `
+    <div class="landing-carousel-tarjeta" data-id="${p.id}">
+      ${renderContenidoTarjetaSimple(p)}
+    </div>`).join('');
+}
+
+function actualizarProgresoCarrusel() {
+  const cont = document.getElementById('landing-productos-carousel');
+  const barra = document.getElementById('landing-carousel-progreso-barra');
+  if (!cont || !barra) return;
+  const maximoDesplazable = cont.scrollWidth - cont.clientWidth;
+  const porcentaje = maximoDesplazable > 0 ? (cont.scrollLeft / maximoDesplazable) * 100 : 0;
+  barra.style.width = `${Math.min(100, Math.max(0, porcentaje))}%`;
+}
+
+function desplazarCarrusel(direccion) {
+  const cont = document.getElementById('landing-productos-carousel');
+  if (!cont) return;
+  const item = cont.querySelector('.landing-carousel-tarjeta');
+  const anchoItem = item ? item.getBoundingClientRect().width + 16 : 166; // 16px = gap del flex
+  cont.scrollBy({ left: direccion * anchoItem * 2, behavior: 'smooth' }); // avanza ~2 tarjetas por clic
+}
+
+// ============ BANNERS DE CATEGORÍA (LANDING) ============
+// Título/subtítulo/CTA de cada banner son texto fijo, ya escrito en el HTML — esta función SOLO
+// completa la imagen de fondo y las fotos+nombres de las 4 tarjetas con productos reales del
+// catálogo (sin selección dinámica por stock, sin rotación: son 3 secciones siempre visibles).
+function normalizarTexto(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+// Cada casillero de data-nombres puede traer varios nombres separados por coma (ej. "quinua,kiwicha")
+// como alternativas para el mismo lugar — se usa el primero que exista en el catálogo real.
+function buscarProductoPorNombre(productos, nombresCsv) {
+  const alternativas = String(nombresCsv || '').split(',').map((s) => s.trim()).filter(Boolean);
+  for (const alt of alternativas) {
+    const objetivo = normalizarTexto(alt);
+    const match = productos.find((p) => {
+      const n = normalizarTexto(p.nombre);
+      return n === objetivo || n.includes(objetivo) || objetivo.includes(n);
+    });
+    if (match) return match;
+  }
+  return null;
+}
+
+function cargarBannersCategoriaFijos(productos) {
+  const candidatos = productos.filter((p) => !esProductoDePrueba(p));
+
+  document.querySelectorAll('.landing-banner-bg[data-nombres]').forEach((el) => {
+    const producto = buscarProductoPorNombre(candidatos, el.dataset.nombres);
+    if (producto && producto.imagen_principal) {
+      el.style.backgroundImage = `url("${producto.imagen_principal}")`;
+    }
+    // Sin match (o sin foto): se queda el fondo verde sólido ya definido en CSS, no se rompe el banner.
+  });
+
+  document.querySelectorAll('.landing-banner-tarjeta[data-nombres]').forEach((el) => {
+    const producto = buscarProductoPorNombre(candidatos, el.dataset.nombres);
+    if (!producto) return; // sin match en el catálogo actual: se omite en silencio, se queda oculta
+
+    el.innerHTML = renderContenidoTarjetaSimple(producto);
+    el.dataset.id = producto.id;
+    el.classList.remove('hidden');
+  });
 }
 
 // ============ CATÁLOGO ============
@@ -2810,7 +2911,16 @@ function inicializarEventos() {
   document.getElementById('btn-refrescar-catalogo').addEventListener('click', cargarCatalogo);
 
   document.getElementById('productos-grid').addEventListener('click', manejarClickGrid);
-  document.getElementById('landing-productos-grid').addEventListener('click', manejarClickGrid);
+  document.getElementById('landing-grid-8').addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.landing-grid-8-tarjeta');
+    if (tarjeta) abrirDetalleProducto(tarjeta.dataset.id);
+  });
+  document.querySelectorAll('.landing-banner-tarjetas').forEach((cont) => {
+    cont.addEventListener('click', (e) => {
+      const tarjeta = e.target.closest('.landing-banner-tarjeta');
+      if (tarjeta && tarjeta.dataset.id) abrirDetalleProducto(tarjeta.dataset.id);
+    });
+  });
 
   document.querySelectorAll('[data-landing-cta]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2820,6 +2930,23 @@ function inicializarEventos() {
   });
   document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
     btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
+  });
+
+  document.querySelectorAll('[data-landing-categoria]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      cambiarVista('catalogo');
+      await cargarCatalogo(); // asegura que el select ya tiene las opciones antes de fijarle un valor
+      document.getElementById('select-categoria').value = btn.dataset.landingCategoria;
+      filtrarYRenderizar();
+    });
+  });
+
+  document.getElementById('landing-carousel-prev').addEventListener('click', () => desplazarCarrusel(-1));
+  document.getElementById('landing-carousel-next').addEventListener('click', () => desplazarCarrusel(1));
+  document.getElementById('landing-productos-carousel').addEventListener('scroll', actualizarProgresoCarrusel, { passive: true });
+  document.getElementById('landing-productos-carousel').addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.landing-carousel-tarjeta');
+    if (tarjeta) abrirDetalleProducto(tarjeta.dataset.id);
   });
 
   document.getElementById('btn-cart').addEventListener('click', () => {

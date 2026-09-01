@@ -402,6 +402,164 @@ input, select { font-family: inherit; }
 .landing-hero-stats strong { font-size: 1.5rem; font-family: var(--font-titulo); }
 .landing-hero-stats span { font-size: 0.8rem; color: rgba(255, 255, 255, 0.78); }
 
+/* ---------- BANNERS DE CATEGORÍA (LANDING) ---------- */
+.landing-banner-grupo { margin: 40px 0 0; }
+.landing-banner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px 24px 0 0;
+  min-height: 440px;
+  display: flex;
+  align-items: center;
+  color: white;
+}
+.landing-banner-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-color: var(--verde-oscuro); /* mientras carga la foto real, o si el producto no tiene foto */
+  background-size: cover;
+  background-position: center;
+}
+.landing-banner::before {
+  content: '';
+  position: absolute; inset: 0;
+  z-index: 1;
+  background: linear-gradient(90deg, rgba(20, 83, 45, 0.9) 0%, rgba(20, 83, 45, 0.6) 48%, rgba(20, 83, 45, 0.18) 100%);
+}
+.landing-banner-content {
+  position: relative;
+  z-index: 2;
+  max-width: 460px;
+  padding: 36px 40px;
+}
+.landing-banner-content h2 { color: white; font-size: clamp(1.4rem, 2.6vw, 1.9rem); margin-bottom: 10px; }
+.landing-banner-content p { color: rgba(255, 255, 255, 0.9); margin-bottom: 22px; }
+
+/* Banners sin fila de tarjetas debajo (Frutas, Sabor de la sierra): redondeo completo, no solo arriba. */
+.landing-banner-standalone { border-radius: 24px; }
+
+.landing-banner-tarjetas {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  background: var(--verde-fondo);
+  border-radius: 0 0 24px 24px;
+  padding: 20px;
+}
+.landing-banner-tarjeta.hidden { display: none; }
+
+@media (max-width: 760px) {
+  .landing-banner { min-height: 260px; }
+  .landing-banner::before {
+    background: linear-gradient(180deg, rgba(20, 83, 45, 0.55) 0%, rgba(20, 83, 45, 0.88) 65%, rgba(20, 83, 45, 0.94) 100%);
+  }
+  .landing-banner-content { max-width: none; padding: 30px 24px; }
+  .landing-banner-tarjetas { grid-template-columns: repeat(2, 1fr); padding: 16px; }
+}
+
+/* ---------- GRID ESTÁTICO DE 8 PRODUCTOS ---------- */
+.landing-grid-8 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+}
+@media (max-width: 760px) {
+  .landing-grid-8 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+}
+
+/* ---------- TARJETA DE PRODUCTO SIMPLIFICADA ----------
+   Compartida por las 3 tarjetas nuevas de esta sección (banner con tarjetas, grid de 8, carrusel):
+   solo imagen + nombre + botón "Comprar". La tarjeta completa del catálogo (.product-card, con
+   precio/calificación/stock) es un componente aparte y no se toca. */
+.landing-banner-tarjeta,
+.landing-grid-8-tarjeta,
+.landing-carousel-tarjeta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  cursor: pointer;
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.producto-simple-img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  overflow: hidden;
+  background: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2.1rem;
+  box-shadow: var(--sombra);
+  transition: transform 0.18s ease;
+}
+.landing-banner-tarjeta:hover .producto-simple-img,
+.landing-grid-8-tarjeta:hover .producto-simple-img,
+.landing-carousel-tarjeta:hover .producto-simple-img { transform: translateY(-3px); }
+.producto-simple-nombre {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--verde-oscuro);
+  text-transform: capitalize;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.producto-simple-comprar { width: 100%; padding: 8px 14px; font-size: 0.82rem; }
+
+/* ---------- CARRUSEL "RECOMENDADO PARA TI" ---------- */
+.landing-carousel-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.landing-carousel {
+  flex: 1;
+  min-width: 0; /* permite que el flex-item se encoja y active el scroll interno, no el ancho del padre */
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scroll-snap-type: x proximity;
+  padding: 4px 2px 14px;
+  -webkit-overflow-scrolling: touch; /* scroll táctil fluido en iOS */
+}
+.landing-carousel-tarjeta { flex: 0 0 150px; scroll-snap-align: start; }
+.landing-carousel-arrow {
+  flex-shrink: 0;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: white;
+  border: 1px solid var(--borde);
+  box-shadow: var(--sombra);
+  color: var(--verde-oscuro);
+  font-size: 1.4rem;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.2s ease;
+}
+.landing-carousel-arrow:hover { background: var(--verde-pastel); }
+
+.landing-carousel-progreso {
+  height: 4px;
+  background: var(--borde);
+  border-radius: 999px;
+  margin-top: 2px;
+  overflow: hidden;
+}
+.landing-carousel-progreso-barra {
+  height: 100%;
+  width: 0%;
+  background: var(--verde-principal);
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
+@media (max-width: 760px) {
+  .landing-carousel-arrow { width: 34px; height: 34px; font-size: 1.2rem; }
+  .landing-carousel-tarjeta { flex-basis: 120px; }
+}
+
 .landing-roles { margin: 48px 0 8px; }
 .landing-roles h2 { text-align: center; margin-bottom: 24px; }
 .landing-roles-grid {
