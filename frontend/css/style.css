@@ -31,6 +31,7 @@ body {
     radial-gradient(circle at 0% 20%, rgba(45, 106, 79, 0.08), transparent 40%);
   min-height: 100vh;
   line-height: 1.5;
+  padding-top: 10px; /* respiro sutil arriba del navbar — ver .navbar { top: 10px } para que se mantenga igual al scrollear, no solo al cargar */
 }
 
 h1, h2, h3 { font-family: var(--font-titulo); color: var(--verde-oscuro); }
@@ -39,36 +40,53 @@ button { font-family: inherit; cursor: pointer; border: none; }
 input, select { font-family: inherit; }
 
 /* ---------- NAVBAR ---------- */
+/* Al cargar (scrollY dentro del hero): transparente, se funde con el fondo del hero/body (que ya no
+   tiene color propio — ver .landing-hero). Al pasar el hero (.navbar-scrolled, ver app.js): blanco
+   sólido + separación sutil, para seguir siendo legible sobre banners/fotos más abajo. */
 .navbar {
   position: sticky;
-  top: 0;
+  top: 10px; /* mismo valor que el padding-top del body: el respiro se mantiene también ya scrolleado */
   z-index: 100;
-  background: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  box-shadow: none;
+  transform: translateY(0);
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.3s ease;
+}
+.navbar.navbar-scrolled {
+  background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--borde);
+  box-shadow: 0 2px 14px rgba(27, 67, 50, 0.08);
 }
+/* Se oculta deslizándose hacia arriba (no display:none, para que la transición se anime) al bajar;
+   translateY(0) — arriba de este bloque — lo trae de vuelta al subir. Ver manejarScrollNavbar(). */
+.navbar.navbar-oculto { transform: translateY(-100%); }
 
 .navbar-inner {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 14px 24px;
+  padding: 24px 40px; /* antes 34px vertical -> ~113px de alto total; bajado para acercarse más a la proporción de la referencia */
   display: flex;
   align-items: center;
-  justify-content: space-between; /* sin esto, con .nav-links colapsado (móvil), .nav-actions no queda pegado al borde derecho */
+  /* flex-start (no space-between): logo + categorías quedan agrupados a la izquierda como un solo
+     bloque; el hueco libre lo absorbe el margin-left:auto de .nav-actions (ver abajo), no queda
+     repartido en dos huecos simétricos que centran visualmente las categorías. */
+  justify-content: flex-start;
   gap: 24px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   font-family: var(--font-titulo);
-  font-size: 1.25rem;
+  font-size: 1.7rem;
   color: var(--verde-oscuro);
   cursor: pointer;
   white-space: nowrap;
 }
-.brand-icon { width: 26px; height: 26px; flex-shrink: 0; }
+.brand-icon { width: 40px; height: 40px; flex-shrink: 0; }
 .brand-icon svg { width: 100%; height: 100%; display: block; }
 .brand strong { color: var(--verde-medio); }
 
@@ -76,7 +94,9 @@ input, select { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1;
+  flex: 0 1 auto; /* antes flex:1 (crecía para llenar todo el hueco hasta los íconos, lo que dejaba las
+    categorías con su punto medio casi exacto al centro del navbar) — ahora ocupa solo su ancho natural,
+    pegado al logo; sigue pudiendo encogerse (flex-shrink:1 + min-width:0 abajo) para el fallback de scroll. */
   flex-wrap: nowrap;
   min-width: 0; /* permite que el flex-item se encoja y active overflow-x en vez de forzar el ancho del padre */
   overflow-x: auto;
@@ -101,7 +121,7 @@ input, select { font-family: inherit; }
 
 /* ---------- BARRA DE CATEGORÍAS (estilo Samsung Shop: un botón = una categoría = un dropdown propio) ---------- */
 .nav-categorias { display: flex; gap: 2px; flex-wrap: nowrap; flex-shrink: 0; }
-.nav-cat-trigger { padding: 9px 10px; font-size: 0.86rem; }
+.nav-cat-trigger { padding: 12px 16px; font-size: 1rem; }
 .nav-cat { position: relative; }
 
 .nav-cat-panel {
@@ -110,7 +130,7 @@ input, select { font-family: inherit; }
      declarar solo un eje) — un panel absolute quedaría recortado verticalmente por ese overflow del
      ancestro. fixed escapa de esa cadena de clipping; top/left se calculan en JS (abrirNavCat). */
   position: fixed;
-  width: min(560px, 90vw);
+  width: min(620px, 92vw);
   padding-top: 10px;
   opacity: 0;
   visibility: hidden;
@@ -123,20 +143,56 @@ input, select { font-family: inherit; }
   visibility: visible;
   pointer-events: auto;
 }
+/* Estilo Samsung: panel blanco flotando sobre el resto de la página, 2 columnas —
+   productos (principal) + "Descubre" (angosta, separador vertical sutil). */
 .nav-cat-panel-inner {
   background: white;
   border-radius: 18px;
   border: 1px solid var(--borde);
   box-shadow: var(--sombra-hover);
-  padding: 18px;
+  padding: 20px;
+  display: flex;
+  gap: 20px;
   transform: translateY(-8px);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .nav-cat.open .nav-cat-panel-inner { transform: translateY(0); }
 
+.nav-cat-panel-productos { flex: 1 1 auto; min-width: 0; }
+
+.nav-cat-panel-descubre {
+  flex: 0 0 160px;
+  border-left: 1px solid var(--borde);
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.nav-cat-descubre-titulo {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+  margin-bottom: 8px;
+}
+.nav-cat-descubre-link {
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--texto);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-cat-descubre-link:hover { background: var(--verde-pastel); color: var(--verde-oscuro); }
+
 .nav-mega-productos {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(2, 1fr); /* siempre se muestran 4 productos (slice(0,4)): 2x2 fijo */
   gap: 14px;
   min-height: 168px;
 }
@@ -179,6 +235,8 @@ input, select { font-family: inherit; }
   display: flex;
   align-items: center;
   gap: 12px;
+  margin-left: auto; /* empuja carrito/cuenta al extremo derecho; el hueco libre queda entre las
+    categorías y aquí (proporción variable según cuántas categorías quepan), no repartido simétricamente. */
 }
 
 .btn {
@@ -322,33 +380,28 @@ input, select { font-family: inherit; }
 /* ---------- LANDING (INVITADOS) ---------- */
 .btn-lg { padding: 14px 28px; font-size: 1rem; }
 
-/* Hero estilo "producto sobre fondo limpio": fondo claro con un toque sutil del verde de marca,
-   texto a la izquierda, imagen real contenida a la derecha (no como fondo a sangre completa). */
+/* Hero estilo "producto sobre fondo limpio": sin tarjeta propia — usa el mismo fondo continuo del
+   body/navbar (nada de color ni borde propio), texto a la izquierda, imagen real flotando a la
+   derecha (sin efecto "marco", panorámica, sin caja). */
 .landing-hero {
   position: relative;
   display: flex;
   align-items: center;
   gap: 48px;
-  overflow: hidden;
-  border-radius: 28px;
-  padding: 56px 48px;
+  padding: 32px 0;
   margin-bottom: 64px;
   min-height: 86vh; /* domina la pantalla al cargar, como la referencia — se ajusta en móvil abajo */
-  background: linear-gradient(135deg, var(--verde-fondo) 0%, var(--verde-pastel) 100%);
-  box-shadow: var(--sombra-hover);
 }
 /* Columna de texto con más ancho relativo que la imagen: el clamp() del título se calculó para
    este ancho real de columna (~620px), no para el viewport completo — por eso el máximo es más
    bajo que "a ojo" parecería, y no se aprieta contra la imagen. */
 .landing-hero-content { flex: 1 1 56%; min-width: 0; max-width: 620px; text-align: left; }
 .landing-hero-media {
-  flex: 1 1 38%;
+  flex: 1 1 40%;
   min-width: 0;
-  min-height: 0;
-  align-self: stretch; /* la foto llena todo el alto del hero (ya no tiene aspect-ratio fijo en desktop) */
-  border-radius: 20px;
+  border-radius: 12px; /* sutil, no el "marco" agresivo de antes */
   overflow: hidden;
-  box-shadow: var(--sombra);
+  aspect-ratio: 16 / 9; /* panorámica — antes se estiraba angosta y alta como una tarjeta */
 }
 .landing-hero-bg {
   width: 100%;
@@ -409,9 +462,9 @@ input, select { font-family: inherit; }
 .landing-hero-stats span { font-size: 0.8rem; color: var(--texto-suave); }
 
 @media (max-width: 860px) {
-  .landing-hero { flex-direction: column; min-height: auto; } /* apilado: la altura la da el contenido, no un % del viewport */
+  .landing-hero { flex-direction: column; min-height: auto; padding: 24px 0; } /* apilado: la altura la da el contenido, no un % del viewport */
   .landing-hero-content { max-width: none; }
-  .landing-hero-media { width: 100%; align-self: auto; aspect-ratio: 16 / 10; } /* apilada no puede "estirarse" al alto del hero: vuelve a necesitar su propio aspect-ratio */
+  .landing-hero-media { width: 100%; }
 }
 
 /* ---------- BANNERS DE CATEGORÍA (LANDING) ---------- */
@@ -2011,12 +2064,22 @@ input, select { font-family: inherit; }
     overflow: hidden;
     transition: max-height 0.25s ease;
   }
-  .nav-cat.open .nav-cat-panel { max-height: 600px; overflow-y: auto; }
-  .nav-cat-panel-inner { transform: none; box-shadow: none; border-radius: 12px; margin-top: 8px; }
+  .nav-cat.open .nav-cat-panel { max-height: 700px; overflow-y: auto; } /* un poco más que antes: ahora también entra la columna "Descubre" apilada */
+  .nav-cat-panel-inner {
+    flex-direction: column; /* apilada: Descubre pasa a ir debajo del grid de productos, no al costado */
+    transform: none; box-shadow: none; border-radius: 12px; margin-top: 8px;
+  }
+  .nav-cat-panel-descubre {
+    flex-basis: auto;
+    border-left: none;
+    border-top: 1px solid var(--borde);
+    padding-left: 0;
+    padding-top: 14px;
+  }
 }
 
 @media (max-width: 560px) {
-  .navbar-inner { padding: 12px 16px; }
+  .navbar-inner { padding: 20px 16px; }
   .brand-text { display: none; }
   #app-main { padding: 16px; }
   .toolbar { flex-direction: column; }

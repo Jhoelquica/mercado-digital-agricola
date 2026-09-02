@@ -659,6 +659,76 @@ async function iniciarSesionConToken(token) {
   actualizarUIAuth();
 }
 
+// ============ NAVBAR DINÁMICO SEGÚN SCROLL ============
+// Dos efectos independientes, combinados en el mismo handler con throttle de requestAnimationFrame:
+// 1) transparente/blanco según POSICIÓN de scroll (ver actualizarNavbarScroll)
+// 2) se oculta/muestra según DIRECCIÓN de scroll (ver actualizarVisibilidadNavbar)
+
+// ---- 1) Transparente sobre el hero, blanco sólido al pasarlo ----
+// El umbral es la altura real del hero (0 si la vista activa no lo tiene, ej. catálogo) con margen.
+let navbarUmbralScroll = 20;
+let navbarScrollTicking = false;
+
+function actualizarUmbralNavbarScroll() {
+  const hero = document.querySelector('.landing-hero');
+  const altura = hero ? hero.offsetHeight : 0;
+  navbarUmbralScroll = altura > 100 ? altura - 80 : 20;
+}
+
+function actualizarNavbarScroll() {
+  document.querySelector('.navbar').classList.toggle('navbar-scrolled', window.scrollY > navbarUmbralScroll);
+}
+
+// ---- 2) Ocultar al bajar, mostrar de inmediato al subir ----
+let navbarUltimoScrollY = 0;
+let navbarAcumuladoBajada = 0; // scroll continuo hacia abajo, para ignorar micro-scrolls (evita parpadeo)
+let navbarOculto = false;
+const NAVBAR_ACUMULADO_PARA_OCULTAR = 8; // px de scroll seguido hacia abajo antes de reaccionar
+const NAVBAR_SCROLL_MINIMO_PARA_OCULTAR = 80; // cerca del tope siempre visible, sin importar dirección
+
+function mostrarNavbar() {
+  if (!navbarOculto) return;
+  navbarOculto = false;
+  document.querySelector('.navbar').classList.remove('navbar-oculto');
+}
+
+function ocultarNavbar() {
+  if (navbarOculto) return;
+  navbarOculto = true;
+  document.querySelector('.navbar').classList.add('navbar-oculto');
+}
+
+function actualizarVisibilidadNavbar() {
+  const scrollActual = window.scrollY;
+  const delta = scrollActual - navbarUltimoScrollY;
+
+  if (scrollActual <= NAVBAR_SCROLL_MINIMO_PARA_OCULTAR) {
+    mostrarNavbar();
+    navbarAcumuladoBajada = 0;
+  } else if (delta > 0) {
+    // bajando: acumula antes de ocultar, así un par de pixeles accidentales no lo esconden
+    navbarAcumuladoBajada += delta;
+    if (navbarAcumuladoBajada > NAVBAR_ACUMULADO_PARA_OCULTAR) ocultarNavbar();
+  } else if (delta < 0) {
+    // subiendo, aunque sea un poco: reaparece de inmediato, sin umbral
+    mostrarNavbar();
+    navbarAcumuladoBajada = 0;
+  }
+
+  navbarUltimoScrollY = scrollActual;
+}
+
+// Throttle simple con requestAnimationFrame: como mucho una actualización por frame, no por pixel.
+function manejarScrollNavbar() {
+  if (navbarScrollTicking) return;
+  navbarScrollTicking = true;
+  requestAnimationFrame(() => {
+    actualizarNavbarScroll();
+    actualizarVisibilidadNavbar();
+    navbarScrollTicking = false;
+  });
+}
+
 // ============ NAVEGACIÓN ============
 function cambiarVista(nombre) {
   if (nombre === 'inicio') nombre = Estado.token ? 'catalogo' : 'landing';
@@ -671,6 +741,15 @@ function cambiarVista(nombre) {
     btn.classList.toggle('active', btn.dataset.nav === nombre);
   });
   document.getElementById('nav-links').classList.remove('open');
+
+  // El umbral depende de si la vista activa tiene el hero alto (solo landing) — se recalcula al
+  // cambiar de vista, y se sincroniza el estado del navbar de inmediato (sin esperar el próximo scroll).
+  actualizarUmbralNavbarScroll();
+  actualizarNavbarScroll();
+  // Tras navegar, el navbar siempre vuelve a mostrarse y el tracking de dirección arranca de cero.
+  mostrarNavbar();
+  navbarUltimoScrollY = window.scrollY;
+  navbarAcumuladoBajada = 0;
 
   if (nombre === 'landing') cargarLanding();
   if (nombre === 'catalogo') cargarCatalogo();
@@ -859,7 +938,15 @@ function renderNavCategorias() {
       <button type="button" class="nav-link nav-cat-trigger" aria-haspopup="true" aria-expanded="false">${NOMBRE_CATEGORIA[c]}</button>
       <div class="nav-cat-panel">
         <div class="nav-cat-panel-inner">
-          <div class="nav-mega-productos" id="nav-cat-productos-${c}"></div>
+          <div class="nav-cat-panel-productos">
+            <div class="nav-mega-productos" id="nav-cat-productos-${c}"></div>
+          </div>
+          <div class="nav-cat-panel-descubre">
+            <span class="nav-cat-descubre-titulo">Descubre</span>
+            <button type="button" class="nav-cat-descubre-link" data-accion="catalogo">Ver todo el catálogo</button>
+            <button type="button" class="nav-cat-descubre-link" data-accion="filtros">Filtros avanzados</button>
+            <button type="button" class="nav-cat-descubre-link" data-accion="blockchain">Cómo funciona la trazabilidad blockchain</button>
+          </div>
         </div>
       </div>
     </div>`).join('');
@@ -2842,6 +2929,12 @@ function inicializarEventos() {
     document.getElementById('nav-links').classList.toggle('open');
   });
 
+  // ---- Navbar dinámico: transparente sobre el hero, blanco sólido al pasarlo ----
+  actualizarUmbralNavbarScroll();
+  actualizarNavbarScroll();
+  window.addEventListener('scroll', manejarScrollNavbar, { passive: true });
+  window.addEventListener('resize', actualizarUmbralNavbarScroll);
+
   // ---- Barra de categorías + ícono de cuenta: hover en escritorio, tap en táctil ----
   // (nunca ambos a la vez, se pisarían; mismo criterio que ya usaba el mega-dropdown anterior)
   const esTactil = !window.matchMedia('(hover: hover)').matches;
@@ -2860,12 +2953,34 @@ function inicializarEventos() {
     }
   });
   document.getElementById('nav-categorias').addEventListener('click', (e) => {
-    const btn = e.target.closest('.nav-mega-producto');
-    if (!btn) return;
-    cerrarTodosLosNavCat();
-    document.getElementById('nav-links').classList.remove('open');
-    cambiarVista('catalogo');
-    abrirDetalleProducto(btn.dataset.id);
+    const btnProducto = e.target.closest('.nav-mega-producto');
+    if (btnProducto) {
+      cerrarTodosLosNavCat();
+      document.getElementById('nav-links').classList.remove('open');
+      cambiarVista('catalogo');
+      abrirDetalleProducto(btnProducto.dataset.id);
+      return;
+    }
+
+    const btnDescubre = e.target.closest('.nav-cat-descubre-link');
+    if (btnDescubre) {
+      cerrarTodosLosNavCat();
+      document.getElementById('nav-links').classList.remove('open');
+      const accion = btnDescubre.dataset.accion;
+      if (accion === 'catalogo') {
+        cambiarVista('catalogo');
+      } else if (accion === 'filtros') {
+        // El catálogo no tiene un panel de filtros que "abrir" — siempre está visible; lo más honesto
+        // que se puede ofrecer es llevar ahí y llevar el foco directo al filtro de precio.
+        cambiarVista('catalogo');
+        document.getElementById('input-precio-min')?.focus();
+      } else if (accion === 'blockchain') {
+        // No existe una vista dedicada a "cómo funciona" — se ancla a la tarjeta real ya existente
+        // en el landing (confirmado con el usuario en vez de inventar un destino).
+        cambiarVista('landing');
+        document.getElementById('landing-confianza-blockchain')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
   });
 
   const navAccount = document.getElementById('nav-account');
