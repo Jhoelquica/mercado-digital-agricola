@@ -105,9 +105,11 @@ input, select { font-family: inherit; }
 .nav-cat { position: relative; }
 
 .nav-cat-panel {
-  position: absolute;
-  top: 100%;
-  left: 0;
+  /* position: fixed (no absolute) a propósito: .nav-links tiene overflow-x:auto para el fallback de
+     scroll horizontal, y por la spec de CSS eso fuerza overflow-y a "auto" también (no hay forma de
+     declarar solo un eje) — un panel absolute quedaría recortado verticalmente por ese overflow del
+     ancestro. fixed escapa de esa cadena de clipping; top/left se calculan en JS (abrirNavCat). */
+  position: fixed;
   width: min(560px, 90vw);
   padding-top: 10px;
   opacity: 0;
@@ -320,24 +322,39 @@ input, select { font-family: inherit; }
 /* ---------- LANDING (INVITADOS) ---------- */
 .btn-lg { padding: 14px 28px; font-size: 1rem; }
 
+/* Hero estilo "producto sobre fondo limpio": fondo claro con un toque sutil del verde de marca,
+   texto a la izquierda, imagen real contenida a la derecha (no como fondo a sangre completa). */
 .landing-hero {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 48px;
   overflow: hidden;
   border-radius: 28px;
-  padding: 56px 32px;
-  margin-bottom: 40px;
-  text-align: center;
-  color: white;
-  background: var(--verde-oscuro);
+  padding: 56px 48px;
+  margin-bottom: 64px;
+  min-height: 86vh; /* domina la pantalla al cargar, como la referencia — se ajusta en móvil abajo */
+  background: linear-gradient(135deg, var(--verde-fondo) 0%, var(--verde-pastel) 100%);
   box-shadow: var(--sombra-hover);
 }
+/* Columna de texto con más ancho relativo que la imagen: el clamp() del título se calculó para
+   este ancho real de columna (~620px), no para el viewport completo — por eso el máximo es más
+   bajo que "a ojo" parecería, y no se aprieta contra la imagen. */
+.landing-hero-content { flex: 1 1 56%; min-width: 0; max-width: 620px; text-align: left; }
+.landing-hero-media {
+  flex: 1 1 38%;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch; /* la foto llena todo el alto del hero (ya no tiene aspect-ratio fijo en desktop) */
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: var(--sombra);
+}
 .landing-hero-bg {
-  position: absolute;
-  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  z-index: 0;
+  display: block;
   transform: scale(1);
   transform-origin: center;
   animation: kenBurnsHero 26s ease-in-out infinite alternate;
@@ -350,60 +367,55 @@ input, select { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .landing-hero-bg { animation: none; }
 }
-.landing-hero::before {
-  content: '';
-  position: absolute; inset: 0;
-  z-index: 1;
-  background:
-    radial-gradient(circle at 85% 15%, rgba(255, 255, 255, 0.14), transparent 45%),
-    linear-gradient(180deg, rgba(20, 83, 45, 0.18) 0%, rgba(20, 83, 45, 0.6) 55%, rgba(20, 83, 45, 0.94) 100%);
-  pointer-events: none;
-}
-.landing-hero-content { position: relative; z-index: 2; max-width: 720px; margin: 0 auto; }
 .landing-kicker {
   display: inline-flex; align-items: center; gap: 6px;
-  background: rgba(255, 255, 255, 0.16);
+  background: white;
+  color: var(--verde-principal);
   padding: 6px 16px;
   border-radius: 999px;
   font-size: 0.82rem;
   font-weight: 600;
   margin-bottom: 18px;
+  box-shadow: var(--sombra);
 }
 .landing-hero h1 {
-  color: white;
-  font-size: clamp(1.8rem, 4vw, 2.8rem);
-  line-height: 1.22;
-  margin-bottom: 14px;
+  color: var(--verde-oscuro);
+  /* Antes usaba vw del viewport completo (hasta 5.2rem/83px), pero el texto vive en una columna de
+     ~620px, no en el ancho completo — a ese tamaño "intermediarios" ya no cabía sin tocar la imagen.
+     El máximo baja a 4rem (~64px), calculado para esa columna real, con margen de sobra. */
+  font-size: clamp(2.4rem, 3.4vw, 4rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  margin-bottom: 20px;
 }
 .landing-hero p {
-  color: rgba(255, 255, 255, 0.88);
-  font-size: 1.05rem;
-  margin-bottom: 28px;
+  color: var(--texto-suave);
+  font-size: 1.12rem;
+  margin-bottom: 32px;
 }
 .landing-hero-actions {
-  display: flex; gap: 14px; justify-content: center; flex-wrap: wrap;
+  display: flex; gap: 14px; justify-content: flex-start; flex-wrap: wrap;
   margin-bottom: 36px;
 }
-.landing-hero .btn-outline {
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  border-color: rgba(255, 255, 255, 0.5);
-}
-.landing-hero .btn-outline:hover { background: rgba(255, 255, 255, 0.2); }
 
 .landing-hero-stats {
-  position: relative;
-  z-index: 2;
-  display: flex; justify-content: center; gap: 36px; flex-wrap: wrap;
+  display: flex; justify-content: flex-start; gap: 36px; flex-wrap: wrap;
   padding-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, 0.22);
+  border-top: 1px solid var(--borde);
 }
-.landing-hero-stats > div { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.landing-hero-stats strong { font-size: 1.5rem; font-family: var(--font-titulo); }
-.landing-hero-stats span { font-size: 0.8rem; color: rgba(255, 255, 255, 0.78); }
+.landing-hero-stats > div { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.landing-hero-stats strong { font-size: 1.5rem; font-family: var(--font-titulo); color: var(--verde-oscuro); }
+.landing-hero-stats span { font-size: 0.8rem; color: var(--texto-suave); }
+
+@media (max-width: 860px) {
+  .landing-hero { flex-direction: column; min-height: auto; } /* apilado: la altura la da el contenido, no un % del viewport */
+  .landing-hero-content { max-width: none; }
+  .landing-hero-media { width: 100%; align-self: auto; aspect-ratio: 16 / 10; } /* apilada no puede "estirarse" al alto del hero: vuelve a necesitar su propio aspect-ratio */
+}
 
 /* ---------- BANNERS DE CATEGORÍA (LANDING) ---------- */
-.landing-banner-grupo { margin: 40px 0 0; }
+.landing-banner-grupo { margin: 64px 0 0; }
 .landing-banner {
   position: relative;
   overflow: hidden;
@@ -433,7 +445,14 @@ input, select { font-family: inherit; }
   max-width: 460px;
   padding: 36px 40px;
 }
-.landing-banner-content h2 { color: white; font-size: clamp(1.4rem, 2.6vw, 1.9rem); margin-bottom: 10px; }
+.landing-banner-content h2 {
+  color: white;
+  font-size: clamp(2.2rem, 4.2vw, 3.4rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.015em;
+  margin-bottom: 14px;
+}
 .landing-banner-content p { color: rgba(255, 255, 255, 0.9); margin-bottom: 22px; }
 
 /* Banners sin fila de tarjetas debajo (Frutas, Sabor de la sierra): redondeo completo, no solo arriba. */
@@ -450,6 +469,7 @@ input, select { font-family: inherit; }
 .landing-banner-tarjeta.hidden { display: none; }
 
 @media (max-width: 760px) {
+  .landing-banner-grupo { margin-top: 40px; }
   .landing-banner { min-height: 260px; }
   .landing-banner::before {
     background: linear-gradient(180deg, rgba(20, 83, 45, 0.55) 0%, rgba(20, 83, 45, 0.88) 65%, rgba(20, 83, 45, 0.94) 100%);
@@ -560,7 +580,14 @@ input, select { font-family: inherit; }
   .landing-carousel-tarjeta { flex-basis: 120px; }
 }
 
-.landing-roles { margin: 48px 0 8px; }
+/* Más aire entre bloques de la landing: el .section-header genérico (usado en muchas otras vistas,
+   no tocado ahí) no trae margin-top propio — se lo damos aquí, solo dentro de la landing. */
+#view-landing .section-header { margin-top: 64px; }
+@media (max-width: 760px) {
+  #view-landing .section-header { margin-top: 40px; }
+}
+
+.landing-roles { margin: 64px 0 8px; }
 .landing-roles h2 { text-align: center; margin-bottom: 24px; }
 .landing-roles-grid {
   display: grid;
@@ -614,7 +641,7 @@ input, select { font-family: inherit; }
 .landing-confianza-item p { font-size: 0.86rem; color: var(--texto-suave); line-height: 1.45; }
 
 @media (max-width: 640px) {
-  .landing-hero { padding: 40px 20px; }
+  .landing-hero { padding: 40px 20px; margin-bottom: 40px; }
   .landing-hero-stats { gap: 20px; }
 }
 

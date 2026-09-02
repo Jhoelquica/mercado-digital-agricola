@@ -917,6 +917,16 @@ function cerrarTodosLosNavCat(excepto = null) {
   });
 }
 
+// El panel es position:fixed (ver comentario en el CSS de .nav-cat-panel) — hay que posicionarlo a
+// mano contra el trigger real, en vez de depender de top:100%/left:0 relativos al padre.
+function posicionarNavCatPanel(trigger, panel) {
+  const rect = trigger.getBoundingClientRect();
+  const anchoPanel = panel.offsetWidth || 560;
+  const left = Math.min(rect.left, window.innerWidth - anchoPanel - 16);
+  panel.style.top = `${rect.bottom}px`;
+  panel.style.left = `${Math.max(16, left)}px`;
+}
+
 function abrirNavCat(categoria) {
   clearTimeout(navCatCerrarTimeouts[categoria]);
   cerrarTodosLosNavCat(categoria);
@@ -925,6 +935,8 @@ function abrirNavCat(categoria) {
   if (!el) return;
   el.classList.add('open');
   el.querySelector('.nav-cat-trigger')?.setAttribute('aria-expanded', 'true');
+  const panel = el.querySelector('.nav-cat-panel');
+  if (panel) posicionarNavCatPanel(el, panel);
   cargarProductosNavCat(categoria);
 }
 
