@@ -66,6 +66,12 @@ spec:
             # DB_PASSWORD (ver el comentario de seguridad en k8s/redis.yaml).
             - name: REDIS_HOST
               value: redis
+            # NO renombrar a REDIS_PORT: Kubernetes inyecta automáticamente esa variable
+            # (formato tcp://<cluster-ip>:6379) para el Service "redis" de k8s/redis.yaml, y
+            # pisa cualquier valor puesto acá — causó CrashLoopBackOff real en las 3 réplicas
+            # (int("tcp://...") revienta). Ver el comentario largo en productos/cache.py.
+            - name: REDIS_CACHE_PORT
+              value: "6379"
 ---
 apiVersion: v1
 kind: Service

@@ -33,7 +33,17 @@ from fastapi.encoders import jsonable_encoder
 logger = logging.getLogger("productos.cache")
 
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+# OJO: NO uses "REDIS_PORT" para esta variable. Kubernetes inyecta automáticamente
+# REDIS_PORT=tcp://<cluster-ip>:6379 (y REDIS_SERVICE_HOST, REDIS_SERVICE_PORT,
+# REDIS_PORT_6379_TCP*) en cualquier Pod del mismo namespace, para CUALQUIER Service llamado
+# "redis" — es el formato de descubrimiento estilo Docker-links que documenta Kubernetes en
+# https://kubernetes.io/docs/concepts/services-networking/service/#environment-variables. Si
+# esta variable se llama igual, ese valor (un string "tcp://...", no un puerto numérico) pisa
+# lo que sea que pongas en el Deployment, y int() revienta con
+# "invalid literal for int() with base 10: 'tcp://...'" — pasó en producción real, con las 3
+# réplicas en CrashLoopBackOff. REDIS_HOST sí es seguro: Kubernetes no genera esa variable para
+# un Service llamado "redis" (solo las listadas arriba), así que ese nombre no se toca.
+REDIS_CACHE_PORT = int(os.getenv("REDIS_CACHE_PORT", "6379"))
 
 # TTL corto a propósito: es la red de seguridad si por lo que sea una invalidación se pierde
 # (ej. el proceso muere justo después del commit y antes de invalidar) — nunca deja el catálogo
@@ -55,7 +65,7 @@ def clave_detalle(producto_id) -> str:
 # decode_responses=True: trabajamos con str en vez de bytes en todo el módulo.
 _cliente = redis.Redis(
     host=REDIS_HOST,
-    port=REDIS_PORT,
+    port=REDIS_CACHE_PORT,
     db=0,
     decode_responses=True,
     socket_connect_timeout=1,
