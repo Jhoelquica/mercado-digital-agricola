@@ -1,0 +1,97 @@
+# Middlewares reutilizables del API Gateway. Referenciados desde k8s/traefik-routes.yaml.
+#
+# Orden en el que se encadenan en cada ruta (importa, ver comentario en cada IngressRoute):
+#   rate-limit-global -> cors-global -> auth-jwt (solo rutas protegidas) -> strip-api-prefix
+#
+# cors-global va ANTES que auth-jwt a propósito: un preflight CORS (OPTIONS) del navegador nunca
+# trae header Authorization, así que si auth-jwt corriera primero, todo preflight a una ruta
+# protegida sería rechazado con 401 y el navegador nunca llegaría a hacer la petición real.
+# El middleware de headers de Traefik responde el preflight directamente (sin llamar a auth-jwt).
+
+# ============ CORS (centralizado; antes repetido con allow_origins=["*"] en los 8 servicios) ============
+# Se deja el CORSMiddleware también en cada microservicio como respaldo (doble capa), tal como
+# se pidió — no se ha tocado ese código. allow_origins=["*"] no combina con credenciales/cookies;
+# esta app usa Bearer tokens en el header Authorization, no cookies, así que es seguro igual que
+# la configuración original que reemplaza/complementa.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cors-global
+spec:
+  headers:
+    accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+    accessControlAllowHeaders: ["*"]
+    accessControlAllowOriginList: ["*"]
+    accessControlMaxAge: 86400
+    addVaryHeader: true
+
+---
+# ============ RATE LIMITING (nativo de Traefik, sin código nuevo) ============
+# 100 req/s sostenidas por IP de origen, con ráfaga permitida de 200 (para que cargar una vista
+# que dispara varias llamadas a la vez, ej. el catálogo + reseñas + envío, no choque contra el
+# límite en un instante puntual). Ajusta average/burst si el patrón de uso real lo pide.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit-global
+spec:
+  rateLimit:
+    average: 100
+    period: 1s
+    burst: 200
+    sourceCriterion:
+      ipStrategy:
+        # depth:0 = usa la IP de origen de la conexión TCP tal cual la ve Traefik.
+        # Si en el futuro el LoadBalancer real queda detrás de otro proxy/CDN (ej. Cloudflare,
+        # un Ingress externo, otro balanceador L7), esa IP dejará de ser la del cliente final y
+        # este límite se aplicará por IP del proxy anterior (efectivamente un límite global, no
+        # por usuario) — en ese caso hay que cambiar a excludedIPs/depth según X-Forwarded-For.
+        depth: 0
+
+---
+# ============ AUTENTICACIÓN CENTRALIZADA (ForwardAuth real, no placeholder) ============
+# Antes de que la petición llegue al microservicio destino, Traefik llama a este endpoint con
+# (por defecto) todos los headers de la petición original, incluido Authorization. Usuarios
+# decodifica el JWT con la misma lógica que ya usan los demás servicios (auth.verificar_token)
+# y responde 200 (válido) o 401 (inválido/expirado/ausente) — Traefik reenvía ese mismo status
+# al cliente si no es 2xx, cortando la petición ahí mismo.
+#
+# DEFENSA EN PROFUNDIDAD: cada microservicio protegido SIGUE validando el JWT con su propio
+# Depends(verificar_token)/requiere_rol() — no se ha tocado ese código. Este middleware es una
+# capa adicional de rechazo temprano (evita que un token inválido/expirado genere carga en el
+# resto del sistema), nunca el único punto de validación.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-jwt
+spec:
+  forwardAuth:
+    address: http://usuarios:8006/usuarios/validar-token
+    # Reenvía la identidad ya decodificada al microservicio de destino como conveniencia
+    # (ej. logging, evitar re-parsear el JWT para casos no críticos). NINGÚN microservicio debe
+    # tratar estos headers como autenticación válida por sí solos — siguen exigiendo y validando
+    # el JWT en su propio Authorization header, que Traefik reenvía intacto igual.
+    authResponseHeaders:
+      - X-Usuario-Id
+      - X-Usuario-Rol
+
+---
+# ============ ENRUTAMIENTO: un único StripPrefix compartido con los 8 prefijos ============
+# /api/<servicio> es solo el namespace público del Gateway; lo que queda después de quitarlo es
+# exactamente el path que cada microservicio ya expone hoy (ej. /api/pedidos/pedidos/abc ->
+# /pedidos/abc), así que no hace falta un StripPrefix distinto por servicio.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-api-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /api/usuarios
+      - /api/productores
+      - /api/productos
+      - /api/pedidos
+      - /api/transporte
+      - /api/notificaciones
+      - /api/pagos
+      - /api/certificacion

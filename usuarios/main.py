@@ -1,7 +1,7 @@
 import os
 
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -73,6 +73,22 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
 
     token = crear_token(str(usuario.id), usuario.rol)
     return {"access_token": token, "token_type": "bearer"}
+
+# Usado por el Middleware ForwardAuth del API Gateway (Traefik) para validar el JWT
+# ANTES de que la petición llegue a cualquier microservicio (ver k8s/traefik-middlewares.yaml).
+# IMPORTANTE: esto es una capa adicional de rechazo temprano, no un reemplazo de la validación
+# que cada microservicio sigue haciendo con su propio Depends(verificar_token)/requiere_rol().
+# Debe registrarse ANTES de "/usuarios/{usuario_id}" para que FastAPI no confunda
+# "validar-token" con un usuario_id.
+@app.get("/usuarios/validar-token")
+def validar_token(response: Response, usuario: dict = Depends(verificar_token)):
+    # verificar_token ya lanza 401 si el token es inválido/expirado, así que llegar aquí implica válido.
+    # Se exponen sub/rol como headers de respuesta: Traefik puede reenviarlos al microservicio de
+    # destino (authResponseHeaders) como conveniencia, pero ningún microservicio debe confiar en ellos
+    # como fuente de autenticación — siguen validando el JWT por su cuenta.
+    response.headers["X-Usuario-Id"] = str(usuario.get("sub", ""))
+    response.headers["X-Usuario-Rol"] = str(usuario.get("rol", ""))
+    return {"valido": True}
 
 @app.get("/usuarios/{usuario_id}")
 def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):

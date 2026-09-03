@@ -1,0 +1,164 @@
+# API Gateway (Traefik v3) — punto de entrada único para los 8 microservicios.
+#
+# ANTES DE APLICAR ESTE ARCHIVO, instala los CRDs de Traefik (IngressRoute, Middleware, etc.)
+# y su RBAC oficial — el clúster no los trae por defecto y "kubectl apply -f k8s/traefik.yaml"
+# fallará con "no matches for kind IngressRoute" si no existen todavía:
+#
+#   kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.7/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+#
+# (Esto instala las CustomResourceDefinitions de traefik.io: IngressRoute, Middleware,
+# IngressRouteTCP/UDP, TLSOption, TLSStore, ServersTransport, TraefikService.
+# El RBAC propio de este Gateway va embebido más abajo en este mismo archivo — no hace falta
+# aplicar también kubernetes-crd-rbac.yml del repo de Traefik, esa es una alternativa equivalente
+# con nombres de recursos distintos, pero usar las dos a la vez es redundante, no dañino.)
+#
+# Fuente verificada: https://doc.traefik.io/traefik/reference/install-configuration/providers/kubernetes/kubernetes-crd/
+# Si en el futuro tu versión de imagen difiere de v3.7, aplica el YAML de esa misma versión
+# (cambia el tag en la URL) para que CRDs y binario coincidan.
+#
+# Alternativa recomendada para un clúster de producción real: instalar Traefik vía su Helm chart
+# oficial (helm repo add traefik https://traefik.github.io/charts), que instala los CRDs
+# automáticamente y facilita los upgrades. Este archivo usa manifiestos planos a propósito,
+# consistente con el resto de k8s/*.yaml de este proyecto.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik-gateway
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik-gateway
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets", "nodes", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+  - apiGroups: ["traefik.io"]
+    resources:
+      - middlewares
+      - middlewaretcps
+      - ingressroutes
+      - traefikservices
+      - ingressroutetcps
+      - ingressrouteudps
+      - tlsoptions
+      - tlsstores
+      - serverstransports
+      - serverstransporttcps
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik-gateway
+subjects:
+  - kind: ServiceAccount
+    name: traefik-gateway
+    namespace: default
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: traefik-gateway
+  template:
+    metadata:
+      labels:
+        app: traefik-gateway
+    spec:
+      serviceAccountName: traefik-gateway
+      containers:
+        - name: traefik
+          image: traefik:v3.7
+          imagePullPolicy: IfNotPresent
+          args:
+            # Entrypoint para tráfico normal: los 8 microservicios se enrutan aquí.
+            - --entrypoints.web.address=:8000
+            # Entrypoint separado para el dashboard/API interno de Traefik.
+            # SOLO PARA DESARROLLO LOCAL — ver comentario en el Service más abajo sobre por qué
+            # "api.insecure" no debe usarse tal cual en un despliegue de producción real.
+            - --entrypoints.traefik.address=:8080
+            - --api.dashboard=true
+            - --api.insecure=true
+            # Habilita leer IngressRoute/Middleware desde este mismo clúster.
+            - --providers.kubernetescrd
+            # Desactiva el provider de Ingress "clásico" (k8s.io/Ingress) — este proyecto enruta
+            # exclusivamente vía IngressRoute (CRD de Traefik), no queremos que ambos providers
+            # compitan por las mismas rutas.
+            - --providers.kubernetesingress=false
+            - --log.level=INFO
+            - --accesslog=true
+            - --ping=true
+          ports:
+            - name: web
+              containerPort: 8000
+            - name: traefik-dash
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-gateway
+spec:
+  type: LoadBalancer
+  selector:
+    app: traefik-gateway
+  ports:
+    # Puerto único para todo el tráfico real de la app (los 8 microservicios vía /api/*).
+    - name: web
+      port: 8000
+      targetPort: 8000
+    # Dashboard de Traefik (ver estado de IngressRoutes/Middlewares en tiempo real).
+    # ADVERTENCIA: expuesto sin autenticación (--api.insecure=true) — SOLO para desarrollo local
+    # contra un clúster que no es accesible públicamente. Antes de un despliegue real:
+    #   1. Quita --api.insecure=true y --entrypoints.traefik.address (o dales otro entrypoint
+    #      que no salga por el LoadBalancer),
+    #   2. Si igual quieres el dashboard accesible, publícalo por su propia IngressRoute con un
+    #      Middleware de BasicAuth/IPWhiteList delante, en vez de exponerlo directo por el Service.
+    - name: dashboard-dev-only
+      port: 8080
+      targetPort: 8080

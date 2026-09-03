@@ -1,0 +1,468 @@
+# IngressRoutes del API Gateway: uno por microservicio, prefijo público /api/<servicio>.
+#
+# Cómo está armado cada IngressRoute (mismo patrón en los 8):
+#   - Una ruta "catch-all" (PathPrefix del namespace completo, priority: 1) con la cadena
+#     [rate-limit-global, cors-global, strip-api-prefix]. Cubre TODOS los endpoints públicos
+#     de ese servicio (revisados uno por uno en el código real antes de escribir esto — no se
+#     asumió cuáles son públicas) y sirve de red de seguridad para cualquier endpoint nuevo que
+#     se agregue al backend más adelante y no tenga todavía una regla específica aquí: sin esa
+#     red, quedaría inalcanzable (404 del propio Gateway) hasta actualizar este archivo.
+#   - Una o más rutas específicas (Method + Path/PathRegexp exactos, priority: 100 — le gana al
+#     catch-all) para cada endpoint que YA exige JWT en el backend (Depends(verificar_token) o
+#     Depends(requiere_rol(...))), con auth-jwt agregado a la cadena.
+#
+# Los endpoints protegidos solo por header interno (X-Servicio-Secreto: llamadas servicio-a-
+# servicio, ej. los DELETE de limpieza QA, /stock/reponer, /eventos-internos) NO tienen regla
+# propia — caen en el catch-all sin auth-jwt, igual que antes de este Gateway: siguen exigiendo
+# ese header en el propio código del microservicio. Quedan técnicamente alcanzables desde fuera
+# del clúster a través del Gateway (protegidos únicamente por ese secreto compartido, no por JWT
+# de usuario) — ver el punto sobre esto en el resumen de la tarea; no se resolvió aquí porque
+# requeriría conocer el CIDR real de red interna del clúster para un IPWhiteList seguro, y
+# adivinarlo podría bloquear tráfico legítimo o no proteger nada.
+#
+# IMPORTANTE sobre las rutas específicas: si en el futuro se agrega un nuevo endpoint protegido
+# con JWT a algún microservicio, hay que añadir aquí su propia regla (Method+Path, priority 100)
+# para que el Gateway lo rechace temprano — si no se hace, el endpoint sigue funcionando (el
+# catch-all lo deja pasar y el propio backend lo protege igual, defensa en profundidad), solo se
+# pierde el rechazo temprano en el Gateway para ese endpoint puntual.
+
+# ================= USUARIOS (puerto 8006) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: usuarios
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/usuarios`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: usuarios
+          port: 8006
+    # GET /usuarios/{id} exige JWT en el backend (obtener_usuario). Nota: con este patrón
+    # también protege de paso GET /usuarios/usuarios/validar-token (el propio endpoint de
+    # validación) — es redundante pero inofensivo, ya exige JWT igual.
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && PathRegexp(`^/api/usuarios/usuarios/[^/]+$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: usuarios
+          port: 8006
+
+---
+# ================= PRODUCTORES (puerto 8001) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: productores
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/productores`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: productores
+          port: 8001
+    # GET /productores/me exige rol "productor" (requiere_rol("productor"))
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/productores/productores/me`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productores
+          port: 8001
+    # POST /productores exige rol "productor" (crear perfil de productor)
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/productores/productores`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productores
+          port: 8001
+
+---
+# ================= PRODUCTOS (puerto 8002) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: productos
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/productos`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+    # POST .../resenas exige JWT (crear_resena) — el GET de la misma ruta es público, no se toca.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/productos/productos/[^/]+/resenas$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+    # POST /productos exige rol "productor" (crear_producto)
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/productos/productos`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+    # POST .../imagenes/subir exige rol "productor"
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/productos/productos/[^/]+/imagenes/subir$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+    # DELETE /productos/imagenes/{id} exige rol "productor" (dueño de la imagen)
+    - kind: Rule
+      priority: 100
+      match: Method(`DELETE`) && PathRegexp(`^/api/productos/productos/imagenes/[^/]+$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+    # PATCH .../imagenes/{id}/orden exige rol "productor"
+    - kind: Rule
+      priority: 100
+      match: Method(`PATCH`) && PathRegexp(`^/api/productos/productos/imagenes/[^/]+/orden$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productos
+          port: 8002
+
+---
+# ================= PEDIDOS (puerto 8003) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pedidos
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/pedidos`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: pedidos
+          port: 8003
+    # POST /pedidos exige rol "comprador" (crear_pedido). Nota: GET /pedidos/{id} es público
+    # en el backend actual (sin Depends de auth) — se deja tal cual, no se le agregó protección
+    # que el backend mismo no exige, siguiendo la instrucción de no aplicar el middleware a
+    # rutas que hoy no requieren JWT.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/pedidos/pedidos`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: pedidos
+          port: 8003
+
+---
+# ================= TRANSPORTE (puerto 8004) — rutas /envios y /repartidores =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: transporte
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/transporte`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # GET /envios (listado completo) exige rol "repartidor"
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/transporte/envios`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # GET /envios/propuestas exige rol "repartidor"
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/transporte/envios/propuestas`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # POST .../aceptar y .../rechazar exigen rol "repartidor". GET .../ruta y GET /envios/{id}
+    # (por pedido) son públicos en el backend actual — no se tocan.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/transporte/envios/[^/]+/aceptar$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/transporte/envios/[^/]+/rechazar$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # PATCH .../estado y .../ubicacion exigen rol "repartidor" (y dueño del envío, validado
+    # en el propio backend)
+    - kind: Rule
+      priority: 100
+      match: Method(`PATCH`) && PathRegexp(`^/api/transporte/envios/[^/]+/estado$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    - kind: Rule
+      priority: 100
+      match: Method(`PATCH`) && PathRegexp(`^/api/transporte/envios/[^/]+/ubicacion$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # POST /repartidores exige rol "repartidor" (crear_repartidor)
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/transporte/repartidores`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+    # GET /repartidores/me exige rol "repartidor"
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/transporte/repartidores/me`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: transporte
+          port: 8004
+
+---
+# ================= NOTIFICACIONES (puerto 8005) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: notificaciones
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/notificaciones`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: notificaciones
+          port: 8005
+    # Los dos únicos GET de este servicio (listado propio y por pedido) exigen JWT — ninguno
+    # es público, así que basta una sola regla por PathPrefix en vez de listarlos uno por uno.
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && PathPrefix(`/api/notificaciones/notificaciones`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: notificaciones
+          port: 8005
+
+---
+# ================= PAGOS (puerto 8007) =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: pagos
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/pagos`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: pagos
+          port: 8007
+    # POST /pagos/procesar exige JWT (procesar_pago). GET /pagos/{pedido_id} es público en el
+    # backend actual — no se toca.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/pagos/pagos/procesar`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: pagos
+          port: 8007
+
+---
+# ================= CERTIFICACION (puerto 8008) — rutas /certificacion y /verificadores =================
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: certificacion
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 1
+      match: PathPrefix(`/api/certificacion`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: strip-api-prefix
+      services:
+        - name: certificacion
+          port: 8008
+    # POST .../eventos exige rol "productor" o "verificador" (registrar_evento). Se deja
+    # explícitamente pública (sin JWT) GET .../verificar, GET .../historial, GET .../qr y
+    # GET .../certificado — es la trazabilidad que cualquiera debe poder consultar escaneando
+    # el QR de un producto, sin necesitar cuenta; así funciona hoy en el backend, no se cambió.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/certificacion/certificacion/[^/]+/eventos$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: certificacion
+          port: 8008
+    # POST /verificadores exige rol "verificador" (crear perfil de verificador)
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && Path(`/api/certificacion/verificadores`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: certificacion
+          port: 8008
+    # GET /verificadores/me exige rol "verificador"
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/certificacion/verificadores/me`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: certificacion
+          port: 8008
