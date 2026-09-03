@@ -149,16 +149,23 @@ spec:
     app: traefik-gateway
   ports:
     # Puerto único para todo el tráfico real de la app (los 8 microservicios vía /api/*).
+    # A propósito NO se expone aquí el puerto 8080 del dashboard: este clúster tiene como
+    # destino real un despliegue en GCP con IP pública, y el Service es tipo LoadBalancer
+    # (balanceador público) — cualquier puerto listado aquí sale a Internet.
+    #
+    # El entrypoint interno del dashboard (--entrypoints.traefik.address=:8080,
+    # --api.dashboard=true, --api.insecure=true) sigue activo en el Deployment de abajo porque
+    # sigue siendo útil para depurar localmente, pero SOLO vía acceso directo al Pod, nunca a
+    # través de este Service:
+    #
+    #   kubectl port-forward deployment/traefik-gateway 8080:8080
+    #
+    # Eso abre un túnel local que nunca toca el balanceador de carga ni sale a Internet — es
+    # acceso interno controlado (requiere credenciales de kubectl contra el clúster), muy
+    # distinto a publicarlo en el Service. Si en algún momento se necesita el dashboard
+    # accesible sin pasar por kubectl (ej. para el equipo sin acceso al clúster), la forma
+    # correcta es una IngressRoute propia para el dashboard con un Middleware de
+    # BasicAuth/IPWhiteList delante — nunca reabrir este puerto en el Service tal cual.
     - name: web
       port: 8000
       targetPort: 8000
-    # Dashboard de Traefik (ver estado de IngressRoutes/Middlewares en tiempo real).
-    # ADVERTENCIA: expuesto sin autenticación (--api.insecure=true) — SOLO para desarrollo local
-    # contra un clúster que no es accesible públicamente. Antes de un despliegue real:
-    #   1. Quita --api.insecure=true y --entrypoints.traefik.address (o dales otro entrypoint
-    #      que no salga por el LoadBalancer),
-    #   2. Si igual quieres el dashboard accesible, publícalo por su propia IngressRoute con un
-    #      Middleware de BasicAuth/IPWhiteList delante, en vez de exponerlo directo por el Service.
-    - name: dashboard-dev-only
-      port: 8080
-      targetPort: 8080
