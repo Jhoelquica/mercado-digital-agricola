@@ -60,6 +60,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: SERVICIO_SECRETO
+            # Caché del catálogo (ver productos/cache.py). Valor fijo por ahora: Redis solo es
+            # alcanzable dentro del clúster (Service ClusterIP en k8s/redis.yaml) y hoy no tiene
+            # contraseña — cuando se le active requirepass, esto pasa a secretKeyRef igual que
+            # DB_PASSWORD (ver el comentario de seguridad en k8s/redis.yaml).
+            - name: REDIS_HOST
+              value: redis
 ---
 apiVersion: v1
 kind: Service

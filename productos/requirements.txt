@@ -9,3 +9,4 @@ minio
 python-multipart
 pybreaker
 prometheus-fastapi-instrumentator
+redis

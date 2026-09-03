@@ -1,0 +1,90 @@
+# Redis como caché distribuida para el catálogo de Productos (ver productos/cache.py).
+# Es solo caché, no almacenamiento primario — si este Pod se pierde, el servicio de Productos
+# sigue funcionando normal contra PostgreSQL (ver manejo de fallos en productos/cache.py).
+#
+# SIN CONTRASEÑA: solo queda expuesto vía Service ClusterIP (jamás sale del clúster, no hay
+# LoadBalancer ni NodePort acá), así que hoy solo es alcanzable por Pods dentro del mismo
+# clúster. Antes de un despliegue real en GCP, revisar esto igual que se hizo con el dashboard
+# de Traefik (ver k8s/traefik.yaml): activar `requirepass` (con la contraseña en el Secret
+# `credenciales-app`, vía secretKeyRef, igual que DB_PASSWORD) y, si el clúster de GKE llega a
+# tener varios namespaces o cargas de terceros corriendo dentro, considerar además una
+# NetworkPolicy que restrinja quién puede hablarle a este Pod en el puerto 6379.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-datos
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # Es solo caché (claves con TTL corto, catálogo de productos) — 1Gi es de sobra incluso
+      # con margen para crecer el catálogo bastante. Súbelo solo si empieza a haber evicciones
+      # por memoria/disco en la práctica.
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  # Recreate (no RollingUpdate): el volumen es ReadWriteOnce, así que un segundo Pod no puede
+  # montarlo mientras el primero sigue vivo — con RollingUpdate el rollout se quedaría colgado
+  # esperando un volumen que ya está en uso. Con Recreate, k8s apaga el Pod viejo antes de
+  # levantar el nuevo. Implica un pequeño corte del caché en cada redeploy de Redis (no de
+  # Productos) — aceptable porque es solo caché, nunca la fuente de verdad.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: datos
+              mountPath: /data
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: redis-datos
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  # ClusterIP a propósito: Redis nunca debe ser alcanzable fuera del clúster.
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

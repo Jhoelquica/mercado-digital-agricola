@@ -1,5 +1,14 @@
 services:
 
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
@@ -69,9 +78,11 @@ services:
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
       SERVICIO_SECRETO: clave-interna-servicios
+      REDIS_HOST: redis
     depends_on:
       - db-productos
       - productores
+      - redis
 
   db-pedidos:
     image: postgres:16
@@ -261,6 +272,7 @@ services:
       depends_on:
         - db-certificacion
 volumes:
+  redis_data:
   productores_data:
   productos_data:
   pedidos_data:

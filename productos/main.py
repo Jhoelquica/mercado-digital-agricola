@@ -15,6 +15,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi import UploadFile, File
 from minio_client import subir_imagen
 import pybreaker
+import cache
 
 
 Base.metadata.create_all(bind=engine)
@@ -126,6 +127,9 @@ def crear_resena(
     db.add(nueva_resena)
     db.commit()
     db.refresh(nueva_resena)
+    # calificacion_promedio/total_resenas se muestran tanto en el catálogo como en el detalle,
+    # así que una reseña nueva deja ambos cachés desactualizados igual que un cambio de stock.
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return nueva_resena
 
 SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
@@ -142,6 +146,7 @@ def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str
     producto.stock += datos.cantidad
     db.commit()
     db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
 
 @app.post("/productos")
@@ -175,6 +180,9 @@ def crear_producto(
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)
+    # Producto nuevo: no tiene todavía una clave de detalle propia en caché (id recién
+    # generado), pero sí hay que sacarlo del catálogo cacheado para que aparezca de inmediato.
+    cache.invalidar(cache.CLAVE_CATALOGO)
     return nuevo
 
 @app.post("/productos/{producto_id}/imagenes/subir")
@@ -229,6 +237,8 @@ def subir_imagen_producto(
     db.add(nueva_imagen)
     db.commit()
     db.refresh(nueva_imagen)
+    # imagen_principal (catálogo) y el arreglo "imagenes" (detalle) cambian con esto.
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return nueva_imagen
 
 @app.delete("/productos/imagenes/{imagen_id}")
@@ -261,8 +271,10 @@ def eliminar_imagen(
     if str(producto.productor_id) != str(productor["id"]):
         raise HTTPException(status_code=403, detail="No puedes eliminar imágenes de un producto que no te pertenece")
 
+    producto_id_afectado = str(producto.id)
     db.delete(imagen)
     db.commit()
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id_afectado))
     return {"mensaje": "Imagen eliminada"}
 
 @app.delete("/productos/{producto_id}")
@@ -278,10 +290,18 @@ def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servici
     db.query(models.Resena).filter(models.Resena.producto_id == producto_id).delete()
     db.delete(producto)
     db.commit()
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return {"mensaje": "Producto eliminado"}
 
 @app.get("/productos")
 def listar_productos(db: Session = Depends(get_db)):
+    # Cache-aside: catálogo completo, TTL corto (ver cache.TTL_SEGUNDOS). Cualquier acción que
+    # cambie lo que se ve acá (crear producto, stock, imágenes, reseñas) invalida esta clave de
+    # inmediato — el TTL es solo la red de seguridad, no el mecanismo principal de frescura.
+    cacheado = cache.obtener(cache.CLAVE_CATALOGO)
+    if cacheado is not None:
+        return cacheado
+
     productos = db.query(models.Producto).all()
 
     imagenes = db.query(models.ProductoImagen).order_by(models.ProductoImagen.orden).all()
@@ -301,7 +321,7 @@ def listar_productos(db: Session = Depends(get_db)):
         for pid, promedio, total in stats_resenas
     }
 
-    return [
+    resultado = [
         {
             "id": p.id,
             "productor_id": p.productor_id,
@@ -319,9 +339,16 @@ def listar_productos(db: Session = Depends(get_db)):
         }
         for p in productos
     ]
+    cache.guardar(cache.CLAVE_CATALOGO, resultado)
+    return resultado
 
 @app.get("/productos/{producto_id}")
 def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
+    clave = cache.clave_detalle(producto_id)
+    cacheado = cache.obtener(clave)
+    if cacheado is not None:
+        return cacheado
+
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -338,7 +365,7 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
     promedio, total_resenas = stats
     promedio = round(float(promedio), 1) if promedio else None
 
-    return {
+    resultado = {
         "id": producto.id,
         "productor_id": producto.productor_id,
         "productor_nombre": producto.productor_nombre,
@@ -353,6 +380,8 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
         "calificacion_promedio": promedio,
         "total_resenas": total_resenas,
     }
+    cache.guardar(clave, resultado)
+    return resultado
 
 @app.patch("/productos/{producto_id}/stock")
 def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
@@ -367,6 +396,7 @@ def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto:
     producto.stock -= datos.cantidad
     db.commit()
     db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
 
 @app.patch("/productos/imagenes/{imagen_id}/orden")
@@ -403,4 +433,6 @@ def actualizar_orden_imagen(
     imagen.orden = datos.orden
     db.commit()
     db.refresh(imagen)
+    # imagen_principal en el catálogo depende del orden de las imágenes.
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(str(producto.id)))
     return imagen
