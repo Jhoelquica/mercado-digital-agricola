@@ -44,6 +44,18 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
+            # Antes dependía del fallback hardcodeado "clave-interna-servicios" en el código
+            # (nunca estuvo wireada acá) — ahora requeridas explícitamente, sin fallback.
+            - name: PEDIDOS_A_PRODUCTOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PEDIDOS_A_PRODUCTOS_SECRETO
+            - name: QA_LIMPIEZA_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: QA_LIMPIEZA_SECRETO
 ---
 apiVersion: v1
 kind: Service

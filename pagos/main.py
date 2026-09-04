@@ -15,7 +15,9 @@ from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
+PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # para llamar a reponer_stock en Productos
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pago (DELETE de limpieza QA)
 
 Base.metadata.create_all(bind=engine)
 
@@ -53,7 +55,7 @@ def compensar_stock(items_json: str):
                 client.post(
                     f"{PRODUCTOS_URL}/productos/{item['producto_id']}/stock/reponer",
                     json={"cantidad": item["cantidad"]},
-                    headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                    headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO},
                     timeout=5,
                 )
                 print(f"[Pagos] Stock repuesto: {item['cantidad']} unidades de {item['producto_id']}")
@@ -78,7 +80,7 @@ def obtener_pago(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/pagos/{pago_id}")
 def eliminar_pago(pago_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     pago = db.query(models.Pago).filter(models.Pago.id == pago_id).first()

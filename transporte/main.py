@@ -90,7 +90,9 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://certificacion:8008")
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
+TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # para llamar a eventos-internos y certificado-pedido en Certificación
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
 
 @app.get("/envios/{envio_id}/ruta")
 def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
@@ -198,7 +200,7 @@ def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/envios/{envio_id}")
 def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
@@ -233,7 +235,7 @@ def notificar_entrega_a_certificacion(pedido_id: str):
             httpx.post(
                 f"{CERTIFICACION_URL}/certificacion/{producto_id}/eventos-internos",
                 json={"evento": "verificado_punto_venta", "datos": f"pedido {pedido_id} entregado"},
-                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                headers={"X-Servicio-Secreto": TRANSPORTE_A_CERTIFICACION_SECRETO},
                 timeout=5
             )
         except httpx.RequestError:
@@ -244,7 +246,7 @@ def notificar_entrega_a_certificacion(pedido_id: str):
             httpx.post(
                 f"{CERTIFICACION_URL}/certificacion/pedido/{pedido_id}/certificado",
                 json={"productos_ids": productos_ids},
-                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                headers={"X-Servicio-Secreto": TRANSPORTE_A_CERTIFICACION_SECRETO},
                 timeout=5
             )
         except httpx.RequestError:
@@ -287,7 +289,7 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
             intentar_resolver_envio_huerfano(db)
 
         # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
-        # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/SERVICIO_SECRETO sin definir)
+        # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/TRANSPORTE_A_CERTIFICACION_SECRETO sin definir)
         # tumbe la respuesta al repartidor; el error queda en logs para investigarlo después de la entrega.
         try:
             notificar_entrega_a_certificacion(str(envio.pedido_id))
@@ -333,7 +335,7 @@ def mi_perfil_repartidor(db: Session = Depends(get_db), usuario: dict = Depends(
 
 @app.delete("/repartidores/{repartidor_id}")
 def eliminar_repartidor(repartidor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()

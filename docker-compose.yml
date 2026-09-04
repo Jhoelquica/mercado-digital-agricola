@@ -45,6 +45,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productores
       PRODUCTOS_URL: http://productos:8002
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-productores
 
@@ -78,7 +79,9 @@ services:
       MINIO_ACCESS_KEY: ${DB_USER}
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
-      SERVICIO_SECRETO: clave-interna-servicios
+      PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
+      PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       REDIS_HOST: redis
     depends_on:
       - db-productos
@@ -113,6 +116,8 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
+      PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
     - db-pedidos
     - productos
@@ -147,7 +152,8 @@ services:
       RABBITMQ_PASSWORD: admin123
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
-      SERVICIO_SECRETO: clave-interna-servicios
+      TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-transporte
       - rabbitmq
@@ -179,6 +185,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-notificaciones
       - rabbitmq
@@ -207,6 +214,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_HOST: db-usuarios
       JWT_SECRET: ${JWT_SECRET}
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-usuarios
 
@@ -238,7 +246,8 @@ services:
         RABBITMQ_PASSWORD: admin123
         JWT_SECRET: ${JWT_SECRET}
         CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
-        SERVICIO_SECRETO: clave-interna-servicios
+        PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
+        QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
         PRODUCTOS_URL: http://productos:8002
       depends_on:
         - db-pagos
@@ -269,7 +278,8 @@ services:
         JWT_SECRET: ${JWT_SECRET}
         FRONTEND_URL: http://localhost:63342/mercado_agricola/frontend
         PRODUCTORES_URL: http://productores:8001
-        SERVICIO_SECRETO: clave-interna-servicios
+        TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
+        QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       depends_on:
         - db-certificacion
 volumes:

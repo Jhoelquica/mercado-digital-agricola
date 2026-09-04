@@ -42,7 +42,11 @@ class UsuarioLogin(BaseModel):
     email: EmailStr
     password: str
 
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito: si el Deployment se olvida de wirear esta env var, el
+# endpoint queda inutilizable (rechaza todo) en vez de aceptar en silencio un valor conocido.
+# Usada SOLO por los DELETE de limpieza QA (ningún otro servicio llama a este endpoint) — ver
+# inventario completo de X-Servicio-Secreto en el resumen de esta tarea.
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 
 @app.get("/salud")
 def salud():
@@ -99,7 +103,7 @@ def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dic
 
 @app.delete("/usuarios/{usuario_id}")
 def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()

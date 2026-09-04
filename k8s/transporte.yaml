@@ -46,11 +46,18 @@ spec:
               value: http://pedidos:8003
             - name: CERTIFICACION_URL
               value: http://certificacion:8008
-            - name: SERVICIO_SECRETO
+            # Reemplaza SERVICIO_SECRETO: Transporte solo necesita la clave del par
+            # Transporte→Certificación más la de limpieza QA.
+            - name: TRANSPORTE_A_CERTIFICACION_SECRETO
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: SERVICIO_SECRETO
+                  key: TRANSPORTE_A_CERTIFICACION_SECRETO
+            - name: QA_LIMPIEZA_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: QA_LIMPIEZA_SECRETO
 ---
 apiVersion: v1
 kind: Service

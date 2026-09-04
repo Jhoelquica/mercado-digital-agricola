@@ -34,7 +34,9 @@ def get_db():
     finally:
         db.close()
 
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
+# por el DELETE de limpieza QA de este servicio — ningún otro servicio lo llama.
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 
 @app.get("/salud")
 def salud():
@@ -42,7 +44,7 @@ def salud():
 
 @app.delete("/notificaciones/{notificacion_id}")
 def eliminar_notificacion(notificacion_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     notificacion = db.query(models.Notificacion).filter(models.Notificacion.id == notificacion_id).first()

@@ -47,11 +47,18 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: CULQI_SECRET_KEY
-            - name: SERVICIO_SECRETO
+            # Reemplaza SERVICIO_SECRETO: Pagos solo necesita la clave del par Pagos→Productos
+            # (para reponer_stock) más la de limpieza QA — no las de ningún otro par.
+            - name: PAGOS_A_PRODUCTOS_SECRETO
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: SERVICIO_SECRETO
+                  key: PAGOS_A_PRODUCTOS_SECRETO
+            - name: QA_LIMPIEZA_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: QA_LIMPIEZA_SECRETO
             - name: PRODUCTOS_URL
               value: http://productos:8002
 ---

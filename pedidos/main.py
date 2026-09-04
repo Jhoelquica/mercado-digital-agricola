@@ -32,7 +32,9 @@ app.add_middleware(
 )
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
+PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
 
 def get_db():
     db = SessionLocal()
@@ -91,7 +93,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             client.patch(
                 f"{PRODUCTOS_URL}/productos/{item.producto_id}/stock",
                 json={"cantidad": item.cantidad},
-                headers={"X-Servicio-Secreto": SERVICIO_SECRETO},
+                headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO},
                 timeout=5,
             )
             nuevo_item = models.PedidoItem(
@@ -130,7 +132,7 @@ def obtener_pedido(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/pedidos/{pedido_id}")
 def eliminar_pedido(pedido_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()

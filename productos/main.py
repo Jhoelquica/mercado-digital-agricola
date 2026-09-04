@@ -132,11 +132,16 @@ def crear_resena(
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return nueva_resena
 
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# 3 claves dedicadas (sin fallback hardcodeado a propósito — ver el mismo comentario en
+# usuarios/main.py) en vez del SERVICIO_SECRETO único de antes: cada endpoint interno valida
+# contra la clave de SU llamador específico, no una compartida por los tres.
+PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # reponer_stock (Pagos llama tras un pago rechazado)
+PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # descontar_stock (Pedidos llama al crear un pedido)
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_producto (DELETE de limpieza QA)
 
 @app.post("/productos/{producto_id}/stock/reponer")
 def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != PAGOS_A_PRODUCTOS_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
@@ -279,7 +284,7 @@ def eliminar_imagen(
 
 @app.delete("/productos/{producto_id}")
 def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
@@ -416,7 +421,7 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
 
 @app.patch("/productos/{producto_id}/stock")
 def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != PEDIDOS_A_PRODUCTOS_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()

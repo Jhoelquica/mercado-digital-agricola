@@ -63,7 +63,10 @@ class CompletarCosechaDatos(BaseModel):
     costo_envio: float
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
+# por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
+# produccion) — ningún otro servicio llama a estos endpoints.
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 
 @app.get("/salud")
 def salud():
@@ -115,7 +118,7 @@ def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuari
 
 @app.delete("/productores/{productor_id}")
 def eliminar_productor(productor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     productor = db.query(models.Productor).filter(models.Productor.id == productor_id).first()
@@ -347,7 +350,7 @@ def eliminar_registro_produccion(
     db: Session = Depends(get_db),
     x_servicio_secreto: str = Header(None),
 ):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     registro = db.query(models.RegistroProduccion).filter(

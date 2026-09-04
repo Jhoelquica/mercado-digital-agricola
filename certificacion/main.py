@@ -44,7 +44,9 @@ class EventoCrear(BaseModel):
     latitud: str | None = None
     longitud: str | None = None
 
-SERVICIO_SECRETO = os.getenv("SERVICIO_SECRETO", "clave-interna-servicios")
+# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
+TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_verificador (DELETE de limpieza QA)
 
 class EventoInterno(BaseModel):
     evento: str
@@ -60,7 +62,7 @@ def crear_certificado_pedido(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None)
 ):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != TRANSPORTE_A_CERTIFICACION_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     existente = db.query(models.CertificadoPedido).filter(
@@ -104,7 +106,7 @@ def registrar_evento_interno(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None)
 ):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != TRANSPORTE_A_CERTIFICACION_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     if datos.evento != "verificado_punto_venta":
@@ -243,7 +245,7 @@ def mi_perfil_verificador(db: Session = Depends(get_db), usuario: dict = Depends
 
 @app.delete("/verificadores/{verificador_id}")
 def eliminar_verificador(verificador_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != SERVICIO_SECRETO:
+    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
     verificador = db.query(models.Verificador).filter(models.Verificador.id == verificador_id).first()

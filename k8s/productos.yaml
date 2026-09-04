@@ -55,11 +55,22 @@ spec:
                 secretKeyRef:
                    name: credenciales-app
                    key: DB_PASSWORD
-            - name: SERVICIO_SECRETO
+            # 3 claves dedicadas (una por llamador) en vez del SERVICIO_SECRETO compartido de antes.
+            - name: PAGOS_A_PRODUCTOS_SECRETO
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: SERVICIO_SECRETO
+                  key: PAGOS_A_PRODUCTOS_SECRETO
+            - name: PEDIDOS_A_PRODUCTOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PEDIDOS_A_PRODUCTOS_SECRETO
+            - name: QA_LIMPIEZA_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: QA_LIMPIEZA_SECRETO
             # Caché del catálogo (ver productos/cache.py). Valor fijo por ahora: Redis solo es
             # alcanzable dentro del clúster (Service ClusterIP en k8s/redis.yaml) y hoy no tiene
             # contraseña — cuando se le active requirepass, esto pasa a secretKeyRef igual que
