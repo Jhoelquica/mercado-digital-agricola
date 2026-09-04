@@ -170,6 +170,11 @@ def rechazar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: di
     if envio.estado != "propuesto":
         raise HTTPException(status_code=409, detail="Esta propuesta ya no está disponible")
 
+    # Se guarda ANTES de reasignar (misma transacción que el cambio de estado de abajo): a
+    # partir de acá, este repartidor queda excluido de este envío para siempre, no solo para
+    # este intento — proponer_envio_a_repartidor consulta esta tabla completa, no un ID puntual.
+    db.add(models.EnvioRechazo(envio_id=envio.id, repartidor_id=repartidor.id))
+
     repartidor.estado_disponibilidad = "disponible"
     envio.repartidor_id = None
     envio.estado = "pendiente_asignacion"

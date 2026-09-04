@@ -25,6 +25,15 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
         print(f"[Transporte] Envío {envio_id} ya no está huérfano (estado actual: {envio.estado}), no se toca")
         return
 
+    # Historial completo de rechazos de ESTE envío (subconsulta, no una lista en memoria que se
+    # pierda entre llamadas): a diferencia de excluir_id (que solo cubre un repartidor puntual
+    # dentro de esta misma llamada), esto excluye a TODOS los que ya rechazaron este envío en
+    # cualquier momento pasado, sin importar qué disparador reintente después (inmediato,
+    # periódico, o este mismo si se llama de nuevo más tarde).
+    rechazos_previos = db.query(models.EnvioRechazo.repartidor_id).filter(
+        models.EnvioRechazo.envio_id == envio_id
+    )
+
     # SKIP LOCKED (no bloqueante) sobre el repartidor: si el candidato que encontraríamos está
     # con su fila bloqueada por OTRA transacción concurrente que está decidiendo asignárselo a
     # un envío distinto, no nos quedamos esperando por él — pasamos al siguiente disponible. Sin
@@ -33,8 +42,14 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
     query = (
         db.query(models.Repartidor)
         .filter(models.Repartidor.estado_disponibilidad == "disponible")
+        .filter(~models.Repartidor.id.in_(rechazos_previos))
         .with_for_update(skip_locked=True)
     )
+    # excluir_id se mantiene y se COMBINA con el historial de arriba (no lo reemplaza): sigue
+    # haciendo falta para el caso en que todavía no hay un EnvioRechazo que cubra la exclusión
+    # —p. ej. intentar_resolver_envio_huerfano puede terminar mirando un envío DISTINTO al que
+    # el repartidor actual acaba de rechazar (ver ese mismo excluir_id en rechazar_propuesta),
+    # y para ese otro envío no existe ningún rechazo registrado todavía.
     if excluir_id:
         query = query.filter(models.Repartidor.id != excluir_id)
 
