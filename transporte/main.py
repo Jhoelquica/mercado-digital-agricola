@@ -10,9 +10,10 @@ from auth import verificar_token, requiere_rol
 
 from database import Base, engine, SessionLocal
 import models
-from logica_repartidores import proponer_envio_a_repartidor
+from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
+from reintento_huerfanos import lanzar_reintento_huerfanos_en_hilo
 import math
 
 Base.metadata.create_all(bind=engine)
@@ -31,6 +32,7 @@ app.add_middleware(
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    lanzar_reintento_huerfanos_en_hilo()
 
 def get_db():
     db = SessionLocal()
@@ -174,6 +176,11 @@ def rechazar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: di
     db.commit()
 
     proponer_envio_a_repartidor(envio.id, db, excluir_id=repartidor.id)
+    # El repartidor que acaba de rechazar sigue "disponible" — puede tomar OTRO envío huérfano
+    # más antiguo que este (si lo hay). excluir_id evita que, si el envío de arriba no encontró
+    # a nadie más y volvió a quedar huérfano, este mismo disparador se lo re-ofrezca de
+    # inmediato al mismo repartidor que lo acaba de rechazar.
+    intentar_resolver_envio_huerfano(db, excluir_id=repartidor.id)
 
     return {"mensaje": "Propuesta rechazada, se ofreció a otro repartidor"}
 
@@ -269,6 +276,10 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
         if repartidor_envio:
             repartidor_envio.estado_disponibilidad = "disponible"
             db.commit()
+            # Disparador inmediato: este repartidor recién quedó libre, revisa si hay algún
+            # envío huérfano esperando (el más antiguo primero) e intenta resolverlo ahora
+            # mismo, sin esperar al job periódico de reintento_huerfanos.py.
+            intentar_resolver_envio_huerfano(db)
 
         # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
         # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/SERVICIO_SECRETO sin definir)
@@ -298,6 +309,11 @@ def crear_repartidor(datos: RepartidorCrear, db: Session = Depends(get_db), usua
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)
+    # Un repartidor recién registrado arranca "disponible" (default del modelo) — es otra forma
+    # más de que uno "se libere", así que dispara el mismo intento inmediato. No estaba en la
+    # lista original de lugares donde esto pasa, pero es el mismo principio aplicado de forma
+    # consistente, y es justo lo que hace falta para el caso de prueba de "registrar uno nuevo".
+    intentar_resolver_envio_huerfano(db)
     return nuevo
 
 
