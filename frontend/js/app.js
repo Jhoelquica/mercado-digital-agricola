@@ -2359,6 +2359,98 @@ async function publicarProducto(e) {
   }
 }
 
+// ---- Gestión Económica: siembra ↔ unidad de medida (mismo patrón que "Publicar producto") ----
+function actualizarVisibilidadEquivalenciaProduccion() {
+  const unidad = document.getElementById('produccion-unidad')?.value;
+  const bloque = document.getElementById('produccion-equivalencia-bloque');
+  const input = document.getElementById('produccion-equivalencia');
+  if (!bloque || !input) return;
+  const necesitaEquivalencia = unidad && unidad !== 'kg';
+  bloque.classList.toggle('hidden', !necesitaEquivalencia);
+  input.required = necesitaEquivalencia;
+  if (!necesitaEquivalencia) input.value = '';
+}
+
+// Puramente informativo — "sin afectar ningún campo automáticamente" (no toca precio/costos).
+async function mostrarPrecioReferenciaCultivo() {
+  const cultivo = document.getElementById('produccion-cultivo')?.value.trim();
+  const cont = document.getElementById('produccion-precio-referencia');
+  if (!cont) return;
+  if (!cultivo) { cont.classList.add('hidden'); return; }
+
+  cont.classList.remove('hidden');
+  cont.textContent = 'Consultando precio de referencia…';
+  try {
+    const data = await Api.productos.precioReferencia(cultivo);
+    cont.textContent = data.precio_promedio != null
+      ? `💡 Precio de referencia en el catálogo: ${formatearMoneda(data.precio_promedio)}/kg (promedio)`
+      : `💡 "${cultivo}" no tiene productos en el catálogo todavía — sin precio de referencia.`;
+  } catch (err) {
+    cont.textContent = '💡 No se pudo consultar el precio de referencia (servicio de Productos no disponible).';
+  }
+}
+
+async function crearRegistroProduccion(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  const unidad = document.getElementById('produccion-unidad').value;
+  const equivalenciaValor = document.getElementById('produccion-equivalencia').value;
+
+  if (unidad !== 'kg' && !equivalenciaValor) {
+    toast('Indica la equivalencia a kg para esta unidad de medida', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const datos = {
+      cultivo: document.getElementById('produccion-cultivo').value.trim(),
+      numero_parcelas: parseInt(document.getElementById('produccion-parcelas').value, 10),
+      ubicacion_cosecha: document.getElementById('produccion-ubicacion').value.trim() || null,
+      costo_semillas: parseFloat(document.getElementById('produccion-costo-semillas').value) || 0,
+      costo_insumos: parseFloat(document.getElementById('produccion-costo-insumos').value) || 0,
+      unidad_medida: unidad,
+      equivalencia_kg: unidad !== 'kg' ? parseFloat(equivalenciaValor) : null,
+      fecha_siembra: document.getElementById('produccion-fecha-siembra').value,
+      fecha_cosecha_estimada: document.getElementById('produccion-fecha-cosecha-estimada').value,
+    };
+    await Api.productores.produccion.crear(datos);
+    toast('Siembra registrada 🌱');
+    cargarPerfil();
+  } catch (err) {
+    manejarError(err, 'registrar la siembra');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function alternarFormCompletarCosecha(registroId) {
+  const form = document.querySelector(`.form-completar-cosecha[data-id="${registroId}"]`);
+  form?.classList.toggle('hidden');
+}
+
+async function completarCosechaRegistro(e, registroId) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const datos = {
+      cantidad_cosechada: parseFloat(form.cantidad_cosechada.value),
+      fecha_cosecha_real: form.fecha_cosecha_real.value,
+      costo_mano_obra: parseFloat(form.costo_mano_obra.value) || 0,
+      costo_envio: parseFloat(form.costo_envio.value) || 0,
+    };
+    await Api.productores.produccion.completarCosecha(registroId, datos);
+    toast('Cosecha completada ✅');
+    cargarPerfil();
+  } catch (err) {
+    manejarError(err, 'completar la cosecha');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderTarjetaProductorProducto(p, indice) {
   const stockBajo = p.stock > 0 && p.stock <= 5;
   const sinStock = p.stock <= 0;
@@ -2769,7 +2861,7 @@ function renderPerfilComprador() {
     </div>`;
 }
 
-function renderPerfilProductor(extra) {
+function renderPerfilProductor(extra, registrosProduccion) {
   if (!extra) {
     return `
       <div class="perfil-cta-completar">
@@ -2792,7 +2884,153 @@ function renderPerfilProductor(extra) {
         <div id="mapa-perfil-productor" class="mapa-mini"></div>
       </div>` : `<div class="mapa-bloque-neutro"><span class="icon">📍</span> No has marcado la ubicación de tu chakra todavía.</div>`}
       <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
+    </div>
+    ${renderGestionEconomica(registrosProduccion || [])}`;
+}
+
+// ============ GESTIÓN ECONÓMICA (Módulo 1) ============
+const OPCIONES_UNIDAD_MEDIDA_HTML = `
+  <option value="kg">Kilogramo (kg)</option>
+  <option value="unidad">Unidad</option>
+  <option value="saco">Saco</option>
+  <option value="arroba">Arroba</option>`;
+
+function renderResumenEconomico(registros) {
+  const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
+
+  const cosechados = registros.filter((r) => r.estado === 'cosechado');
+  const totalCosechadoKg = cosechados.reduce((suma, r) => {
+    if (r.cantidad_cosechada == null) return suma;
+    const enKg = r.unidad_medida === 'kg'
+      ? Number(r.cantidad_cosechada)
+      : Number(r.cantidad_cosechada) * Number(r.equivalencia_kg || 0);
+    return suma + enKg;
+  }, 0);
+
+  const conGanancia = cosechados.filter((r) => r.ganancia_estimada != null);
+  const gananciaAcumulada = conGanancia.reduce((suma, r) => suma + Number(r.ganancia_estimada), 0);
+  const sinCalcular = cosechados.length - conGanancia.length;
+
+  return `
+    <div class="card-panel gestion-economica-resumen">
+      <h3>📊 Gestión Económica</h3>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Total invertido</span><span class="perfil-dato-valor">${formatearMoneda(totalInvertido)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Total cosechado</span><span class="perfil-dato-valor">${cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—'}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Ganancia acumulada</span><span class="perfil-dato-valor ${gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—'}</span></div>
+      </div>
+      ${sinCalcular > 0 ? `<p class="muted produccion-nota-resumen">ℹ️ ${sinCalcular} registro${sinCalcular > 1 ? 's' : ''} cosechado${sinCalcular > 1 ? 's' : ''} sin datos suficientes para calcular ganancia — no se incluye${sinCalcular > 1 ? 'n' : ''} en el total.</p>` : ''}
     </div>`;
+}
+
+function renderFormRegistroProduccion() {
+  return `
+    <div class="card-panel">
+      <h4>🌱 Registrar nueva siembra</h4>
+      <form id="form-registro-produccion" class="form-grid">
+        <label>Cultivo
+          <input type="text" id="produccion-cultivo" required maxlength="80" placeholder="Ej. Papa Nativa">
+        </label>
+        <div id="produccion-precio-referencia" class="produccion-precio-ref hidden"></div>
+        <label>Número de parcelas
+          <input type="number" id="produccion-parcelas" min="1" step="1" required placeholder="1">
+        </label>
+        <label>Ubicación de la cosecha (opcional)
+          <input type="text" id="produccion-ubicacion" placeholder="Ej. Parcela norte">
+        </label>
+        <label>Costo de semillas (S/)
+          <input type="number" id="produccion-costo-semillas" min="0" step="0.01" value="0">
+        </label>
+        <label>Costo de insumos (S/)
+          <input type="number" id="produccion-costo-insumos" min="0" step="0.01" value="0">
+        </label>
+        <label>Unidad de medida
+          <select id="produccion-unidad">${OPCIONES_UNIDAD_MEDIDA_HTML}</select>
+        </label>
+        <label id="produccion-equivalencia-bloque" class="hidden">Equivalencia a kg (1 unidad = X kg)
+          <input type="number" id="produccion-equivalencia" min="0.0001" step="0.0001" placeholder="Ej. 11.5">
+        </label>
+        <label>Fecha de siembra
+          <input type="date" id="produccion-fecha-siembra" required>
+        </label>
+        <label>Fecha estimada de cosecha
+          <input type="date" id="produccion-fecha-cosecha-estimada" required>
+        </label>
+        <button type="submit" class="btn btn-primary">Registrar siembra</button>
+      </form>
+    </div>`;
+}
+
+function renderTarjetaRegistroProduccion(r) {
+  const esPlanificado = r.estado === 'planificado';
+  const badge = esPlanificado
+    ? '<span class="badge badge-pendiente">🌱 Planificado</span>'
+    : '<span class="badge badge-entregado">✅ Cosechado</span>';
+
+  const datosBase = `
+    <div class="perfil-datos-grid">
+      <div class="perfil-dato"><span class="perfil-dato-label">Parcelas</span><span class="perfil-dato-valor">${r.numero_parcelas}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Ubicación</span><span class="perfil-dato-valor">${escapeAttr(r.ubicacion_cosecha || '—')}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Siembra</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_siembra)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Cosecha estimada</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_cosecha_estimada)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Costo total</span><span class="perfil-dato-valor">${formatearMoneda(r.costo_total)}</span></div>
+    </div>`;
+
+  let bloqueEstado;
+  if (esPlanificado) {
+    bloqueEstado = `
+      <button type="button" class="btn btn-outline btn-sm btn-toggle-completar-cosecha" data-id="${r.id}">Completar cosecha</button>
+      <form class="form-grid form-completar-cosecha hidden" data-id="${r.id}">
+        <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
+          <input type="number" name="cantidad_cosechada" min="0.01" step="0.01" required>
+        </label>
+        <label>Fecha real de cosecha
+          <input type="date" name="fecha_cosecha_real" required>
+        </label>
+        <label>Costo de mano de obra final (S/)
+          <input type="number" name="costo_mano_obra" min="0" step="0.01" value="0" required>
+        </label>
+        <label>Costo de envío final (S/)
+          <input type="number" name="costo_envio" min="0" step="0.01" value="0" required>
+        </label>
+        <button type="submit" class="btn btn-primary btn-sm">Confirmar cosecha</button>
+      </form>`;
+  } else if (r.ingreso_estimado != null) {
+    bloqueEstado = `
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Precio de referencia</span><span class="perfil-dato-valor">${formatearMoneda(r.precio_referencia_kg)}/kg</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Ingreso estimado</span><span class="perfil-dato-valor">${formatearMoneda(r.ingreso_estimado)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Ganancia</span><span class="perfil-dato-valor ${r.ganancia_estimada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${formatearMoneda(r.ganancia_estimada)} (${r.margen_porcentaje}%)</span></div>
+      </div>`;
+  } else {
+    bloqueEstado = `
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
+      </div>
+      <p class="produccion-sin-calculo">ℹ️ No se pudo calcular la ganancia: ${escapeAttr(r.motivo_sin_calculo || 'motivo desconocido')}.</p>`;
+  }
+
+  return `
+    <div class="card-panel produccion-card">
+      <div class="produccion-card-header">
+        <h4>${escapeAttr(r.cultivo)}</h4>
+        ${badge}
+      </div>
+      ${datosBase}
+      ${bloqueEstado}
+    </div>`;
+}
+
+function renderGestionEconomica(registros) {
+  const lista = registros.length
+    ? registros.map(renderTarjetaRegistroProduccion).join('')
+    : '<p class="muted" style="text-align:center;padding:16px 0;">Aún no registraste ninguna siembra.</p>';
+
+  return `
+    ${renderResumenEconomico(registros)}
+    ${renderFormRegistroProduccion()}
+    <div id="produccion-lista">${lista}</div>`;
 }
 
 function renderPerfilRepartidor(extra) {
@@ -2816,7 +3054,7 @@ function renderPerfilRepartidor(extra) {
     </div>`;
 }
 
-function renderPerfil(usuario, extra) {
+function renderPerfil(usuario, extra, registrosProduccion) {
   const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '👤', texto: usuario.rol || 'Usuario' };
 
   const headerHtml = `
@@ -2830,7 +3068,7 @@ function renderPerfil(usuario, extra) {
     </div>`;
 
   let seccionRol = renderPerfilComprador();
-  if (usuario.rol === 'productor') seccionRol = renderPerfilProductor(extra);
+  if (usuario.rol === 'productor') seccionRol = renderPerfilProductor(extra, registrosProduccion);
   else if (usuario.rol === 'repartidor') seccionRol = renderPerfilRepartidor(extra);
 
   return `
@@ -2859,13 +3097,17 @@ async function cargarPerfil() {
   }
 
   let extra = null;
+  let registrosProduccion = [];
   if (usuario.rol === 'productor') {
     try { extra = await Api.productores.miPerfil(); } catch { /* aún no tiene perfil de productor */ }
+    if (extra) {
+      try { registrosProduccion = await Api.productores.produccion.listarMe(); } catch (err) { manejarError(err, 'cargar tu gestión económica'); }
+    }
   } else if (usuario.rol === 'repartidor') {
     try { extra = await Api.repartidores.miPerfil(); } catch { /* aún no tiene perfil de repartidor */ }
   }
 
-  cont.innerHTML = renderPerfil(usuario, extra);
+  cont.innerHTML = renderPerfil(usuario, extra, registrosProduccion);
 
   if (usuario.rol === 'productor' && extra && hayCoordenadas(extra.latitud, extra.longitud)) {
     crearMapaSoloLectura('mapa-perfil-productor', extra.latitud, extra.longitud, '🧺', '#2d6a4f', escapeAttr(extra.nombre || 'Tu chakra'));
@@ -3225,7 +3467,24 @@ function inicializarEventos() {
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
     if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
     if (e.target.closest('#btn-perfil-ir-pedidos')) { cambiarVista('mis-pedidos'); return; }
+    const btnCompletar = e.target.closest('.btn-toggle-completar-cosecha');
+    if (btnCompletar) { alternarFormCompletarCosecha(btnCompletar.dataset.id); return; }
   });
+
+  // Gestión Económica: el formulario de siembra y las mini-formas de "completar cosecha" (una
+  // por tarjeta) se re-renderizan en cada cargarPerfil(), así que van delegados sobre el
+  // contenedor estable en vez de engancharse directo — igual que los botones de arriba.
+  document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
+    if (e.target.id === 'form-registro-produccion') { crearRegistroProduccion(e); return; }
+    if (e.target.matches('.form-completar-cosecha')) { completarCosechaRegistro(e, e.target.dataset.id); return; }
+  });
+
+  document.getElementById('perfil-contenido').addEventListener('change', (e) => {
+    if (e.target.id === 'produccion-unidad') actualizarVisibilidadEquivalenciaProduccion();
+  });
+  document.getElementById('perfil-contenido').addEventListener('blur', (e) => {
+    if (e.target.id === 'produccion-cultivo') mostrarPrecioReferenciaCultivo();
+  }, true);
 }
 
 function cambiarTabAuth(tab) {

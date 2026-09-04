@@ -293,6 +293,37 @@ def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servici
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return {"mensaje": "Producto eliminado"}
 
+@app.get("/productos/precio-referencia/{nombre_producto}")
+def precio_referencia(nombre_producto: str, db: Session = Depends(get_db)):
+    """Precio de mercado de referencia para un nombre de cultivo/producto: promedio (AVG) del
+    precio entre todos los productos del catálogo con ese nombre exacto (sin distinguir
+    mayúsculas/minúsculas). Público — lo usa el Módulo de Gestión Económica de Productores para
+    estimar ingresos, pero no requiere pertenecer a nadie en particular.
+
+    LIMITACIÓN CONOCIDA: promedia el campo "precio" tal cual está en cada producto, sin agrupar
+    por unidad_medida — si el mismo nombre de producto existe en el catálogo con precios en
+    distintas unidades (ej. "Papa" vendida por kg en un caso y por saco en otro), el promedio
+    mezcla unidades distintas y deja de ser un precio-por-kg real. Aceptado así para este primer
+    módulo (así se especificó); si se vuelve un problema real, la forma correcta sería promediar
+    solo dentro de una misma unidad_medida, o normalizar todo a precio-por-kg antes de promediar.
+    """
+    nombre_normalizado = nombre_producto.strip()
+    promedio = db.query(func.avg(models.Producto.precio)).filter(
+        func.lower(models.Producto.nombre) == nombre_normalizado.lower()
+    ).scalar()
+
+    if promedio is None:
+        return {
+            "nombre_producto": nombre_normalizado,
+            "precio_promedio": None,
+            "mensaje": "No hay productos activos con ese nombre en el catálogo",
+        }
+
+    return {
+        "nombre_producto": nombre_normalizado,
+        "precio_promedio": round(float(promedio), 2),
+    }
+
 @app.get("/productos")
 def listar_productos(db: Session = Depends(get_db)):
     # Cache-aside: catálogo completo, TTL corto (ver cache.TTL_SEGUNDOS). Cualquier acción que

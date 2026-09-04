@@ -1430,6 +1430,49 @@ input, select { font-family: inherit; }
 .perfil-cta-completar .empty-state-icon { margin-bottom: 10px; }
 .perfil-cta-completar .btn { margin-top: 16px; }
 
+/* ---- Gestión Económica (Módulo 1) ---- */
+.ganancia-positiva { color: var(--verde-oscuro); }
+.ganancia-negativa { color: #b3401f; }
+
+.produccion-precio-ref {
+  background: var(--verde-fondo);
+  border: 1px dashed var(--verde-claro);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  color: var(--verde-oscuro);
+  margin-top: -4px;
+}
+
+.produccion-nota-resumen { margin-top: 4px; }
+
+.produccion-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.produccion-card-header h4 { margin: 0; }
+
+.produccion-sin-calculo {
+  background: #fff8ee;
+  border: 1px solid #f0d9a8;
+  color: #8a6d1a;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.produccion-card .form-completar-cosecha {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--borde);
+}
+
+.produccion-lista { display: flex; flex-direction: column; gap: 16px; }
+
 .form-grid {
   display: flex;
   flex-direction: column;

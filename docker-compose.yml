@@ -44,6 +44,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productores
+      PRODUCTOS_URL: http://productos:8002
     depends_on:
       - db-productores
 

@@ -99,10 +99,16 @@ const Api = {
     obtener: (id) => request('productores', `/productores/${id}`),
     miPerfil: () => request('productores', '/productores/me', { auth: true }),
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),
+    produccion: {
+      crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
+      listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
+      completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
+    },
   },
   productos: {
     listar: () => request('productos', '/productos'),
     obtener: (id) => request('productos', `/productos/${id}`),
+    precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
     crear: (datos) => request('productos', '/productos', { method: 'POST', body: datos, auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
