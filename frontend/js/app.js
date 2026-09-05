@@ -1860,7 +1860,7 @@ function filtrarYRenderizarPedidos() {
     return;
   }
   document.getElementById('pedidos-empty').classList.add('hidden');
-  cont.innerHTML = filtrados.map((d) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta)).join('');
+  cont.innerHTML = filtrados.map((d, i) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta, i)).join('');
 
   filtrados.forEach((d) => {
     if (d.envio && ['asignado', 'en_camino'].includes(d.envio.estado) && d.ruta?.disponible) {
@@ -1940,7 +1940,8 @@ function renderBloqueRuta(envio, ruta) {
     </div>`;
 }
 
-function renderTarjetaPedido(pedido, envio, pago, ruta) {
+function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
   const items = (pedido.items || []).map((i) => ({ ...i, producto: Estado.productos.find((p) => p.id === i.producto_id) }));
   const total = items.reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
 
@@ -1956,7 +1957,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
   const pagoRechazado = pago?.estado === 'rechazado';
 
   return `
-    <div class="pedido-card" data-pedido-id="${pedido.id}">
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-pedido-id="${pedido.id}">
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Pedido #${String(pedido.id).slice(0, 8)}</div>
@@ -2964,7 +2965,8 @@ function renderFormRegistroProduccion() {
     </div>`;
 }
 
-function renderTarjetaRegistroProduccion(r) {
+function renderTarjetaRegistroProduccion(r, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
   const esPlanificado = r.estado === 'planificado';
   const badge = esPlanificado
     ? '<span class="pill pill-estado pill-pendiente"><i class="ti ti-seedling"></i> Planificado</span>'
@@ -3015,7 +3017,7 @@ function renderTarjetaRegistroProduccion(r) {
   }
 
   return `
-    <div class="card-panel produccion-card">
+    <div class="card-panel produccion-card" style="animation-delay:${retraso}ms">
       <div class="produccion-card-header">
         <h4>${escapeAttr(r.cultivo)}</h4>
         ${badge}

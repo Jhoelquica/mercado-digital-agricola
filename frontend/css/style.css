@@ -864,7 +864,9 @@ input, select { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .product-card,
   .propuesta-card,
-  #envios-list .pedido-card { animation: none; }
+  #envios-list .pedido-card,
+  #pedidos-list .pedido-card,
+  .produccion-card { animation: none; }
 }
 .product-card::after {
   content: '';
@@ -1148,9 +1150,9 @@ input, select { font-family: inherit; }
   box-shadow: var(--sombra);
   border: 1px solid var(--borde);
 }
-/* Animación de entrada + hover SOLO en Gestionar Envíos (#envios-list): .pedido-card también
-   la usa Mis Pedidos (#pedidos-list), que no era parte de este pedido — se escopea a propósito
-   para no cambiarle el comportamiento a una pantalla que no se pidió tocar. */
+/* Animación de entrada + hover en Gestionar Envíos (#envios-list). Mis Pedidos (#pedidos-list)
+   comparte la misma clase .pedido-card pero solo suma la animación de entrada (ver regla de
+   abajo) — el hover no se pidió para esta pantalla, así que no se agrega en silencio. */
 #envios-list .pedido-card {
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
   animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
@@ -1158,6 +1160,9 @@ input, select { font-family: inherit; }
 #envios-list .pedido-card:hover {
   transform: translateY(-4px);
   box-shadow: var(--sombra-hover);
+}
+#pedidos-list .pedido-card {
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 .pedido-card-header {
   display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;
@@ -1542,6 +1547,8 @@ input, select { font-family: inherit; }
 }
 
 .produccion-nota-resumen { margin-top: 4px; }
+
+.produccion-card { animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 
 .produccion-card-header {
   display: flex;
