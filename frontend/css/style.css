@@ -1118,6 +1118,7 @@ input, select { font-family: inherit; }
   letter-spacing: 0.02em;
 }
 .badge-pendiente, .badge-propuesto { background: #fff3cd; color: #8a6d1a; }
+.badge-confirmado { background: #d6f5f0; color: #0f6d63; }
 .badge-en_camino, .badge-en_transito, .badge-en_ruta { background: #cfe8ff; color: #14538a; }
 .badge-entregado, .badge-aprobado { background: var(--verde-pastel); color: var(--verde-oscuro); }
 .badge-cancelado, .badge-rechazado, .badge-error { background: #ffe0da; color: #b3401f; }

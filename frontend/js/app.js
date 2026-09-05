@@ -393,6 +393,7 @@ const ICONOS_ESTADO = {
   pendiente: 'hourglass',
   pendiente_asignacion: 'hourglass',
   propuesto: 'mail',
+  confirmado: 'receipt',
   asignado: 'clipboard-list',
   en_camino: 'truck',
   en_transito: 'truck',
@@ -405,7 +406,7 @@ const ICONOS_ESTADO = {
 };
 
 const ESTADOS_BADGE_CONOCIDOS = new Set([
-  'pendiente', 'pendiente_asignacion', 'propuesto', 'asignado',
+  'pendiente', 'pendiente_asignacion', 'propuesto', 'confirmado', 'asignado',
   'en_camino', 'en_transito', 'en_ruta', 'entregado', 'aprobado',
   'cancelado', 'rechazado', 'error',
 ]);
