@@ -9,6 +9,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><path d=%22M22 40 L78 40 L70 82 Q50 90 30 82 Z%22 fill=%22%232d6a4f%22/><path d=%22M28 56 L72 56%22 stroke=%22%231b4332%22 stroke-width=%223%22 stroke-linecap=%22round%22 opacity=%220.45%22/><path d=%22M30 70 L70 70%22 stroke=%22%231b4332%22 stroke-width=%223%22 stroke-linecap=%22round%22 opacity=%220.45%22/><path d=%22M50 40 Q50 28 50 18%22 stroke=%22%2340916c%22 stroke-width=%226%22 stroke-linecap=%22round%22 fill=%22none%22/><path d=%22M50 22 Q40 14 44 6 Q56 10 50 22 Z%22 fill=%22%2374c69d%22/><path d=%22M50 18 Q60 10 56 2 Q46 6 50 18 Z%22 fill=%22%2395d5b2%22/></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<!-- Nota: la ruta correcta es .../dist/tabler-icons.min.css — sin "/dist/" jsdelivr resuelve a la
+     versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
+     @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -30,27 +34,27 @@
 
     <div class="nav-actions">
       <button class="btn btn-ghost cart-btn" id="btn-cart">
-        🛒 <span id="cart-count" class="cart-badge hidden">0</span>
+        <i class="ti ti-shopping-cart"></i> <span id="cart-count" class="cart-badge hidden">0</span>
       </button>
       <div class="nav-account" id="nav-account">
-        <button type="button" class="nav-account-trigger" id="btn-account" aria-haspopup="true" aria-expanded="false" aria-label="Mi cuenta">👤</button>
+        <button type="button" class="nav-account-trigger" id="btn-account" aria-haspopup="true" aria-expanded="false" aria-label="Mi cuenta"><i class="ti ti-user"></i></button>
         <div class="nav-account-panel" id="nav-account-panel">
           <div class="nav-account-panel-inner">
             <div id="nav-account-guest">
-              <button type="button" class="nav-account-item" id="btn-open-login">🔑 Iniciar sesión</button>
-              <button type="button" class="nav-account-item" id="btn-open-registro">📝 Registrarse</button>
+              <button type="button" class="nav-account-item" id="btn-open-login"><i class="ti ti-key"></i> Iniciar sesión</button>
+              <button type="button" class="nav-account-item" id="btn-open-registro"><i class="ti ti-user-plus"></i> Registrarse</button>
             </div>
             <div id="nav-account-user" class="hidden">
               <div class="nav-account-saludo">Hola, <strong id="user-name">Usuario</strong></div>
-              <button type="button" class="nav-account-item" data-nav="mis-pedidos">📦 Mis Pedidos</button>
-              <button type="button" class="nav-account-item" data-nav="notificaciones">🔔 Notificaciones</button>
-              <button type="button" class="nav-account-item" data-nav="perfil">👤 Mi Perfil</button>
-              <button type="button" class="nav-account-item nav-account-logout" id="btn-logout">🚪 Cerrar sesión</button>
+              <button type="button" class="nav-account-item" data-nav="mis-pedidos"><i class="ti ti-package"></i> Mis Pedidos</button>
+              <button type="button" class="nav-account-item" data-nav="notificaciones"><i class="ti ti-bell"></i> Notificaciones</button>
+              <button type="button" class="nav-account-item" data-nav="perfil"><i class="ti ti-user"></i> Mi Perfil</button>
+              <button type="button" class="nav-account-item nav-account-logout" id="btn-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
             </div>
           </div>
         </div>
       </div>
-      <button class="hamburger" id="hamburger" aria-label="Menú">☰</button>
+      <button class="hamburger" id="hamburger" aria-label="Menú"><i class="ti ti-menu-2"></i></button>
     </div>
   </div>
 </header>
@@ -61,7 +65,7 @@
   <section id="view-landing" class="view active">
     <div class="landing-hero">
       <div class="landing-hero-content">
-        <span class="landing-kicker">📍 Hecho en Ayacucho, Perú</span>
+        <span class="landing-kicker"><i class="ti ti-map-pin"></i> Hecho en Ayacucho, Perú</span>
         <h1>Del productor a tu mesa, sin intermediarios</h1>
         <p>Frutas, verduras y más, directo del productor a tu mesa. Con trazabilidad verificada.</p>
         <div class="landing-hero-actions">
@@ -71,7 +75,7 @@
         <div class="landing-hero-stats">
           <div><strong id="landing-stat-productos">—</strong><span>productos frescos</span></div>
           <div><strong id="landing-stat-productores">—</strong><span>productores locales</span></div>
-          <div><strong>🔗</strong><span>Trazabilidad blockchain</span></div>
+          <div><strong><i class="ti ti-link"></i></strong><span>Trazabilidad blockchain</span></div>
         </div>
       </div>
       <div class="landing-hero-media">
@@ -112,7 +116,7 @@
 
     <!-- GRID ESTÁTICO DE 8 PRODUCTOS (mismo criterio que ya usaba "Productos destacados": QA fuera, orden por calificación) -->
     <div class="section-header">
-      <h2>🧺 Productos destacados</h2>
+      <h2><i class="ti ti-basket"></i> Productos destacados</h2>
       <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
     </div>
     <div id="landing-grid-8" class="landing-grid-8"></div>
@@ -137,7 +141,7 @@
 
     <!-- RECOMENDADO PARA TI: carrusel horizontal (antes "Productos destacados") -->
     <div class="section-header">
-      <h2>✨ Recomendado para ti</h2>
+      <h2><i class="ti ti-sparkles"></i> Recomendado para ti</h2>
       <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
     </div>
     <div class="landing-carousel-wrap">
@@ -153,19 +157,19 @@
       <h2>Una plataforma, tres roles</h2>
       <div class="landing-roles-grid">
         <div class="landing-role-card">
-          <span class="landing-role-icon">🛒</span>
+          <span class="landing-role-icon"><i class="ti ti-shopping-cart"></i></span>
           <h3>Comprador</h3>
           <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
           <button class="btn btn-outline btn-sm" data-landing-registro="comprador">Registrarme como comprador</button>
         </div>
         <div class="landing-role-card">
-          <span class="landing-role-icon">🚜</span>
+          <span class="landing-role-icon"><i class="ti ti-tractor"></i></span>
           <h3>Productor</h3>
           <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
           <button class="btn btn-outline btn-sm" data-landing-registro="productor">Registrarme como productor</button>
         </div>
         <div class="landing-role-card">
-          <span class="landing-role-icon">🚚</span>
+          <span class="landing-role-icon"><i class="ti ti-truck"></i></span>
           <h3>Repartidor</h3>
           <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
           <button class="btn btn-outline btn-sm" data-landing-registro="repartidor">Registrarme como repartidor</button>
@@ -175,15 +179,15 @@
 
     <div class="landing-confianza">
       <div class="landing-confianza-item">
-        <span class="landing-confianza-icon">📍</span>
+        <span class="landing-confianza-icon"><i class="ti ti-map-pin"></i></span>
         <div><strong>Hecho en Ayacucho, Perú</strong><p>Conectamos comunidades agrícolas locales con compradores urbanos, sin cadenas de intermediarios.</p></div>
       </div>
       <div class="landing-confianza-item" id="landing-confianza-blockchain">
-        <span class="landing-confianza-icon">🛡️</span>
+        <span class="landing-confianza-icon"><i class="ti ti-shield-check"></i></span>
         <div><strong>Trazabilidad garantizada</strong><p>Cada producto certificado tiene su historial verificado con blockchain, desde la chakra hasta tu mesa.</p></div>
       </div>
       <div class="landing-confianza-item">
-        <span class="landing-confianza-icon">⭐</span>
+        <span class="landing-confianza-icon"><i class="ti ti-star"></i></span>
         <div><strong>Reseñas reales</strong><p>Calificaciones y comentarios de compradores verificados en cada producto.</p></div>
       </div>
     </div>
@@ -198,7 +202,7 @@
 
     <div class="toolbar">
       <div class="search-box">
-        <span class="search-icon">🔎</span>
+        <span class="search-icon"><i class="ti ti-search"></i></span>
         <input type="text" id="input-buscar" placeholder="Buscar por producto, categoría o productor...">
       </div>
       <select id="select-categoria" class="select-categoria">
@@ -211,7 +215,7 @@
     </div>
 
     <div class="filtro-precio">
-      <span class="filtro-precio-label">💰 Precio</span>
+      <span class="filtro-precio-label"><i class="ti ti-coin"></i> Precio</span>
       <input type="number" id="input-precio-min" class="input-precio" min="0" step="0.01" placeholder="Mín">
       <span class="filtro-precio-sep">—</span>
       <input type="number" id="input-precio-max" class="input-precio" min="0" step="0.01" placeholder="Máx">
@@ -220,14 +224,14 @@
 
     <div id="productos-grid" class="grid"></div>
     <div id="productos-empty" class="empty-state hidden">
-      <p>🌾 No se encontraron productos con esos filtros.</p>
+      <p><i class="ti ti-search-off"></i> No se encontraron productos con esos filtros.</p>
     </div>
   </section>
 
   <!-- MIS PEDIDOS -->
   <section id="view-mis-pedidos" class="view">
     <div class="section-header">
-      <h2>📦 Mis Pedidos</h2>
+      <h2><i class="ti ti-package"></i> Mis Pedidos</h2>
       <button class="btn btn-outline" id="btn-refrescar-pedidos">↻ Refrescar</button>
     </div>
 
@@ -249,7 +253,7 @@
   <!-- NOTIFICACIONES -->
   <section id="view-notificaciones" class="view">
     <div class="section-header">
-      <h2>🔔 Notificaciones</h2>
+      <h2><i class="ti ti-bell"></i> Notificaciones</h2>
       <button class="btn btn-outline" id="btn-refrescar-notificaciones">↻ Refrescar</button>
     </div>
     <div id="notificaciones-list" class="notif-list"></div>
@@ -260,7 +264,7 @@
   <!-- PANEL PRODUCTOR -->
   <section id="view-panel-productor" class="view">
     <div class="section-header">
-      <h2>🚜 Panel del Productor</h2>
+      <h2><i class="ti ti-tractor"></i> Panel del Productor</h2>
     </div>
 
     <div id="productor-setup" class="card-panel hidden">
@@ -278,7 +282,7 @@
         </label>
         <div class="mapa-selector-bloque">
           <div class="mapa-selector-label">
-            <span>📍 Ubicación de tu chakra (opcional)</span>
+            <span><i class="ti ti-map-pin"></i> Ubicación de tu chakra (opcional)</span>
             <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-productor">Usar mi ubicación</button>
           </div>
           <div id="mapa-ubicacion-productor" class="mapa-seleccionable"></div>
@@ -290,7 +294,7 @@
 
     <div id="productor-panel" class="hidden">
       <div class="card-panel card-panel-publicar">
-        <h3 id="titulo-form-producto">🌱 Publicar nuevo producto</h3>
+        <h3 id="titulo-form-producto"><i class="ti ti-seedling"></i> Publicar nuevo producto</h3>
         <p class="muted">Completa los datos y mira cómo se verá en el catálogo.</p>
 
         <div class="publicar-layout">
@@ -321,14 +325,14 @@
           </form>
 
           <div class="publicar-preview">
-            <span class="publicar-preview-label">👁️ Vista previa</span>
+            <span class="publicar-preview-label"><i class="ti ti-eye"></i> Vista previa</span>
             <div id="preview-producto-card"></div>
           </div>
         </div>
 
         <div id="producto-fotos-bloque" class="fotos-upload-bloque hidden">
           <div class="fotos-upload-header">
-            <h4>📷 Sube fotos de tu producto</h4>
+            <h4><i class="ti ti-camera"></i> Sube fotos de tu producto</h4>
           </div>
           <p class="muted">La primera foto será la principal en el catálogo. Formatos: JPG, PNG o WEBP.</p>
           <div id="gestor-fotos-nuevo"></div>
@@ -342,7 +346,7 @@
       </div>
       <div id="mis-productos-grid" class="grid"></div>
       <div id="mis-productos-empty" class="empty-state hidden">
-        <span class="empty-state-icon">🌱</span>
+        <span class="empty-state-icon"><i class="ti ti-seedling"></i></span>
         <p><strong>Aún no tienes productos publicados</strong></p>
         <p class="muted">Completa el formulario de arriba para publicar tu primer producto y empezar a vender sin intermediarios.</p>
         <button type="button" class="btn btn-primary" id="btn-empezar-publicar">Publicar mi primer producto</button>
@@ -353,7 +357,7 @@
   <!-- GESTIONAR ENVÍOS (solo repartidor) -->
   <section id="view-gestion-envios" class="view">
     <div class="section-header">
-      <h2>🚚 Gestionar Envíos</h2>
+      <h2><i class="ti ti-truck"></i> Gestionar Envíos</h2>
       <button class="btn btn-outline" id="btn-refrescar-envios">↻ Refrescar</button>
     </div>
 
@@ -377,17 +381,17 @@
 
       <div id="propuestas-section" class="propuestas-section hidden">
         <div class="section-header inner">
-          <h3>📨 Propuestas pendientes <span id="propuestas-badge" class="badge-contador hidden">0</span></h3>
+          <h3><i class="ti ti-mail"></i> Propuestas pendientes <span id="propuestas-badge" class="badge-contador hidden">0</span></h3>
         </div>
         <div id="propuestas-list" class="propuestas-list"></div>
       </div>
 
       <div class="section-header inner">
-        <h3>📋 Mis envíos</h3>
+        <h3><i class="ti ti-clipboard-list"></i> Mis envíos</h3>
       </div>
       <div id="envios-list" class="pedidos-list"></div>
       <div id="envios-empty" class="empty-state hidden">
-        <span class="empty-state-icon">🌤️</span>
+        <span class="empty-state-icon"><i class="ti ti-cloud"></i></span>
         <p><strong>Todo tranquilo por ahora</strong></p>
         <p class="muted">No tienes propuestas ni envíos activos en este momento.</p>
       </div>
@@ -397,7 +401,7 @@
   <!-- MI PERFIL -->
   <section id="view-perfil" class="view">
     <div class="section-header">
-      <h2>👤 Mi Perfil</h2>
+      <h2><i class="ti ti-user"></i> Mi Perfil</h2>
     </div>
     <div id="perfil-contenido"></div>
   </section>
@@ -408,9 +412,9 @@
   <div class="footer-ctas" id="footer-ctas">
     <p class="footer-ctas-title">¿Listo para empezar?</p>
     <div class="footer-ctas-buttons">
-      <button class="btn btn-primary btn-sm" data-landing-registro="comprador">🛒 Soy comprador</button>
-      <button class="btn btn-primary btn-sm" data-landing-registro="productor">🚜 Soy productor</button>
-      <button class="btn btn-primary btn-sm" data-landing-registro="repartidor">🚚 Soy repartidor</button>
+      <button class="btn btn-primary btn-sm" data-landing-registro="comprador"><i class="ti ti-shopping-cart"></i> Soy comprador</button>
+      <button class="btn btn-primary btn-sm" data-landing-registro="productor"><i class="ti ti-tractor"></i> Soy productor</button>
+      <button class="btn btn-primary btn-sm" data-landing-registro="repartidor"><i class="ti ti-truck"></i> Soy repartidor</button>
     </div>
   </div>
   <p>🌾 Chakra Shop — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
@@ -419,7 +423,7 @@
 <!-- MODAL: AUTH -->
 <div class="modal-overlay hidden" id="modal-auth">
   <div class="modal modal-auth">
-    <button class="modal-close" data-close="modal-auth">✕</button>
+    <button class="modal-close" data-close="modal-auth"><i class="ti ti-x"></i></button>
     <div class="auth-tabs">
       <button class="auth-tab active" data-tab="login">Iniciar sesión</button>
       <button class="auth-tab" data-tab="registro">Registrarse</button>
@@ -462,7 +466,7 @@
 <!-- MODAL: CHECKOUT (RESUMEN → PAGO → CONFIRMACIÓN) -->
 <div class="modal-overlay hidden" id="modal-pedido">
   <div class="modal modal-checkout">
-    <button class="modal-close" data-close="modal-pedido">✕</button>
+    <button class="modal-close" data-close="modal-pedido"><i class="ti ti-x"></i></button>
 
     <div class="checkout-stepper">
       <div class="checkout-step active" data-step="1">
@@ -483,7 +487,7 @@
 
     <!-- PASO 1: RESUMEN -->
     <div class="checkout-panel active" id="checkout-panel-1">
-      <h3>🧺 Resumen de tu pedido</h3>
+      <h3><i class="ti ti-basket"></i> Resumen de tu pedido</h3>
       <div id="carrito-items" class="carrito-items"></div>
       <div id="carrito-vacio" class="empty-state hidden">
         <p>Tu carrito está vacío. Agrega productos desde el catálogo.</p>
@@ -497,7 +501,7 @@
       </label>
       <div class="mapa-selector-bloque">
         <div class="mapa-selector-label">
-          <span>📍 Punto de entrega (opcional)</span>
+          <span><i class="ti ti-map-pin"></i> Punto de entrega (opcional)</span>
           <button type="button" class="btn btn-ghost btn-sm" id="btn-usar-mi-ubicacion">Usar mi ubicación</button>
         </div>
         <div id="mapa-destino-pedido" class="mapa-seleccionable"></div>
@@ -508,17 +512,17 @@
 
     <!-- PASO 2: MÉTODO DE PAGO -->
     <div class="checkout-panel" id="checkout-panel-2">
-      <h3>💳 Método de pago</h3>
+      <h3><i class="ti ti-credit-card"></i> Método de pago</h3>
       <p class="muted">El cobro se procesa de forma segura con Culqi.</p>
       <div class="metodo-pago-grid">
         <label class="metodo-pago-card seleccionado">
           <input type="radio" name="metodo-pago" value="tarjeta" checked>
-          <span class="metodo-pago-icon">💳</span>
+          <span class="metodo-pago-icon"><i class="ti ti-credit-card"></i></span>
           <span class="metodo-pago-nombre">Tarjeta</span>
         </label>
         <label class="metodo-pago-card">
           <input type="radio" name="metodo-pago" value="yape">
-          <span class="metodo-pago-icon">📱</span>
+          <span class="metodo-pago-icon"><i class="ti ti-device-mobile"></i></span>
           <span class="metodo-pago-nombre">Yape</span>
         </label>
       </div>
@@ -543,7 +547,7 @@
 <!-- MODAL: CERTIFICACIÓN (TRAZABILIDAD BLOCKCHAIN) -->
 <div class="modal-overlay hidden" id="modal-certificacion">
   <div class="modal modal-certificacion">
-    <button class="modal-close" data-close="modal-certificacion">✕</button>
+    <button class="modal-close" data-close="modal-certificacion"><i class="ti ti-x"></i></button>
     <div id="certificacion-content"></div>
   </div>
 </div>
@@ -551,7 +555,7 @@
 <!-- MODAL: DETALLE PRODUCTO -->
 <div class="modal-overlay hidden" id="modal-detalle-producto">
   <div class="modal modal-detalle">
-    <button class="modal-close" data-close="modal-detalle-producto">✕</button>
+    <button class="modal-close" data-close="modal-detalle-producto"><i class="ti ti-x"></i></button>
     <div id="detalle-producto-content"></div>
   </div>
 </div>

@@ -64,13 +64,13 @@ function hashCorto(hash) {
 }
 
 const EVENTOS_CERTIFICACION = {
-  cosecha_registrada: { emoji: '🌾', texto: 'Cosecha registrada' },
-  certificado_productor: { emoji: '✅', texto: 'Certificado por el productor' },
-  verificado_punto_venta: { emoji: '🏪', texto: 'Verificado en punto de venta' },
+  cosecha_registrada: { emoji: '<i class="ti ti-wheat"></i>', texto: 'Cosecha registrada' },
+  certificado_productor: { emoji: '<i class="ti ti-circle-check"></i>', texto: 'Certificado por el productor' },
+  verificado_punto_venta: { emoji: '<i class="ti ti-building-store"></i>', texto: 'Verificado en punto de venta' },
 };
 
 function labelEventoCertificacion(evento) {
-  return EVENTOS_CERTIFICACION[evento] || { emoji: '📦', texto: evento };
+  return EVENTOS_CERTIFICACION[evento] || { emoji: '<i class="ti ti-package"></i>', texto: evento };
 }
 
 function renderLineaTiempoCertificacion(historial) {
@@ -104,7 +104,7 @@ function renderLineaTiempoCertificacion(historial) {
 function renderVerificadorLinea(b) {
   if (b.evento !== 'certificado_productor' || !b.verificador_id) return '';
   const nombre = b.verificador_nombre || `verificador ${String(b.verificador_id).slice(0, 8)}`;
-  return `<p class="timeline-verificador">👤 Certificado por: ${escapeAttr(nombre)}</p>`;
+  return `<p class="timeline-verificador"><i class="ti ti-user"></i> Certificado por: ${escapeAttr(nombre)}</p>`;
 }
 
 async function abrirModalCertificacion(productoId) {
@@ -118,7 +118,7 @@ async function abrirModalCertificacion(productoId) {
       Api.productos.obtener(productoId),
     ]);
     cont.innerHTML = `
-      <h3>🔗 Certificación de trazabilidad</h3>
+      <h3><i class="ti ti-link"></i> Certificación de trazabilidad</h3>
       <p class="muted">${escapeAttr(producto.nombre)}</p>
       <div class="certificacion-qr-bloque">
         <img src="${escapeAttr(Api.certificacion.qrUrl(productoId))}" alt="Código QR de certificación" class="certificacion-qr" id="certificacion-qr-img">
@@ -136,7 +136,7 @@ async function abrirModalCertificacion(productoId) {
   } catch (err) {
     cont.innerHTML = `
       <div class="verificar-banner banner-error">
-        <span class="banner-icon">⚠️</span>
+        <span class="banner-icon"><i class="ti ti-alert-triangle"></i></span>
         <div>
           <strong>No se pudo cargar la certificación</strong>
           <p>${escapeAttr(err.message)}</p>
@@ -230,10 +230,13 @@ function manejarClickFavorito(boton) {
   boton.classList.remove('favorito-pop');
   void boton.offsetWidth; // reinicia la animación aunque se haga click varias veces seguidas
   boton.classList.add('favorito-pop');
+  // Un solo ícono (ti-heart): el estado guardado/no-guardado se distingue por el color de
+  // ".activo" en el CSS, no por cambiar de ícono (Tabler no trae una variante "heart-filled"
+  // en el mismo set sin cargar una segunda hoja de estilos que pisaría esta misma clase).
   if (boton.classList.contains('btn-favorito-detalle')) {
-    boton.innerHTML = ahoraFavorito ? '❤️ Guardado' : '🤍 Guardar';
+    boton.innerHTML = ahoraFavorito ? '<i class="ti ti-heart"></i> Guardado' : '<i class="ti ti-heart"></i> Guardar';
   } else {
-    boton.textContent = ahoraFavorito ? '❤️' : '🤍';
+    boton.innerHTML = '<i class="ti ti-heart"></i>';
   }
 }
 
@@ -289,7 +292,7 @@ function renderGestorFotosHTML(productoId, imagenes) {
       </div>
       <div class="upload-zona ${lleno ? 'deshabilitada' : ''}">
         <input type="file" class="upload-input" accept="image/jpeg,image/png,image/webp" multiple ${lleno ? 'disabled' : ''} hidden>
-        <span class="upload-zona-icono">📤</span>
+        <span class="upload-zona-icono"><i class="ti ti-upload"></i></span>
         <span>${lleno ? 'Alcanzaste el máximo de 5 fotos' : 'Arrastra tus fotos aquí o <strong>haz clic para elegir</strong>'}</span>
       </div>
       ${n ? `
@@ -298,7 +301,7 @@ function renderGestorFotosHTML(productoId, imagenes) {
           <div class="upload-miniatura">
             ${i === 0 ? '<span class="miniatura-badge-principal">Principal</span>' : ''}
             <img src="${escapeAttr(img.url)}" alt="" loading="lazy">
-            <button type="button" class="upload-miniatura-quitar" data-imagen-id="${img.id}" aria-label="Quitar foto">✕</button>
+            <button type="button" class="upload-miniatura-quitar" data-imagen-id="${img.id}" aria-label="Quitar foto"><i class="ti ti-x"></i></button>
             <div class="upload-miniatura-mover">
               <button type="button" class="miniatura-mover-btn" data-imagen-id="${img.id}" data-direccion="izq" aria-label="Mover foto a la izquierda" ${i === 0 ? 'disabled' : ''}>‹</button>
               <button type="button" class="miniatura-mover-btn" data-imagen-id="${img.id}" data-direccion="der" aria-label="Mover foto a la derecha" ${i === ordenadas.length - 1 ? 'disabled' : ''}>›</button>
@@ -314,7 +317,7 @@ function rerenderGestorFotos(productoId) {
     el.outerHTML = renderGestorFotosHTML(productoId, imagenes);
   });
   document.querySelectorAll(`.btn-toggle-fotos[data-id="${productoId}"]`).forEach((btn) => {
-    btn.textContent = `📷 Fotos (${imagenes.length}/5)`;
+    btn.innerHTML = `<i class="ti ti-camera"></i> Fotos (${imagenes.length}/5)`;
   });
 }
 
@@ -387,18 +390,18 @@ async function moverFotoProducto(productoId, imagenId, direccion) {
 }
 
 const ICONOS_ESTADO = {
-  pendiente: '⏳',
-  pendiente_asignacion: '⏳',
-  propuesto: '📨',
-  asignado: '📋',
-  en_camino: '🚚',
-  en_transito: '🚚',
-  en_ruta: '🚚',
-  entregado: '✅',
-  cancelado: '✖️',
-  rechazado: '✖️',
-  aprobado: '✅',
-  error: '⚠️',
+  pendiente: 'hourglass',
+  pendiente_asignacion: 'hourglass',
+  propuesto: 'mail',
+  asignado: 'clipboard-list',
+  en_camino: 'truck',
+  en_transito: 'truck',
+  en_ruta: 'truck',
+  entregado: 'circle-check',
+  cancelado: 'circle-x',
+  rechazado: 'circle-x',
+  aprobado: 'circle-check',
+  error: 'alert-triangle',
 };
 
 const ESTADOS_BADGE_CONOCIDOS = new Set([
@@ -410,7 +413,8 @@ const ESTADOS_BADGE_CONOCIDOS = new Set([
 function badgeEstadoEnvio(estado) {
   const clave = (estado || 'pendiente').toLowerCase().replace(/\s+/g, '_');
   const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `badge-${clave}` : 'badge-default';
-  const icono = ICONOS_ESTADO[clave] || '•';
+  const iconoClase = ICONOS_ESTADO[clave];
+  const icono = iconoClase ? `<i class="ti ti-${iconoClase}"></i>` : '•';
   return `<span class="badge ${clase}">${icono} ${estado || 'pendiente'}</span>`;
 }
 
@@ -439,9 +443,14 @@ function unidadEtiqueta(codigo) {
 }
 
 function renderEstrellas(promedio) {
+  // Un solo ícono (ti-star): "llena" vs "vacía" se distingue por color (ver .estrella-llena en
+  // CSS), no por cambiar de ícono — el set outline de Tabler no trae una variante rellena sin
+  // cargar una segunda hoja de estilos que pisaría esta misma clase (ver nota en alternarFavorito).
   const llenas = Math.round(promedio || 0);
   let html = '';
-  for (let i = 1; i <= 5; i++) html += i <= llenas ? '★' : '☆';
+  for (let i = 1; i <= 5; i++) {
+    html += `<i class="ti ti-star${i <= llenas ? ' estrella-llena' : ''}"></i>`;
+  }
   return html;
 }
 
@@ -514,7 +523,7 @@ function crearMapaSoloLectura(contenedorId, lat, lng, emoji, color, popupTexto) 
   return mapa;
 }
 
-function crearMapaSeleccionable(contenedorId, { latInicial, lngInicial, emoji = '📍', color = '#e76f51', onSeleccionar } = {}) {
+function crearMapaSeleccionable(contenedorId, { latInicial, lngInicial, emoji = '<i class="ti ti-map-pin"></i>', color = '#e76f51', onSeleccionar } = {}) {
   const el = document.getElementById(contenedorId);
   if (!el || typeof L === 'undefined') return null;
 
@@ -558,8 +567,8 @@ function crearMapaRuta(contenedorId, origen, destino) {
   mapa.fitBounds([puntoOrigen, puntoDestino], { padding: [28, 28], maxZoom: 15 });
   agregarCapaBase(mapa);
 
-  const marcadorOrigen = L.marker(puntoOrigen, { icon: crearIconoMarcador('🛵', '#2d6a4f') }).addTo(mapa).bindPopup('Repartidor');
-  L.marker(puntoDestino, { icon: crearIconoMarcador('📍', '#e76f51') }).addTo(mapa).bindPopup('Destino');
+  const marcadorOrigen = L.marker(puntoOrigen, { icon: crearIconoMarcador('<i class="ti ti-moped"></i>', '#2d6a4f') }).addTo(mapa).bindPopup('Repartidor');
+  L.marker(puntoDestino, { icon: crearIconoMarcador('<i class="ti ti-map-pin"></i>', '#e76f51') }).addTo(mapa).bindPopup('Destino');
   const linea = L.polyline([puntoOrigen, puntoDestino], { color: '#40916c', weight: 3, dashArray: '6 8' }).addTo(mapa);
 
   setTimeout(() => mapa.invalidateSize(), 80);
@@ -802,7 +811,7 @@ async function cargarLanding() {
     const destacados8 = ordenados.slice(0, 8);
     grid8.innerHTML = destacados8.length
       ? destacados8.map((p) => `<div class="landing-grid-8-tarjeta" data-id="${p.id}">${renderContenidoTarjetaSimple(p)}</div>`).join('')
-      : '<p class="empty-state">🌾 Todavía no hay productos publicados.</p>';
+      : '<p class="empty-state"><i class="ti ti-basket-off"></i> Todavía no hay productos publicados.</p>';
 
     // El carrusel arranca donde termina el grid de 8 para no repetir exactamente los mismos
     // productos en dos secciones seguidas; si no alcanzan, se completa desde el principio.
@@ -810,7 +819,7 @@ async function cargarLanding() {
     const recomendados = (resto.length >= 10 ? resto : ordenados).slice(0, 30);
     carrusel.innerHTML = recomendados.length
       ? renderCarruselProductos(recomendados)
-      : '<p class="empty-state">🌾 Todavía no hay productos publicados.</p>';
+      : '<p class="empty-state"><i class="ti ti-basket-off"></i> Todavía no hay productos publicados.</p>';
     actualizarProgresoCarrusel();
 
     cargarBannersCategoriaFijos(productos);
@@ -1096,16 +1105,16 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
         ${renderMediaProducto(p, 'product-banner')}
         ${clickable ? `
         <button type="button" class="btn-favorito ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
-          ${favorito ? '❤️' : '🤍'}
+          <i class="ti ti-heart"></i>
         </button>` : ''}
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
           <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
-          ${tieneCalificacion ? `<span class="product-rating"><span class="rating-stars">★</span> ${Number(p.calificacion_promedio).toFixed(1)} <span class="rating-count-mini">(${p.total_resenas})</span></span>` : ''}
+          ${tieneCalificacion ? `<span class="product-rating"><span class="rating-stars"><i class="ti ti-star estrella-llena"></i></span> ${Number(p.calificacion_promedio).toFixed(1)} <span class="rating-count-mini">(${p.total_resenas})</span></span>` : ''}
         </div>
         <h4>${p.nombre}</h4>
-        <span class="product-productor">👨‍🌾 ${p.productor_nombre || 'Productor local'}</span>
+        <span class="product-productor"><i class="ti ti-plant-2"></i> ${p.productor_nombre || 'Productor local'}</span>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
         <span class="product-stock ${stockBajo ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
         ${clickable ? `
@@ -1127,7 +1136,7 @@ function manejarClickGrid(e) {
   if (btnAgregar) {
     e.stopPropagation();
     agregarAlCarrito(btnAgregar.dataset.id);
-    destellarBoton(btnAgregar, '✓ Agregado');
+    destellarBoton(btnAgregar, '<i class="ti ti-check"></i> Agregado');
     return;
   }
   const card = e.target.closest('.product-card');
@@ -1210,11 +1219,11 @@ function renderBloqueProductor(p, productor) {
   return `
     <div class="detalle-productor-card">
       <div class="detalle-productor-header">
-        <span class="detalle-productor-icono">🧑‍🌾</span>
+        <span class="detalle-productor-icono"><i class="ti ti-plant-2"></i></span>
         <div class="detalle-productor-info">
           <span class="detalle-productor-label">Cultivado por</span>
           <h3 class="detalle-productor-nombre">${escapeAttr(nombre)}</h3>
-          ${ubicacionTexto ? `<span class="detalle-productor-ubicacion">📍 ${escapeAttr(ubicacionTexto)}</span>` : ''}
+          ${ubicacionTexto ? `<span class="detalle-productor-ubicacion"><i class="ti ti-map-pin"></i> ${escapeAttr(ubicacionTexto)}</span>` : ''}
         </div>
       </div>
       ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini"></div>` : ''}
@@ -1277,16 +1286,16 @@ function renderSeccionResenas(resenas) {
     <form id="form-resena" class="resena-form">
       <h4>Deja tu reseña</h4>
       <div class="estrellas-selector">
-        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}">★</button>`).join('')}
+        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}"><i class="ti ti-star"></i></button>`).join('')}
       </div>
       <textarea placeholder="Cuéntanos qué te pareció (opcional)"></textarea>
       <button type="submit" class="btn btn-primary">Publicar reseña</button>
     </form>`
-    : '<p class="muted">🔒 Inicia sesión para dejar tu propia reseña.</p>';
+    : '<p class="muted"><i class="ti ti-lock"></i> Inicia sesión para dejar tu propia reseña.</p>';
 
   return `
     <div class="resenas-section">
-      <h3>⭐ Reseñas ${resenas.length ? `(${resenas.length})` : ''}</h3>
+      <h3><i class="ti ti-star"></i> Reseñas ${resenas.length ? `(${resenas.length})` : ''}</h3>
       <div class="resenas-lista">${listaHtml}</div>
       ${formularioHtml}
     </div>`;
@@ -1321,7 +1330,7 @@ function renderDetalleProducto(p, resenas, productor) {
     <div class="detalle-encabezado">
       <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
       <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
-        ${favorito ? '❤️ Guardado' : '🤍 Guardar'}
+        <i class="ti ti-heart"></i> ${favorito ? 'Guardado' : 'Guardar'}
       </button>
     </div>
 
@@ -1369,7 +1378,7 @@ function renderDetalleProducto(p, resenas, productor) {
 
   document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => {
     agregarAlCarrito(p.id, cantidadSeleccionada);
-    destellarBoton(e.currentTarget, '✓ Agregado');
+    destellarBoton(e.currentTarget, '<i class="ti ti-check"></i> Agregado');
     setTimeout(() => cerrarModal('modal-detalle-producto'), 700);
   });
 
@@ -1378,7 +1387,7 @@ function renderDetalleProducto(p, resenas, productor) {
   });
 
   if (hayCoordenadas(productor?.latitud, productor?.longitud)) {
-    crearMapaSoloLectura('mapa-productor-detalle', productor.latitud, productor.longitud, '🧺', '#2d6a4f', escapeAttr(productor.nombre || 'Productor'));
+    crearMapaSoloLectura('mapa-productor-detalle', productor.latitud, productor.longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(productor.nombre || 'Productor'));
   }
 
   const miniaturas = contenido.querySelectorAll('.galeria-miniatura');
@@ -1514,7 +1523,7 @@ function renderCarrito() {
         <span>${i.cantidad} ${unidadPlural(i.unidad_medida, i.cantidad)}</span>
         <button data-accion="mas" data-id="${i.producto_id}">+</button>
       </div>
-      <button class="carrito-remove" data-accion="quitar" data-id="${i.producto_id}">🗑️</button>
+      <button class="carrito-remove" data-accion="quitar" data-id="${i.producto_id}"><i class="ti ti-trash"></i></button>
     </div>
   `).join('');
 
@@ -1532,7 +1541,7 @@ function irPasoCheckout(paso) {
     stepEl.classList.toggle('active', n === paso);
     stepEl.classList.toggle('completado', n < paso);
     const circulo = stepEl.querySelector('.checkout-step-circle');
-    circulo.textContent = n < paso ? '✓' : String(n);
+    circulo.innerHTML = n < paso ? '<i class="ti ti-check"></i>' : String(n);
   });
 }
 
@@ -1588,7 +1597,7 @@ function inicializarMapaDestino() {
   }
 
   mapaDestinoPedido = crearMapaSeleccionable('mapa-destino-pedido', {
-    emoji: '📍',
+    emoji: '<i class="ti ti-map-pin"></i>',
     color: '#e76f51',
     onSeleccionar: (lat, lng) => {
       destinoSeleccionado = { lat, lng };
@@ -1600,7 +1609,7 @@ function inicializarMapaDestino() {
 function actualizarAyudaDestino() {
   const ayuda = document.getElementById('mapa-destino-ayuda');
   if (!ayuda || !destinoSeleccionado) return;
-  ayuda.textContent = `📍 Destino marcado (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
+  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Destino marcado (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
   ayuda.classList.add('confirmado');
 }
 
@@ -1728,7 +1737,7 @@ function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
 
   if (aprobado) {
     cont.innerHTML = `
-      <div class="icono-grande">🎉</div>
+      <div class="icono-grande"><i class="ti ti-confetti"></i></div>
       <h3>¡Pago aprobado!</h3>
       <p>Tu pedido <strong>#${idCorto}</strong> está confirmado.</p>
       <p>Total pagado: <strong>${formatearMoneda(monto)}</strong></p>`;
@@ -1738,7 +1747,7 @@ function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
       ? errorMsg
       : `El pago quedó en estado "${resultado?.estado || 'pendiente'}".`;
     cont.innerHTML = `
-      <div class="icono-grande">⚠️</div>
+      <div class="icono-grande"><i class="ti ti-alert-triangle"></i></div>
       <h3>No se pudo confirmar el pago</h3>
       <p>${escapeAttr(motivo)}</p>
       <p>Tu pedido <strong>#${idCorto}</strong> quedó registrado — puedes reintentar el pago más tarde.</p>`;
@@ -1779,21 +1788,21 @@ function renderEmptyPedidos(tipo) {
   const vacio = document.getElementById('pedidos-empty');
   const plantillas = {
     'no-sesion': `
-      <span class="empty-state-icon">🔒</span>
+      <span class="empty-state-icon"><i class="ti ti-lock"></i></span>
       <p><strong>Inicia sesión para ver tus pedidos</strong></p>
       <p class="muted">Necesitas una cuenta para hacer seguimiento de tus compras.</p>
       <button type="button" class="btn btn-primary" id="btn-vacio-login">Iniciar sesión</button>`,
     'sin-pedidos': `
-      <span class="empty-state-icon">🛍️</span>
+      <span class="empty-state-icon"><i class="ti ti-shopping-bag"></i></span>
       <p><strong>Aún no tienes pedidos</strong></p>
       <p class="muted">Explora el catálogo y arma tu primer pedido directo de productores locales.</p>
       <button type="button" class="btn btn-primary" id="btn-vacio-catalogo">Explorar catálogo</button>`,
     'sin-en-curso': `
-      <span class="empty-state-icon">✅</span>
+      <span class="empty-state-icon"><i class="ti ti-circle-check"></i></span>
       <p><strong>No tienes pedidos en curso</strong></p>
       <p class="muted">Todos tus pedidos ya fueron entregados.</p>`,
     'sin-entregados': `
-      <span class="empty-state-icon">📭</span>
+      <span class="empty-state-icon"><i class="ti ti-package-off"></i></span>
       <p><strong>Aún no tienes pedidos entregados</strong></p>
       <p class="muted">Aquí verás el historial una vez que se complete una entrega.</p>`,
   };
@@ -1890,7 +1899,7 @@ async function cargarEstadosResenaPedidos(filtrados) {
     if (pendientes.length) {
       contenedor.innerHTML = pendientes.map((pid) => {
         const nombre = Estado.productos.find((p) => p.id === pid)?.nombre || 'este producto';
-        return `<button type="button" class="btn btn-outline btn-sm btn-calificar-producto" data-producto-id="${pid}">⭐ Califica ${escapeAttr(nombre)}</button>`;
+        return `<button type="button" class="btn btn-outline btn-sm btn-calificar-producto" data-producto-id="${pid}"><i class="ti ti-star"></i> Califica ${escapeAttr(nombre)}</button>`;
       }).join('');
     }
   }
@@ -1926,15 +1935,15 @@ async function cargarDatosPedido(pedidoId) {
 
 function renderStatsRuta(ruta) {
   return `
-    <div class="ruta-stat"><span class="ruta-stat-icon">📏</span><div><strong>${ruta.distancia_km} km</strong><span>distancia</span></div></div>
-    <div class="ruta-stat"><span class="ruta-stat-icon">⏱️</span><div><strong>~${ruta.tiempo_estimado_min} min</strong><span>tiempo estimado</span></div></div>`;
+    <div class="ruta-stat"><span class="ruta-stat-icon"><i class="ti ti-route"></i></span><div><strong>${ruta.distancia_km} km</strong><span>distancia</span></div></div>
+    <div class="ruta-stat"><span class="ruta-stat-icon"><i class="ti ti-clock"></i></span><div><strong>~${ruta.tiempo_estimado_min} min</strong><span>tiempo estimado</span></div></div>`;
 }
 
 function renderBloqueRuta(envio, ruta) {
   if (!envio) return '';
   if (!ruta || !ruta.disponible) {
     const mensaje = ruta?.mensaje || 'El seguimiento en mapa aún no está disponible para este envío.';
-    return `<div class="mapa-bloque-neutro"><span class="icon">🗺️</span> ${escapeAttr(mensaje)}</div>`;
+    return `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map"></i></span> ${escapeAttr(mensaje)}</div>`;
   }
   return `
     <div class="mapa-bloque">
@@ -1978,7 +1987,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
 
       ${pagoRechazado ? `
       <div class="pago-rechazado-aviso">
-        <span>⚠️ Tu pago fue rechazado.</span>
+        <span><i class="ti ti-alert-triangle"></i> Tu pago fue rechazado.</span>
         <button type="button" class="btn btn-outline btn-sm btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
       </div>` : ''}
 
@@ -1986,7 +1995,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
       ${entregado ? '<div class="resena-cta"></div>' : ''}
       ${entregado ? `
       <div class="pedido-certificado-cta">
-        <button type="button" class="btn btn-outline btn-sm btn-ver-certificado-pedido" data-pedido-id="${pedido.id}">🔗 Ver certificado de compra</button>
+        <button type="button" class="btn btn-outline btn-sm btn-ver-certificado-pedido" data-pedido-id="${pedido.id}"><i class="ti ti-link"></i> Ver certificado de compra</button>
         <div class="productor-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
       </div>` : ''}
     </div>
@@ -2009,7 +2018,7 @@ function renderCertificadoPedido(cert) {
     <div class="certificado-pedido">
       <p class="certificado-pedido-hash">Certificado: <code>${escapeAttr(hashCorto(cert.merkle_root))}</code></p>
       ${filas}
-      <p class="muted certificado-pedido-nota">🔒 Verificado mediante blockchain</p>
+      <p class="muted certificado-pedido-nota"><i class="ti ti-lock"></i> Verificado mediante blockchain</p>
     </div>`;
 }
 
@@ -2106,22 +2115,22 @@ async function buscarPedidoPorId() {
 
 // ============ NOTIFICACIONES ============
 const NOTIF_ICONOS = {
-  pedido_creado: '📦',
-  envio_actualizado: '🚚',
+  pedido_creado: 'package',
+  envio_actualizado: 'truck',
 };
 
 function iconoNotificacion(tipo) {
-  return NOTIF_ICONOS[tipo] || '🔔';
+  return `<i class="ti ti-${NOTIF_ICONOS[tipo] || 'bell'}"></i>`;
 }
 
 function renderVacioNotificaciones(tipo) {
   const vacio = document.getElementById('notificaciones-empty');
   const plantillas = {
     'no-sesion': `
-      <span class="empty-state-icon">🔒</span>
+      <span class="empty-state-icon"><i class="ti ti-lock"></i></span>
       <p><strong>Inicia sesión para ver tus notificaciones</strong></p>`,
     'sin-notificaciones': `
-      <span class="empty-state-icon">🔔</span>
+      <span class="empty-state-icon"><i class="ti ti-bell"></i></span>
       <p><strong>No tienes notificaciones todavía</strong></p>
       <p class="muted">Aquí verás avisos sobre tus pedidos y envíos apenas ocurran.</p>`,
   };
@@ -2253,7 +2262,7 @@ function reiniciarFormularioProducto() {
   document.getElementById('form-producto')?.reset();
   document.getElementById('producto-fotos-bloque')?.classList.add('hidden');
   document.getElementById('form-producto')?.classList.remove('hidden');
-  document.getElementById('titulo-form-producto').textContent = '🌱 Publicar nuevo producto';
+  document.getElementById('titulo-form-producto').innerHTML = '<i class="ti ti-seedling"></i> Publicar nuevo producto';
   actualizarVistaPreviaProducto();
 }
 
@@ -2274,7 +2283,7 @@ function inicializarMapaUbicacionProductor() {
   }
 
   mapaUbicacionProductor = crearMapaSeleccionable('mapa-ubicacion-productor', {
-    emoji: '🧺',
+    emoji: '<i class="ti ti-map-pin"></i>',
     color: '#2d6a4f',
     onSeleccionar: (lat, lng) => {
       ubicacionProductorSeleccionada = { lat, lng };
@@ -2286,7 +2295,7 @@ function inicializarMapaUbicacionProductor() {
 function actualizarAyudaUbicacionProductor() {
   const ayuda = document.getElementById('mapa-productor-ayuda');
   if (!ayuda || !ubicacionProductorSeleccionada) return;
-  ayuda.textContent = `📍 Ubicación marcada (${ubicacionProductorSeleccionada.lat.toFixed(5)}, ${ubicacionProductorSeleccionada.lng.toFixed(5)})`;
+  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionProductorSeleccionada.lat.toFixed(5)}, ${ubicacionProductorSeleccionada.lng.toFixed(5)})`;
   ayuda.classList.add('confirmado');
 }
 
@@ -2344,7 +2353,7 @@ async function publicarProducto(e) {
     toast('Producto publicado con éxito 🎉');
 
     document.getElementById('form-producto').classList.add('hidden');
-    document.getElementById('titulo-form-producto').textContent = `✅ ${nuevoProducto.nombre}`;
+    document.getElementById('titulo-form-producto').innerHTML = `<i class="ti ti-circle-check"></i> ${escapeAttr(nuevoProducto.nombre)}`;
     Estado.imagenesPorProducto[nuevoProducto.id] = [];
     const bloqueFotos = document.getElementById('producto-fotos-bloque');
     bloqueFotos.classList.remove('hidden');
@@ -2379,14 +2388,15 @@ async function mostrarPrecioReferenciaCultivo() {
   if (!cultivo) { cont.classList.add('hidden'); return; }
 
   cont.classList.remove('hidden');
-  cont.textContent = 'Consultando precio de referencia…';
+  cont.innerHTML = '<i class="ti ti-bulb"></i> Consultando precio de referencia…';
   try {
     const data = await Api.productos.precioReferencia(cultivo);
-    cont.textContent = data.precio_promedio != null
-      ? `💡 Precio de referencia en el catálogo: ${formatearMoneda(data.precio_promedio)}/kg (promedio)`
-      : `💡 "${cultivo}" no tiene productos en el catálogo todavía — sin precio de referencia.`;
+    // innerHTML por el ícono, así que "cultivo" (texto libre del formulario) va escapado a mano.
+    cont.innerHTML = data.precio_promedio != null
+      ? `<i class="ti ti-bulb"></i> Precio de referencia en el catálogo: ${formatearMoneda(data.precio_promedio)}/kg (promedio)`
+      : `<i class="ti ti-bulb"></i> "${escapeAttr(cultivo)}" no tiene productos en el catálogo todavía — sin precio de referencia.`;
   } catch (err) {
-    cont.textContent = '💡 No se pudo consultar el precio de referencia (servicio de Productos no disponible).';
+    cont.innerHTML = '<i class="ti ti-bulb"></i> No se pudo consultar el precio de referencia (servicio de Productos no disponible).';
   }
 }
 
@@ -2462,7 +2472,7 @@ function renderTarjetaProductorProducto(p, indice) {
       <div class="product-card-media">
         ${renderMediaProducto(p, 'product-banner')}
         ${sinStock ? '<span class="badge-flotante badge-stock-bajo">Sin stock</span>' : ''}
-        ${!sinStock && stockBajo ? '<span class="badge-flotante badge-stock-bajo">⚠️ Poco stock</span>' : ''}
+        ${!sinStock && stockBajo ? '<span class="badge-flotante badge-stock-bajo"><i class="ti ti-alert-triangle"></i> Poco stock</span>' : ''}
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
@@ -2474,10 +2484,10 @@ function renderTarjetaProductorProducto(p, indice) {
 
         <div class="productor-card-acciones">
           <button type="button" class="btn btn-outline btn-sm btn-toggle-resenas" data-id="${p.id}">
-            ⭐ ${tieneCalificacion ? `${p.total_resenas} reseña${p.total_resenas === 1 ? '' : 's'}` : 'Reseñas'}
+            <i class="ti ti-star"></i> ${tieneCalificacion ? `${p.total_resenas} reseña${p.total_resenas === 1 ? '' : 's'}` : 'Reseñas'}
           </button>
-          <button type="button" class="btn btn-outline btn-sm btn-toggle-fotos" data-id="${p.id}">📷 Fotos</button>
-          <button type="button" class="btn btn-outline btn-sm btn-ver-certificacion" data-id="${p.id}">🔗 Certificación</button>
+          <button type="button" class="btn btn-outline btn-sm btn-toggle-fotos" data-id="${p.id}"><i class="ti ti-camera"></i> Fotos</button>
+          <button type="button" class="btn btn-outline btn-sm btn-ver-certificacion" data-id="${p.id}"><i class="ti ti-link"></i> Certificación</button>
         </div>
 
         <div class="productor-expandible hidden" data-panel="resenas" data-id="${p.id}"></div>
@@ -2554,10 +2564,13 @@ async function cargarMisProductos() {
 }
 
 // ============ GESTIÓN DE ENVÍOS (repartidor) ============
+// icono queda como un punto de color dibujado en CSS (.disponibilidad-punto), no un ícono de
+// Tabler: el set outline no trae una variante de círculo sólido/relleno, y un anillo hueco
+// comunica mucho más débil el "semáforo de estado" que un punto de color lleno.
 const DISPONIBILIDAD_INFO = {
-  disponible: { texto: 'Disponible', clase: 'disponibilidad-verde', icono: '🟢', detalle: 'Puedes recibir nuevas propuestas de envío.' },
-  ocupado: { texto: 'Ocupado', clase: 'disponibilidad-ambar', icono: '🟠', detalle: 'Estás atendiendo un envío en este momento.' },
-  desconectado: { texto: 'Desconectado', clase: 'disponibilidad-gris', icono: '⚪', detalle: 'No recibirás nuevas propuestas hasta que te conectes.' },
+  disponible: { texto: 'Disponible', clase: 'disponibilidad-verde', detalle: 'Puedes recibir nuevas propuestas de envío.' },
+  ocupado: { texto: 'Ocupado', clase: 'disponibilidad-ambar', detalle: 'Estás atendiendo un envío en este momento.' },
+  desconectado: { texto: 'Desconectado', clase: 'disponibilidad-gris', detalle: 'No recibirás nuevas propuestas hasta que te conectes.' },
 };
 
 function renderBannerDisponibilidad(estado) {
@@ -2565,7 +2578,7 @@ function renderBannerDisponibilidad(estado) {
   const info = DISPONIBILIDAD_INFO[clave] || DISPONIBILIDAD_INFO.desconectado;
   return `
     <div class="disponibilidad-banner ${info.clase}">
-      <span class="disponibilidad-icono">${info.icono}</span>
+      <span class="disponibilidad-icono"><span class="disponibilidad-punto"></span></span>
       <div>
         <strong>${info.texto}</strong>
         <span>${info.detalle}</span>
@@ -2627,9 +2640,10 @@ async function crearPerfilRepartidor(e) {
   }
 }
 
-function renderTarjetaPropuesta(envio) {
+function renderTarjetaPropuesta(envio, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
   return `
-    <div class="propuesta-card">
+    <div class="propuesta-card" style="animation-delay:${retraso}ms">
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
@@ -2638,17 +2652,18 @@ function renderTarjetaPropuesta(envio) {
         ${badgeEstadoEnvio(envio.estado || 'propuesto')}
       </div>
       <div class="propuesta-actions">
-        <button type="button" class="btn btn-outline btn-rechazar-propuesta" data-envio-id="${envio.id}">✕ Rechazar</button>
-        <button type="button" class="btn btn-primary btn-aceptar-propuesta" data-envio-id="${envio.id}">✓ Aceptar envío</button>
+        <button type="button" class="btn btn-outline btn-rechazar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-x"></i> Rechazar</button>
+        <button type="button" class="btn btn-primary btn-aceptar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-check"></i> Aceptar envío</button>
       </div>
     </div>`;
 }
 
-function renderTarjetaEnvio(envio, ruta) {
+function renderTarjetaEnvio(envio, ruta, indice = 0) {
   const activo = ['asignado', 'en_camino'].includes(envio.estado);
   const finalizado = ['entregado', 'cancelado', 'rechazado'].includes(envio.estado);
+  const retraso = Math.min(indice, 12) * 35;
   return `
-    <div class="pedido-card ${activo ? 'pedido-card-activo' : ''}">
+    <div class="pedido-card ${activo ? 'pedido-card-activo' : ''}" style="animation-delay:${retraso}ms">
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
@@ -2702,7 +2717,7 @@ async function cargarListaEnvios(miRepartidorId) {
 
   if (propuestas.length) {
     propuestasSeccion.classList.remove('hidden');
-    propuestasCont.innerHTML = propuestas.map(renderTarjetaPropuesta).join('');
+    propuestasCont.innerHTML = propuestas.map((e, i) => renderTarjetaPropuesta(e, i)).join('');
     propuestasBadge.textContent = propuestas.length;
     propuestasBadge.classList.toggle('hidden', propuestas.length <= 1);
   }
@@ -2727,7 +2742,7 @@ async function cargarListaEnvios(miRepartidorId) {
     } catch { /* seguimiento de ruta no disponible por ahora */ }
   }));
 
-  cont.innerHTML = mios.map((e) => renderTarjetaEnvio(e, rutasPorEnvio[e.id])).join('');
+  cont.innerHTML = mios.map((e, i) => renderTarjetaEnvio(e, rutasPorEnvio[e.id], i)).join('');
   activos.forEach((e) => {
     const ruta = rutasPorEnvio[e.id];
     if (ruta?.disponible) iniciarMapaRutaPedido(e.id, ruta);
@@ -2765,8 +2780,8 @@ let intervalUbicacionRepartidor = null;
 let ultimaPosicionRepartidor = null;
 
 function renderEstadoUbicacion(tipo, mensaje) {
-  const iconos = { ok: '📍', error: '⚠️', espera: '🔄' };
-  return `<span class="ubicacion-chip ubicacion-${tipo}">${iconos[tipo] || '📍'} ${escapeAttr(mensaje)}</span>`;
+  const iconos = { ok: 'map-pin', error: 'alert-triangle', espera: 'refresh' };
+  return `<span class="ubicacion-chip ubicacion-${tipo}"><i class="ti ti-${iconos[tipo] || 'map-pin'}"></i> ${escapeAttr(mensaje)}</span>`;
 }
 
 function iniciarSeguimientoRepartidor() {
@@ -2824,9 +2839,9 @@ function detenerSeguimientoRepartidor() {
 
 // ============ MI PERFIL ============
 const ROL_INFO_PERFIL = {
-  comprador: { icono: '🛒', texto: 'Comprador' },
-  productor: { icono: '🚜', texto: 'Productor' },
-  repartidor: { icono: '🚚', texto: 'Repartidor' },
+  comprador: { icono: '<i class="ti ti-shopping-cart"></i>', texto: 'Comprador' },
+  productor: { icono: '<i class="ti ti-tractor"></i>', texto: 'Productor' },
+  repartidor: { icono: '<i class="ti ti-truck"></i>', texto: 'Repartidor' },
 };
 
 function ocultarDni(dni) {
@@ -2855,7 +2870,7 @@ function renderSkeletonPerfil() {
 function renderPerfilComprador() {
   return `
     <div class="card-panel">
-      <h3>🛒 Comprador</h3>
+      <h3><i class="ti ti-shopping-cart"></i> Comprador</h3>
       <p class="muted">Explora el catálogo y haz seguimiento de tus compras.</p>
       <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-pedidos">Ir a Mis Pedidos →</button>
     </div>`;
@@ -2865,7 +2880,7 @@ function renderPerfilProductor(extra, registrosProduccion) {
   if (!extra) {
     return `
       <div class="perfil-cta-completar">
-        <span class="empty-state-icon">🚜</span>
+        <span class="empty-state-icon"><i class="ti ti-tractor"></i></span>
         <p><strong>Aún no completaste tu perfil de productor</strong></p>
         <p class="muted">Créalo para empezar a publicar productos sin intermediarios.</p>
         <button type="button" class="btn btn-primary" id="btn-perfil-ir-panel">Completar perfil de productor</button>
@@ -2873,16 +2888,16 @@ function renderPerfilProductor(extra, registrosProduccion) {
   }
   return `
     <div class="card-panel">
-      <h3>🚜 Datos de productor</h3>
+      <h3><i class="ti ti-tractor"></i> Datos de productor</h3>
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(extra.comunidad || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${escapeAttr(extra.contacto || '—')}</span></div>
       </div>
       ${hayCoordenadas(extra.latitud, extra.longitud) ? `
       <div class="mapa-bloque">
-        <h4 class="mapa-titulo">📍 Ubicación de tu chakra</h4>
+        <h4 class="mapa-titulo"><i class="ti ti-map-pin"></i> Ubicación de tu chakra</h4>
         <div id="mapa-perfil-productor" class="mapa-mini"></div>
-      </div>` : `<div class="mapa-bloque-neutro"><span class="icon">📍</span> No has marcado la ubicación de tu chakra todavía.</div>`}
+      </div>` : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> No has marcado la ubicación de tu chakra todavía.</div>`}
       <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
     </div>
     ${renderGestionEconomica(registrosProduccion || [])}`;
@@ -2913,20 +2928,20 @@ function renderResumenEconomico(registros) {
 
   return `
     <div class="card-panel gestion-economica-resumen">
-      <h3>📊 Gestión Económica</h3>
+      <h3><i class="ti ti-chart-bar"></i> Gestión Económica</h3>
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Total invertido</span><span class="perfil-dato-valor">${formatearMoneda(totalInvertido)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Total cosechado</span><span class="perfil-dato-valor">${cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—'}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Ganancia acumulada</span><span class="perfil-dato-valor ${gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—'}</span></div>
       </div>
-      ${sinCalcular > 0 ? `<p class="muted produccion-nota-resumen">ℹ️ ${sinCalcular} registro${sinCalcular > 1 ? 's' : ''} cosechado${sinCalcular > 1 ? 's' : ''} sin datos suficientes para calcular ganancia — no se incluye${sinCalcular > 1 ? 'n' : ''} en el total.</p>` : ''}
+      ${sinCalcular > 0 ? `<p class="muted produccion-nota-resumen"><i class="ti ti-info-circle"></i> ${sinCalcular} registro${sinCalcular > 1 ? 's' : ''} cosechado${sinCalcular > 1 ? 's' : ''} sin datos suficientes para calcular ganancia — no se incluye${sinCalcular > 1 ? 'n' : ''} en el total.</p>` : ''}
     </div>`;
 }
 
 function renderFormRegistroProduccion() {
   return `
     <div class="card-panel">
-      <h4>🌱 Registrar nueva siembra</h4>
+      <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
       <form id="form-registro-produccion" class="form-grid">
         <label>Cultivo
           <input type="text" id="produccion-cultivo" required maxlength="80" placeholder="Ej. Papa Nativa">
@@ -2964,8 +2979,8 @@ function renderFormRegistroProduccion() {
 function renderTarjetaRegistroProduccion(r) {
   const esPlanificado = r.estado === 'planificado';
   const badge = esPlanificado
-    ? '<span class="badge badge-pendiente">🌱 Planificado</span>'
-    : '<span class="badge badge-entregado">✅ Cosechado</span>';
+    ? '<span class="badge badge-pendiente"><i class="ti ti-seedling"></i> Planificado</span>'
+    : '<span class="badge badge-entregado"><i class="ti ti-circle-check"></i> Cosechado</span>';
 
   const datosBase = `
     <div class="perfil-datos-grid">
@@ -3008,7 +3023,7 @@ function renderTarjetaRegistroProduccion(r) {
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
       </div>
-      <p class="produccion-sin-calculo">ℹ️ No se pudo calcular la ganancia: ${escapeAttr(r.motivo_sin_calculo || 'motivo desconocido')}.</p>`;
+      <p class="produccion-sin-calculo"><i class="ti ti-info-circle"></i> No se pudo calcular la ganancia: ${escapeAttr(r.motivo_sin_calculo || 'motivo desconocido')}.</p>`;
   }
 
   return `
@@ -3037,7 +3052,7 @@ function renderPerfilRepartidor(extra) {
   if (!extra) {
     return `
       <div class="perfil-cta-completar">
-        <span class="empty-state-icon">🚚</span>
+        <span class="empty-state-icon"><i class="ti ti-truck"></i></span>
         <p><strong>Aún no completaste tu perfil de repartidor</strong></p>
         <p class="muted">Créalo para empezar a recibir propuestas de envío.</p>
         <button type="button" class="btn btn-primary" id="btn-perfil-ir-envios">Completar perfil de repartidor</button>
@@ -3045,7 +3060,7 @@ function renderPerfilRepartidor(extra) {
   }
   return `
     <div class="card-panel">
-      <h3>🚚 Datos de repartidor</h3>
+      <h3><i class="ti ti-truck"></i> Datos de repartidor</h3>
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">DNI</span><span class="perfil-dato-valor perfil-dato-mono">${escapeAttr(ocultarDni(extra.dni))}</span></div>
       </div>
@@ -3055,7 +3070,7 @@ function renderPerfilRepartidor(extra) {
 }
 
 function renderPerfil(usuario, extra, registrosProduccion) {
-  const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '👤', texto: usuario.rol || 'Usuario' };
+  const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '<i class="ti ti-user"></i>', texto: usuario.rol || 'Usuario' };
 
   const headerHtml = `
     <div class="perfil-header card-panel">
@@ -3075,7 +3090,7 @@ function renderPerfil(usuario, extra, registrosProduccion) {
     ${headerHtml}
     ${seccionRol}
     <div class="card-panel">
-      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-logout">🚪 Cerrar sesión</button>
+      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
     </div>`;
 }
 
@@ -3110,7 +3125,7 @@ async function cargarPerfil() {
   cont.innerHTML = renderPerfil(usuario, extra, registrosProduccion);
 
   if (usuario.rol === 'productor' && extra && hayCoordenadas(extra.latitud, extra.longitud)) {
-    crearMapaSoloLectura('mapa-perfil-productor', extra.latitud, extra.longitud, '🧺', '#2d6a4f', escapeAttr(extra.nombre || 'Tu chakra'));
+    crearMapaSoloLectura('mapa-perfil-productor', extra.latitud, extra.longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(extra.nombre || 'Tu chakra'));
   }
 }
 

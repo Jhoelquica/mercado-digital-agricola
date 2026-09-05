@@ -807,7 +807,9 @@ input, select { font-family: inherit; }
   to { opacity: 1; transform: translateY(0); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .product-card { animation: none; }
+  .product-card,
+  .propuesta-card,
+  #envios-list .pedido-card { animation: none; }
 }
 .product-card::after {
   content: '';
@@ -912,10 +914,14 @@ input, select { font-family: inherit; }
   font-size: 1rem;
   line-height: 1;
   z-index: 3;
-  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease;
+  color: var(--texto-suave);
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s ease, color 0.2s ease;
 }
 .btn-favorito:hover { transform: scale(1.1); background: white; }
 .btn-favorito:active { transform: scale(0.92); }
+/* Antes eran dos emojis distintos (🤍/❤️); ahora es un solo ícono (ti-heart) y el estado
+   "guardado" se distingue por color, no por cambiar de ícono (ver alternarFavorito en app.js). */
+.btn-favorito.activo, .btn-favorito-detalle.activo { color: var(--naranja); }
 .btn-favorito.favorito-pop { animation: favoritoPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes favoritoPop {
   0% { transform: scale(1); }
@@ -1084,6 +1090,17 @@ input, select { font-family: inherit; }
   padding: 20px;
   box-shadow: var(--sombra);
   border: 1px solid var(--borde);
+}
+/* Animación de entrada + hover SOLO en Gestionar Envíos (#envios-list): .pedido-card también
+   la usa Mis Pedidos (#pedidos-list), que no era parte de este pedido — se escopea a propósito
+   para no cambiarle el comportamiento a una pantalla que no se pidió tocar. */
+#envios-list .pedido-card {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+#envios-list .pedido-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--sombra-hover);
 }
 .pedido-card-header {
   display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;
@@ -1296,7 +1313,17 @@ input, select { font-family: inherit; }
   box-shadow: var(--sombra);
   border: 1.5px solid transparent;
 }
-.disponibilidad-icono { font-size: 1.8rem; line-height: 1; }
+.disponibilidad-icono { font-size: 1.8rem; line-height: 1; display: inline-flex; }
+/* Punto de color dibujado en CSS, no un ícono de Tabler — ver el comentario en app.js
+   (renderBannerDisponibilidad): el set outline no tiene una variante de círculo sólido, y un
+   anillo hueco se ve mucho más débil para un "semáforo de estado" como este. Toma el color de
+   la regla ya existente ".disponibilidad-verde/ambar/gris span" (currentColor), sin duplicar. */
+.disponibilidad-punto {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .disponibilidad-banner strong { display: block; font-size: 1.05rem; font-family: var(--font-titulo); }
 .disponibilidad-banner span { font-size: 0.82rem; }
 .disponibilidad-verde { background: var(--verde-pastel); border-color: var(--verde-claro); }
@@ -1319,13 +1346,26 @@ input, select { font-family: inherit; }
 .propuestas-list { display: flex; flex-direction: column; gap: 14px; }
 
 .propuesta-card {
-  background: white;
+  /* Fondo con un leve tinte cálido (no blanco plano) + borde izquierdo más grueso: la señal de
+     "esto requiere tu acción" tiene que notarse antes de leer el badge de estado, no solo
+     depender de él — ver auditoría: antes competía visualmente igual que un envío histórico. */
+  background: linear-gradient(180deg, #fffaef, #ffffff 65%);
   border-radius: 14px;
   padding: 16px 18px;
   border: 1px solid var(--borde);
-  border-left: 4px solid #f0a500;
+  border-left: 5px solid #f0a500;
   box-shadow: var(--sombra);
-  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  /* "backwards" mantiene el estado inicial del keyframe (opacity:0) durante el animation-delay
+     escalonado — sin esto, con delay > 0 la tarjeta se ve un instante antes de animarse. */
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.propuesta-card:hover {
+  /* Mismo desplazamiento/sombra que .product-card, pero SIN tocar border-color: el borde
+     izquierdo ámbar es la señal de urgencia y no debe apagarse ni cambiar de color al pasar
+     el mouse. */
+  transform: translateY(-4px);
+  box-shadow: var(--sombra-hover);
 }
 .propuesta-actions { display: flex; gap: 10px; margin-top: 14px; }
 .propuesta-actions .btn { flex: 1; padding: 12px 16px; font-size: 0.92rem; }
@@ -1884,7 +1924,11 @@ input, select { font-family: inherit; }
 
 /* ---------- CALIFICACIONES Y RESEÑAS ---------- */
 .rating-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
-.rating-stars { color: #f0a500; font-size: 1rem; letter-spacing: 1px; }
+/* Gris por defecto (estrella "vacía"); .estrella-llena la pinta dorada — antes era ★/☆, dos
+   caracteres distintos, ahora es el mismo ti-star con el color como única diferencia (ver
+   renderEstrellas en app.js). */
+.rating-stars { color: var(--borde); font-size: 1rem; letter-spacing: 1px; }
+.rating-stars .estrella-llena { color: #f0a500; }
 .rating-value { font-weight: 700; color: var(--texto); font-size: 0.92rem; }
 .rating-count { font-size: 0.8rem; color: var(--texto-suave); }
 
