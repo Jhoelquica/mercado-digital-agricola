@@ -231,6 +231,126 @@ input, select { font-family: inherit; }
   .nav-mega-producto { animation: none; }
 }
 
+/* ---------- PANEL DE BÚSQUEDA (overlay estilo Samsung, ícono de búsqueda del navbar) ---------- */
+/* Mismo fondo semi-transparente que .modal-overlay, pero anclado arriba (align-items:flex-start)
+   en vez de centrado: el panel es una hoja que cuelga del borde superior, no una tarjeta flotante. */
+.search-overlay {
+  position: fixed; inset: 0;
+  background: rgba(27, 67, 50, 0.35);
+  backdrop-filter: blur(3px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  z-index: 900;
+  animation: fadeIn 0.2s ease;
+  overflow-y: auto;
+}
+.search-overlay.hidden { display: none; }
+
+.search-panel {
+  background: white;
+  width: min(1100px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 28px clamp(20px, 5vw, 40px) 36px;
+  border-radius: 0 0 20px 20px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  position: relative;
+  animation: buscarPanelBajar 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes buscarPanelBajar {
+  from { opacity: 0; transform: translateY(-16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.search-panel-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 2px solid var(--borde);
+  padding: 8px 44px 16px 4px; /* padding-right deja lugar al botón de cierre */
+  margin-bottom: 24px;
+}
+.search-panel-icon { font-size: 1.3rem; color: var(--texto-suave); }
+.search-panel-input {
+  flex: 1;
+  border: none; outline: none;
+  font-size: 1.25rem;
+  font-family: inherit;
+  color: var(--texto);
+  background: transparent;
+}
+.search-panel-input::placeholder { color: var(--texto-suave); opacity: 0.7; }
+
+.search-panel-heading {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 1rem;
+  margin-bottom: 16px;
+  color: var(--texto);
+}
+
+.search-panel-body { display: flex; gap: 32px; }
+
+/* Columna angosta con términos reales trackeados (ver POST/GET /productos/busquedas en el
+   servicio Productos) — mismo estilo que la columna "Descubre" del mega-dropdown. Se oculta
+   por completo (no un hueco vacío) cuando todavía no hay suficiente historial de búsquedas. */
+.search-panel-populares {
+  flex: 0 0 180px;
+  border-right: 1px solid var(--borde);
+  padding-right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.search-panel-populares.hidden { display: none; }
+.search-panel-populares-titulo {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--texto-suave);
+  margin-bottom: 8px;
+}
+.search-panel-popular-item {
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--texto);
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.search-panel-popular-item:hover { background: var(--verde-pastel); color: var(--verde-oscuro); }
+
+.search-panel-resultados { flex: 1; min-width: 0; }
+
+.search-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+@media (max-width: 700px) {
+  .search-panel-body { flex-direction: column; gap: 20px; }
+  .search-panel-populares {
+    flex-basis: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--borde);
+    padding-right: 0;
+    padding-bottom: 14px;
+  }
+  .search-panel-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .search-panel { padding: 20px 16px 28px; }
+  .search-panel-input { font-size: 1.05rem; }
+}
+
 .nav-actions {
   display: flex;
   align-items: center;
@@ -366,16 +486,6 @@ input, select { font-family: inherit; }
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
-.hero {
-  text-align: center;
-  padding: 48px 16px 32px;
-}
-.hero h1 {
-  font-size: clamp(1.6rem, 3.5vw, 2.5rem);
-  margin-bottom: 12px;
-}
-.hero p { color: var(--texto-suave); font-size: 1.05rem; }
 
 /* ---------- LANDING (INVITADOS) ---------- */
 .btn-lg { padding: 14px 28px; font-size: 1rem; }
@@ -718,61 +828,6 @@ input, select { font-family: inherit; }
 }
 .section-header.inner { margin-top: 32px; }
 
-.toolbar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 24px;
-  flex-wrap: wrap;
-}
-
-.search-box {
-  flex: 1;
-  min-width: 220px;
-  position: relative;
-  display: flex;
-  align-items: center;
-  background: white;
-  border: 1.5px solid var(--borde);
-  border-radius: 999px;
-  padding: 4px 4px 4px 16px;
-  box-shadow: var(--sombra);
-}
-.search-icon { margin-right: 8px; opacity: 0.6; }
-.search-box input {
-  border: none; outline: none; flex: 1; padding: 10px 6px; font-size: 0.95rem; background: transparent;
-}
-
-.select-categoria {
-  padding: 10px 16px;
-  border-radius: 999px;
-  border: 1.5px solid var(--borde);
-  background: white;
-  color: var(--texto);
-  box-shadow: var(--sombra);
-  font-size: 0.9rem;
-}
-
-.filtro-precio {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
-  background: white;
-  border: 1.5px solid var(--borde);
-  border-radius: 16px;
-  padding: 12px 16px;
-  box-shadow: var(--sombra);
-}
-.filtro-precio-label { font-size: 0.85rem; font-weight: 600; color: var(--texto-suave); white-space: nowrap; }
-.filtro-precio-sep { color: var(--texto-suave); }
-.input-precio {
-  width: 90px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1.5px solid var(--borde);
-  font-size: 0.88rem;
-}
 .btn-sm { padding: 6px 12px; font-size: 0.8rem; margin-left: auto; }
 
 /* ---------- GRID / CARDS ---------- */
@@ -2171,13 +2226,10 @@ input, select { font-family: inherit; }
   .navbar-inner { padding: 20px 16px; }
   .brand-text { display: none; }
   #app-main { padding: 16px; }
-  .toolbar { flex-direction: column; }
   .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
   .product-card-body { padding: 12px 14px 14px; }
   .product-banner { height: 120px; font-size: 2.6rem; }
-  .hero { padding: 28px 8px 20px; }
   .modal { padding: 20px; }
-  .filtro-precio { padding: 10px 12px; }
   .btn-sm { margin-left: 0; }
   .checkout-step-label { display: none; }
   .checkout-step-line { width: 24px; }

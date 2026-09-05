@@ -40,3 +40,10 @@ class Resena(Base):
     calificacion = Column(Integer, nullable=False)  # 1 a 5
     comentario = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
+
+class BusquedaLog(Base):
+    __tablename__ = "busqueda_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    termino = Column(String, nullable=False)
+    fecha = Column(DateTime, default=datetime.utcnow)

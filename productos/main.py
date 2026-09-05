@@ -1,6 +1,7 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import httpx
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException
@@ -65,6 +66,9 @@ class ReponerStock(BaseModel):
 
 class OrdenImagen(BaseModel):
     orden: int
+
+class BusquedaRegistrar(BaseModel):
+    termino: str
 
 @breaker_productores
 def llamar_productores_me(token: str):
@@ -377,6 +381,31 @@ def listar_productos(db: Session = Depends(get_db)):
     ]
     cache.guardar(cache.CLAVE_CATALOGO, resultado)
     return resultado
+
+@app.post("/productos/busquedas/registrar")
+def registrar_busqueda(datos: BusquedaRegistrar, db: Session = Depends(get_db)):
+    # Público, sin auth: cualquiera que busque cuenta, con o sin sesión. Ignora términos muy
+    # cortos (ruido de una letra suelta) — el resto de la limpieza de ruido (debounce, no registrar
+    # cada tecla) vive del lado del frontend, acá solo se guarda lo que ya llegó.
+    termino = datos.termino.strip().lower()
+    if len(termino) < 2:
+        return {"registrado": False}
+    db.add(models.BusquedaLog(termino=termino))
+    db.commit()
+    return {"registrado": True}
+
+@app.get("/productos/busquedas/populares")
+def busquedas_populares(db: Session = Depends(get_db)):
+    desde = datetime.utcnow() - timedelta(days=7)
+    resultados = (
+        db.query(models.BusquedaLog.termino, func.count(models.BusquedaLog.id).label("total"))
+        .filter(models.BusquedaLog.fecha >= desde)
+        .group_by(models.BusquedaLog.termino)
+        .order_by(func.count(models.BusquedaLog.id).desc())
+        .limit(8)
+        .all()
+    )
+    return [{"termino": termino, "total": total} for termino, total in resultados]
 
 @app.get("/productos/{producto_id}")
 def obtener_producto(producto_id: str, db: Session = Depends(get_db)):

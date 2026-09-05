@@ -33,6 +33,7 @@
     </nav>
 
     <div class="nav-actions">
+      <button class="btn btn-ghost" id="btn-abrir-busqueda" aria-label="Buscar productos"><i class="ti ti-search"></i></button>
       <button class="btn btn-ghost cart-btn" id="btn-cart">
         <i class="ti ti-shopping-cart"></i> <span id="cart-count" class="cart-badge hidden">0</span>
       </button>
@@ -58,6 +59,27 @@
     </div>
   </div>
 </header>
+
+<div class="search-overlay hidden" id="panel-busqueda">
+  <div class="search-panel">
+    <button class="modal-close" data-close="panel-busqueda" aria-label="Cerrar búsqueda"><i class="ti ti-x"></i></button>
+    <div class="search-panel-input-wrap">
+      <i class="ti ti-search search-panel-icon"></i>
+      <input type="text" id="input-busqueda-panel" class="search-panel-input" placeholder="Buscar por producto, categoría o productor..." autocomplete="off">
+    </div>
+    <div class="search-panel-body">
+      <div class="search-panel-populares hidden" id="search-panel-populares">
+        <span class="search-panel-populares-titulo">Búsquedas populares</span>
+        <div id="search-panel-populares-lista"></div>
+      </div>
+      <div class="search-panel-resultados">
+        <h3 class="search-panel-heading" id="search-panel-heading"><i class="ti ti-sparkles"></i> Recomendaciones</h3>
+        <div class="search-panel-grid" id="search-panel-grid"></div>
+        <p class="empty-state hidden" id="search-panel-empty"><i class="ti ti-search-off"></i> No se encontraron productos.</p>
+      </div>
+    </div>
+  </div>
+</div>
 
 <main id="app-main">
 
@@ -190,41 +212,6 @@
         <span class="landing-confianza-icon"><i class="ti ti-star"></i></span>
         <div><strong>Reseñas reales</strong><p>Calificaciones y comentarios de compradores verificados en cada producto.</p></div>
       </div>
-    </div>
-  </section>
-
-  <!-- CATALOGO -->
-  <section id="view-catalogo" class="view">
-    <div class="hero">
-      <h1>Del campo peruano, directo a tu mesa 🥑🌽🍅</h1>
-      <p>Compra productos frescos de productores agrícolas locales, sin intermediarios.</p>
-    </div>
-
-    <div class="toolbar">
-      <div class="search-box">
-        <span class="search-icon"><i class="ti ti-search"></i></span>
-        <input type="text" id="input-buscar" placeholder="Buscar por producto, categoría o productor...">
-      </div>
-      <select id="select-categoria" class="select-categoria">
-        <option value="">Todas las categorías</option>
-      </select>
-      <select id="select-ubicacion" class="select-categoria">
-        <option value="">Todas las ubicaciones</option>
-      </select>
-      <button class="btn btn-outline" id="btn-refrescar-catalogo">↻ Refrescar</button>
-    </div>
-
-    <div class="filtro-precio">
-      <span class="filtro-precio-label"><i class="ti ti-coin"></i> Precio</span>
-      <input type="number" id="input-precio-min" class="input-precio" min="0" step="0.01" placeholder="Mín">
-      <span class="filtro-precio-sep">—</span>
-      <input type="number" id="input-precio-max" class="input-precio" min="0" step="0.01" placeholder="Máx">
-      <button class="btn btn-ghost btn-sm" id="btn-limpiar-filtros">Limpiar filtros</button>
-    </div>
-
-    <div id="productos-grid" class="grid"></div>
-    <div id="productos-empty" class="empty-state hidden">
-      <p><i class="ti ti-search-off"></i> No se encontraron productos con esos filtros.</p>
     </div>
   </section>
 

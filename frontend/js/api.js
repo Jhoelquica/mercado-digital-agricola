@@ -119,6 +119,8 @@ const Api = {
     },
     eliminarImagen: (imagenId) => request('productos', `/productos/imagenes/${imagenId}`, { method: 'DELETE', auth: true }),
     actualizarOrdenImagen: (imagenId, orden) => request('productos', `/productos/imagenes/${imagenId}/orden`, { method: 'PATCH', body: { orden }, auth: true }),
+    registrarBusqueda: (termino) => request('productos', '/productos/busquedas/registrar', { method: 'POST', body: { termino } }),
+    busquedasPopulares: () => request('productos', '/productos/busquedas/populares'),
   },
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),

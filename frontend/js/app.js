@@ -6,7 +6,6 @@ const Estado = {
   email: null,
   rol: null,
   productos: [],
-  productores: {},   // id -> { nombre, comunidad, contacto, ubicacion }
   carrito: [],        // {producto_id, nombre, precio, cantidad, stockDisponible}
   productorId: null,
   repartidorId: null,
@@ -741,7 +740,7 @@ function manejarScrollNavbar() {
 
 // ============ NAVEGACIÓN ============
 function cambiarVista(nombre) {
-  if (nombre === 'inicio') nombre = Estado.token ? 'catalogo' : 'landing';
+  if (nombre === 'inicio') nombre = 'landing';
 
   detenerPollingRutas();
   detenerSeguimientoRepartidor();
@@ -762,7 +761,6 @@ function cambiarVista(nombre) {
   navbarAcumuladoBajada = 0;
 
   if (nombre === 'landing') cargarLanding();
-  if (nombre === 'catalogo') cargarCatalogo();
   if (nombre === 'mis-pedidos') cargarMisPedidos();
   if (nombre === 'notificaciones') cargarNotificaciones();
   if (nombre === 'panel-productor') iniciarPanelProductor();
@@ -788,6 +786,16 @@ function esProductoDePrueba(p) {
   return /\btest\b|\bqa\b/i.test(`${p.nombre} ${p.categoria}`);
 }
 
+// Mismo criterio de siempre para "lo destacado": QA fuera, mejor calificado primero (sin
+// calificaciones aún, el sort es estable y conserva el orden del catálogo). Compartido por
+// "Productos destacados"/"Recomendado para ti" (landing) y las recomendaciones del panel de búsqueda.
+function ordenarPorDestacado(productos) {
+  const candidatos = productos.filter((p) => !esProductoDePrueba(p));
+  const fuente = candidatos.length >= 3 ? candidatos : productos;
+  return [...fuente]
+    .sort((a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0));
+}
+
 async function cargarLanding() {
   const grid8 = document.getElementById('landing-grid-8');
   const carrusel = document.getElementById('landing-productos-carousel');
@@ -801,13 +809,7 @@ async function cargarLanding() {
     const productoresUnicos = new Set(productos.map((p) => p.productor_id)).size;
     document.getElementById('landing-stat-productores').textContent = productoresUnicos;
 
-    const candidatos = productos.filter((p) => !esProductoDePrueba(p));
-    const fuente = candidatos.length >= 3 ? candidatos : productos;
-
-    // Mismo criterio de siempre para "lo destacado": mejor calificado primero (sin calificaciones
-    // aún, el sort es estable y conserva el orden del catálogo).
-    const ordenados = [...fuente]
-      .sort((a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0));
+    const ordenados = ordenarPorDestacado(productos);
 
     const destacados8 = ordenados.slice(0, 8);
     grid8.innerHTML = destacados8.length
@@ -911,28 +913,6 @@ function cargarBannersCategoriaFijos(productos) {
   });
 }
 
-// ============ CATÁLOGO ============
-async function cargarCatalogo() {
-  const grid = document.getElementById('productos-grid');
-  document.getElementById('productos-empty').classList.add('hidden');
-  grid.innerHTML = renderSkeletonProductos();
-  try {
-    const [productos, productores] = await Promise.all([
-      Api.productos.listar(),
-      Api.productores.listar(),
-    ]);
-    Estado.productos = productos;
-    Estado.productores = {};
-    productores.forEach((p) => { Estado.productores[p.id] = p; });
-
-    poblarSelectCategorias(productos);
-    poblarSelectUbicaciones(productos);
-    renderProductos(productos);
-  } catch (err) {
-    manejarError(err, 'cargar el catálogo');
-  }
-}
-
 // ============ BARRA DE CATEGORÍAS (NAVBAR, estilo Samsung Shop) ============
 // Un botón por categoría en la barra; cada uno abre su propio dropdown ya filtrado a ESA categoría
 // (sin niveles anidados: a diferencia del mega-dropdown genérico anterior, aquí no hace falta un
@@ -953,8 +933,7 @@ function renderNavCategorias() {
           </div>
           <div class="nav-cat-panel-descubre">
             <span class="nav-cat-descubre-titulo">Descubre</span>
-            <button type="button" class="nav-cat-descubre-link" data-accion="catalogo">Ver todo el catálogo</button>
-            <button type="button" class="nav-cat-descubre-link" data-accion="filtros">Filtros avanzados</button>
+            <button type="button" class="nav-cat-descubre-link" data-accion="buscar">Ver todo el catálogo</button>
             <button type="button" class="nav-cat-descubre-link" data-accion="blockchain">Cómo funciona la trazabilidad blockchain</button>
           </div>
         </div>
@@ -1049,6 +1028,93 @@ function cerrarNavCatConDelay(categoria) {
   navCatCerrarTimeouts[categoria] = setTimeout(() => cerrarNavCat(categoria), 180);
 }
 
+// ============ PANEL DE BÚSQUEDA (NAVBAR, overlay estilo Samsung) ============
+// Reemplaza a la antigua vista "Catálogo": la categoría ya la resuelve el mega-dropdown de arriba,
+// así que esto solo cubre la búsqueda de texto libre. Reutiliza renderProductoMega (misma tarjeta
+// del mega-dropdown) y el criterio de "destacados" ya usado en el landing.
+async function renderRecomendacionesBusqueda() {
+  if (!Estado.productos.length) {
+    try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos con lo que haya */ }
+  }
+  const destacados = ordenarPorDestacado(Estado.productos).slice(0, 4);
+  pintarResultadosBusqueda(destacados, 'Recomendaciones', 'sparkles');
+}
+
+function pintarResultadosBusqueda(productos, titulo, icono) {
+  document.getElementById('search-panel-heading').innerHTML = `<i class="ti ti-${icono}"></i> ${titulo}`;
+  const grid = document.getElementById('search-panel-grid');
+  const vacio = document.getElementById('search-panel-empty');
+  if (!productos.length) {
+    grid.innerHTML = '';
+    vacio.classList.remove('hidden');
+    return;
+  }
+  vacio.classList.add('hidden');
+  grid.innerHTML = productos.map(renderProductoMega).join('');
+}
+
+// "Búsquedas populares" (columna angosta, término real más buscado en los últimos 7 días — ver
+// GET /productos/busquedas/populares). Se carga una sola vez al abrir el panel y queda fija ahí
+// aunque el usuario escriba (no es parte del área de resultados que cambia con la búsqueda).
+async function cargarBusquedasPopulares() {
+  const cont = document.getElementById('search-panel-populares');
+  try {
+    const populares = await Api.productos.busquedasPopulares();
+    if (!populares.length) {
+      cont.classList.add('hidden');
+      return;
+    }
+    document.getElementById('search-panel-populares-lista').innerHTML = populares
+      .map((p) => `<button type="button" class="search-panel-popular-item" data-termino="${escapeAttr(p.termino)}">${escapeAttr(p.termino)}</button>`)
+      .join('');
+    cont.classList.remove('hidden');
+  } catch {
+    cont.classList.add('hidden');
+  }
+}
+
+let debounceRegistrarBusqueda = null;
+// Fire-and-forget: no bloquea ni se muestra al usuario, y si falla no afecta la búsqueda en sí
+// (por eso el .catch vacío). Con debounce para no registrar cada tecla suelta, solo cuando el
+// usuario deja de escribir un momento.
+function registrarBusquedaConDebounce(termino) {
+  clearTimeout(debounceRegistrarBusqueda);
+  if (termino.trim().length < 2) return;
+  debounceRegistrarBusqueda = setTimeout(() => {
+    Api.productos.registrarBusqueda(termino.trim()).catch(() => {});
+  }, 600);
+}
+
+function buscarEnPanel() {
+  const textoOriginal = document.getElementById('input-busqueda-panel').value.trim();
+  const texto = textoOriginal.toLowerCase();
+  if (!texto) {
+    clearTimeout(debounceRegistrarBusqueda);
+    renderRecomendacionesBusqueda();
+    return;
+  }
+  registrarBusquedaConDebounce(texto);
+  const resultados = Estado.productos.filter((p) =>
+    `${p.nombre} ${p.categoria || ''} ${p.productor_nombre || ''}`.toLowerCase().includes(texto));
+  pintarResultadosBusqueda(resultados, `Resultados para "${textoOriginal}"`, 'search');
+}
+
+function abrirPanelBusqueda() {
+  cerrarTodosLosNavCat();
+  cerrarNavAccount();
+  document.getElementById('nav-links').classList.remove('open');
+  const input = document.getElementById('input-busqueda-panel');
+  input.value = '';
+  document.getElementById('panel-busqueda').classList.remove('hidden');
+  renderRecomendacionesBusqueda();
+  cargarBusquedasPopulares();
+  input.focus();
+}
+
+function cerrarPanelBusqueda() {
+  document.getElementById('panel-busqueda').classList.add('hidden');
+}
+
 // ============ ÍCONO DE CUENTA (NAVBAR) ============
 // Mismo patrón hover/tap que la barra de categorías, un solo nivel (ícono -> menú), sin anidar.
 let navAccountCerrarTimeout = null;
@@ -1070,28 +1136,6 @@ function cerrarNavAccount() {
 function cerrarNavAccountConDelay() {
   clearTimeout(navAccountCerrarTimeout);
   navAccountCerrarTimeout = setTimeout(cerrarNavAccount, 180);
-}
-
-function poblarSelectCategorias(productos) {
-  const select = document.getElementById('select-categoria');
-  const actual = select.value;
-  const categorias = [...new Set(productos.map((p) => p.categoria).filter(Boolean))].sort();
-  select.innerHTML = '<option value="">🗂️ Todas las categorías</option>' +
-    categorias.map((c) => `<option value="${escapeAttr(c)}">${iconoCategoria(c)} ${nombreCategoria(c)}</option>`).join('');
-  select.value = actual;
-}
-
-function poblarSelectUbicaciones(productos) {
-  const select = document.getElementById('select-ubicacion');
-  const actual = select.value;
-  const ubicaciones = [...new Set(
-    productos
-      .map((p) => Estado.productores[p.productor_id]?.ubicacion)
-      .filter(Boolean)
-  )].sort();
-  select.innerHTML = '<option value="">Todas las ubicaciones</option>' +
-    ubicaciones.map((u) => `<option value="${escapeAttr(u)}">${u}</option>`).join('');
-  select.value = actual;
 }
 
 function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {}) {
@@ -1126,65 +1170,6 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
     </div>`;
 }
 
-function manejarClickGrid(e) {
-  const btnFavorito = e.target.closest('.btn-favorito');
-  if (btnFavorito) {
-    e.stopPropagation();
-    manejarClickFavorito(btnFavorito);
-    return;
-  }
-  const btnAgregar = e.target.closest('.btn-agregar');
-  if (btnAgregar) {
-    e.stopPropagation();
-    agregarAlCarrito(btnAgregar.dataset.id);
-    destellarBoton(btnAgregar, '<i class="ti ti-check"></i> Agregado');
-    return;
-  }
-  const card = e.target.closest('.product-card');
-  if (card) abrirDetalleProducto(card.dataset.id);
-}
-
-function renderProductos(productos) {
-  const grid = document.getElementById('productos-grid');
-  const vacio = document.getElementById('productos-empty');
-
-  if (!productos.length) {
-    grid.innerHTML = '';
-    vacio.classList.remove('hidden');
-    return;
-  }
-  vacio.classList.add('hidden');
-  grid.innerHTML = productos.map((p, i) => renderTarjetaProductoCatalogo(p, { indice: i })).join('');
-}
-
-function filtrarYRenderizar() {
-  const texto = document.getElementById('input-buscar').value.trim().toLowerCase();
-  const categoria = document.getElementById('select-categoria').value;
-  const ubicacion = document.getElementById('select-ubicacion').value;
-  const precioMin = parseFloat(document.getElementById('input-precio-min').value);
-  const precioMax = parseFloat(document.getElementById('input-precio-max').value);
-
-  const filtrados = Estado.productos.filter((p) => {
-    const coincideTexto = !texto || `${p.nombre} ${p.categoria || ''} ${p.productor_nombre || ''}`.toLowerCase().includes(texto);
-    const coincideCategoria = !categoria || p.categoria === categoria;
-    const ubicacionProducto = Estado.productores[p.productor_id]?.ubicacion;
-    const coincideUbicacion = !ubicacion || ubicacionProducto === ubicacion;
-    const precio = Number(p.precio);
-    const coincideMin = isNaN(precioMin) || precio >= precioMin;
-    const coincideMax = isNaN(precioMax) || precio <= precioMax;
-    return coincideTexto && coincideCategoria && coincideUbicacion && coincideMin && coincideMax;
-  });
-  renderProductos(filtrados);
-}
-
-function limpiarFiltros() {
-  document.getElementById('input-buscar').value = '';
-  document.getElementById('select-categoria').value = '';
-  document.getElementById('select-ubicacion').value = '';
-  document.getElementById('input-precio-min').value = '';
-  document.getElementById('input-precio-max').value = '';
-  filtrarYRenderizar();
-}
 
 async function abrirDetalleProducto(id) {
   const contenido = document.getElementById('detalle-producto-content');
@@ -1665,7 +1650,9 @@ async function confirmarYPagar() {
     Estado.carrito = [];
     renderCarrito();
     document.getElementById('pedido-telefono').value = '';
-    cargarCatalogo();
+    // Refresca el stock en memoria (recién descontado por el pedido) para que el mega-dropdown y
+    // el panel de búsqueda no sigan mostrando cantidades desactualizadas.
+    try { Estado.productos = await Api.productos.listar(); } catch { /* no bloquea el checkout si falla */ }
 
     abrirCheckoutCulqi(pedido.id, total, metodo);
   } catch (err) {
@@ -1796,8 +1783,8 @@ function renderEmptyPedidos(tipo) {
     'sin-pedidos': `
       <span class="empty-state-icon"><i class="ti ti-shopping-bag"></i></span>
       <p><strong>Aún no tienes pedidos</strong></p>
-      <p class="muted">Explora el catálogo y arma tu primer pedido directo de productores locales.</p>
-      <button type="button" class="btn btn-primary" id="btn-vacio-catalogo">Explorar catálogo</button>`,
+      <p class="muted">Busca productos y arma tu primer pedido directo de productores locales.</p>
+      <button type="button" class="btn btn-primary" id="btn-vacio-catalogo">Buscar productos</button>`,
     'sin-en-curso': `
       <span class="empty-state-icon"><i class="ti ti-circle-check"></i></span>
       <p><strong>No tienes pedidos en curso</strong></p>
@@ -1813,7 +1800,7 @@ function renderEmptyPedidos(tipo) {
     cambiarTabAuth('login');
     abrirModal('modal-auth');
   });
-  document.getElementById('btn-vacio-catalogo')?.addEventListener('click', () => cambiarVista('catalogo'));
+  document.getElementById('btn-vacio-catalogo')?.addEventListener('click', () => abrirPanelBusqueda());
 }
 
 async function cargarMisPedidos() {
@@ -2199,7 +2186,7 @@ function claveProductorId() {
 
 async function iniciarPanelProductor() {
   if (!Estado.token || Estado.rol !== 'productor') {
-    cambiarVista('catalogo');
+    cambiarVista('inicio');
     return;
   }
 
@@ -2589,7 +2576,7 @@ function renderBannerDisponibilidad(estado) {
 
 async function cargarGestionEnvios() {
   if (!Estado.token || Estado.rol !== 'repartidor') {
-    cambiarVista('catalogo');
+    cambiarVista('inicio');
     return;
   }
 
@@ -3097,7 +3084,7 @@ function renderPerfil(usuario, extra, registrosProduccion) {
 
 async function cargarPerfil() {
   if (!Estado.token) {
-    cambiarVista('catalogo');
+    cambiarVista('inicio');
     return;
   }
   const cont = document.getElementById('perfil-contenido');
@@ -3142,7 +3129,7 @@ async function manejarLogin(e) {
     await iniciarSesionConToken(resp.access_token);
     document.getElementById('form-login').reset();
     cerrarModal('modal-auth');
-    cambiarVista('catalogo');
+    cambiarVista('inicio');
     toast(`¡Bienvenido de nuevo, ${Estado.nombre}! 🌱`);
   } catch (err) {
     manejarError(err, 'iniciar sesión');
@@ -3168,7 +3155,7 @@ async function manejarRegistro(e) {
 
     document.getElementById('form-registro').reset();
     cerrarModal('modal-auth');
-    cambiarVista('catalogo');
+    cambiarVista('inicio');
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     manejarError(err, 'crear la cuenta');
@@ -3215,7 +3202,6 @@ function inicializarEventos() {
     if (btnProducto) {
       cerrarTodosLosNavCat();
       document.getElementById('nav-links').classList.remove('open');
-      cambiarVista('catalogo');
       abrirDetalleProducto(btnProducto.dataset.id);
       return;
     }
@@ -3225,13 +3211,8 @@ function inicializarEventos() {
       cerrarTodosLosNavCat();
       document.getElementById('nav-links').classList.remove('open');
       const accion = btnDescubre.dataset.accion;
-      if (accion === 'catalogo') {
-        cambiarVista('catalogo');
-      } else if (accion === 'filtros') {
-        // El catálogo no tiene un panel de filtros que "abrir" — siempre está visible; lo más honesto
-        // que se puede ofrecer es llevar ahí y llevar el foco directo al filtro de precio.
-        cambiarVista('catalogo');
-        document.getElementById('input-precio-min')?.focus();
+      if (accion === 'buscar') {
+        abrirPanelBusqueda();
       } else if (accion === 'blockchain') {
         // No existe una vista dedicada a "cómo funciona" — se ancla a la tarjeta real ya existente
         // en el landing (confirmado con el usuario en vez de inventar un destino).
@@ -3287,15 +3268,32 @@ function inicializarEventos() {
   document.getElementById('form-login').addEventListener('submit', manejarLogin);
   document.getElementById('form-registro').addEventListener('submit', manejarRegistro);
 
-  document.getElementById('input-buscar').addEventListener('input', filtrarYRenderizar);
-  document.getElementById('select-categoria').addEventListener('change', filtrarYRenderizar);
-  document.getElementById('select-ubicacion').addEventListener('change', filtrarYRenderizar);
-  document.getElementById('input-precio-min').addEventListener('input', filtrarYRenderizar);
-  document.getElementById('input-precio-max').addEventListener('input', filtrarYRenderizar);
-  document.getElementById('btn-limpiar-filtros').addEventListener('click', limpiarFiltros);
-  document.getElementById('btn-refrescar-catalogo').addEventListener('click', cargarCatalogo);
+  document.getElementById('btn-abrir-busqueda').addEventListener('click', abrirPanelBusqueda);
+  document.getElementById('panel-busqueda').addEventListener('click', (e) => {
+    if (e.target.id === 'panel-busqueda') cerrarPanelBusqueda();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('panel-busqueda').classList.contains('hidden')) {
+      cerrarPanelBusqueda();
+    }
+  });
+  document.getElementById('input-busqueda-panel').addEventListener('input', buscarEnPanel);
+  document.getElementById('search-panel-grid').addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.nav-mega-producto');
+    if (tarjeta) {
+      cerrarPanelBusqueda();
+      abrirDetalleProducto(tarjeta.dataset.id);
+    }
+  });
+  document.getElementById('search-panel-populares-lista').addEventListener('click', (e) => {
+    const item = e.target.closest('.search-panel-popular-item');
+    if (!item) return;
+    const input = document.getElementById('input-busqueda-panel');
+    input.value = item.dataset.termino;
+    input.focus();
+    buscarEnPanel();
+  });
 
-  document.getElementById('productos-grid').addEventListener('click', manejarClickGrid);
   document.getElementById('landing-grid-8').addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.landing-grid-8-tarjeta');
     if (tarjeta) abrirDetalleProducto(tarjeta.dataset.id);
@@ -3310,19 +3308,19 @@ function inicializarEventos() {
   document.querySelectorAll('[data-landing-cta]').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (btn.dataset.landingCta === 'registro') abrirRegistroConRol();
-      if (btn.dataset.landingCta === 'explorar') cambiarVista('catalogo');
+      if (btn.dataset.landingCta === 'explorar') abrirPanelBusqueda();
     });
   });
   document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
     btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
   });
 
+  // El mega-dropdown de categorías (barra de navegación) ya resuelve esta navegación con productos
+  // reales — en vez de duplicar esa lógica, estos botones simplemente abren ese mismo dropdown.
   document.querySelectorAll('[data-landing-categoria]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      cambiarVista('catalogo');
-      await cargarCatalogo(); // asegura que el select ya tiene las opciones antes de fijarle un valor
-      document.getElementById('select-categoria').value = btn.dataset.landingCategoria;
-      filtrarYRenderizar();
+    btn.addEventListener('click', () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setTimeout(() => abrirNavCat(btn.dataset.landingCategoria), 350);
     });
   });
 
@@ -3515,7 +3513,7 @@ function iniciar() {
   actualizarUIAuth();
   renderNavCategorias();
   inicializarEventos();
-  cambiarVista(Estado.token ? 'catalogo' : 'landing');
+  cambiarVista('inicio');
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);
