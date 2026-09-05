@@ -874,7 +874,10 @@ input, select { font-family: inherit; }
   justify-content: space-between;
   gap: 8px;
 }
-.product-tag {
+.pill {
+  border-radius: 999px;
+}
+.pill-categoria {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -883,7 +886,6 @@ input, select { font-family: inherit; }
   color: var(--verde-medio);
   background: var(--verde-pastel);
   padding: 3px 10px;
-  border-radius: 999px;
   width: fit-content;
   white-space: nowrap;
 }
@@ -1109,22 +1111,21 @@ input, select { font-family: inherit; }
 .pedido-id { font-size: 0.78rem; color: var(--texto-suave); font-family: monospace; }
 .pedido-fecha { font-size: 0.82rem; color: var(--texto-suave); }
 
-.badge {
+.pill-estado {
   padding: 5px 14px;
-  border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
-.badge-pendiente, .badge-propuesto { background: #fff3cd; color: #8a6d1a; }
-.badge-confirmado { background: #d6f5f0; color: #0f6d63; }
-.badge-en_camino, .badge-en_transito, .badge-en_ruta { background: #cfe8ff; color: #14538a; }
-.badge-entregado, .badge-aprobado { background: var(--verde-pastel); color: var(--verde-oscuro); }
-.badge-cancelado, .badge-rechazado, .badge-error { background: #ffe0da; color: #b3401f; }
-.badge-asignado { background: #e6e0fb; color: #5b3ea6; }
-.badge-pendiente_asignacion { background: #eef0f2; color: #5a6570; }
-.badge-default { background: #eee; color: #555; }
+.pill-pendiente, .pill-propuesto { background: #fff3cd; color: #8a6d1a; }
+.pill-confirmado { background: #d6f5f0; color: #0f6d63; }
+.pill-en_camino, .pill-en_transito, .pill-en_ruta { background: #cfe8ff; color: #14538a; }
+.pill-entregado, .pill-aprobado { background: var(--verde-pastel); color: var(--verde-oscuro); }
+.pill-cancelado, .pill-rechazado, .pill-error { background: #ffe0da; color: #b3401f; }
+.pill-asignado { background: #e6e0fb; color: #5b3ea6; }
+.pill-pendiente_asignacion { background: #eef0f2; color: #5a6570; }
+.pill-default { background: #eee; color: #555; }
 
 .badge-contador {
   display: inline-flex;
@@ -1714,13 +1715,13 @@ input, select { font-family: inherit; }
   text-overflow: ellipsis;
 }
 
-.productor-expandible {
+.panel-expandible {
   margin-top: 10px;
   padding-top: 12px;
   border-top: 1px dashed var(--borde);
   animation: fadeIn 0.25s ease;
 }
-.productor-expandible.hidden { display: none; }
+.panel-expandible.hidden { display: none; }
 
 /* ---------- MODAL CERTIFICACIÓN ---------- */
 .modal-certificacion { max-width: 540px; }

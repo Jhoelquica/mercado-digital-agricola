@@ -413,10 +413,10 @@ const ESTADOS_BADGE_CONOCIDOS = new Set([
 
 function badgeEstadoEnvio(estado) {
   const clave = (estado || 'pendiente').toLowerCase().replace(/\s+/g, '_');
-  const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `badge-${clave}` : 'badge-default';
+  const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `pill-${clave}` : 'pill-default';
   const iconoClase = ICONOS_ESTADO[clave];
   const icono = iconoClase ? `<i class="ti ti-${iconoClase}"></i>` : '•';
-  return `<span class="badge ${clase}">${icono} ${estado || 'pendiente'}</span>`;
+  return `<span class="pill pill-estado ${clase}">${icono} ${estado || 'pendiente'}</span>`;
 }
 
 const UNIDADES_MEDIDA = {
@@ -1111,7 +1111,7 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
-          <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
           ${tieneCalificacion ? `<span class="product-rating"><span class="rating-stars"><i class="ti ti-star estrella-llena"></i></span> ${Number(p.calificacion_promedio).toFixed(1)} <span class="rating-count-mini">(${p.total_resenas})</span></span>` : ''}
         </div>
         <h4>${p.nombre}</h4>
@@ -1329,7 +1329,7 @@ function renderDetalleProducto(p, resenas, productor) {
   contenido.innerHTML = `
     ${renderGaleriaProducto(p)}
     <div class="detalle-encabezado">
-      <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+      <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
       <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
         <i class="ti ti-heart"></i> ${favorito ? 'Guardado' : 'Guardar'}
       </button>
@@ -1980,8 +1980,8 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
 
       <div class="estado-badges-row">
         <div class="estado-badge-item"><span class="estado-badge-label">Pedido</span>${badgeEstadoEnvio(pedido.estado)}</div>
-        <div class="estado-badge-item"><span class="estado-badge-label">Pago</span>${pago ? badgeEstadoEnvio(pago.estado) : '<span class="badge badge-default">—</span>'}</div>
-        <div class="estado-badge-item"><span class="estado-badge-label">Envío</span>${envio ? badgeEstadoEnvio(envio.estado) : '<span class="badge badge-default">—</span>'}</div>
+        <div class="estado-badge-item"><span class="estado-badge-label">Pago</span>${pago ? badgeEstadoEnvio(pago.estado) : '<span class="pill pill-estado pill-default">—</span>'}</div>
+        <div class="estado-badge-item"><span class="estado-badge-label">Envío</span>${envio ? badgeEstadoEnvio(envio.estado) : '<span class="pill pill-estado pill-default">—</span>'}</div>
       </div>
 
       <ul class="pedido-items">${itemsHtml}</ul>
@@ -1997,7 +1997,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta) {
       ${entregado ? `
       <div class="pedido-certificado-cta">
         <button type="button" class="btn btn-outline btn-sm btn-ver-certificado-pedido" data-pedido-id="${pedido.id}"><i class="ti ti-link"></i> Ver certificado de compra</button>
-        <div class="productor-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
+        <div class="panel-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
       </div>` : ''}
     </div>
   `;
@@ -2024,7 +2024,7 @@ function renderCertificadoPedido(cert) {
 }
 
 async function alternarCertificadoPedido(pedidoId) {
-  const panel = document.querySelector(`.productor-expandible[data-panel="certificado-pedido"][data-pedido-id="${pedidoId}"]`);
+  const panel = document.querySelector(`.panel-expandible[data-panel="certificado-pedido"][data-pedido-id="${pedidoId}"]`);
   if (!panel) return;
 
   if (!panel.classList.contains('hidden')) {
@@ -2477,7 +2477,7 @@ function renderTarjetaProductorProducto(p, indice) {
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
-          <span class="product-tag">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
         </div>
         <h4>${p.nombre}</h4>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
@@ -2491,16 +2491,16 @@ function renderTarjetaProductorProducto(p, indice) {
           <button type="button" class="btn btn-outline btn-sm btn-ver-certificacion" data-id="${p.id}"><i class="ti ti-link"></i> Certificación</button>
         </div>
 
-        <div class="productor-expandible hidden" data-panel="resenas" data-id="${p.id}"></div>
-        <div class="productor-expandible hidden" data-panel="fotos" data-id="${p.id}"></div>
+        <div class="panel-expandible hidden" data-panel="resenas" data-id="${p.id}"></div>
+        <div class="panel-expandible hidden" data-panel="fotos" data-id="${p.id}"></div>
       </div>
     </div>`;
 }
 
 async function alternarResenasProductor(id) {
-  const panel = document.querySelector(`.productor-expandible[data-panel="resenas"][data-id="${id}"]`);
+  const panel = document.querySelector(`.panel-expandible[data-panel="resenas"][data-id="${id}"]`);
   if (!panel) return;
-  document.querySelector(`.productor-expandible[data-panel="fotos"][data-id="${id}"]`)?.classList.add('hidden');
+  document.querySelector(`.panel-expandible[data-panel="fotos"][data-id="${id}"]`)?.classList.add('hidden');
 
   if (!panel.classList.contains('hidden')) {
     panel.classList.add('hidden');
@@ -2520,9 +2520,9 @@ async function alternarResenasProductor(id) {
 }
 
 async function alternarFotosProductor(id) {
-  const panel = document.querySelector(`.productor-expandible[data-panel="fotos"][data-id="${id}"]`);
+  const panel = document.querySelector(`.panel-expandible[data-panel="fotos"][data-id="${id}"]`);
   if (!panel) return;
-  document.querySelector(`.productor-expandible[data-panel="resenas"][data-id="${id}"]`)?.classList.add('hidden');
+  document.querySelector(`.panel-expandible[data-panel="resenas"][data-id="${id}"]`)?.classList.add('hidden');
 
   if (!panel.classList.contains('hidden')) {
     panel.classList.add('hidden');
@@ -2980,8 +2980,8 @@ function renderFormRegistroProduccion() {
 function renderTarjetaRegistroProduccion(r) {
   const esPlanificado = r.estado === 'planificado';
   const badge = esPlanificado
-    ? '<span class="badge badge-pendiente"><i class="ti ti-seedling"></i> Planificado</span>'
-    : '<span class="badge badge-entregado"><i class="ti ti-circle-check"></i> Cosechado</span>';
+    ? '<span class="pill pill-estado pill-pendiente"><i class="ti ti-seedling"></i> Planificado</span>'
+    : '<span class="pill pill-estado pill-entregado"><i class="ti ti-circle-check"></i> Cosechado</span>';
 
   const datosBase = `
     <div class="perfil-datos-grid">
