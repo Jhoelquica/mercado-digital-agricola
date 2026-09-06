@@ -739,8 +739,17 @@ function manejarScrollNavbar() {
 }
 
 // ============ NAVEGACIÓN ============
-function cambiarVista(nombre) {
+function cambiarVista(nombre, parametro) {
   if (nombre === 'inicio') nombre = 'landing';
+
+  // Recuerda desde qué vista se llegó a "detalle-producto" (puede abrirse desde cualquier
+  // lugar: mega-dropdown, landing, panel de búsqueda, Mis Pedidos...) para que el botón
+  // "Volver" de esa página sepa a dónde regresar. Si ya estábamos en detalle-producto (p. ej.
+  // un enlace a otro producto desde ahí), se conserva la vista original en vez de sobrescribirla.
+  if (nombre === 'detalle-producto') {
+    const actual = document.querySelector('.view.active')?.id?.replace('view-', '');
+    if (actual && actual !== 'detalle-producto') vistaAntesDeDetalle = actual;
+  }
 
   detenerPollingRutas();
   detenerSeguimientoRepartidor();
@@ -766,6 +775,7 @@ function cambiarVista(nombre) {
   if (nombre === 'panel-productor') iniciarPanelProductor();
   if (nombre === 'gestion-envios') cargarGestionEnvios();
   if (nombre === 'perfil') cargarPerfil();
+  if (nombre === 'detalle-producto') cargarDetalleProducto(parametro);
 }
 
 function abrirRegistroConRol(rol) {
@@ -1171,32 +1181,6 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
 }
 
 
-async function abrirDetalleProducto(id) {
-  const contenido = document.getElementById('detalle-producto-content');
-  contenido.innerHTML = renderSkeletonDetalle();
-  abrirModal('modal-detalle-producto');
-
-  let p;
-  try {
-    p = await Api.productos.obtener(id);
-  } catch (err) {
-    manejarError(err, 'cargar el producto');
-    cerrarModal('modal-detalle-producto');
-    return;
-  }
-
-  let resenas = [];
-  let productor = null;
-  try {
-    resenas = await Api.productos.listarResenas(id);
-  } catch { /* sin reseñas disponibles por ahora */ }
-  try {
-    productor = await Api.productores.obtener(p.productor_id);
-  } catch { /* no se pudo cargar el productor, seguimos sin mapa */ }
-
-  renderDetalleProducto(p, resenas, productor);
-}
-
 function renderBloqueProductor(p, productor) {
   const nombre = productor?.nombre || p.productor_nombre || 'Productor local';
   const ubicacionTexto = productor?.comunidad || productor?.ubicacion || null;
@@ -1214,33 +1198,6 @@ function renderBloqueProductor(p, productor) {
       </div>
       ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini"></div>` : ''}
     </div>`;
-}
-
-function renderGaleriaProducto(p) {
-  const imagenes = Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden) : [];
-  if (imagenes.length <= 1) {
-    return renderMediaProducto(p, 'producto-emoji-lg');
-  }
-
-  const emoji = emojiParaProducto(p);
-  const miniaturas = imagenes.map((img, i) => `
-    <div class="galeria-miniatura ${i === 0 ? 'active' : ''}" data-url="${escapeAttr(img.url)}">
-      <img src="${escapeAttr(img.url)}" alt="${escapeAttr(p.nombre || '')}" loading="lazy" onerror="this.style.opacity='0.25'">
-    </div>`).join('');
-
-  return `
-    <div class="galeria-producto">
-      <div class="galeria-principal" id="galeria-imagen-principal">
-        <img src="${escapeAttr(imagenes[0].url)}" alt="${escapeAttr(p.nombre || '')}" onerror="this.parentElement.textContent='${emoji}'">
-      </div>
-      <div class="galeria-miniaturas">${miniaturas}</div>
-    </div>`;
-}
-
-function cambiarImagenGaleria(url, emoji, miniaturas, seleccionada) {
-  const principal = document.getElementById('galeria-imagen-principal');
-  principal.innerHTML = `<img src="${escapeAttr(url)}" alt="" onerror="this.parentElement.textContent='${emoji}'">`;
-  miniaturas.forEach((m) => m.classList.toggle('active', m === seleccionada));
 }
 
 function renderResumenCalificacion(p) {
@@ -1305,44 +1262,126 @@ function renderResenasSoloLectura(resenas) {
     </div>`;
 }
 
-function renderDetalleProducto(p, resenas, productor) {
+// ============ DETALLE DE PRODUCTO (página propia, estilo Samsung) ============
+// Header + pestañas fijos (sticky), secciones apiladas con scroll-reveal por IntersectionObserver
+// (no animation-delay fijo: estas secciones aparecen según scroll real, no al cargar la vista).
+let vistaAntesDeDetalle = 'landing';
+
+async function cargarDetalleProducto(id) {
+  const contenido = document.getElementById('detalle-producto-content');
+  contenido.innerHTML = renderSkeletonDetalle();
+  window.scrollTo({ top: 0 });
+
+  let p;
+  try {
+    p = await Api.productos.obtener(id);
+  } catch (err) {
+    manejarError(err, 'cargar el producto');
+    cambiarVista(vistaAntesDeDetalle);
+    return;
+  }
+
+  let resenas = [];
+  let productor = null;
+  try { resenas = await Api.productos.listarResenas(id); } catch { /* sin reseñas disponibles por ahora */ }
+  try { productor = await Api.productores.obtener(p.productor_id); } catch { /* seguimos sin mapa */ }
+
+  renderPaginaDetalleProducto(p, resenas, productor);
+}
+
+function renderHeroYGaleriaDetalle(p) {
+  const imagenes = Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden) : [];
+  const emoji = emojiParaProducto(p);
+  const heroUrl = imagenes[0]?.url || p.imagen_url || null;
+  const galeriaExtra = imagenes.slice(1);
+
+  const heroHtml = `
+    <div class="detalle-hero detalle-scroll-seccion" id="detalle-seccion-descripcion">
+      ${heroUrl
+        ? `<img src="${escapeAttr(heroUrl)}" alt="${escapeAttr(p.nombre || '')}" onerror="this.parentElement.textContent='${emoji}'">`
+        : emoji}
+    </div>`;
+
+  const galeriaHtml = galeriaExtra.map((img) => `
+    <div class="detalle-galeria-item detalle-scroll-seccion">
+      <img src="${escapeAttr(img.url)}" alt="${escapeAttr(p.nombre || '')}" loading="lazy" onerror="this.style.opacity='0.2'">
+    </div>`).join('');
+
+  return heroHtml + galeriaHtml;
+}
+
+function renderPaginaDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   const favorito = esFavorito(p.id);
   const stockBajo = p.stock > 0 && p.stock <= 5;
   const sinStock = p.stock <= 0;
+  const precioHtml = `${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span>`;
 
   contenido.innerHTML = `
-    ${renderGaleriaProducto(p)}
-    <div class="detalle-encabezado">
-      <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
-      <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
-        <i class="ti ti-heart"></i> ${favorito ? 'Guardado' : 'Guardar'}
-      </button>
-    </div>
-
-    <div class="detalle-cabecera">
-      <h2>${escapeAttr(p.nombre)}</h2>
-      ${renderResumenCalificacion(p)}
-      <div class="detalle-precio-row">
-        <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
-        <span class="product-stock ${stockBajo ? 'low' : ''}">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
+    <div class="detalle-sticky-header" id="detalle-sticky-header">
+      <button type="button" class="detalle-volver" id="btn-volver-detalle"><i class="ti ti-arrow-left"></i> Volver</button>
+      <div class="detalle-sticky-info">
+        <span class="detalle-sticky-nombre">${escapeAttr(p.nombre)}</span>
+        <span class="detalle-sticky-precio">${precioHtml}</span>
+        ${p.calificacion_promedio ? `<span class="detalle-sticky-rating"><span class="rating-stars">${renderEstrellas(p.calificacion_promedio)}</span> ${Number(p.calificacion_promedio).toFixed(1)}</span>` : ''}
       </div>
-    </div>
-
-    <div class="detalle-accion-principal">
-      ${!sinStock ? `
-      <div class="carrito-qty detalle-cantidad-selector">
-        <button type="button" id="btn-cantidad-menos" aria-label="Disminuir cantidad">−</button>
-        <span id="detalle-cantidad-valor">1</span>
-        <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
-      </div>` : ''}
-      <button class="btn btn-primary btn-lg btn-block" data-id="${p.id}" id="btn-agregar-detalle" ${sinStock ? 'disabled' : ''}>
-        ${sinStock ? 'Agotado' : '+ Agregar al pedido'}
+      <button type="button" class="btn btn-primary" id="btn-agregar-sticky" ${sinStock ? 'disabled' : ''}>
+        ${sinStock ? 'Agotado' : '+ Agregar al carrito'}
       </button>
     </div>
 
-    ${renderBloqueProductor(p, productor)}
-    ${renderSeccionResenas(resenas)}
+    <nav class="detalle-tabs" id="detalle-tabs">
+      <button type="button" class="detalle-tab active" data-target="detalle-seccion-descripcion">Descripción</button>
+      <button type="button" class="detalle-tab" data-target="detalle-seccion-productor">Productor</button>
+      <button type="button" class="detalle-tab" data-target="detalle-seccion-certificacion">Certificación</button>
+      <button type="button" class="detalle-tab" data-target="detalle-seccion-resenas">Reseñas</button>
+    </nav>
+
+    ${renderHeroYGaleriaDetalle(p)}
+
+    <div class="detalle-info-columna">
+      <div class="detalle-encabezado">
+        <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+        <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
+          <i class="ti ti-heart"></i> ${favorito ? 'Guardado' : 'Guardar'}
+        </button>
+      </div>
+
+      <div class="detalle-cabecera">
+        <h2>${escapeAttr(p.nombre)}</h2>
+        ${renderResumenCalificacion(p)}
+        <div class="detalle-precio-row">
+          <span class="product-price">${precioHtml}</span>
+          <span class="product-stock ${stockBajo ? 'low' : ''}">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
+        </div>
+      </div>
+
+      <div class="detalle-accion-principal">
+        ${!sinStock ? `
+        <div class="carrito-qty detalle-cantidad-selector">
+          <button type="button" id="btn-cantidad-menos" aria-label="Disminuir cantidad">−</button>
+          <span id="detalle-cantidad-valor">1</span>
+          <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
+        </div>` : ''}
+        <button class="btn btn-primary btn-lg btn-block" data-id="${p.id}" id="btn-agregar-detalle" ${sinStock ? 'disabled' : ''}>
+          ${sinStock ? 'Agotado' : '+ Agregar al pedido'}
+        </button>
+      </div>
+
+      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-productor">
+        <h3 class="detalle-seccion-titulo"><i class="ti ti-plant-2"></i> De la chacra a tu mesa</h3>
+        ${renderBloqueProductor(p, productor)}
+      </section>
+
+      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-certificacion">
+        <h3 class="detalle-seccion-titulo"><i class="ti ti-link"></i> Certificación de trazabilidad</h3>
+        <div id="detalle-certificacion-contenido"><div class="verificar-cargando"><div class="spinner"></div><p>Cargando certificación...</p></div></div>
+      </section>
+
+      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-resenas">
+        ${renderSeccionResenas(resenas)}
+      </section>
+    </div>
   `;
 
   let cantidadSeleccionada = 1;
@@ -1362,25 +1401,29 @@ function renderDetalleProducto(p, resenas, productor) {
     }
   });
 
-  document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => {
+  // Botón grande (bajo el precio) y botón compacto del header fijo comparten la misma cantidad
+  // seleccionada — a diferencia del modal viejo, agregar al carrito ya NO navega fuera de la
+  // página (no hay "cerrar" en una página propia; el usuario sigue viendo el producto).
+  const agregarConFeedback = (btn) => {
     agregarAlCarrito(p.id, cantidadSeleccionada);
-    destellarBoton(e.currentTarget, '<i class="ti ti-check"></i> Agregado');
-    setTimeout(() => cerrarModal('modal-detalle-producto'), 700);
-  });
+    destellarBoton(btn, '<i class="ti ti-check"></i> Agregado');
+  };
+  document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => agregarConFeedback(e.currentTarget));
+  document.getElementById('btn-agregar-sticky')?.addEventListener('click', (e) => agregarConFeedback(e.currentTarget));
 
   contenido.querySelector('.btn-favorito-detalle')?.addEventListener('click', (e) => {
     manejarClickFavorito(e.currentTarget);
   });
 
+  document.getElementById('btn-volver-detalle')?.addEventListener('click', () => cambiarVista(vistaAntesDeDetalle));
+
   if (hayCoordenadas(productor?.latitud, productor?.longitud)) {
     crearMapaSoloLectura('mapa-productor-detalle', productor.latitud, productor.longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(productor.nombre || 'Productor'));
   }
 
-  const miniaturas = contenido.querySelectorAll('.galeria-miniatura');
-  const emoji = emojiParaProducto(p);
-  miniaturas.forEach((mini) => {
-    mini.addEventListener('click', () => cambiarImagenGaleria(mini.dataset.url, emoji, miniaturas, mini));
-  });
+  inicializarPestanasDetalle();
+  inicializarScrollRevealDetalle();
+  cargarCertificacionDetalle(p.id);
 
   const formResena = document.getElementById('form-resena');
   if (formResena) {
@@ -1403,6 +1446,79 @@ function renderDetalleProducto(p, resenas, productor) {
   }
 }
 
+// Pestañas: scroll suave al ancla real, con offset por el header+tabs (ambos sticky) via
+// scroll-margin-top — así el destino no queda tapado detrás de las barras fijas.
+function inicializarPestanasDetalle() {
+  const headerEl = document.getElementById('detalle-sticky-header');
+  const tabsEl = document.getElementById('detalle-tabs');
+  if (!headerEl || !tabsEl) return;
+
+  tabsEl.style.top = `${headerEl.offsetHeight}px`;
+  const offset = headerEl.offsetHeight + tabsEl.offsetHeight + 16;
+  document.querySelectorAll('#detalle-producto-content [id^="detalle-seccion-"]').forEach((sec) => {
+    sec.style.scrollMarginTop = `${offset}px`;
+  });
+
+  tabsEl.querySelectorAll('.detalle-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      tabsEl.querySelectorAll('.detalle-tab').forEach((t) => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById(tab.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  });
+}
+
+function inicializarScrollRevealDetalle() {
+  const secciones = document.querySelectorAll('#detalle-producto-content .detalle-scroll-seccion');
+  if (!('IntersectionObserver' in window)) {
+    secciones.forEach((s) => s.classList.add('visible'));
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  secciones.forEach((s) => observer.observe(s));
+}
+
+// Certificación: misma lógica ya usada en el modal de certificación del Panel Productor
+// (renderLineaTiempoCertificacion ya maneja el estado vacío), solo que integrada a la página
+// en vez de abrir un modal aparte.
+async function cargarCertificacionDetalle(productoId) {
+  const cont = document.getElementById('detalle-certificacion-contenido');
+  if (!cont) return;
+  try {
+    const historial = await Api.certificacion.historial(productoId);
+    cont.innerHTML = `
+      <div class="certificacion-qr-bloque">
+        <img src="${escapeAttr(Api.certificacion.qrUrl(productoId))}" alt="Código QR de certificación" class="certificacion-qr" id="certificacion-qr-img-detalle">
+        <p class="muted certificacion-qr-nota">Comparte este QR con tus compradores para que verifiquen el origen del producto.</p>
+      </div>
+      <h4 class="timeline-titulo">Historial de la cadena</h4>
+      ${renderLineaTiempoCertificacion(historial)}
+    `;
+    document.getElementById('certificacion-qr-img-detalle')?.addEventListener('error', function () {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'No se pudo cargar el código QR.';
+      this.replaceWith(p);
+    });
+  } catch (err) {
+    cont.innerHTML = `
+      <div class="verificar-banner banner-error">
+        <span class="banner-icon"><i class="ti ti-alert-triangle"></i></span>
+        <div>
+          <strong>No se pudo cargar la certificación</strong>
+          <p>${escapeAttr(err.message)}</p>
+        </div>
+      </div>`;
+  }
+}
+
 async function enviarResena(productoId, calificacion, comentario) {
   const form = document.getElementById('form-resena');
   const btn = form.querySelector('button[type="submit"]');
@@ -1416,7 +1532,7 @@ async function enviarResena(productoId, calificacion, comentario) {
       Api.productos.listarResenas(productoId),
       Api.productores.obtener(p.productor_id).catch(() => null),
     ]);
-    renderDetalleProducto(p, resenas, productor);
+    renderPaginaDetalleProducto(p, resenas, productor);
   } catch (err) {
     manejarError(err, 'publicar tu reseña');
     btn.disabled = false;
@@ -3204,7 +3320,7 @@ function inicializarEventos() {
     if (btnProducto) {
       cerrarTodosLosNavCat();
       document.getElementById('nav-links').classList.remove('open');
-      abrirDetalleProducto(btnProducto.dataset.id);
+      cambiarVista('detalle-producto', btnProducto.dataset.id);
       return;
     }
 
@@ -3284,7 +3400,7 @@ function inicializarEventos() {
     const tarjeta = e.target.closest('.nav-mega-producto');
     if (tarjeta) {
       cerrarPanelBusqueda();
-      abrirDetalleProducto(tarjeta.dataset.id);
+      cambiarVista('detalle-producto', tarjeta.dataset.id);
     }
   });
   document.getElementById('search-panel-populares-lista').addEventListener('click', (e) => {
@@ -3298,12 +3414,12 @@ function inicializarEventos() {
 
   document.getElementById('landing-grid-8').addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.landing-grid-8-tarjeta');
-    if (tarjeta) abrirDetalleProducto(tarjeta.dataset.id);
+    if (tarjeta) cambiarVista('detalle-producto', tarjeta.dataset.id);
   });
   document.querySelectorAll('.landing-banner-tarjetas').forEach((cont) => {
     cont.addEventListener('click', (e) => {
       const tarjeta = e.target.closest('.landing-banner-tarjeta');
-      if (tarjeta && tarjeta.dataset.id) abrirDetalleProducto(tarjeta.dataset.id);
+      if (tarjeta && tarjeta.dataset.id) cambiarVista('detalle-producto', tarjeta.dataset.id);
     });
   });
 
@@ -3331,7 +3447,7 @@ function inicializarEventos() {
   document.getElementById('landing-productos-carousel').addEventListener('scroll', actualizarProgresoCarrusel, { passive: true });
   document.getElementById('landing-productos-carousel').addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.landing-carousel-tarjeta');
-    if (tarjeta) abrirDetalleProducto(tarjeta.dataset.id);
+    if (tarjeta) cambiarVista('detalle-producto', tarjeta.dataset.id);
   });
 
   document.getElementById('btn-cart').addEventListener('click', () => {
@@ -3376,7 +3492,7 @@ function inicializarEventos() {
   });
   document.getElementById('pedidos-list').addEventListener('click', (e) => {
     const calificar = e.target.closest('.btn-calificar-producto');
-    if (calificar) { abrirDetalleProducto(calificar.dataset.productoId); return; }
+    if (calificar) { cambiarVista('detalle-producto', calificar.dataset.productoId); return; }
     const reintentar = e.target.closest('.btn-reintentar-pago');
     if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto)); return; }
     const certPedido = e.target.closest('.btn-ver-certificado-pedido');

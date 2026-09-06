@@ -1950,41 +1950,102 @@ input, select { font-family: inherit; }
 .checkout-confirmacion p { color: var(--texto-suave); margin-bottom: 4px; }
 .checkout-confirmacion strong { color: var(--verde-principal); }
 
-.modal-detalle .producto-emoji-lg {
-  font-size: 3.5rem; background: var(--verde-pastel);
-  width: 90px; height: 90px; border-radius: 20px;
-  display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
+/* ---------- DETALLE DE PRODUCTO (página propia, estilo Samsung) ---------- */
+/* Header + pestañas van pegados al borde de #app-main (margin negativo cancela su padding:24px)
+   para que se sientan de ancho completo aunque el resto de la página respete el layout normal. */
+.detalle-sticky-header {
+  position: sticky; top: 0; z-index: 90;
+  background: white;
+  display: flex; align-items: center; gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 24px;
+  margin: -24px -24px 24px;
+  box-shadow: var(--sombra);
+}
+.detalle-volver {
+  display: flex; align-items: center; gap: 6px;
+  background: transparent;
+  color: var(--texto-suave);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.detalle-volver:hover { color: var(--verde-oscuro); }
+.detalle-sticky-info {
+  display: flex; align-items: center; gap: 16px;
+  flex: 1; min-width: 0;
+  flex-wrap: wrap;
+}
+.detalle-sticky-nombre {
+  font-family: var(--font-titulo);
+  font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
+}
+.detalle-sticky-precio { font-weight: 700; color: var(--verde-principal); white-space: nowrap; }
+.detalle-sticky-rating { font-size: 0.85rem; color: var(--texto-suave); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.detalle-sticky-rating .rating-stars { color: #f0a500; }
+
+.detalle-tabs {
+  position: sticky; z-index: 89;
+  background: white;
+  display: flex; gap: 4px;
+  padding: 10px 24px;
+  margin: 0 -24px 28px;
+  border-bottom: 1px solid var(--borde);
+  overflow-x: auto;
+}
+.detalle-tab {
+  background: transparent;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.88rem;
+  color: var(--texto-suave);
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.detalle-tab:hover, .detalle-tab.active { background: var(--verde-pastel); color: var(--verde-oscuro); }
+
+/* Hero + galería van a ancho completo (fuera de la columna angosta de texto); cada foto adicional
+   ocupa su propia sección de scroll, una tras otra. */
+.detalle-hero, .detalle-galeria-item {
+  /* height fija (no min-height): con solo min-height, "img { height:100% }" no tiene contra qué
+     resolverse y la imagen cae a su alto intrínseco — una foto en vertical estira el contenedor
+     mucho más allá de 55vh y desplaza todo lo que viene después (rompe el scroll de las pestañas). */
+  height: 55vh;
+  border-radius: var(--radio);
   overflow: hidden;
+  background: var(--verde-pastel);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 6rem;
+  margin-bottom: 24px;
+}
+.detalle-hero img, .detalle-galeria-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Texto/acciones/secciones en una columna legible, centrada bajo las imágenes de ancho completo. */
+.detalle-info-columna { max-width: 760px; margin: 0 auto; }
+
+.detalle-seccion-bloque { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--borde); }
+.detalle-seccion-titulo { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+
+/* Scroll-reveal: IntersectionObserver agrega .visible al entrar en el viewport — a diferencia del
+   resto de la app, aquí NO aplica animation-delay fijo (estas secciones aparecen según scroll
+   real, no al cargar la vista). Ver inicializarScrollRevealDetalle(). */
+.detalle-scroll-seccion {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.detalle-scroll-seccion.visible { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .detalle-scroll-seccion { opacity: 1 !important; transform: none !important; transition: none !important; }
 }
 
-/* ---------- GALERÍA DE PRODUCTO ---------- */
-.galeria-producto { margin-bottom: 16px; }
-.galeria-principal {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  max-height: 280px;
-  background: linear-gradient(135deg, var(--verde-pastel), #eaf7ee);
-  border-radius: 20px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 4.2rem;
-  overflow: hidden;
-  margin-bottom: 10px;
+@media (max-width: 560px) {
+  .detalle-sticky-header { padding: 12px 16px; margin: -16px -16px 20px; gap: 10px; }
+  .detalle-sticky-nombre { max-width: 140px; }
+  .detalle-tabs { padding: 8px 16px; margin: 0 -16px 24px; }
+  .detalle-hero, .detalle-galeria-item { height: 40vh; font-size: 4rem; }
 }
-.galeria-principal img { width: 100%; height: 100%; object-fit: cover; }
-.galeria-miniaturas { display: flex; gap: 8px; flex-wrap: wrap; }
-.galeria-miniatura {
-  width: 56px; height: 56px;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 2px solid transparent;
-  cursor: pointer;
-  opacity: 0.65;
-  transition: all 0.2s ease;
-  background: var(--verde-pastel);
-}
-.galeria-miniatura img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.galeria-miniatura:hover { opacity: 1; }
-.galeria-miniatura.active { border-color: var(--verde-principal); opacity: 1; }
 
 /* ---------- CALIFICACIONES Y RESEÑAS ---------- */
 .rating-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
