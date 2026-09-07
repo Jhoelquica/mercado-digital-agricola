@@ -1299,13 +1299,31 @@ function slugProducto(nombre) {
   return normalizarTexto(nombre).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
-// Título/párrafo por posición (hero=0, primera foto extra=1, segunda=2) — mismo texto para
-// cualquier producto con video, con su nombre real interpolado.
+// Etiqueta/título/párrafo/fondo/tema por posición (hero=0, primera foto extra=1, segunda=2) —
+// estilo Samsung (etiqueta pequeña en mayúsculas vía CSS + titular corto + párrafo detallado,
+// superpuestos sobre el video con degradado). Mismo texto para cualquier producto con video, con
+// su nombre real interpolado en minúsculas (así lee natural en medio de la oración, ej. "la
+// chirimoya es...", no "la Chirimoya es..."). "fondo" y "tema" ('oscuro'|'claro') van por sección
+// — no un negro parejo global — así cada una complementa el tono de SU video específico; "tema"
+// decide el color del degradado y del texto (blanco sobre oscuro, o el inverso sobre claro).
 function textosVideoGaleria(p) {
+  const nombre = (p.nombre || '').toLowerCase();
   return [
-    { titulo: 'Directo del árbol a tu mesa', parrafo: `${p.nombre} recién cosechada en Ayacucho, sin intermediarios entre la chacra y tu cocina.` },
-    { titulo: 'Trazabilidad en cada fruto', parrafo: `Cada ${p.nombre} que vendemos queda registrada en una cadena de bloques verificable — sabes exactamente de dónde viene.` },
-    { titulo: 'Cultivado por manos que conoces', parrafo: `Detrás de cada ${p.nombre} hay un productor real de tu comunidad, no una gran distribuidora.` },
+    {
+      etiqueta: 'Nutrición', titulo: 'Nutritiva y rica en vitaminas',
+      parrafo: `La ${nombre} es fuente natural de vitamina C, fibra y antioxidantes — un snack saludable directo de la chacra en Ayacucho.`,
+      fondo: '#0f140f', tema: 'oscuro',
+    },
+    {
+      etiqueta: 'Trazabilidad', titulo: 'Cada fruto, verificado',
+      parrafo: `Cada ${nombre} que vendemos queda registrada en una cadena de bloques verificable — sabes exactamente de dónde viene.`,
+      fondo: '#1a1410', tema: 'oscuro',
+    },
+    {
+      etiqueta: 'Origen', titulo: 'Cultivada por manos que conoces',
+      parrafo: `Detrás de cada ${nombre} hay un productor real de tu comunidad, no una gran distribuidora.`,
+      fondo: '#f5f0e8', tema: 'claro',
+    },
   ];
 }
 
@@ -1329,16 +1347,19 @@ function renderHeroYGaleriaDetalle(p) {
 
     if (conVideo && pos.url && textos[i]) {
       const videoUrl = `assets/videos/${slug}-video-${i + 1}.mp4`;
+      const t = textos[i];
       return `
-        <div class="${claseBase} detalle-scroll-seccion detalle-video-seccion"${idAttr}>
+        <div class="${claseBase} detalle-scroll-seccion detalle-video-seccion detalle-video-seccion--${t.tema}"${idAttr} style="background:${t.fondo}">
           <div class="detalle-video-wrap">
             <video class="detalle-video" muted playsinline preload="metadata" poster="${escapeAttr(pos.url)}" data-src="${escapeAttr(videoUrl)}"></video>
-            <button type="button" class="detalle-video-replay hidden"><i class="ti ti-player-play-filled"></i> Reproducir de nuevo</button>
+            <button type="button" class="detalle-video-replay hidden" aria-label="Reproducir de nuevo"><i class="ti ti-player-play"></i></button>
+            <div class="detalle-video-degradado"></div>
+            <div class="detalle-video-texto">
+              <span class="detalle-video-etiqueta">${escapeAttr(t.etiqueta)}</span>
+              <h3>${escapeAttr(t.titulo)}</h3>
+              <p>${escapeAttr(t.parrafo)}</p>
+            </div>
           </div>
-        </div>
-        <div class="detalle-info-columna detalle-video-texto">
-          <h3>${escapeAttr(textos[i].titulo)}</h3>
-          <p>${escapeAttr(textos[i].parrafo)}</p>
         </div>`;
     }
 
@@ -1351,10 +1372,10 @@ function renderHeroYGaleriaDetalle(p) {
   }).join('');
 }
 
-// Al entrar en viewport (ver inicializarScrollRevealDetalle): carga el src real (estaba en
-// data-src para no descargar los 3 videos de golpe al abrir la página) y reproduce una sola vez
-// (sin loop). Al terminar, muestra el botón de repetir en vez de dejar el último frame "muerto".
-function iniciarVideoGaleria(seccion) {
+// Adjunta los listeners UNA sola vez por sección (llamado al armar la página, antes de que entre
+// en viewport). El play/pause real lo disparan reproducirVideoGaleria/pausarYReiniciarVideoGaleria,
+// llamadas repetidamente por el observer dedicado a video cada vez que la sección entra/sale.
+function configurarVideoGaleria(seccion) {
   const video = seccion.querySelector('.detalle-video');
   const replayBtn = seccion.querySelector('.detalle-video-replay');
   if (!video || !replayBtn) return;
@@ -1379,13 +1400,36 @@ function iniciarVideoGaleria(seccion) {
     // arrancó). Visto en pruebas reales con Chromium.
     video.play().catch(() => replayBtn.classList.remove('hidden'));
   });
+}
 
-  video.src = video.dataset.src;
+// Se llama cada vez que la sección de video CRUZA el umbral alto de visibilidad hacia adentro
+// (ver inicializarScrollRevealDetalle). Carga el src real la primera vez (estaba en data-src para
+// no descargar los 3 videos de golpe al abrir la página) y reproduce desde donde haya quedado —
+// que gracias a pausarYReiniciarVideoGaleria siempre es 0, así que en la práctica es "desde el
+// principio" cada vez que la sección vuelve a quedar mayormente visible.
+function reproducirVideoGaleria(seccion) {
+  const video = seccion.querySelector('.detalle-video');
+  const replayBtn = seccion.querySelector('.detalle-video-replay');
+  if (!video) return;
+  if (!video.src) video.src = video.dataset.src;
+  replayBtn?.classList.add('hidden');
   video.play().catch(() => { /* algunos navegadores bloquean hasta un autoplay muted (ahorro de
     datos, etc.) — no rompe nada, el usuario puede iniciarlo con el botón de repetir manualmente */
-    replayBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Reproducir';
-    replayBtn.classList.remove('hidden');
+    replayBtn?.classList.remove('hidden');
   });
+}
+
+// Se llama cuando la sección de video sale del umbral alto de visibilidad (el usuario sigue
+// bajando/subiendo). Pausa y reinicia explícitamente — así nunca queda sonando de fondo ni
+// avanzando fuera de pantalla, y nunca hay más de un video "activo" a la vez sin importar qué tan
+// rápido haga scroll el usuario (ver CORRECCIÓN 2).
+function pausarYReiniciarVideoGaleria(seccion) {
+  const video = seccion.querySelector('.detalle-video');
+  const replayBtn = seccion.querySelector('.detalle-video-replay');
+  if (!video || !video.src) return; // nunca llegó a cargar (nunca entró en viewport) — nada que pausar
+  video.pause();
+  video.currentTime = 0;
+  replayBtn?.classList.add('hidden');
 }
 
 function renderPaginaDetalleProducto(p, resenas, productor) {
@@ -1548,31 +1592,50 @@ function inicializarPestanasDetalle() {
 
 function inicializarScrollRevealDetalle() {
   const secciones = document.querySelectorAll('#detalle-producto-content .detalle-scroll-seccion');
+  const seccionesVideo = document.querySelectorAll('#detalle-producto-content .detalle-video-seccion');
+
   if (!('IntersectionObserver' in window)) {
-    secciones.forEach((s) => {
-      s.classList.add('visible');
-      // Sin IntersectionObserver no hay forma de saber cuándo entra en pantalla — se le da
-      // controles nativos en vez de intentar el play-al-scroll que el resto del navegador sí tiene.
-      if (s.classList.contains('detalle-video-seccion')) {
-        const video = s.querySelector('.detalle-video');
-        if (video) {
-          video.src = video.dataset.src;
-          video.setAttribute('controls', '');
-        }
+    secciones.forEach((s) => s.classList.add('visible'));
+    // Sin IntersectionObserver no hay forma de saber cuándo entra en pantalla — se le da
+    // controles nativos en vez de intentar el play-al-scroll que el resto del navegador sí tiene.
+    seccionesVideo.forEach((s) => {
+      const video = s.querySelector('.detalle-video');
+      if (video) {
+        video.src = video.dataset.src;
+        video.setAttribute('controls', '');
       }
     });
     return;
   }
-  const observer = new IntersectionObserver((entries) => {
+
+  // 1) Revelado (fade-in/slide-up) de TODAS las secciones: umbral bajo, se dispara apenas asoma
+  // un poco y deja de observar — esto no cambió, sigue siendo solo la animación de entrada.
+  const observerRevelado = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
         entry.target.classList.add('visible');
-        if (entry.target.classList.contains('detalle-video-seccion')) iniciarVideoGaleria(entry.target);
-        observer.unobserve(entry.target);
+        observerRevelado.unobserve(entry.target);
       }
     });
   }, { threshold: 0.12 });
-  secciones.forEach((s) => observer.observe(s));
+  secciones.forEach((s) => observerRevelado.observe(s));
+
+  // 2) Reproducción de video: umbral alto (recién dispara el play cuando la sección ya domina la
+  // pantalla, no apenas asoma) y NUNCA se desconecta — sigue mirando para pausar+reiniciar en
+  // cuanto la sección sale de vista. Con secciones de ~88vh y un umbral de 0.65, dos secciones
+  // vecinas no pueden estar ambas por encima del umbral al mismo tiempo (0.65+0.65 > 1 viewport),
+  // así que estructuralmente nunca hay dos videos "activos" a la vez — el pausar-al-salir es
+  // además una red de seguridad explícita para scroll muy rápido (ver CORRECCIÓN 2).
+  const observerVideo = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) reproducirVideoGaleria(entry.target);
+      else pausarYReiniciarVideoGaleria(entry.target);
+    });
+  }, { threshold: 0.65 });
+  seccionesVideo.forEach((s) => {
+    configurarVideoGaleria(s);
+    observerVideo.observe(s);
+  });
 }
 
 // Certificación: misma lógica ya usada en el modal de certificación del Panel Productor
