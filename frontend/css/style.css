@@ -2021,6 +2021,31 @@ input, select { font-family: inherit; }
 }
 .detalle-hero img, .detalle-galeria-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* Sección de galería con video (ver PRODUCTOS_CON_VIDEO en app.js): el <video> ocupa el mismo
+   espacio que ocuparía la foto (misma .detalle-hero/.detalle-galeria-item); el botón de "reproducir
+   de nuevo" se superpone centrado una vez que termina (sin loop). */
+.detalle-video-wrap { position: relative; width: 100%; height: 100%; }
+.detalle-video { width: 100%; height: 100%; object-fit: cover; display: block; background: black; }
+.detalle-video-replay {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(27, 67, 50, 0.75);
+  color: white;
+  padding: 12px 22px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  backdrop-filter: blur(2px);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.detalle-video-replay:hover { background: rgba(27, 67, 50, 0.9); transform: translate(-50%, -50%) scale(1.04); }
+
+/* Selector combinado (no solo .detalle-video-texto) para ganarle en especificidad al margin de
+   .detalle-info-columna definido más abajo — misma clase base, este es su ajuste puntual. */
+.detalle-info-columna.detalle-video-texto { text-align: center; margin: -8px auto 24px; }
+.detalle-video-texto h3 { margin-bottom: 8px; }
+.detalle-video-texto p { color: var(--texto-suave); }
+
 /* Texto/acciones/secciones en una columna legible, centrada bajo las imágenes de ancho completo. */
 .detalle-info-columna { max-width: 760px; margin: 0 auto; }
 

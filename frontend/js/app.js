@@ -1289,25 +1289,103 @@ async function cargarDetalleProducto(id) {
   renderPaginaDetalleProducto(p, resenas, productor);
 }
 
+// Productos con video en su galería de detalle. Convención de archivos (no de código): un
+// producto nuevo se activa subiendo assets/videos/<slug>-video-1.mp4 (y -2/-3 si aplica) con el
+// mismo slug que arma slugProducto(), y agregando ese slug acá — no hace falta tocar el resto de
+// la lógica de render, que ya sabe usar el video si el archivo existe en esa posición.
+const PRODUCTOS_CON_VIDEO = ['chirimoya'];
+
+function slugProducto(nombre) {
+  return normalizarTexto(nombre).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// Título/párrafo por posición (hero=0, primera foto extra=1, segunda=2) — mismo texto para
+// cualquier producto con video, con su nombre real interpolado.
+function textosVideoGaleria(p) {
+  return [
+    { titulo: 'Directo del árbol a tu mesa', parrafo: `${p.nombre} recién cosechada en Ayacucho, sin intermediarios entre la chacra y tu cocina.` },
+    { titulo: 'Trazabilidad en cada fruto', parrafo: `Cada ${p.nombre} que vendemos queda registrada en una cadena de bloques verificable — sabes exactamente de dónde viene.` },
+    { titulo: 'Cultivado por manos que conoces', parrafo: `Detrás de cada ${p.nombre} hay un productor real de tu comunidad, no una gran distribuidora.` },
+  ];
+}
+
 function renderHeroYGaleriaDetalle(p) {
   const imagenes = Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden) : [];
   const emoji = emojiParaProducto(p);
   const heroUrl = imagenes[0]?.url || p.imagen_url || null;
   const galeriaExtra = imagenes.slice(1);
+  const slug = slugProducto(p.nombre);
+  const conVideo = PRODUCTOS_CON_VIDEO.includes(slug);
+  const textos = conVideo ? textosVideoGaleria(p) : [];
 
-  const heroHtml = `
-    <div class="detalle-hero detalle-scroll-seccion" id="detalle-seccion-descripcion">
-      ${heroUrl
-        ? `<img src="${escapeAttr(heroUrl)}" alt="${escapeAttr(p.nombre || '')}" onerror="this.parentElement.textContent='${emoji}'">`
-        : emoji}
-    </div>`;
+  // Posiciones en el mismo orden que hoy: 0 = hero, 1+ = fotos extra de la galería. Un video solo
+  // reemplaza una posición que YA tiene una foto real ahí (esa foto pasa a ser el poster) — si el
+  // producto tiene menos fotos que videos definidos, esa posición sigue sin existir.
+  const posiciones = [{ url: heroUrl, esHero: true }, ...galeriaExtra.map((img) => ({ url: img.url, esHero: false }))];
 
-  const galeriaHtml = galeriaExtra.map((img) => `
-    <div class="detalle-galeria-item detalle-scroll-seccion">
-      <img src="${escapeAttr(img.url)}" alt="${escapeAttr(p.nombre || '')}" loading="lazy" onerror="this.style.opacity='0.2'">
-    </div>`).join('');
+  return posiciones.map((pos, i) => {
+    const idAttr = pos.esHero ? ' id="detalle-seccion-descripcion"' : '';
+    const claseBase = pos.esHero ? 'detalle-hero' : 'detalle-galeria-item';
 
-  return heroHtml + galeriaHtml;
+    if (conVideo && pos.url && textos[i]) {
+      const videoUrl = `assets/videos/${slug}-video-${i + 1}.mp4`;
+      return `
+        <div class="${claseBase} detalle-scroll-seccion detalle-video-seccion"${idAttr}>
+          <div class="detalle-video-wrap">
+            <video class="detalle-video" muted playsinline preload="metadata" poster="${escapeAttr(pos.url)}" data-src="${escapeAttr(videoUrl)}"></video>
+            <button type="button" class="detalle-video-replay hidden"><i class="ti ti-player-play-filled"></i> Reproducir de nuevo</button>
+          </div>
+        </div>
+        <div class="detalle-info-columna detalle-video-texto">
+          <h3>${escapeAttr(textos[i].titulo)}</h3>
+          <p>${escapeAttr(textos[i].parrafo)}</p>
+        </div>`;
+    }
+
+    return `
+      <div class="${claseBase} detalle-scroll-seccion"${idAttr}>
+        ${pos.url
+          ? `<img src="${escapeAttr(pos.url)}" alt="${escapeAttr(p.nombre || '')}" ${pos.esHero ? '' : 'loading="lazy"'} onerror="this.parentElement.textContent='${emoji}'">`
+          : emoji}
+      </div>`;
+  }).join('');
+}
+
+// Al entrar en viewport (ver inicializarScrollRevealDetalle): carga el src real (estaba en
+// data-src para no descargar los 3 videos de golpe al abrir la página) y reproduce una sola vez
+// (sin loop). Al terminar, muestra el botón de repetir en vez de dejar el último frame "muerto".
+function iniciarVideoGaleria(seccion) {
+  const video = seccion.querySelector('.detalle-video');
+  const replayBtn = seccion.querySelector('.detalle-video-replay');
+  if (!video || !replayBtn) return;
+
+  video.addEventListener('error', () => {
+    const wrap = seccion.querySelector('.detalle-video-wrap');
+    const poster = video.getAttribute('poster');
+    if (wrap) wrap.outerHTML = poster ? `<img src="${escapeAttr(poster)}" alt="" loading="lazy">` : '';
+  });
+  video.addEventListener('ended', () => replayBtn.classList.remove('hidden'));
+  replayBtn.addEventListener('click', () => {
+    // Guarda de idempotencia: si ya está oculto, un doble click (o un segundo evento duplicado)
+    // no debe disparar un segundo play() superpuesto al primero — llamar play() dos veces casi
+    // junto puede pisarse entre sí y dejar el video pausado a mitad de arranque en algunos
+    // navegadores, aunque la promesa del primero haya resuelto bien.
+    if (replayBtn.classList.contains('hidden')) return;
+    replayBtn.classList.add('hidden');
+    // Nada de "video.currentTime = 0" antes del play(): un video terminado ya reinicia solo desde
+    // el principio al llamar play() (comportamiento nativo del elemento) — forzar el seek justo
+    // antes rompe la promesa de play() en algunos navegadores (queda "colgado" en pausa, sin
+    // avisar del error, y el botón de repetir ya se ocultó dando la falsa impresión de que sí
+    // arrancó). Visto en pruebas reales con Chromium.
+    video.play().catch(() => replayBtn.classList.remove('hidden'));
+  });
+
+  video.src = video.dataset.src;
+  video.play().catch(() => { /* algunos navegadores bloquean hasta un autoplay muted (ahorro de
+    datos, etc.) — no rompe nada, el usuario puede iniciarlo con el botón de repetir manualmente */
+    replayBtn.innerHTML = '<i class="ti ti-player-play-filled"></i> Reproducir';
+    replayBtn.classList.remove('hidden');
+  });
 }
 
 function renderPaginaDetalleProducto(p, resenas, productor) {
@@ -1471,13 +1549,25 @@ function inicializarPestanasDetalle() {
 function inicializarScrollRevealDetalle() {
   const secciones = document.querySelectorAll('#detalle-producto-content .detalle-scroll-seccion');
   if (!('IntersectionObserver' in window)) {
-    secciones.forEach((s) => s.classList.add('visible'));
+    secciones.forEach((s) => {
+      s.classList.add('visible');
+      // Sin IntersectionObserver no hay forma de saber cuándo entra en pantalla — se le da
+      // controles nativos en vez de intentar el play-al-scroll que el resto del navegador sí tiene.
+      if (s.classList.contains('detalle-video-seccion')) {
+        const video = s.querySelector('.detalle-video');
+        if (video) {
+          video.src = video.dataset.src;
+          video.setAttribute('controls', '');
+        }
+      }
+    });
     return;
   }
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (entry.isIntersecting) {
         entry.target.classList.add('visible');
+        if (entry.target.classList.contains('detalle-video-seccion')) iniciarVideoGaleria(entry.target);
         observer.unobserve(entry.target);
       }
     });
