@@ -1432,6 +1432,40 @@ function pausarYReiniciarVideoGaleria(seccion) {
   replayBtn?.classList.add('hidden');
 }
 
+// Video del hero de landing: mismo comportamiento que Chirimoya arriba, reutilizando tal cual sus
+// mismas 3 funciones (no un mecanismo paralelo) — reproduce UNA vez al entrar en pantalla, se pausa
+// y reinicia al salir (por scroll o por navegar a otra vista: el hero queda display:none y el
+// observer lo reporta como no-intersecting igual que si hubiera salido por scroll), y si el usuario
+// quiere volver a verlo usa el botón de repetir (esquina inferior derecha, mismo lugar que en
+// Chirimoya). Único cambio respecto a inicializarScrollRevealDetalle: ahí el observer de video vive
+// scopeado a #detalle-producto-content (y se reconecta en cada carga de producto); acá el hero es un
+// único nodo estático (vive siempre en el DOM, cambiarVista solo alterna la clase .active), así que
+// basta un observer propio, armado UNA sola vez desde inicializarEventos().
+function inicializarVideoHeroLanding() {
+  const hero = document.querySelector('.landing-hero');
+  if (!hero) return;
+  configurarVideoGaleria(hero);
+
+  if (!('IntersectionObserver' in window)) {
+    // Sin IntersectionObserver no hay forma de saber cuándo está en pantalla — se le da controles
+    // nativos en vez de intentar el play-al-scroll que el resto del navegador sí tiene.
+    const video = hero.querySelector('.detalle-video');
+    if (video) {
+      video.src = video.dataset.src;
+      video.setAttribute('controls', '');
+    }
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) reproducirVideoGaleria(hero);
+      else pausarYReiniciarVideoGaleria(hero);
+    });
+  }, { threshold: 0.4 });
+  observer.observe(hero);
+}
+
 function renderPaginaDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   const favorito = esFavorito(p.id);
@@ -3582,6 +3616,7 @@ function inicializarEventos() {
       if (btn.dataset.landingCta === 'explorar') abrirPanelBusqueda();
     });
   });
+  inicializarVideoHeroLanding();
   document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
     btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
   });

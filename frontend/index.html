@@ -86,29 +86,30 @@
   <!-- LANDING (INVITADOS) -->
   <section id="view-landing" class="view active">
     <div class="landing-hero">
-      <div class="landing-hero-content">
-        <span class="landing-kicker"><i class="ti ti-map-pin"></i> Hecho en Ayacucho, Perú</span>
-        <h1>Del productor a tu mesa, sin intermediarios</h1>
-        <p>Frutas, verduras y más, directo del productor a tu mesa. Con trazabilidad verificada.</p>
-        <div class="landing-hero-actions">
-          <button class="btn btn-primary btn-lg" data-landing-cta="registro">Crear cuenta gratis</button>
-          <button class="btn btn-outline btn-lg" data-landing-cta="explorar">Explorar catálogo →</button>
+      <div class="detalle-video-wrap">
+        <video
+          class="detalle-video"
+          muted playsinline
+          preload="metadata"
+          poster="assets/hero-valle-andino-1600.jpg"
+          data-src="assets/videos/hero-valle-loop.mp4"
+          aria-label="Valle andino con terrazas de cultivo agrícola, video ambiental"></video>
+        <button type="button" class="detalle-video-replay hidden" aria-label="Reproducir de nuevo"><i class="ti ti-player-play"></i></button>
+        <div class="detalle-video-degradado"></div>
+        <div class="landing-hero-content detalle-video-texto">
+          <span class="landing-kicker"><i class="ti ti-map-pin"></i> Hecho en Ayacucho, Perú</span>
+          <h1>Del productor a tu mesa, sin intermediarios</h1>
+          <p>Frutas, verduras y más, directo del productor a tu mesa. Con trazabilidad verificada.</p>
+          <div class="landing-hero-actions">
+            <button class="btn btn-primary btn-lg" data-landing-cta="registro">Crear cuenta gratis</button>
+            <button class="btn btn-outline btn-lg" data-landing-cta="explorar">Buscar productos →</button>
+          </div>
+          <div class="landing-hero-stats">
+            <div><strong id="landing-stat-productos">—</strong><span>productos frescos</span></div>
+            <div><strong id="landing-stat-productores">—</strong><span>productores locales</span></div>
+            <div><strong><i class="ti ti-link"></i></strong><span>Trazabilidad blockchain</span></div>
+          </div>
         </div>
-        <div class="landing-hero-stats">
-          <div><strong id="landing-stat-productos">—</strong><span>productos frescos</span></div>
-          <div><strong id="landing-stat-productores">—</strong><span>productores locales</span></div>
-          <div><strong><i class="ti ti-link"></i></strong><span>Trazabilidad blockchain</span></div>
-        </div>
-      </div>
-      <div class="landing-hero-media">
-        <img
-          class="landing-hero-bg"
-          src="assets/hero-valle-andino-1600.jpg"
-          srcset="assets/hero-valle-andino-800.jpg 800w, assets/hero-valle-andino-1600.jpg 1600w, assets/hero-valle-andino-2400.jpg 2400w"
-          sizes="(min-width: 1024px) 520px, 100vw"
-          alt="Valle andino con terrazas de cultivo agrícola"
-          width="2400" height="1595"
-          loading="eager" fetchpriority="high">
       </div>
     </div>
 
@@ -139,7 +140,7 @@
     <!-- GRID ESTÁTICO DE 8 PRODUCTOS (mismo criterio que ya usaba "Productos destacados": QA fuera, orden por calificación) -->
     <div class="section-header">
       <h2><i class="ti ti-basket"></i> Productos destacados</h2>
-      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
+      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todos los productos →</button>
     </div>
     <div id="landing-grid-8" class="landing-grid-8"></div>
 
@@ -164,7 +165,7 @@
     <!-- RECOMENDADO PARA TI: carrusel horizontal (antes "Productos destacados") -->
     <div class="section-header">
       <h2><i class="ti ti-sparkles"></i> Recomendado para ti</h2>
-      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todo el catálogo →</button>
+      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todos los productos →</button>
     </div>
     <div class="landing-carousel-wrap">
       <button type="button" class="landing-carousel-arrow landing-carousel-arrow-prev" id="landing-carousel-prev" aria-label="Ver productos anteriores">‹</button>

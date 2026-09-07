@@ -495,45 +495,27 @@ input, select { font-family: inherit; }
 /* ---------- LANDING (INVITADOS) ---------- */
 .btn-lg { padding: 14px 28px; font-size: 1rem; }
 
-/* Hero estilo "producto sobre fondo limpio": sin tarjeta propia — usa el mismo fondo continuo del
-   body/navbar (nada de color ni borde propio), texto a la izquierda, imagen real flotando a la
-   derecha (sin efecto "marco", panorámica, sin caja). */
+/* Hero a pantalla completa con el video real de fondo — mismo patrón "full-bleed + texto
+   superpuesto con degradado" que las secciones de video de Chirimoya en Detalle de Producto (ver
+   .detalle-video-wrap/.detalle-video-degradado/.detalle-video-texto más abajo: se REUTILIZAN tal
+   cual aquí, mismas clases, no un sistema paralelo). El full-bleed es la misma técnica documentada
+   ahí ("width:100vw + margin calc(50% - 50vw)"), aplicada directo a .landing-hero porque
+   .detalle-video-seccion por sí sola no trae estilos propios (depende de combinarse con
+   .detalle-hero/.detalle-galeria-item, que traen reglas ajenas a este hero).
+   Diferencia con Chirimoya: acá el bloque de texto apilado es más alto (badge+título+párrafo+2
+   botones+3 stats, no solo etiqueta+título+párrafo), así que el degradado cubre más porcentaje del
+   video (ver "detalle-video-degradado" abajo) y el hero es un poco más alto. */
 .landing-hero {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 48px;
-  padding: 32px 0;
+  height: 92vh;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
   margin-bottom: 64px;
-  min-height: 86vh; /* domina la pantalla al cargar, como la referencia — se ajusta en móvil abajo */
 }
-/* Columna de texto con más ancho relativo que la imagen: el clamp() del título se calculó para
-   este ancho real de columna (~620px), no para el viewport completo — por eso el máximo es más
-   bajo que "a ojo" parecería, y no se aprieta contra la imagen. */
-.landing-hero-content { flex: 1 1 56%; min-width: 0; max-width: 620px; text-align: left; }
-.landing-hero-media {
-  flex: 1 1 40%;
-  min-width: 0;
-  border-radius: 12px; /* sutil, no el "marco" agresivo de antes */
-  overflow: hidden;
-  aspect-ratio: 16 / 9; /* panorámica — antes se estiraba angosta y alta como una tarjeta */
-}
-.landing-hero-bg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  transform: scale(1);
-  transform-origin: center;
-  animation: kenBurnsHero 26s ease-in-out infinite alternate;
-  will-change: transform;
-}
-@keyframes kenBurnsHero {
-  from { transform: scale(1) translate3d(0, 0, 0); }
-  to { transform: scale(1.08) translate3d(-1.2%, -0.8%, 0); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .landing-hero-bg { animation: none; }
+.landing-hero .detalle-video-degradado { height: 85%; }
+.landing-hero-content {
+  max-width: 680px; /* más ancho que los 620px de Chirimoya: acá conviven 2 botones + 3 stats en fila */
 }
 .landing-kicker {
   display: inline-flex; align-items: center; gap: 6px;
@@ -547,10 +529,7 @@ input, select { font-family: inherit; }
   box-shadow: var(--sombra);
 }
 .landing-hero h1 {
-  color: var(--verde-oscuro);
-  /* Antes usaba vw del viewport completo (hasta 5.2rem/83px), pero el texto vive en una columna de
-     ~620px, no en el ancho completo — a ese tamaño "intermediarios" ya no cabía sin tocar la imagen.
-     El máximo baja a 4rem (~64px), calculado para esa columna real, con margen de sobra. */
+  color: inherit; /* blanco, heredado de .detalle-video-texto — mismo mecanismo que el h3 de Chirimoya */
   font-size: clamp(2.4rem, 3.4vw, 4rem);
   font-weight: 800;
   line-height: 1.08;
@@ -558,7 +537,8 @@ input, select { font-family: inherit; }
   margin-bottom: 20px;
 }
 .landing-hero p {
-  color: var(--texto-suave);
+  color: inherit;
+  opacity: 0.88;
   font-size: 1.12rem;
   margin-bottom: 32px;
 }
@@ -570,16 +550,14 @@ input, select { font-family: inherit; }
 .landing-hero-stats {
   display: flex; justify-content: flex-start; gap: 36px; flex-wrap: wrap;
   padding-top: 24px;
-  border-top: 1px solid var(--borde);
+  border-top: 1px solid rgba(255, 255, 255, 0.25); /* var(--borde) es gris claro, ilegible sobre el degradado oscuro */
 }
 .landing-hero-stats > div { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-.landing-hero-stats strong { font-size: 1.5rem; font-family: var(--font-titulo); color: var(--verde-oscuro); }
-.landing-hero-stats span { font-size: 0.8rem; color: var(--texto-suave); }
+.landing-hero-stats strong { font-size: 1.5rem; font-family: var(--font-titulo); color: inherit; }
+.landing-hero-stats span { font-size: 0.8rem; color: inherit; opacity: 0.75; }
 
 @media (max-width: 860px) {
-  .landing-hero { flex-direction: column; min-height: auto; padding: 24px 0; } /* apilado: la altura la da el contenido, no un % del viewport */
-  .landing-hero-content { max-width: none; }
-  .landing-hero-media { width: 100%; }
+  .landing-hero { height: 96vh; } /* más contenido apilado que Chirimoya necesita algo más de alto en móvil */
 }
 
 /* ---------- BANNERS DE CATEGORÍA (LANDING) ---------- */
@@ -809,7 +787,7 @@ input, select { font-family: inherit; }
 .landing-confianza-item p { font-size: 0.86rem; color: var(--texto-suave); line-height: 1.45; }
 
 @media (max-width: 640px) {
-  .landing-hero { padding: 40px 20px; margin-bottom: 40px; }
+  .landing-hero { height: 100vh; margin-bottom: 40px; } /* sin padding propio: lo rompería el full-bleed, el padding real lo da .detalle-video-texto */
   .landing-hero-stats { gap: 20px; }
 }
 
@@ -2047,17 +2025,17 @@ input, select { font-family: inherit; }
    wrap (para posicionarse sobre el video) y sin este reset heredaría ese 6rem gigante. */
 .detalle-video-wrap { position: relative; width: 100%; height: 100%; font-size: 1rem; }
 .detalle-video { width: 100%; height: 100%; object-fit: cover; display: block; background: transparent; }
-/* Círculo grande centrado (no un pill de texto en una esquina): lo primero que el ojo nota cuando
-   el video termina, mismo lenguaje visual que un botón de play nativo de reproductor de video.
-   Se mantiene igual en las 3 secciones a propósito, sin variar por tema claro/oscuro. */
+/* Círculo chico en la esquina inferior derecha (no centrado — ver historial: se movió de centrado
+   a esquina en las 3 secciones de Chirimoya y en el hero de landing, mismo lugar en todas). No debe
+   competir con el título/párrafo/degradado/botones superpuestos, que sí van centrados por debajo. */
 .detalle-video-replay {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  width: 84px; height: 84px;
+  position: absolute; right: 24px; bottom: 24px;
+  width: 46px; height: 46px;
   display: flex; align-items: center; justify-content: center;
   background: rgba(255, 255, 255, 0.85);
   color: var(--verde-oscuro);
   border-radius: 50%;
-  font-size: 2rem;
+  font-size: 1.05rem;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(3px);
   transition: background 0.15s ease, transform 0.15s ease;
@@ -2065,8 +2043,8 @@ input, select { font-family: inherit; }
 }
 /* El triángulo de "play" pesa visualmente más a la izquierda de su propio cuadro — un pequeño
    corrimiento a la derecha lo centra ópticamente dentro del círculo (si no, se ve descentrado). */
-.detalle-video-replay i { margin-left: 5px; }
-.detalle-video-replay:hover { background: white; transform: translate(-50%, -50%) scale(1.08); }
+.detalle-video-replay i { margin-left: 3px; }
+.detalle-video-replay:hover { background: white; transform: scale(1.08); }
 
 /* Degradado + texto superpuestos abajo-izquierda (estilo Samsung), no un bloque aparte debajo del
    video. El degradado por defecto es oscuro→transparente (secciones 1 y 2, texto blanco); el
@@ -2131,8 +2109,12 @@ input, select { font-family: inherit; }
      pantalla — funciona igual en cualquiera, así que acá solo queda el alto (más bajo en móvil) y
      el padding del texto superpuesto, que si no se ve muy apretado en una pantalla angosta. */
   .detalle-hero.detalle-video-seccion, .detalle-galeria-item.detalle-video-seccion { height: 75vh; }
-  .detalle-video-replay { width: 68px; height: 68px; font-size: 1.6rem; }
-  .detalle-video-texto { padding: 28px 20px 32px; }
+  .detalle-video-replay { width: 40px; height: 40px; font-size: 0.95rem; right: 16px; bottom: 16px; }
+  /* Padding derecho más ancho que el resto: en una pantalla angosta el texto ocupa casi todo el
+     ancho (no hay max-width:620px de sobra como en desktop), así que sin este espacio extra la
+     última línea del párrafo queda debajo del botón de repetir de la esquina inferior derecha —
+     válido tanto en Chirimoya como en el hero de landing, los dos llevan el mismo botón ahí. */
+  .detalle-video-texto { padding: 28px 72px 32px 20px; }
 }
 
 /* ---------- CALIFICACIONES Y RESEÑAS ---------- */
