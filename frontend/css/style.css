@@ -601,23 +601,25 @@ input, select { font-family: inherit; }
 }
 .landing-banner-content p { color: rgba(255, 255, 255, 0.9); margin-bottom: 22px; }
 
-/* Banners sin fila de tarjetas debajo (Sabor de la sierra — Frutas dejó de ser standalone, ahora
-   tiene su propia fila de tarjetas, ver .landing-banner-tarjetas--cine): redondeo completo, no
-   solo arriba. */
+/* Banners sin fila de tarjetas debajo: redondeo completo, no solo arriba. Sin uso por ahora — los
+   dos banners que la llevaban (Frutas, Sabor de la sierra) ya migraron al tratamiento
+   "cinematográfico" (con su propia fila de tarjetas, ver .landing-banner-tarjetas--cine) — se deja
+   la clase por si un futuro banner sin tarjetas la necesita de nuevo. */
 .landing-banner-standalone { border-radius: 24px; }
 
-/* Piloto "banner cinematográfico" — por ahora SOLO "Frutas de temporada" (ver el comentario junto
-   a esta clase en el HTML). Mismo espíritu que el video de Chirimoya: banner notoriamente más
-   grande que el resto (440px → 78vh) y texto que aparece al hacer scroll, no visible desde el
-   principio — con la diferencia de que ACÁ se repite cada vez que el bloque de texto entra/sale de
-   pantalla (no una sola vez), a pedido explícito: título/párrafo/botón vuelven a opacity:0 al salir
-   de vista y se re-animan escalonados (transition-delay creciente por elemento) cada vez que se
-   vuelve a entrar, sea bajando o subiendo (ver inicializarBannerCinematico en app.js — agrega Y
-   quita .visible según isIntersecting, sin unobserve()). El observer mira .landing-banner-content
-   (el bloque de texto en sí), no la sección .landing-banner-cine completa de 78vh — el texto vive
-   centrado verticalmente dentro de esa sección tan alta, así que observar la sección entera cruzaba
-   el umbral mucho antes de que el texto llegara a estar en pantalla de verdad. Si el resultado
-   convence, se replica la misma clase en los otros banners. */
+/* Piloto "banner cinematográfico" — por ahora Frutas de temporada y Sabor de la sierra (ver el
+   comentario junto a esta clase en el HTML de cada uno); Lácteos (con su fila de tarjetas propia,
+   sin este tratamiento) queda para después si el resultado convence. Mismo espíritu que el video de
+   Chirimoya: banner notoriamente más grande que el resto (440px → 78vh) y texto que aparece al
+   hacer scroll, no visible desde el principio — con la diferencia de que ACÁ se repite cada vez que
+   el bloque de texto entra/sale de pantalla (no una sola vez), a pedido explícito: título/párrafo/
+   botón vuelven a opacity:0 al salir de vista y se re-animan escalonados (transition-delay
+   creciente por elemento) cada vez que se vuelve a entrar, sea bajando o subiendo (ver
+   inicializarBannerCinematico en app.js — agrega Y quita .visible según isIntersecting, sin
+   unobserve()). El observer mira .landing-banner-content (el bloque de texto en sí) de CADA
+   sección .landing-banner-cine, no la sección completa de 78vh — el texto vive centrado
+   verticalmente dentro de esa sección tan alta, así que observar la sección entera cruzaba el
+   umbral mucho antes de que el texto llegara a estar en pantalla de verdad. */
 .landing-banner-cine { min-height: 78vh; }
 .landing-banner-cine h2,
 .landing-banner-cine p,

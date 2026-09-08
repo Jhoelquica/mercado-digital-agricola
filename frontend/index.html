@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=276ac85b">
+<link rel="stylesheet" href="css/style.css?v=07b13e33">
 </head>
 <body>
 
@@ -135,9 +135,13 @@
       </div>
     </div>
 
-    <!-- BANNER: SABOR DE LA SIERRA (sin fila de tarjetas) -->
-    <div class="landing-banner-grupo">
-      <section class="landing-banner landing-banner-standalone">
+    <!-- BANNER: SABOR DE LA SIERRA — mismo tratamiento "cinematográfico" que Frutas (ver
+         comentarios junto a esas mismas clases en el HTML de Frutas y en style.css): sangrado
+         completo (.landing-banner-grupo--cine), texto escalonado y repetible al hacer scroll
+         (.landing-banner-cine) y 4 productos relacionados con botón "Comprar" visible solo al
+         pasar el puntero (.landing-banner-tarjetas--cine). -->
+    <div class="landing-banner-grupo landing-banner-grupo--cine">
+      <section class="landing-banner landing-banner-cine">
         <div class="landing-banner-bg" data-nombres="maiz morado,kiwicha"></div>
         <div class="landing-banner-content">
           <h2>Sabor de la sierra</h2>
@@ -145,6 +149,12 @@
           <button type="button" class="btn btn-primary" data-landing-categoria="grano">Ver categoría →</button>
         </div>
       </section>
+      <div class="landing-banner-tarjetas landing-banner-tarjetas--cine">
+        <div class="landing-banner-tarjeta hidden" data-nombres="maiz choclo"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="trigo"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="papa blanca"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="kiwicha"></div>
+      </div>
     </div>
 
     <!-- GRID ESTÁTICO DE 8 PRODUCTOS (mismo criterio que ya usaba "Productos destacados": QA fuera, orden por calificación) -->
@@ -558,6 +568,6 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="js/api.js?v=9a19ef5b"></script>
-<script src="js/app.js?v=3899a741"></script>
+<script src="js/app.js?v=a7d17a85"></script>
 </body>
 </html>

@@ -1466,8 +1466,10 @@ function inicializarVideoHeroLanding() {
   observer.observe(hero);
 }
 
-// Piloto "banner cinematográfico" de la landing (por ahora solo "Frutas de temporada", ver
-// .landing-banner-cine en index.html y su comentario en style.css). El observer mira
+// Piloto "banner cinematográfico" de la landing (por ahora Frutas de temporada y Sabor de la
+// sierra, ver .landing-banner-cine en index.html y su comentario en style.css). Genérico por
+// diseño — querySelectorAll agarra CUALQUIER banner con esa clase, así que sumar un banner nuevo al
+// piloto es solo agregar la clase en el HTML, sin tocar esta función. El observer mira
 // .landing-banner-content (el bloque de texto en sí, no la sección .landing-banner-cine completa de
 // ~78vh) — el texto vive centrado verticalmente ahí dentro (align-items:center), así que observar la
 // sección entera cruzaba el umbral mucho antes de que el texto llegara a estar en pantalla de
