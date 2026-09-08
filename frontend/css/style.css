@@ -608,12 +608,16 @@ input, select { font-family: inherit; }
 
 /* Piloto "banner cinematográfico" — por ahora SOLO "Frutas de temporada" (ver el comentario junto
    a esta clase en el HTML). Mismo espíritu que el video de Chirimoya: banner notoriamente más
-   grande que el resto (440px → 78vh) y texto que aparece solo al hacer scroll, no visible desde el
-   principio. El mecanismo de aparición reutiliza tal cual el patrón de inicializarScrollRevealDetalle
-   (IntersectionObserver con umbral bajo, agrega .visible una sola vez y se desconecta — ver
-   inicializarBannerCinematico en app.js); lo nuevo es solo el CSS: ahí el bloque entero aparece de
-   una, acá título/párrafo/botón aparecen escalonados (transition-delay creciente por elemento) en
-   vez de todos juntos. Si el resultado convence, se replica la misma clase en los otros banners. */
+   grande que el resto (440px → 78vh) y texto que aparece al hacer scroll, no visible desde el
+   principio — con la diferencia de que ACÁ se repite cada vez que el bloque de texto entra/sale de
+   pantalla (no una sola vez), a pedido explícito: título/párrafo/botón vuelven a opacity:0 al salir
+   de vista y se re-animan escalonados (transition-delay creciente por elemento) cada vez que se
+   vuelve a entrar, sea bajando o subiendo (ver inicializarBannerCinematico en app.js — agrega Y
+   quita .visible según isIntersecting, sin unobserve()). El observer mira .landing-banner-content
+   (el bloque de texto en sí), no la sección .landing-banner-cine completa de 78vh — el texto vive
+   centrado verticalmente dentro de esa sección tan alta, así que observar la sección entera cruzaba
+   el umbral mucho antes de que el texto llegara a estar en pantalla de verdad. Si el resultado
+   convence, se replica la misma clase en los otros banners. */
 .landing-banner-cine { min-height: 78vh; }
 .landing-banner-cine h2,
 .landing-banner-cine p,
@@ -622,9 +626,9 @@ input, select { font-family: inherit; }
   transform: translateY(24px);
   transition: opacity 0.6s ease, transform 0.6s ease;
 }
-.landing-banner-cine.visible h2 { opacity: 1; transform: none; transition-delay: 0.05s; }
-.landing-banner-cine.visible p { opacity: 1; transform: none; transition-delay: 0.22s; }
-.landing-banner-cine.visible .btn { opacity: 1; transform: none; transition-delay: 0.38s; }
+.landing-banner-content.visible h2 { opacity: 1; transform: none; transition-delay: 0.05s; }
+.landing-banner-content.visible p { opacity: 1; transform: none; transition-delay: 0.22s; }
+.landing-banner-content.visible .btn { opacity: 1; transform: none; transition-delay: 0.38s; }
 @media (prefers-reduced-motion: reduce) {
   .landing-banner-cine h2, .landing-banner-cine p, .landing-banner-cine .btn {
     opacity: 1 !important; transform: none !important; transition: none !important;

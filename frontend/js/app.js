@@ -1467,29 +1467,32 @@ function inicializarVideoHeroLanding() {
 }
 
 // Piloto "banner cinematográfico" de la landing (por ahora solo "Frutas de temporada", ver
-// .landing-banner-cine en index.html y su comentario en style.css). Reutiliza tal cual el mismo
-// patrón que el observerRevelado de inicializarScrollRevealDetalle (más abajo): umbral bajo, agrega
-// .visible una sola vez y deja de observar — el efecto escalonado (título → párrafo → botón) lo da
-// el CSS (transition-delay creciente por elemento), no este observer. Se llama UNA sola vez desde
-// inicializarEventos(): el HTML de la landing es estático, no hace falta reconectar nada.
+// .landing-banner-cine en index.html y su comentario en style.css). El observer mira
+// .landing-banner-content (el bloque de texto en sí, no la sección .landing-banner-cine completa de
+// ~78vh) — el texto vive centrado verticalmente ahí dentro (align-items:center), así que observar la
+// sección entera cruzaba el umbral mucho antes de que el texto llegara a estar en pantalla de
+// verdad. El efecto escalonado (título → párrafo → botón) lo da el CSS (transition-delay creciente
+// por elemento), no este observer.
+// A diferencia de inicializarScrollRevealDetalle (más abajo, dispara UNA vez y se desconecta): acá
+// se repite cada vez que el bloque entra/sale de pantalla — .visible se agrega Y se quita según
+// entry.isIntersecting, sin unobserve(), a propósito (así lo pidió el usuario: el efecto debe
+// repetirse siempre que se pasa por el banner, no solo la primera vez). Se llama UNA sola vez desde
+// inicializarEventos(): el HTML de la landing es estático, no hace falta reconectar el observer.
 function inicializarBannerCinematico() {
-  const banners = document.querySelectorAll('.landing-banner-cine');
-  if (!banners.length) return;
+  const contenidos = document.querySelectorAll('.landing-banner-cine .landing-banner-content');
+  if (!contenidos.length) return;
 
   if (!('IntersectionObserver' in window)) {
-    banners.forEach((b) => b.classList.add('visible'));
+    contenidos.forEach((c) => c.classList.add('visible'));
     return;
   }
 
   const observer = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-        observer.unobserve(entry.target);
-      }
+      entry.target.classList.toggle('visible', entry.isIntersecting);
     });
-  }, { threshold: 0.12 });
-  banners.forEach((b) => observer.observe(b));
+  }, { threshold: 0.3 });
+  contenidos.forEach((c) => observer.observe(c));
 }
 
 function renderPaginaDetalleProducto(p, resenas, productor) {
