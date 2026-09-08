@@ -1466,6 +1466,32 @@ function inicializarVideoHeroLanding() {
   observer.observe(hero);
 }
 
+// Piloto "banner cinematográfico" de la landing (por ahora solo "Frutas de temporada", ver
+// .landing-banner-cine en index.html y su comentario en style.css). Reutiliza tal cual el mismo
+// patrón que el observerRevelado de inicializarScrollRevealDetalle (más abajo): umbral bajo, agrega
+// .visible una sola vez y deja de observar — el efecto escalonado (título → párrafo → botón) lo da
+// el CSS (transition-delay creciente por elemento), no este observer. Se llama UNA sola vez desde
+// inicializarEventos(): el HTML de la landing es estático, no hace falta reconectar nada.
+function inicializarBannerCinematico() {
+  const banners = document.querySelectorAll('.landing-banner-cine');
+  if (!banners.length) return;
+
+  if (!('IntersectionObserver' in window)) {
+    banners.forEach((b) => b.classList.add('visible'));
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12 });
+  banners.forEach((b) => observer.observe(b));
+}
+
 function renderPaginaDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   const favorito = esFavorito(p.id);
@@ -3617,6 +3643,7 @@ function inicializarEventos() {
     });
   });
   inicializarVideoHeroLanding();
+  inicializarBannerCinematico();
   document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
     btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
   });

@@ -601,8 +601,50 @@ input, select { font-family: inherit; }
 }
 .landing-banner-content p { color: rgba(255, 255, 255, 0.9); margin-bottom: 22px; }
 
-/* Banners sin fila de tarjetas debajo (Frutas, Sabor de la sierra): redondeo completo, no solo arriba. */
+/* Banners sin fila de tarjetas debajo (Sabor de la sierra — Frutas dejó de ser standalone, ahora
+   tiene su propia fila de tarjetas, ver .landing-banner-tarjetas--cine): redondeo completo, no
+   solo arriba. */
 .landing-banner-standalone { border-radius: 24px; }
+
+/* Piloto "banner cinematográfico" — por ahora SOLO "Frutas de temporada" (ver el comentario junto
+   a esta clase en el HTML). Mismo espíritu que el video de Chirimoya: banner notoriamente más
+   grande que el resto (440px → 78vh) y texto que aparece solo al hacer scroll, no visible desde el
+   principio. El mecanismo de aparición reutiliza tal cual el patrón de inicializarScrollRevealDetalle
+   (IntersectionObserver con umbral bajo, agrega .visible una sola vez y se desconecta — ver
+   inicializarBannerCinematico en app.js); lo nuevo es solo el CSS: ahí el bloque entero aparece de
+   una, acá título/párrafo/botón aparecen escalonados (transition-delay creciente por elemento) en
+   vez de todos juntos. Si el resultado convence, se replica la misma clase en los otros banners. */
+.landing-banner-cine { min-height: 78vh; }
+.landing-banner-cine h2,
+.landing-banner-cine p,
+.landing-banner-cine .btn {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+.landing-banner-cine.visible h2 { opacity: 1; transform: none; transition-delay: 0.05s; }
+.landing-banner-cine.visible p { opacity: 1; transform: none; transition-delay: 0.22s; }
+.landing-banner-cine.visible .btn { opacity: 1; transform: none; transition-delay: 0.38s; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-banner-cine h2, .landing-banner-cine p, .landing-banner-cine .btn {
+    opacity: 1 !important; transform: none !important; transition: none !important;
+  }
+}
+
+/* Sangrado completo del grupo "Frutas" (banner + fila de tarjetas juntos, mismo ancho) — mismo
+   truco ya usado en el hero y en los videos de Chirimoya ("width:100vw + margin calc(50% - 50vw)"),
+   aplicado acá al wrapper .landing-banner-grupo en vez de al banner solo, porque esta vez hay dos
+   piezas (el banner y la fila de tarjetas) que deben quedar exactamente alineadas y del mismo
+   ancho — el margen visible que quedaba antes venía del max-width:1280px de #app-main, no de un
+   padding puntual de este banner. Sin las esquinas redondeadas: a sangre completa se ven como un
+   borde grueso en vez de una foto de pantalla completa. */
+.landing-banner-grupo--cine {
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+}
+.landing-banner-grupo--cine .landing-banner,
+.landing-banner-grupo--cine .landing-banner-tarjetas { border-radius: 0; }
 
 .landing-banner-tarjetas {
   display: grid;
@@ -614,6 +656,27 @@ input, select { font-family: inherit; }
 }
 .landing-banner-tarjeta.hidden { display: none; }
 
+/* Piloto: botón "Comprar" oculto por defecto en las tarjetas de Frutas, visible solo al pasar el
+   puntero (o con foco de teclado, vía :focus-within) — a diferencia de las tarjetas de Lácteos
+   (mismas clases compartidas .landing-banner-tarjeta/.producto-simple-*, sin este modificador, que
+   siguen mostrando el botón siempre). Altura de la tarjeta fija de todos modos (el botón solo
+   cambia de opacidad, no de tamaño) para que la imagen no salte ni cambie de alto al pasar el mouse. */
+.landing-banner-tarjetas--cine .producto-simple-comprar {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.landing-banner-tarjetas--cine .landing-banner-tarjeta:hover .producto-simple-comprar,
+.landing-banner-tarjetas--cine .landing-banner-tarjeta:focus-within .producto-simple-comprar {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-banner-tarjetas--cine .producto-simple-comprar { transition: none; }
+}
+
 @media (max-width: 760px) {
   .landing-banner-grupo { margin-top: 40px; }
   .landing-banner { min-height: 260px; }
@@ -622,6 +685,9 @@ input, select { font-family: inherit; }
   }
   .landing-banner-content { max-width: none; padding: 30px 24px; }
   .landing-banner-tarjetas { grid-template-columns: repeat(2, 1fr); padding: 16px; }
+  /* Sigue siendo notoriamente más grande que el resto (260px) en móvil, solo que menos que el
+     78vh de desktop — a ese alto en una pantalla angosta se sentiría excesivo. */
+  .landing-banner-cine { min-height: 60vh; }
 }
 
 /* ---------- GRID ESTÁTICO DE 8 PRODUCTOS ---------- */

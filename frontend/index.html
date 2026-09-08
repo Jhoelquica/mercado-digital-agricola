@@ -113,9 +113,13 @@
       </div>
     </div>
 
-    <!-- BANNER: FRUTAS (sin fila de tarjetas) -->
-    <div class="landing-banner-grupo">
-      <section class="landing-banner landing-banner-standalone">
+    <!-- BANNER: FRUTAS — piloto "cinematográfico": sangrado completo sin margen lateral (ver
+         .landing-banner-grupo--cine), texto escalonado al hacer scroll (ver .landing-banner-cine)
+         y 4 productos relacionados debajo con botón "Comprar" visible solo al pasar el puntero
+         (ver .landing-banner-tarjetas--cine). Los otros banners no llevan estas clases todavía a
+         propósito, ver comentarios junto a cada una en style.css. -->
+    <div class="landing-banner-grupo landing-banner-grupo--cine">
+      <section class="landing-banner landing-banner-cine">
         <div class="landing-banner-bg" data-nombres="platano,chirimoya"></div>
         <div class="landing-banner-content">
           <h2>Frutas de temporada</h2>
@@ -123,6 +127,12 @@
           <button type="button" class="btn btn-primary" data-landing-categoria="fruta">Ver categoría →</button>
         </div>
       </section>
+      <div class="landing-banner-tarjetas landing-banner-tarjetas--cine">
+        <div class="landing-banner-tarjeta hidden" data-nombres="mango"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="fresa"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="naranja"></div>
+        <div class="landing-banner-tarjeta hidden" data-nombres="manzana"></div>
+      </div>
     </div>
 
     <!-- BANNER: SABOR DE LA SIERRA (sin fila de tarjetas) -->
