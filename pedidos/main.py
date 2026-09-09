@@ -36,6 +36,16 @@ PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
 
+# Rango aproximado del departamento de Ayacucho — el pedido solo se acepta si el destino de
+# entrega cae dentro de esta caja (no es el polígono real del departamento, es un rectángulo que
+# lo contiene; suficiente para la validación que se pidió, sin traer una librería de geometría).
+AYACUCHO_LAT_MIN = -15.20
+AYACUCHO_LAT_MAX = -12.85
+AYACUCHO_LNG_MIN = -75.10
+AYACUCHO_LNG_MAX = -73.00
+
+MONTO_MINIMO_PEDIDO = 30.00  # soles, sobre el subtotal (precio × cantidad de cada item, sin envío)
+
 def get_db():
     db = SessionLocal()
     try:
@@ -50,8 +60,8 @@ class ItemPedido(BaseModel):
 class PedidoCrear(BaseModel):
     comprador_nombre: str
     comprador_telefono: str | None = None
-    destino_latitud: str | None = None
-    destino_longitud: str | None = None
+    destino_latitud: float
+    destino_longitud: float
     items: list[ItemPedido]
 
 @app.get("/salud")
@@ -60,6 +70,15 @@ def salud():
 
 @app.post("/pedidos")
 def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
+    # Validación 1 (fail-fast, antes de tocar la base de datos): el destino de entrega debe caer
+    # dentro de la región de Ayacucho.
+    if not (AYACUCHO_LAT_MIN <= datos.destino_latitud <= AYACUCHO_LAT_MAX) or \
+       not (AYACUCHO_LNG_MIN <= datos.destino_longitud <= AYACUCHO_LNG_MAX):
+        raise HTTPException(
+            status_code=400,
+            detail="El destino del pedido debe estar dentro de la región de Ayacucho.",
+        )
+
     items_validados = []
 
     with httpx.Client() as client:
@@ -77,6 +96,15 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
 
             items_validados.append((item, producto))
+
+        # Validación 2 (fail-fast, todavía antes de tocar la base de datos): el subtotal (precio ×
+        # cantidad de cada item, sin contar envío) debe alcanzar el mínimo de compra.
+        subtotal = sum(producto["precio"] * item.cantidad for item, producto in items_validados)
+        if subtotal < MONTO_MINIMO_PEDIDO:
+            raise HTTPException(
+                status_code=400,
+                detail="El monto mínimo de compra es S/30.00. Agrega más productos para continuar.",
+            )
 
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(

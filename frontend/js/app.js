@@ -1930,6 +1930,7 @@ function inicializarMapaDestino() {
     onSeleccionar: (lat, lng) => {
       destinoSeleccionado = { lat, lng };
       actualizarAyudaDestino();
+      quitarResaltadoMapaDestino();
     },
   });
 }
@@ -1941,6 +1942,19 @@ function actualizarAyudaDestino() {
   ayuda.classList.add('confirmado');
 }
 
+// Resalta el mapa de destino (borde + scroll) cuando el usuario intenta confirmar sin haber
+// marcado un punto — se quita en cuanto elige uno (arriba en onSeleccionar / usarMiUbicacionDestino).
+function resaltarMapaDestino() {
+  const mapaEl = document.getElementById('mapa-destino-pedido');
+  if (!mapaEl) return;
+  mapaEl.classList.add('destino-requerido');
+  mapaEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function quitarResaltadoMapaDestino() {
+  document.getElementById('mapa-destino-pedido')?.classList.remove('destino-requerido');
+}
+
 async function usarMiUbicacionDestino() {
   const btn = document.getElementById('btn-usar-mi-ubicacion');
   btn.disabled = true;
@@ -1950,6 +1964,7 @@ async function usarMiUbicacionDestino() {
     mapaDestinoPedido?.moverMarcador(lat, lng);
     destinoSeleccionado = { lat, lng };
     actualizarAyudaDestino();
+    quitarResaltadoMapaDestino();
   } catch (err) {
     toast(err.message, 'error');
   } finally {
@@ -1972,6 +1987,12 @@ function resetearBotonPago() {
 }
 
 async function confirmarYPagar() {
+  if (!destinoSeleccionado) {
+    toast('Selecciona el punto de entrega en el mapa antes de confirmar tu pedido.', 'error');
+    resaltarMapaDestino();
+    return;
+  }
+
   const btn = document.getElementById('btn-checkout-pagar');
   const metodo = document.querySelector('input[name="metodo-pago"]:checked')?.value || 'tarjeta';
   btn.disabled = true;

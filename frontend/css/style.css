@@ -1429,6 +1429,10 @@ input, select { font-family: inherit; }
 }
 .mapa-ayuda { font-size: 0.78rem; color: var(--texto-suave); margin-top: 6px; }
 .mapa-ayuda.confirmado { color: var(--verde-principal); font-weight: 600; }
+.mapa-seleccionable.destino-requerido {
+  border-color: var(--naranja);
+  box-shadow: 0 0 0 3px rgba(231, 111, 81, 0.25);
+}
 
 .marcador-mapa-wrap { background: transparent !important; border: none !important; }
 .marcador-mapa {

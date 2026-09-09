@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from database import Base
@@ -16,8 +16,14 @@ class Pedido(Base):
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 
     items = relationship("PedidoItem", backref="pedido")
-    destino_latitud = Column(String, nullable=True)
-    destino_longitud = Column(String, nullable=True)
+    # Antes eran String y opcionales (nullable=True) — ahora son obligatorios y numéricos: el
+    # destino se valida contra la región de Ayacucho antes de crear el pedido (ver crear_pedido en
+    # main.py), lo cual requiere poder compararlos como números, no como texto. Mismo nombre de
+    # columna de siempre (no se renombra): tanto el frontend (Api.pedidos.crear) como el servicio
+    # de Transporte (obtener_ruta, cálculo de distancia) ya leen/escriben destino_latitud/
+    # destino_longitud tal cual — cambiar el nombre habría roto ambos sin necesidad.
+    destino_latitud = Column(Float, nullable=False)
+    destino_longitud = Column(Float, nullable=False)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"
