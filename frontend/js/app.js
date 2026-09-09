@@ -798,7 +798,7 @@ function esProductoDePrueba(p) {
 
 // Mismo criterio de siempre para "lo destacado": QA fuera, mejor calificado primero (sin
 // calificaciones aún, el sort es estable y conserva el orden del catálogo). Compartido por
-// "Productos destacados"/"Recomendado para ti" (landing) y las recomendaciones del panel de búsqueda.
+// "Recomendado para ti" (landing) y las recomendaciones del panel de búsqueda.
 function ordenarPorDestacado(productos) {
   const candidatos = productos.filter((p) => !esProductoDePrueba(p));
   const fuente = candidatos.length >= 3 ? candidatos : productos;
@@ -807,9 +807,7 @@ function ordenarPorDestacado(productos) {
 }
 
 async function cargarLanding() {
-  const grid8 = document.getElementById('landing-grid-8');
   const carrusel = document.getElementById('landing-productos-carousel');
-  grid8.innerHTML = renderSkeletonProductos(8);
   carrusel.innerHTML = renderSkeletonProductos(6);
   try {
     const productos = await Api.productos.listar();
@@ -821,15 +819,10 @@ async function cargarLanding() {
 
     const ordenados = ordenarPorDestacado(productos);
 
-    const destacados8 = ordenados.slice(0, 8);
-    grid8.innerHTML = destacados8.length
-      ? destacados8.map((p) => `<div class="landing-grid-8-tarjeta" data-id="${p.id}">${renderContenidoTarjetaSimple(p)}</div>`).join('')
-      : '<p class="empty-state"><i class="ti ti-basket-off"></i> Todavía no hay productos publicados.</p>';
-
-    // El carrusel arranca donde termina el grid de 8 para no repetir exactamente los mismos
-    // productos en dos secciones seguidas; si no alcanzan, se completa desde el principio.
-    const resto = ordenados.slice(8);
-    const recomendados = (resto.length >= 10 ? resto : ordenados).slice(0, 30);
+    // Antes se reservaban los primeros 8 para el grid estático "Productos destacados" (eliminado
+    // por redundante); el carrusel ahora arranca directo desde el mejor calificado. 10 en vez de
+    // 30: con tarjetas más grandes (nombre/precio) 30 quedaba demasiado largo para desplazar.
+    const recomendados = ordenados.slice(0, 10);
     carrusel.innerHTML = recomendados.length
       ? renderCarruselProductos(recomendados)
       : '<p class="empty-state"><i class="ti ti-basket-off"></i> Todavía no hay productos publicados.</p>';
@@ -837,28 +830,42 @@ async function cargarLanding() {
 
     cargarBannersCategoriaFijos(productos);
   } catch (err) {
-    grid8.innerHTML = '';
     carrusel.innerHTML = '';
-    manejarError(err, 'cargar los productos destacados');
+    manejarError(err, 'cargar los productos recomendados');
   }
 }
 
-// Tarjeta simplificada compartida por las 3 secciones nuevas de esta sesión (banner con tarjetas,
-// grid de 8, carrusel): solo imagen + nombre + botón "Comprar" que navega al detalle ya existente.
-// La tarjeta completa del catálogo (renderTarjetaProductoCatalogo, con precio/calificación/stock)
-// es un componente aparte, usado en el catálogo y "Mis productos" — no se toca.
-function renderContenidoTarjetaSimple(p) {
+// Tarjeta simplificada compartida por las tarjetas de los banners y el carrusel: imagen + nombre +
+// (opcional) precio + (opcional) botón "Comprar" que navega al detalle ya existente. La tarjeta
+// completa del catálogo (renderTarjetaProductoCatalogo, con precio/calificación/stock) es un
+// componente aparte, usado en el catálogo y "Mis productos" — no se toca.
+// conPrecio: solo el carrusel lo pide (ver renderCarruselProductos) — las tarjetas de los banners
+// se quedan sin precio, sin cambios. Reutiliza el mismo .product-price/.price-unit que ya usa el
+// resto de la app (detalle de producto, tarjeta de catálogo) — precio único real de p.precio, sin
+// inventar precio "antes/ahora" ni descuento: el catálogo no maneja precios de oferta.
+// conBoton: el carrusel lo pide en false — ahí toda la tarjeta ya navega al detalle con un solo
+// clic en cualquier parte (imagen incluida, ver el listener de click de landing-productos-carousel),
+// así que el botón "Comprar" sobraba. Las tarjetas de los banners siguen con su botón de siempre
+// (visible solo al pasar el puntero, ver .landing-banner-tarjetas--cine).
+function renderContenidoTarjetaSimple(p, { conPrecio = false, conBoton = true } = {}) {
+  const precioHtml = conPrecio
+    ? `<span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>`
+    : '';
+  const botonHtml = conBoton
+    ? `<button type="button" class="btn btn-primary btn-sm producto-simple-comprar" data-id="${p.id}">Comprar</button>`
+    : '';
   return `
     ${renderMediaProducto(p, 'producto-simple-img')}
     <span class="producto-simple-nombre">${escapeAttr(p.nombre)}</span>
-    <button type="button" class="btn btn-primary btn-sm producto-simple-comprar" data-id="${p.id}">Comprar</button>`;
+    ${precioHtml}
+    ${botonHtml}`;
 }
 
 // ============ CARRUSEL "RECOMENDADO PARA TI" (LANDING) ============
 function renderCarruselProductos(productos) {
   return productos.map((p) => `
     <div class="landing-carousel-tarjeta" data-id="${p.id}">
-      ${renderContenidoTarjetaSimple(p)}
+      ${renderContenidoTarjetaSimple(p, { conPrecio: true, conBoton: false })}
     </div>`).join('');
 }
 
@@ -1466,10 +1473,11 @@ function inicializarVideoHeroLanding() {
   observer.observe(hero);
 }
 
-// Piloto "banner cinematográfico" de la landing (por ahora Frutas de temporada y Sabor de la
-// sierra, ver .landing-banner-cine en index.html y su comentario en style.css). Genérico por
-// diseño — querySelectorAll agarra CUALQUIER banner con esa clase, así que sumar un banner nuevo al
-// piloto es solo agregar la clase en el HTML, sin tocar esta función. El observer mira
+// Tratamiento "banner cinematográfico" de la landing — ya aplicado a los 3 banners de categoría
+// (Frutas de temporada, Sabor de la sierra, Lácteos frescos; ver .landing-banner-cine en index.html
+// y su comentario en style.css). Genérico por diseño — querySelectorAll agarra CUALQUIER banner con
+// esa clase, así que sumar uno nuevo es solo agregar la clase en el HTML, sin tocar esta función.
+// El observer mira
 // .landing-banner-content (el bloque de texto en sí, no la sección .landing-banner-cine completa de
 // ~78vh) — el texto vive centrado verticalmente ahí dentro (align-items:center), así que observar la
 // sección entera cruzaba el umbral mucho antes de que el texto llegara a estar en pantalla de
@@ -3630,10 +3638,6 @@ function inicializarEventos() {
     buscarEnPanel();
   });
 
-  document.getElementById('landing-grid-8').addEventListener('click', (e) => {
-    const tarjeta = e.target.closest('.landing-grid-8-tarjeta');
-    if (tarjeta) cambiarVista('detalle-producto', tarjeta.dataset.id);
-  });
   document.querySelectorAll('.landing-banner-tarjetas').forEach((cont) => {
     cont.addEventListener('click', (e) => {
       const tarjeta = e.target.closest('.landing-banner-tarjeta');

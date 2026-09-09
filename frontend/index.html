@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=07b13e33">
+<link rel="stylesheet" href="css/style.css?v=4106ff5b">
 </head>
 <body>
 
@@ -113,11 +113,16 @@
       </div>
     </div>
 
-    <!-- BANNER: FRUTAS — piloto "cinematográfico": sangrado completo sin margen lateral (ver
-         .landing-banner-grupo--cine), texto escalonado al hacer scroll (ver .landing-banner-cine)
-         y 4 productos relacionados debajo con botón "Comprar" visible solo al pasar el puntero
-         (ver .landing-banner-tarjetas--cine). Los otros banners no llevan estas clases todavía a
-         propósito, ver comentarios junto a cada una en style.css. -->
+    <!-- BANNER: FRUTAS — tratamiento "cinematográfico" (ya aplicado también a Sabor de la sierra y
+         Lácteos, ver comentarios junto a cada una en style.css): banner notoriamente más grande
+         (ver .landing-banner-cine), con margen delgado y CONSTANTE a los costados en cualquier
+         ancho de pantalla — NO a sangre completa, a propósito (referencia real de Samsung: solo el
+         hero va a sangre completa; los banners promocionales de abajo van con margen fino, como
+         una tarjeta — ver .landing-banner-grupo--cine en style.css, que usa el mismo sangrado
+         completo del hero por dentro para que ese margen no dependa del max-width:1280px de
+         #app-main) — texto escalonado y repetible al hacer scroll (ver .landing-banner-cine) y 4
+         productos relacionados debajo con botón "Comprar" visible solo al pasar el puntero (ver
+         .landing-banner-tarjetas--cine). -->
     <div class="landing-banner-grupo landing-banner-grupo--cine">
       <section class="landing-banner landing-banner-cine">
         <div class="landing-banner-bg" data-nombres="platano,chirimoya"></div>
@@ -136,10 +141,11 @@
     </div>
 
     <!-- BANNER: SABOR DE LA SIERRA — mismo tratamiento "cinematográfico" que Frutas (ver
-         comentarios junto a esas mismas clases en el HTML de Frutas y en style.css): sangrado
-         completo (.landing-banner-grupo--cine), texto escalonado y repetible al hacer scroll
-         (.landing-banner-cine) y 4 productos relacionados con botón "Comprar" visible solo al
-         pasar el puntero (.landing-banner-tarjetas--cine). -->
+         comentarios junto a esas mismas clases en el HTML de Frutas y en style.css): banner más
+         grande con margen a los costados (NO a sangre completa, ver el comentario largo en el
+         banner de Frutas), texto escalonado y repetible al hacer scroll (.landing-banner-cine) y 4
+         productos relacionados con botón "Comprar" visible solo al pasar el puntero
+         (.landing-banner-tarjetas--cine). -->
     <div class="landing-banner-grupo landing-banner-grupo--cine">
       <section class="landing-banner landing-banner-cine">
         <div class="landing-banner-bg" data-nombres="maiz morado,kiwicha"></div>
@@ -157,16 +163,15 @@
       </div>
     </div>
 
-    <!-- GRID ESTÁTICO DE 8 PRODUCTOS (mismo criterio que ya usaba "Productos destacados": QA fuera, orden por calificación) -->
-    <div class="section-header">
-      <h2><i class="ti ti-basket"></i> Productos destacados</h2>
-      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todos los productos →</button>
-    </div>
-    <div id="landing-grid-8" class="landing-grid-8"></div>
-
-    <!-- BANNER: LÁCTEOS (único que conserva su fila de 4 tarjetas) -->
-    <div class="landing-banner-grupo">
-      <section class="landing-banner">
+    <!-- BANNER: LÁCTEOS — mismo tratamiento "cinematográfico" que Frutas y Sabor de la sierra (ver
+         comentarios junto a esas mismas clases en el HTML de Frutas y en style.css): banner más
+         grande con margen a los costados (NO a sangre completa, ver el comentario largo en el
+         banner de Frutas), texto escalonado y repetible al hacer scroll (.landing-banner-cine) y
+         botón "Comprar" visible solo al pasar el puntero (.landing-banner-tarjetas--cine) sobre la
+         misma fila de 4 tarjetas que ya tenía. Con este, los 3 banners de categoría quedan
+         consistentes. -->
+    <div class="landing-banner-grupo landing-banner-grupo--cine">
+      <section class="landing-banner landing-banner-cine">
         <div class="landing-banner-bg" data-nombres="queso,leche fresca"></div>
         <div class="landing-banner-content">
           <h2>Lácteos frescos</h2>
@@ -174,7 +179,7 @@
           <button type="button" class="btn btn-primary" data-landing-categoria="lacteo">Ver categoría →</button>
         </div>
       </section>
-      <div class="landing-banner-tarjetas">
+      <div class="landing-banner-tarjetas landing-banner-tarjetas--cine">
         <div class="landing-banner-tarjeta hidden" data-nombres="yogurt natural"></div>
         <div class="landing-banner-tarjeta hidden" data-nombres="huevo de campo"></div>
         <div class="landing-banner-tarjeta hidden" data-nombres="huevo de codorniz"></div>
@@ -182,56 +187,71 @@
       </div>
     </div>
 
-    <!-- RECOMENDADO PARA TI: carrusel horizontal (antes "Productos destacados") -->
-    <div class="section-header">
-      <h2><i class="ti ti-sparkles"></i> Recomendado para ti</h2>
-      <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todos los productos →</button>
-    </div>
-    <div class="landing-carousel-wrap">
-      <button type="button" class="landing-carousel-arrow landing-carousel-arrow-prev" id="landing-carousel-prev" aria-label="Ver productos anteriores">‹</button>
-      <div class="landing-carousel" id="landing-productos-carousel"></div>
-      <button type="button" class="landing-carousel-arrow landing-carousel-arrow-next" id="landing-carousel-next" aria-label="Ver más productos">›</button>
-    </div>
-    <div class="landing-carousel-progreso">
-      <div class="landing-carousel-progreso-barra" id="landing-carousel-progreso-barra"></div>
-    </div>
+    <!-- ANCHO COMPLETO: mismo margen fino y constante que los banners de arriba (ver
+         .landing-ancho-completo en style.css, misma técnica que .landing-banner-grupo--cine) — sin
+         este wrapper, esta parte se quedaba angosta dentro del max-width:1280px de #app-main,
+         chocando en una pantalla ancha contra los banners/hero de arriba, que sí llegan casi al
+         borde real de la pantalla. -->
+    <div class="landing-ancho-completo">
+      <!-- RECOMENDADO PARA TI: carrusel horizontal (el grid estático de 8 "Productos destacados"
+           que iba antes de Lácteos se eliminó por redundante con este carrusel y las tarjetas de
+           los banners) -->
+      <div class="section-header">
+        <h2><i class="ti ti-sparkles"></i> Recomendado para ti</h2>
+        <button class="btn btn-outline btn-sm" data-landing-cta="explorar">Ver todos los productos →</button>
+      </div>
+      <div class="landing-carousel-wrap">
+        <div class="landing-carousel" id="landing-productos-carousel"></div>
+      </div>
+      <!-- Progreso + flechas juntos en una sola fila abajo a la derecha (antes las flechas iban a
+           los costados del carrusel, flanqueándolo) — mismo estilo que la referencia de Samsung. -->
+      <div class="landing-carousel-footer">
+        <div class="landing-carousel-progreso">
+          <div class="landing-carousel-progreso-barra" id="landing-carousel-progreso-barra"></div>
+        </div>
+        <div class="landing-carousel-arrows">
+          <button type="button" class="landing-carousel-arrow landing-carousel-arrow-prev" id="landing-carousel-prev" aria-label="Ver productos anteriores">‹</button>
+          <button type="button" class="landing-carousel-arrow landing-carousel-arrow-next" id="landing-carousel-next" aria-label="Ver más productos">›</button>
+        </div>
+      </div>
 
-    <div class="landing-roles">
-      <h2>Una plataforma, tres roles</h2>
-      <div class="landing-roles-grid">
-        <div class="landing-role-card">
-          <span class="landing-role-icon"><i class="ti ti-shopping-cart"></i></span>
-          <h3>Comprador</h3>
-          <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
-          <button class="btn btn-outline btn-sm" data-landing-registro="comprador">Registrarme como comprador</button>
-        </div>
-        <div class="landing-role-card">
-          <span class="landing-role-icon"><i class="ti ti-tractor"></i></span>
-          <h3>Productor</h3>
-          <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
-          <button class="btn btn-outline btn-sm" data-landing-registro="productor">Registrarme como productor</button>
-        </div>
-        <div class="landing-role-card">
-          <span class="landing-role-icon"><i class="ti ti-truck"></i></span>
-          <h3>Repartidor</h3>
-          <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
-          <button class="btn btn-outline btn-sm" data-landing-registro="repartidor">Registrarme como repartidor</button>
+      <div class="landing-roles">
+        <h2>Una plataforma, tres roles</h2>
+        <div class="landing-roles-grid">
+          <div class="landing-role-card">
+            <span class="landing-role-icon"><i class="ti ti-shopping-cart"></i></span>
+            <h3>Comprador</h3>
+            <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
+            <button class="btn btn-outline btn-sm" data-landing-registro="comprador">Registrarme como comprador</button>
+          </div>
+          <div class="landing-role-card">
+            <span class="landing-role-icon"><i class="ti ti-tractor"></i></span>
+            <h3>Productor</h3>
+            <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
+            <button class="btn btn-outline btn-sm" data-landing-registro="productor">Registrarme como productor</button>
+          </div>
+          <div class="landing-role-card">
+            <span class="landing-role-icon"><i class="ti ti-truck"></i></span>
+            <h3>Repartidor</h3>
+            <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
+            <button class="btn btn-outline btn-sm" data-landing-registro="repartidor">Registrarme como repartidor</button>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="landing-confianza">
-      <div class="landing-confianza-item">
-        <span class="landing-confianza-icon"><i class="ti ti-map-pin"></i></span>
-        <div><strong>Hecho en Ayacucho, Perú</strong><p>Conectamos comunidades agrícolas locales con compradores urbanos, sin cadenas de intermediarios.</p></div>
-      </div>
-      <div class="landing-confianza-item" id="landing-confianza-blockchain">
-        <span class="landing-confianza-icon"><i class="ti ti-shield-check"></i></span>
-        <div><strong>Trazabilidad garantizada</strong><p>Cada producto certificado tiene su historial verificado con blockchain, desde la chakra hasta tu mesa.</p></div>
-      </div>
-      <div class="landing-confianza-item">
-        <span class="landing-confianza-icon"><i class="ti ti-star"></i></span>
-        <div><strong>Reseñas reales</strong><p>Calificaciones y comentarios de compradores verificados en cada producto.</p></div>
+      <div class="landing-confianza">
+        <div class="landing-confianza-item">
+          <span class="landing-confianza-icon"><i class="ti ti-map-pin"></i></span>
+          <div><strong>Hecho en Ayacucho, Perú</strong><p>Conectamos comunidades agrícolas locales con compradores urbanos, sin cadenas de intermediarios.</p></div>
+        </div>
+        <div class="landing-confianza-item" id="landing-confianza-blockchain">
+          <span class="landing-confianza-icon"><i class="ti ti-shield-check"></i></span>
+          <div><strong>Trazabilidad garantizada</strong><p>Cada producto certificado tiene su historial verificado con blockchain, desde la chakra hasta tu mesa.</p></div>
+        </div>
+        <div class="landing-confianza-item">
+          <span class="landing-confianza-icon"><i class="ti ti-star"></i></span>
+          <div><strong>Reseñas reales</strong><p>Calificaciones y comentarios de compradores verificados en cada producto.</p></div>
+        </div>
       </div>
     </div>
   </section>
@@ -568,6 +588,6 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="js/api.js?v=9a19ef5b"></script>
-<script src="js/app.js?v=a7d17a85"></script>
+<script src="js/app.js?v=db31ace7"></script>
 </body>
 </html>

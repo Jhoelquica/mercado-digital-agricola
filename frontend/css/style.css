@@ -607,10 +607,10 @@ input, select { font-family: inherit; }
    la clase por si un futuro banner sin tarjetas la necesita de nuevo. */
 .landing-banner-standalone { border-radius: 24px; }
 
-/* Piloto "banner cinematográfico" — por ahora Frutas de temporada y Sabor de la sierra (ver el
-   comentario junto a esta clase en el HTML de cada uno); Lácteos (con su fila de tarjetas propia,
-   sin este tratamiento) queda para después si el resultado convence. Mismo espíritu que el video de
-   Chirimoya: banner notoriamente más grande que el resto (440px → 78vh) y texto que aparece al
+/* Tratamiento "cinematográfico" — ya aplicado a los 3 banners de categoría (Frutas de temporada,
+   Sabor de la sierra, Lácteos frescos; ver el comentario junto a esta clase en el HTML de cada
+   uno). Mismo espíritu que el video de Chirimoya: banner notoriamente más grande que el resto
+   (440px → 78vh) y texto que aparece al
    hacer scroll, no visible desde el principio — con la diferencia de que ACÁ se repite cada vez que
    el bloque de texto entra/sale de pantalla (no una sola vez), a pedido explícito: título/párrafo/
    botón vuelven a opacity:0 al salir de vista y se re-animan escalonados (transition-delay
@@ -637,20 +637,34 @@ input, select { font-family: inherit; }
   }
 }
 
-/* Sangrado completo del grupo "Frutas" (banner + fila de tarjetas juntos, mismo ancho) — mismo
-   truco ya usado en el hero y en los videos de Chirimoya ("width:100vw + margin calc(50% - 50vw)"),
-   aplicado acá al wrapper .landing-banner-grupo en vez de al banner solo, porque esta vez hay dos
-   piezas (el banner y la fila de tarjetas) que deben quedar exactamente alineadas y del mismo
-   ancho — el margen visible que quedaba antes venía del max-width:1280px de #app-main, no de un
-   padding puntual de este banner. Sin las esquinas redondeadas: a sangre completa se ven como un
-   borde grueso en vez de una foto de pantalla completa. */
-.landing-banner-grupo--cine {
+/* VUELTA A CORRECCIÓN #2 (con evidencia real del usuario): la corrección #3 (calcar el ancho de
+   #app-main, sin sangrado propio) sí igualaba estos banners al carrusel/"Una plataforma, tres
+   roles" — pero en una pantalla bien ancha eso choca contra el HERO, que SIEMPRE fue a sangre
+   completa (llega al borde real del viewport, nunca vivió dentro de #app-main): al lado del hero
+   sin límite, un banner metido en los 1280px de #app-main se ve con un margen enorme — el mismo
+   problema original, solo que ahora contra el hero en vez de contra la referencia de Samsung. A
+   pedido explícito del usuario ("déjalo como estaba anteriormente"), estos banners vuelven a la
+   corrección #2: anchos e inmersivos como el hero (margen fino y CONSTANTE relativo al viewport,
+   no al max-width:1280px de #app-main). Misma técnica de sangrado completo que usan el hero y los
+   videos de Chirimoya (width:100vw + margin calc(50% - 50vw)) para que el WRAPPER llegue de verdad
+   al borde del viewport, con un padding fijo adentro como margen visible. Las esquinas redondeadas
+   de .landing-banner/.landing-banner-tarjetas de siempre se mantienen.
+   CORRECCIÓN #4: eso solo dejaba anchos a los banners — el resto del contenido de la landing
+   ("Recomendado para ti", "Una plataforma, tres roles", los 3 íconos de confianza) se seguía
+   quedando angosto dentro de #app-main, ahora chocando contra los banners de arriba en vez de al
+   revés. Mismo margen fino y constante para TODO ese contenido — .landing-ancho-completo comparte
+   la regla con .landing-banner-grupo--cine (misma técnica, mismos valores) envolviendo ese bloque
+   completo en el HTML en vez de aplicarlo sección por sección. */
+.landing-banner-grupo--cine,
+.landing-ancho-completo {
   width: 100vw;
   margin-left: calc(50% - 50vw);
   margin-right: calc(50% - 50vw);
+  padding: 0 24px;
 }
-.landing-banner-grupo--cine .landing-banner,
-.landing-banner-grupo--cine .landing-banner-tarjetas { border-radius: 0; }
+@media (max-width: 640px) {
+  .landing-banner-grupo--cine, .landing-ancho-completo { padding: 0 16px; }
+}
 
 .landing-banner-tarjetas {
   display: grid;
@@ -662,11 +676,12 @@ input, select { font-family: inherit; }
 }
 .landing-banner-tarjeta.hidden { display: none; }
 
-/* Piloto: botón "Comprar" oculto por defecto en las tarjetas de Frutas, visible solo al pasar el
-   puntero (o con foco de teclado, vía :focus-within) — a diferencia de las tarjetas de Lácteos
-   (mismas clases compartidas .landing-banner-tarjeta/.producto-simple-*, sin este modificador, que
-   siguen mostrando el botón siempre). Altura de la tarjeta fija de todos modos (el botón solo
-   cambia de opacidad, no de tamaño) para que la imagen no salte ni cambie de alto al pasar el mouse. */
+/* Botón "Comprar" oculto por defecto en las tarjetas de los 3 banners de categoría, visible solo
+   al pasar el puntero (o con foco de teclado, vía :focus-within) — las mismas clases compartidas
+   .landing-banner-tarjeta/.producto-simple-* se usan también en el grid de 8 y el carrusel, que NO
+   llevan este modificador y siguen mostrando el botón siempre. Altura de la tarjeta fija de todos
+   modos (el botón solo cambia de opacidad, no de tamaño) para que la imagen no salte ni cambie de
+   alto al pasar el mouse. */
 .landing-banner-tarjetas--cine .producto-simple-comprar {
   opacity: 0;
   transform: translateY(6px);
@@ -696,22 +711,13 @@ input, select { font-family: inherit; }
   .landing-banner-cine { min-height: 60vh; }
 }
 
-/* ---------- GRID ESTÁTICO DE 8 PRODUCTOS ---------- */
-.landing-grid-8 {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 20px;
-}
-@media (max-width: 760px) {
-  .landing-grid-8 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
-}
-
 /* ---------- TARJETA DE PRODUCTO SIMPLIFICADA ----------
-   Compartida por las 3 tarjetas nuevas de esta sección (banner con tarjetas, grid de 8, carrusel):
-   solo imagen + nombre + botón "Comprar". La tarjeta completa del catálogo (.product-card, con
-   precio/calificación/stock) es un componente aparte y no se toca. */
+   Compartida por las tarjetas de los banners y el carrusel "Recomendado para ti": solo imagen +
+   nombre + botón "Comprar" (el carrusel además suma precio, ver .landing-carousel-tarjeta más
+   abajo). La tarjeta completa del catálogo (.product-card, con precio/calificación/stock) es un
+   componente aparte y no se toca. (Antes también la usaba el grid estático "Productos destacados",
+   eliminado por redundante con este mismo carrusel.) */
 .landing-banner-tarjeta,
-.landing-grid-8-tarjeta,
 .landing-carousel-tarjeta {
   display: flex;
   flex-direction: column;
@@ -733,7 +739,6 @@ input, select { font-family: inherit; }
   transition: transform 0.18s ease;
 }
 .landing-banner-tarjeta:hover .producto-simple-img,
-.landing-grid-8-tarjeta:hover .producto-simple-img,
 .landing-carousel-tarjeta:hover .producto-simple-img { transform: translateY(-3px); }
 .producto-simple-nombre {
   font-weight: 700;
@@ -747,43 +752,69 @@ input, select { font-family: inherit; }
 }
 .producto-simple-comprar { width: 100%; padding: 8px 14px; font-size: 0.82rem; }
 
-/* ---------- CARRUSEL "RECOMENDADO PARA TI" ---------- */
-.landing-carousel-wrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
+/* ---------- CARRUSEL "RECOMENDADO PARA TI" ----------
+   Comparado a propósito contra la referencia real de Samsung (captura del usuario): tarjetas casi
+   el doble de grandes (150px → 260px, con más aire entre ellas), título de la sección más grande
+   (ver #view-landing .section-header h2 más abajo — escalado a propósito solo acá, la clase
+   .section-header genérica se usa en muchas otras vistas y no se toca ahí), y las flechas de
+   navegación bajan de flanquear el carrusel a una fila propia junto a la barra de progreso, abajo
+   a la derecha (antes: dos botones grandes a los costados, chocando contra el ancho completo del
+   carrusel — ver .landing-carousel-footer). */
+.landing-carousel-wrap { /* ya no lleva flechas adentro (ver .landing-carousel-footer) */ }
 .landing-carousel {
-  flex: 1;
   min-width: 0; /* permite que el flex-item se encoja y active el scroll interno, no el ancho del padre */
   display: flex;
-  gap: 16px;
+  gap: 24px;
   overflow-x: auto;
   scroll-behavior: smooth;
   scroll-snap-type: x proximity;
   padding: 4px 2px 14px;
   -webkit-overflow-scrolling: touch; /* scroll táctil fluido en iOS */
 }
-.landing-carousel-tarjeta { flex: 0 0 150px; scroll-snap-align: start; }
+.landing-carousel-tarjeta { flex: 0 0 260px; scroll-snap-align: start; }
+/* Nombre y precio notoriamente más grandes que en las tarjetas de los banners (0.88rem, sin
+   precio) — proporción similar a la referencia de Samsung. El nombre pasa de una sola línea con
+   "..." a envolver en hasta 2 líneas (a este tamaño, truncado a una línea se veía peor); el precio
+   reutiliza el mismo .product-price/.price-unit de siempre en el resto de la app (detalle de
+   producto, catálogo) — precio único real, el catálogo no maneja precios de oferta. */
+.landing-carousel-tarjeta .producto-simple-nombre {
+  font-size: 1.2rem;
+  line-height: 1.3;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.landing-carousel-tarjeta .product-price { font-size: 1.4rem; margin-top: 4px; }
+
+/* Progreso + flechas en una sola fila, abajo a la derecha del carrusel (ver el comentario grande
+   más arriba) — el progreso ocupa el espacio sobrante (flex:1), las flechas quedan compactas a la
+   derecha, ya no flanqueando el carrusel entero. */
+.landing-carousel-footer {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-top: 4px;
+}
+.landing-carousel-arrows { display: flex; gap: 8px; flex-shrink: 0; }
 .landing-carousel-arrow {
   flex-shrink: 0;
-  width: 40px; height: 40px;
+  width: 36px; height: 36px;
   border-radius: 50%;
   background: white;
   border: 1px solid var(--borde);
   box-shadow: var(--sombra);
   color: var(--verde-oscuro);
-  font-size: 1.4rem;
+  font-size: 1.2rem;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.2s ease;
 }
 .landing-carousel-arrow:hover { background: var(--verde-pastel); }
 
 .landing-carousel-progreso {
+  flex: 1;
   height: 4px;
   background: var(--borde);
   border-radius: 999px;
-  margin-top: 2px;
   overflow: hidden;
 }
 .landing-carousel-progreso-barra {
@@ -794,13 +825,19 @@ input, select { font-family: inherit; }
   transition: width 0.15s ease;
 }
 @media (max-width: 760px) {
-  .landing-carousel-arrow { width: 34px; height: 34px; font-size: 1.2rem; }
-  .landing-carousel-tarjeta { flex-basis: 120px; }
+  .landing-carousel-arrow { width: 32px; height: 32px; font-size: 1.1rem; }
+  .landing-carousel-tarjeta { flex-basis: 190px; }
+  .landing-carousel { gap: 16px; }
 }
 
 /* Más aire entre bloques de la landing: el .section-header genérico (usado en muchas otras vistas,
-   no tocado ahí) no trae margin-top propio — se lo damos aquí, solo dentro de la landing. */
+   no tocado ahí) no trae margin-top propio — se lo damos aquí, solo dentro de la landing. El h2
+   tampoco trae tamaño propio (hereda el porte por defecto del navegador) — acá sí lo agrandamos,
+   otra vez solo dentro de la landing (#view-landing), a propósito distinto del resto de la app,
+   para que "Recomendado para ti" pese como título en vez de como encabezado de sección chico —
+   proporción similar a la referencia de Samsung. */
 #view-landing .section-header { margin-top: 64px; }
+#view-landing .section-header h2 { font-size: clamp(1.7rem, 2.6vw, 2.2rem); }
 @media (max-width: 760px) {
   #view-landing .section-header { margin-top: 40px; }
 }
@@ -1132,7 +1169,7 @@ input, select { font-family: inherit; }
   transition: background 0.2s ease;
 }
 .product-price { font-size: 1.3rem; font-weight: 800; color: var(--verde-principal); margin-top: 4px; }
-.product-price .price-unit { font-size: 0.78rem; font-weight: 600; color: var(--texto-suave); }
+.product-price .price-unit { font-size: 0.78rem; font-weight: 600; color: var(--texto-suave); white-space: nowrap; }
 .product-stock { font-size: 0.78rem; color: var(--texto-suave); }
 .product-stock.low { color: var(--naranja); font-weight: 600; }
 
