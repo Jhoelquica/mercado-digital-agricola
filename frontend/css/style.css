@@ -556,6 +556,20 @@ input, select { font-family: inherit; }
   margin-bottom: 36px;
 }
 
+/* ── Paleta de marca — PRIMERA aplicacion, SOLO los botones del hero (ver :root). Todo scopeado a
+   .landing-hero-actions: .btn-primary / .btn-outline GLOBALES no se tocan; nav, footer y el resto
+   del sitio siguen con la escala --verde-*. El <h1> del hero se mantiene blanco a proposito: los
+   colores de marca son oscuros y sobre el degradado del video quedarian ilegibles. El .btn base ya
+   trae `transition: ... background 0.2s ease`, asi que el hover ya es animado. ── */
+.landing-hero-actions .btn-primary       { background: var(--color-primario); }
+.landing-hero-actions .btn-primary:hover { background: var(--color-primario-hover); }
+.landing-hero-actions .btn-outline {
+  background: var(--color-fondo-secundario);
+  color: var(--color-primario);
+  border-color: var(--color-fondo-secundario); /* tapa el borde verde global (--verde-medio) */
+}
+.landing-hero-actions .btn-outline:hover { background: var(--color-fondo-secundario); } /* no vira a verde-pastel */
+
 .landing-hero-stats {
   display: flex; justify-content: flex-start; gap: 36px; flex-wrap: wrap;
   padding-top: 24px;
