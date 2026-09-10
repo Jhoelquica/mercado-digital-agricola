@@ -387,9 +387,9 @@ input, select { font-family: inherit; }
 .btn-primary { background: var(--color-primario); color: white; box-shadow: var(--sombra); }
 .btn-primary:hover { background: var(--color-primario-hover); box-shadow: var(--sombra-hover); transform: translateY(-1px); }
 .btn-outline { background: white; color: var(--color-primario); border: 1.5px solid var(--color-borde); }
-.btn-outline:hover { background: var(--color-superficie); transform: translateY(-1px); }
+.btn-outline:hover { background: color-mix(in srgb, var(--color-borde) 14%, transparent); transform: translateY(-1px); }
 .btn-ghost { background: transparent; color: var(--texto-suave); }
-.btn-ghost:hover { background: var(--color-superficie); color: var(--color-primario); }
+.btn-ghost:hover { background: color-mix(in srgb, var(--color-borde) 14%, transparent); color: var(--color-primario); }
 .btn-block { width: 100%; }
 .btn-danger { background: #fff0ee; color: var(--naranja); }
 .btn-danger:hover { background: #ffe0da; }
@@ -889,7 +889,7 @@ input, select { font-family: inherit; }
   display: inline-flex; align-items: center; justify-content: center;
   width: 56px; height: 56px;
   border-radius: 50%;
-  background: var(--color-superficie);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
   font-size: 1.6rem;
   margin-bottom: 14px;
 }
@@ -915,7 +915,7 @@ input, select { font-family: inherit; }
   width: 44px; height: 44px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 12px;
-  background: var(--color-superficie);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
   font-size: 1.3rem;
 }
 .landing-confianza-item strong { display: block; margin-bottom: 4px; color: var(--color-primario); }
@@ -1183,7 +1183,7 @@ input, select { font-family: inherit; }
 .detalle-productor-icono {
   width: 46px; height: 46px;
   border-radius: 50%;
-  background: var(--color-superficie);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
   display: flex; align-items: center; justify-content: center;
   font-size: 1.4rem;
   flex-shrink: 0;
@@ -1585,7 +1585,7 @@ input, select { font-family: inherit; }
   display: flex; align-items: center; justify-content: center;
   font-size: 1.2rem;
   flex-shrink: 0;
-  background: var(--color-superficie);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
 }
 .notif-icon.tipo-envio_actualizado { background: #cfe8ff; }
 .notif-icon.tipo-pedido_creado { background: #fde9d9; }
@@ -1628,7 +1628,7 @@ input, select { font-family: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--color-superficie);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
   color: var(--color-primario);
   font-weight: 700;
   font-size: 0.8rem;
