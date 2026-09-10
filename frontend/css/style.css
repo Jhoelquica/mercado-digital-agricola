@@ -16,6 +16,15 @@
   --radio: 16px;
   --font-titulo: 'Poppins', sans-serif;
   --font-texto: 'Inter', sans-serif;
+
+  /* Paleta de marca oficial — en adopcion gradual. Por ahora NINGUN componente la usa todavia;
+     se ira migrando hero -> nav -> footer -> resto en sesiones posteriores para no romper de golpe.
+     Convive a proposito con la escala --verde-* de arriba (--color-primario #2D3B2A NO es lo mismo
+     que --verde-oscuro #1b4332). */
+  --color-primario: #2D3B2A;         /* verde oscuro — texto de marca, CTA primario */
+  --color-primario-hover: #3D4F38;   /* hover del CTA primario */
+  --color-secundario: #5C5850;       /* gris calido — texto secundario, headings suaves */
+  --color-fondo-secundario: #E8E1D3; /* beige calido — fondo de boton/elemento secundario */
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
