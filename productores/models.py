@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Numeric, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Numeric, Float, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -18,6 +18,27 @@ class Productor(Base):
     longitud = Column(String, nullable=True)
 
 
+class Chacra(Base):
+    """Parcela/finca que el productor registra y a la que asocia cada RegistroProduccion.
+    Tabla nueva — la crea Base.metadata.create_all() al arrancar, igual que las demás
+    (ver comentario en RegistroProduccion)."""
+    __tablename__ = "chacras"
+    __table_args__ = (
+        # El código lo elige el productor y solo tiene que ser único DENTRO de su cuenta:
+        # dos productores distintos pueden tener ambos, p. ej., "CH-01". Lo que no se repite
+        # es la combinación (productor_id, codigo).
+        UniqueConstraint("productor_id", "codigo", name="uq_chacra_productor_codigo"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    productor_id = Column(UUID(as_uuid=True), ForeignKey("productores.id"), nullable=False)
+    codigo = Column(String, nullable=False)
+    nombre = Column(String, nullable=True)  # nombre descriptivo opcional, ej. "Chacra del cerro"
+    ubicacion_latitud = Column(Float, nullable=False)
+    ubicacion_longitud = Column(Float, nullable=False)
+    fecha_registro = Column(DateTime, default=datetime.utcnow)
+
+
 class RegistroProduccion(Base):
     """Módulo 1 de Gestión Económica: una siembra planificada que eventualmente se cosecha.
     Tabla nueva — no requiere ALTER TABLE, Base.metadata.create_all() (ya se llama al arrancar
@@ -27,6 +48,7 @@ class RegistroProduccion(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     productor_id = Column(UUID(as_uuid=True), ForeignKey("productores.id"), nullable=False)
+    chacra_id = Column(UUID(as_uuid=True), ForeignKey("chacras.id"), nullable=False)
 
     cultivo = Column(String, nullable=False)
     numero_parcelas = Column(Integer, nullable=False)

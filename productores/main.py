@@ -1,4 +1,5 @@
 import os
+import uuid
 import httpx
 from datetime import datetime
 
@@ -6,7 +7,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from auth import verificar_token, requiere_rol
 import pybreaker
 
@@ -41,9 +42,33 @@ class ProductorCrear(BaseModel):
     latitud: str | None = None
     longitud: str | None = None
 
+# ============ Chacras ============
+
+class ChacraCrear(BaseModel):
+    codigo: str
+    nombre: str | None = None
+    ubicacion_latitud: float
+    ubicacion_longitud: float
+
+class ChacraSalida(BaseModel):
+    # Los demás endpoints devuelven el objeto ORM crudo; acá se usa un schema de salida
+    # explícito (y como response_model) para dejar clara la forma pública de la entidad.
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    productor_id: uuid.UUID
+    codigo: str
+    nombre: str | None = None
+    ubicacion_latitud: float
+    ubicacion_longitud: float
+    fecha_registro: datetime
+
 # ============ Gestión Económica (Módulo 1) ============
 
 class RegistroProduccionCrear(BaseModel):
+    # Toda siembra se asocia a una chacra del productor (obligatorio). Se valida en el
+    # endpoint que la chacra pertenezca a la cuenta autenticada, no solo que exista.
+    chacra_id: uuid.UUID
     cultivo: str
     numero_parcelas: int
     ubicacion_cosecha: str | None = None
@@ -151,6 +176,105 @@ def _obtener_productor_del_token(usuario: dict, db: Session) -> models.Productor
     return productor
 
 
+# ============ Chacras (CRUD) ============
+
+def _obtener_chacra_propia(chacra_id: str, productor: models.Productor, db: Session) -> models.Chacra:
+    """Devuelve la chacra si existe y es del productor. 404 si no existe, 403 si es de otro
+    (mismo criterio que completar_cosecha con los registros de producción)."""
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == chacra_id).first()
+    if not chacra:
+        raise HTTPException(status_code=404, detail="Chacra no encontrada")
+    if str(chacra.productor_id) != str(productor.id):
+        raise HTTPException(status_code=403, detail="Esta chacra no te pertenece")
+    return chacra
+
+
+@app.post("/chacras", response_model=ChacraSalida)
+def crear_chacra(
+    datos: ChacraCrear,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    productor = _obtener_productor_del_token(usuario, db)
+
+    # Pre-chequeo para dar el mensaje amigable; el UniqueConstraint (productor_id, codigo)
+    # en models.Chacra es el respaldo a nivel de base de datos. Mismo enfoque que crear_productor.
+    duplicada = db.query(models.Chacra).filter(
+        models.Chacra.productor_id == productor.id,
+        models.Chacra.codigo == datos.codigo,
+    ).first()
+    if duplicada:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ya tienes una chacra registrada con el código '{datos.codigo}'.",
+        )
+
+    nueva = models.Chacra(
+        productor_id=productor.id,
+        codigo=datos.codigo,
+        nombre=datos.nombre,
+        ubicacion_latitud=datos.ubicacion_latitud,
+        ubicacion_longitud=datos.ubicacion_longitud,
+    )
+    db.add(nueva)
+    db.commit()
+    db.refresh(nueva)
+    return nueva
+
+
+@app.get("/chacras/me", response_model=list[ChacraSalida])
+def listar_mis_chacras(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    productor = _obtener_productor_del_token(usuario, db)
+    return db.query(models.Chacra).filter(
+        models.Chacra.productor_id == productor.id
+    ).order_by(models.Chacra.fecha_registro.desc()).all()
+
+
+@app.get("/chacras/{chacra_id}", response_model=ChacraSalida)
+def obtener_chacra(
+    chacra_id: str,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    productor = _obtener_productor_del_token(usuario, db)
+    return _obtener_chacra_propia(chacra_id, productor, db)
+
+
+@app.put("/chacras/{chacra_id}", response_model=ChacraSalida)
+def editar_chacra(
+    chacra_id: str,
+    datos: ChacraCrear,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    productor = _obtener_productor_del_token(usuario, db)
+    chacra = _obtener_chacra_propia(chacra_id, productor, db)
+
+    # Si cambia el código, no debe chocar con otra chacra del mismo productor.
+    if datos.codigo != chacra.codigo:
+        choque = db.query(models.Chacra).filter(
+            models.Chacra.productor_id == productor.id,
+            models.Chacra.codigo == datos.codigo,
+            models.Chacra.id != chacra.id,
+        ).first()
+        if choque:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ya tienes una chacra registrada con el código '{datos.codigo}'.",
+            )
+
+    chacra.codigo = datos.codigo
+    chacra.nombre = datos.nombre
+    chacra.ubicacion_latitud = datos.ubicacion_latitud
+    chacra.ubicacion_longitud = datos.ubicacion_longitud
+    db.commit()
+    db.refresh(chacra)
+    return chacra
+
+
 # Mismo patrón que breaker_productores en productos/main.py (fail_max=3, reset_timeout=30):
 # tras 3 fallos seguidos llamando a Productos, deja de intentar la conexión real durante 30s y
 # falla instantáneo con CircuitBreakerError — así una caída de Productos no le cuesta hasta 5s
@@ -239,6 +363,7 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
     return {
         "id": registro.id,
         "productor_id": registro.productor_id,
+        "chacra_id": registro.chacra_id,
         "cultivo": registro.cultivo,
         "numero_parcelas": registro.numero_parcelas,
         "ubicacion_cosecha": registro.ubicacion_cosecha,
@@ -266,6 +391,12 @@ def crear_registro_produccion(
 ):
     productor = _obtener_productor_del_token(usuario, db)
 
+    # La chacra debe pertenecer al productor autenticado — que exista no alcanza (podría ser
+    # de otro productor). Mismo trato para "no existe" y "no es tuya": 403, sin filtrar cuál.
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == datos.chacra_id).first()
+    if not chacra or str(chacra.productor_id) != str(productor.id):
+        raise HTTPException(status_code=403, detail="La chacra especificada no pertenece a tu cuenta.")
+
     if datos.numero_parcelas <= 0:
         raise HTTPException(status_code=422, detail="El número de parcelas debe ser mayor a 0")
     if datos.fecha_cosecha_estimada < datos.fecha_siembra:
@@ -278,6 +409,7 @@ def crear_registro_produccion(
 
     nuevo = models.RegistroProduccion(
         productor_id=productor.id,
+        chacra_id=datos.chacra_id,
         cultivo=datos.cultivo,
         numero_parcelas=datos.numero_parcelas,
         ubicacion_cosecha=datos.ubicacion_cosecha,

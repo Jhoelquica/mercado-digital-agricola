@@ -7,3 +7,4 @@ python-jose[cryptography]
 prometheus-fastapi-instrumentator
 httpx
 pybreaker
+pytest
