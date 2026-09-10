@@ -87,14 +87,18 @@
   <section id="view-landing" class="view active">
     <div class="landing-hero">
       <div class="detalle-video-wrap">
+        <!-- Hero de landing: <video> nativo autoplay + loop, INDEPENDIENTE del sistema de galería de
+             producto (app.js no lo toca — sin configurarVideoGaleria, sin observer, sin botón replay).
+             src directo (no data-src diferido) para que se vea desde el primer frame; poster como
+             fallback mientras carga. Las clases .detalle-video / .detalle-video-wrap se conservan solo
+             por el layout compartido (object-fit:cover + degradado + texto), no aportan comportamiento. -->
         <video
           class="detalle-video"
-          muted playsinline
-          preload="metadata"
+          autoplay muted loop playsinline
+          preload="auto"
           poster="assets/hero-valle-andino-1600.jpg"
-          data-src="assets/videos/hero-valle-loop.mp4"
+          src="assets/videos/hero-valle-bg.mp4"
           aria-label="Valle andino con terrazas de cultivo agrícola, video ambiental"></video>
-        <button type="button" class="detalle-video-replay hidden" aria-label="Reproducir de nuevo"><i class="ti ti-player-play"></i></button>
         <div class="detalle-video-degradado"></div>
         <div class="landing-hero-content detalle-video-texto">
           <span class="landing-kicker"><i class="ti ti-map-pin"></i> Hecho en Ayacucho, Perú</span>
