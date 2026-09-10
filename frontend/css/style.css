@@ -1604,6 +1604,40 @@ input, select { font-family: inherit; }
 .card-panel h3 { margin-bottom: 6px; }
 .muted { color: var(--texto-suave); font-size: 0.9rem; margin-bottom: 16px; }
 
+/* ---------- PANEL VERIFICADOR ---------- */
+/* Contenido nuevo — nace con la paleta de marca (--color-*), sin la escala --verde-* vieja.
+   Tabs tipo pill, mismo patrón que .pedidos-tabs pero con los tokens nuevos. */
+.verificador-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.verificador-tab {
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: white;
+  border: 1.5px solid var(--color-borde);
+  color: var(--color-secundario);
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.verificador-tab:hover {
+  background: color-mix(in srgb, var(--color-borde) 14%, transparent);
+  color: var(--color-primario);
+}
+.verificador-tab.active {
+  background: var(--color-primario);
+  color: white;
+  border-color: var(--color-primario);
+}
+.verificador-seccion { animation: fadeIn 0.25s ease; }
+#view-panel-verificador .card-panel { border-color: var(--color-borde); max-width: 480px; }
+#verificador-cuenta-nombre { color: var(--color-primario); }
+#btn-verificador-logout { margin-top: 4px; }
+
 /* ---------- MI PERFIL ---------- */
 #perfil-contenido { display: flex; flex-direction: column; gap: 20px; }
 #perfil-contenido > * { animation: aparecerTarjeta 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards; }

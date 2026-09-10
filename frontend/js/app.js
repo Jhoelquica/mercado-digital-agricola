@@ -641,6 +641,7 @@ function actualizarUIAuth() {
   document.getElementById('nav-account-user').classList.toggle('hidden', !logueado);
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
+  document.querySelector('.nav-verificador').classList.toggle('hidden', !(logueado && Estado.rol === 'verificador'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
   if (logueado) {
@@ -774,6 +775,7 @@ function cambiarVista(nombre, parametro) {
   if (nombre === 'notificaciones') cargarNotificaciones();
   if (nombre === 'panel-productor') iniciarPanelProductor();
   if (nombre === 'gestion-envios') cargarGestionEnvios();
+  if (nombre === 'panel-verificador') iniciarPanelVerificador();
   if (nombre === 'perfil') cargarPerfil();
   if (nombre === 'detalle-producto') cargarDetalleProducto(parametro);
 }
@@ -2943,6 +2945,49 @@ async function cargarGestionEnvios() {
   iniciarSeguimientoRepartidor();
 }
 
+// ============ PANEL VERIFICADOR ============
+// Scaffolding: guard de rol + "Mi cuenta" (nombre del verificador). Las secciones "Cosechas
+// pendientes" e "Historial" son placeholders — su contenido va en entregas separadas.
+// Mismo guard que iniciarPanelProductor / cargarGestionEnvios: sin token o rol != verificador
+// -> se manda a inicio (no hay pantalla 403 propia en esta SPA, redirigir es el patrón).
+async function iniciarPanelVerificador() {
+  if (!Estado.token || Estado.rol !== 'verificador') {
+    cambiarVista('inicio');
+    return;
+  }
+
+  // Al entrar al panel siempre se muestra la primera sección (por si quedó otra activa de antes).
+  seleccionarSeccionVerificador('cosechas');
+
+  const nombreEl = document.getElementById('verificador-cuenta-nombre');
+  const detalleEl = document.getElementById('verificador-cuenta-detalle');
+  nombreEl.textContent = Estado.nombre || 'Mi cuenta';
+  detalleEl.textContent = 'Cargando tu perfil de verificador…';
+
+  try {
+    const perfil = await Api.verificadores.miPerfil();
+    nombreEl.textContent = perfil.nombre || Estado.nombre || 'Verificador';
+    detalleEl.textContent = perfil.credencial
+      ? `Credencial: ${perfil.credencial}`
+      : 'Verificador de Chakra Shop';
+  } catch (err) {
+    // 404 = tiene el rol pero aún no creó su perfil de verificador (POST /verificadores).
+    // El alta de ese perfil es una entrega aparte; acá solo se informa.
+    detalleEl.textContent = err.status === 404
+      ? 'Todavía no completaste tu perfil de verificador.'
+      : 'No se pudo cargar tu perfil de verificador.';
+  }
+}
+
+function seleccionarSeccionVerificador(seccion) {
+  document.querySelectorAll('#view-panel-verificador .verificador-tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.vseccion === seccion);
+  });
+  document.querySelectorAll('#view-panel-verificador .verificador-seccion').forEach((s) => {
+    s.classList.toggle('hidden', s.dataset.vseccion !== seccion);
+  });
+}
+
 async function crearPerfilRepartidor(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
@@ -3795,6 +3840,13 @@ function inicializarEventos() {
 
   document.getElementById('form-repartidor').addEventListener('submit', crearPerfilRepartidor);
   document.getElementById('btn-refrescar-envios').addEventListener('click', cargarGestionEnvios);
+
+  // ---- Panel Verificador: navegación entre secciones + logout ----
+  document.getElementById('verificador-tabs').addEventListener('click', (e) => {
+    const tab = e.target.closest('.verificador-tab');
+    if (tab) seleccionarSeccionVerificador(tab.dataset.vseccion);
+  });
+  document.getElementById('btn-verificador-logout').addEventListener('click', cerrarSesion);
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-actualizar-envio');
     if (!btn) return;

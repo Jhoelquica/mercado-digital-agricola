@@ -140,6 +140,11 @@ const Api = {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),
     crear: (datos) => request('transporte', '/repartidores', { method: 'POST', body: datos, auth: true }),
   },
+  verificadores: {
+    // El rol Verificador vive en el servicio de certificación (8008) — mismo caso que
+    // Api.repartidores, que usa el servicio de transporte y no uno propio.
+    miPerfil: () => request('certificacion', '/verificadores/me', { auth: true }),
+  },
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),
     listarTodas: () => request('notificaciones', '/notificaciones', { auth: true }),

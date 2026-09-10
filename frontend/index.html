@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=4106ff5b">
+<link rel="stylesheet" href="css/style.css?v=7b2e05a1">
 </head>
 <body>
 
@@ -30,6 +30,7 @@
       <div class="nav-categorias" id="nav-categorias"></div>
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
       <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
+      <button class="nav-link nav-verificador hidden" data-nav="panel-verificador">Panel Verificador</button>
     </nav>
 
     <div class="nav-actions">
@@ -435,6 +436,45 @@
     </div>
   </section>
 
+  <!-- PANEL VERIFICADOR — scaffolding: layout + navegación + auth. Las pantallas de contenido
+       (cosechas pendientes, aprobar/rechazar, historial real) van en entregas separadas.
+       Vista SPA como panel-productor / gestion-envios; guard en iniciarPanelVerificador(). -->
+  <section id="view-panel-verificador" class="view">
+    <div class="section-header">
+      <h2><i class="ti ti-shield-check"></i> Panel Verificador</h2>
+    </div>
+
+    <nav class="verificador-tabs" id="verificador-tabs" aria-label="Secciones del panel">
+      <button type="button" class="verificador-tab active" data-vseccion="cosechas">Cosechas pendientes</button>
+      <button type="button" class="verificador-tab" data-vseccion="historial">Historial</button>
+      <button type="button" class="verificador-tab" data-vseccion="cuenta">Mi cuenta</button>
+    </nav>
+
+    <div class="verificador-seccion" data-vseccion="cosechas">
+      <div class="empty-state">
+        <span class="empty-state-icon"><i class="ti ti-plant-2"></i></span>
+        <p><strong>Cosechas pendientes</strong></p>
+        <p class="muted">Próximamente — acá vas a revisar y certificar las cosechas que esperan verificación.</p>
+      </div>
+    </div>
+
+    <div class="verificador-seccion hidden" data-vseccion="historial">
+      <div class="empty-state">
+        <span class="empty-state-icon"><i class="ti ti-history"></i></span>
+        <p><strong>Historial</strong></p>
+        <p class="muted">Próximamente — el registro de todo lo que verificaste.</p>
+      </div>
+    </div>
+
+    <div class="verificador-seccion hidden" data-vseccion="cuenta">
+      <div class="card-panel">
+        <h3 id="verificador-cuenta-nombre">Mi cuenta</h3>
+        <p class="muted" id="verificador-cuenta-detalle">—</p>
+        <button type="button" class="btn btn-outline" id="btn-verificador-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
+      </div>
+    </div>
+  </section>
+
   <!-- MI PERFIL -->
   <section id="view-perfil" class="view">
     <div class="section-header">
@@ -493,6 +533,7 @@
           <option value="comprador">Comprador (restaurante, mercado, persona)</option>
           <option value="productor">Productor (agricultor)</option>
           <option value="repartidor">Repartidor</option>
+          <option value="verificador">Verificador (certifica el origen de las cosechas)</option>
         </select>
       </label>
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
@@ -591,7 +632,7 @@
 
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="js/api.js?v=9a19ef5b"></script>
-<script src="js/app.js?v=db31ace7"></script>
+<script src="js/api.js?v=7b2e05a1"></script>
+<script src="js/app.js?v=7b2e05a1"></script>
 </body>
 </html>
