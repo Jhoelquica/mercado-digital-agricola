@@ -95,6 +95,9 @@ PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
 # produccion) — ningún otro servicio llama a estos endpoints.
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
+# Sin fallback hardcodeado a propósito (mismo criterio). La envía aprobar_cosecha al crear el
+# producto en el catálogo — Productos valida este mismo valor en crear_producto_desde_cosecha.
+PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")
 
 @app.get("/salud")
 def salud():
@@ -285,9 +288,24 @@ def editar_chacra(
 # (medido: 3 registros con 3 cultivos distintos tardaban 10.2s en total antes de esto).
 breaker_productos = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 
+# Dedicado a la llamada de aprobar_cosecha (POST /productos/interno/crear-desde-cosecha) — NO
+# comparte breaker con breaker_productos (arriba): son llamadas distintas hacia el mismo
+# servicio, con causas y consecuencias de fallo propias. Que precio-referencia esté fallando no
+# debería abrir el circuito de creación de productos, ni al revés.
+breaker_crear_producto = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
+
 
 def _pedir_precio_referencia(cultivo: str):
     return httpx.get(f"{PRODUCTOS_URL}/productos/precio-referencia/{cultivo}", timeout=5)
+
+
+def _pedir_crear_producto_desde_cosecha(payload: dict):
+    return httpx.post(
+        f"{PRODUCTOS_URL}/productos/interno/crear-desde-cosecha",
+        json=payload,
+        headers={"X-Servicio-Secreto": PRODUCTORES_A_PRODUCTOS_SECRETO},
+        timeout=5,
+    )
 
 
 def _consultar_precio_referencia(cultivo: str):
@@ -566,6 +584,48 @@ def aprobar_cosecha(
 ):
     registro = _obtener_registro_pendiente_verificacion(registro_id, db)
 
+    productor = db.query(models.Productor).filter(models.Productor.id == registro.productor_id).first()
+
+    payload = {
+        "productor_id": str(registro.productor_id),
+        "productor_nombre": productor.nombre,
+        "nombre": registro.cultivo,
+        "unidad_medida": registro.unidad_medida,
+        # RegistroProduccion.cantidad_cosechada es Numeric (admite decimales, ej. 45.5 kg);
+        # Producto.stock es entero — se redondea en vez de truncar para no perder unidades
+        # completas por un simple recorte de decimales (45.9 -> 46, no 45).
+        "stock": round(float(registro.cantidad_cosechada)),
+        "registro_produccion_id": str(registro.id),
+    }
+
+    # Se crea el producto ANTES de tocar el estado/historial acá abajo: si esta llamada falla,
+    # la cosecha se queda en pendiente_verificacion (nunca "aprobado" sin un producto real
+    # detrás) y el Verificador puede simplemente reintentar aprobar más tarde.
+    try:
+        resp = breaker_crear_producto.call(_pedir_crear_producto_desde_cosecha, payload)
+    except (pybreaker.CircuitBreakerError, httpx.RequestError):
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo crear el producto en el catálogo. Intenta aprobar de nuevo en unos momentos.",
+        )
+
+    producto_id_creado = None
+    if resp.status_code == 200:
+        producto_id_creado = resp.json().get("id")
+    elif resp.status_code == 409:
+        # Reintento tras un intento anterior que sí llegó a crear el producto en Productos pero
+        # falló después de eso (antes de confirmar acá) — ver UniqueConstraint sobre
+        # registro_produccion_id en productos/models.py. Este ES el resultado esperado, no una
+        # falla: si lo tratáramos como error, un reintento nunca podría completar la aprobación
+        # (siempre volvería a chocar contra el mismo 409). No tenemos el id del producto acá —
+        # el 409 no lo devuelve — así que producto_id_creado queda en None en este caso puntual.
+        pass
+    else:
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo crear el producto en el catálogo. Intenta aprobar de nuevo en unos momentos.",
+        )
+
     registro.estado = "aprobado"
     db.add(models.HistorialVerificacionCosecha(
         registro_produccion_id=registro.id,
@@ -575,12 +635,9 @@ def aprobar_cosecha(
     db.commit()
     db.refresh(registro)
 
-    # TODO(sub-entrega 3 — creación de producto): acá va la llamada que crea automáticamente el
-    # Producto en el catálogo (servicio Productos) a partir de este RegistroProduccion. Todavía
-    # no existe el vínculo Producto <-> RegistroProduccion ni el mapeo de campos (cultivo-> nombre,
-    # unidad_medida, etc.) — ver el reporte de la investigación previa a esta sub-entrega.
-
-    return _serializar_registro(registro, {}, db)
+    resultado = _serializar_registro(registro, {}, db)
+    resultado["producto_id"] = producto_id_creado
+    return resultado
 
 
 @app.post("/productores/produccion/{registro_id}/rechazar")

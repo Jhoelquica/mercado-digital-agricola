@@ -45,6 +45,13 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            # aprobar_cosecha llama a POST /productos/interno/crear-desde-cosecha con este
+            # secreto — Productos valida el mismo valor del lado suyo (ver k8s/productos.yaml).
+            - name: PRODUCTORES_A_PRODUCTOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTORES_A_PRODUCTOS_SECRETO
 ---
 apiVersion: v1
 kind: Service

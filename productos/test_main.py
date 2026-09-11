@@ -301,3 +301,24 @@ def test_crear_desde_cosecha_con_secreto_crea_borrador():
     assert catalogo.status_code == 200, catalogo.text
     ids_catalogo = {p["id"] for p in catalogo.json()}
     assert cuerpo["id"] not in ids_catalogo
+
+
+def test_crear_desde_cosecha_duplicado_falla_409():
+    # Simula el reintento de Productores tras un fallo de red que sí había llegado a crear el
+    # producto la primera vez: mismo registro_produccion_id, segunda llamada.
+    payload = {
+        "productor_id": str(uuid.uuid4()),
+        "productor_nombre": "Chacra de Juana",
+        "nombre": "Papa Nativa",
+        "unidad_medida": "kg",
+        "stock": 50,
+        "registro_produccion_id": str(uuid.uuid4()),
+    }
+    headers = {"X-Servicio-Secreto": main.PRODUCTORES_A_PRODUCTOS_SECRETO}
+
+    primera = client.post("/productos/interno/crear-desde-cosecha", json=payload, headers=headers)
+    assert primera.status_code == 200, primera.text
+
+    segunda = client.post("/productos/interno/crear-desde-cosecha", json=payload, headers=headers)
+    assert segunda.status_code == 409
+    assert segunda.json()["detail"] == "Ya existe un producto para esta cosecha."

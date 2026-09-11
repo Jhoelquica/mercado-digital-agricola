@@ -14,15 +14,21 @@ Cubre:
 - rechazar con motivo -> ok; sin motivo -> 422
 - reenvío tras rechazo (mismo endpoint completar-cosecha) -> vuelve a pendiente_verificacion
 - listar pendientes-verificacion solo trae lo que corresponde
+- aprobar crea el producto en Productos (payload correcto) y devuelve su id
+- aprobar cuando la llamada a Productos falla -> 502, NO transiciona ni registra historial,
+  y un reintento posterior sí se completa
+- aprobar cuando Productos responde 409 (producto ya creado en un intento anterior) se trata
+  como éxito idempotente, no como falla
 
 Requiere una base de datos Postgres real accesible según database.py (tipos UUID de
 postgresql + create_all() al importar main) — no se puede sustituir por SQLite.
 crear_registro_produccion no llama a servicios externos cuando el registro aún no está
 cosechado (cantidad_cosechada is None), y el test de 403 falla antes de llegar a crear el
 registro, así que esos no necesitan mock. completar_cosecha() sí dispara una consulta de
-precio de referencia a Productos (_consultar_precio_referencia) — como este archivo no levanta
-ese servicio, los tests que completan una cosecha mockean esa función puntual (no el circuit
-breaker ni httpx) para no depender de una red real ni de sus timeouts.
+precio de referencia a Productos (_consultar_precio_referencia), y aprobar_cosecha() llama a
+Productos para crear el producto (_pedir_crear_producto_desde_cosecha) — como este archivo no
+levanta ese servicio, los tests que ejercitan esos caminos mockean esas funciones puntuales (no
+el circuit breaker ni httpx) para no depender de una red real ni de sus timeouts.
 """
 import uuid
 from datetime import datetime, timedelta
@@ -162,6 +168,38 @@ def _completar_cosecha(monkeypatch, registro_id: str, cantidad: float = 50.0):
     )
 
 
+class _RespuestaFalsaProductos:
+    def __init__(self, status_code, data=None):
+        self.status_code = status_code
+        self._data = data or {}
+
+    def json(self):
+        return self._data
+
+
+def _mockear_crear_producto_desde_cosecha(monkeypatch, status_code: int = 200, producto_id: str = "producto-fake-id"):
+    """aprobar_cosecha llama a Productos vía
+    breaker_crear_producto.call(_pedir_crear_producto_desde_cosecha, payload) — se mockea esa
+    función puntual (no el breaker ni httpx), mismo criterio que _completar_cosecha con
+    _consultar_precio_referencia. Se fuerza el breaker a cerrado antes de cada uso para que un
+    fallo inducido por otro test no deje el circuito abierto y contamine este.
+    """
+    main.breaker_crear_producto.close()
+    monkeypatch.setattr(
+        main, "_pedir_crear_producto_desde_cosecha",
+        lambda payload: _RespuestaFalsaProductos(status_code, {"id": producto_id}),
+    )
+
+
+def _mockear_crear_producto_desde_cosecha_falla(monkeypatch):
+    main.breaker_crear_producto.close()
+
+    def _falla(payload):
+        raise main.httpx.RequestError("fallo simulado de red")
+
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", _falla)
+
+
 def _crear_registro_pendiente_verificacion(monkeypatch) -> tuple[str, str]:
     """Crea productor + chacra + registro y lo completa (queda en pendiente_verificacion). Deja
     al productor como usuario autenticado al retornar. Devuelve (registro_id, productor_sub)."""
@@ -201,10 +239,12 @@ def test_completar_cosecha_en_estado_no_permitido_falla_409(monkeypatch):
 def test_aprobar_desde_pendiente_verificacion_ok(monkeypatch):
     registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
 
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-abc")
     sub_verificador = _como_verificador()
     resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
     assert resp.status_code == 200, resp.text
     assert resp.json()["estado"] == "aprobado"
+    assert resp.json()["producto_id"] == "producto-abc"
 
     db = main.SessionLocal()
     try:
@@ -214,6 +254,99 @@ def test_aprobar_desde_pendiente_verificacion_ok(monkeypatch):
         assert fila.accion == "aprobado"
         assert str(fila.verificador_id) == sub_verificador
         assert fila.motivo is None
+    finally:
+        db.close()
+
+
+def test_aprobar_envia_el_payload_correcto_a_productos(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+
+    db = main.SessionLocal()
+    try:
+        registro = db.query(main.models.RegistroProduccion).filter(
+            main.models.RegistroProduccion.id == registro_id
+        ).one()
+        productor = db.query(main.models.Productor).filter(
+            main.models.Productor.id == registro.productor_id
+        ).one()
+        cultivo_esperado = registro.cultivo
+        unidad_esperada = registro.unidad_medida
+        stock_esperado = round(float(registro.cantidad_cosechada))
+        nombre_productor_esperado = productor.nombre
+    finally:
+        db.close()
+
+    capturado = {}
+    main.breaker_crear_producto.close()
+
+    def _capturar(payload):
+        capturado.update(payload)
+        return _RespuestaFalsaProductos(200, {"id": "producto-capturado"})
+
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", _capturar)
+
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+    assert resp.status_code == 200, resp.text
+
+    assert capturado["registro_produccion_id"] == registro_id
+    assert capturado["nombre"] == cultivo_esperado
+    assert capturado["unidad_medida"] == unidad_esperada
+    assert capturado["stock"] == stock_esperado
+    assert capturado["productor_nombre"] == nombre_productor_esperado
+
+
+def test_aprobar_cuando_productos_falla_no_transiciona_ni_registra_historial(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+
+    _mockear_crear_producto_desde_cosecha_falla(monkeypatch)
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "No se pudo crear el producto en el catálogo. Intenta aprobar de nuevo en unos momentos."
+
+    # Sigue pendiente_verificacion -> el Verificador puede simplemente reintentar.
+    db = main.SessionLocal()
+    try:
+        registro = db.query(main.models.RegistroProduccion).filter(
+            main.models.RegistroProduccion.id == registro_id
+        ).one()
+        assert registro.estado == "pendiente_verificacion"
+
+        total_historial = db.query(main.models.HistorialVerificacionCosecha).filter(
+            main.models.HistorialVerificacionCosecha.registro_produccion_id == registro_id
+        ).count()
+        assert total_historial == 0
+    finally:
+        db.close()
+
+    # Reintento posterior con Productos ya funcionando -> se completa normalmente.
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-tras-reintento")
+    reintento = client.post(f"/productores/produccion/{registro_id}/aprobar")
+    assert reintento.status_code == 200, reintento.text
+    assert reintento.json()["estado"] == "aprobado"
+    assert reintento.json()["producto_id"] == "producto-tras-reintento"
+
+
+def test_aprobar_con_409_de_productos_es_idempotente(monkeypatch):
+    # Simula: Productos ya había creado el producto en un intento anterior (ver
+    # UniqueConstraint sobre registro_produccion_id en productos/models.py), pero la respuesta
+    # nunca llegó a confirmarse acá — el Verificador reintenta aprobar.
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+
+    _mockear_crear_producto_desde_cosecha(monkeypatch, status_code=409)
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "aprobado"
+    assert resp.json()["producto_id"] is None  # el 409 no devuelve el id del producto existente
+
+    db = main.SessionLocal()
+    try:
+        total_historial = db.query(main.models.HistorialVerificacionCosecha).filter(
+            main.models.HistorialVerificacionCosecha.registro_produccion_id == registro_id
+        ).count()
+        assert total_historial == 1
     finally:
         db.close()
 
@@ -308,6 +441,7 @@ def test_listar_pendientes_verificacion_solo_trae_correctos(monkeypatch):
 
     # Uno aprobado: no debe aparecer en la lista de pendientes.
     aprobado_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch)
     _como_verificador()
     aprobar = client.post(f"/productores/produccion/{aprobado_id}/aprobar")
     assert aprobar.status_code == 200, aprobar.text

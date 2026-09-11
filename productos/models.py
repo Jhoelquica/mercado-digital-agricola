@@ -3,11 +3,18 @@ from datetime import datetime
 from sqlalchemy import Column, String, Numeric, Integer, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
-from sqlalchemy import Column, String, Numeric, Integer, DateTime, ForeignKey
+from sqlalchemy import Column, String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 class Producto(Base):
     __tablename__ = "productos"
+    __table_args__ = (
+        # Un solo producto por cosecha aprobada — evita duplicados si Productores reintenta
+        # crear_producto_desde_cosecha (ej. tras un timeout de red que sí llegó a completarse
+        # del lado de Productos). NULL no choca contra NULL en Postgres, así que los productos
+        # creados a mano (sin registro_produccion_id) conviven sin problema entre sí.
+        UniqueConstraint("registro_produccion_id", name="uq_producto_registro_produccion"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     productor_id = Column(UUID(as_uuid=True), nullable=False)

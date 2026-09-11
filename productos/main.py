@@ -3,6 +3,7 @@ import os
 import httpx
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -600,7 +601,13 @@ def crear_producto_desde_cosecha(
 
     productor_nombre viaja en el body en vez de resolverse acá: quien llama (Productores) ya
     tiene ese dato en su propia base, así que no hace falta una llamada cruzada solo para
-    obtenerlo (mismo criterio que productor_id, que tampoco se resuelve desde un token)."""
+    obtenerlo (mismo criterio que productor_id, que tampoco se resuelve desde un token).
+
+    Idempotente por construcción: UniqueConstraint("registro_produccion_id") en el modelo
+    (models.py) es quien de verdad evita duplicados si Productores reintenta esta llamada tras
+    un fallo de red — acá solo se traduce esa violación en un 409 legible, no se re-implementa
+    la unicidad a mano con un SELECT previo (que además sería vulnerable a una carrera entre
+    el chequeo y el insert)."""
     if x_servicio_secreto != PRODUCTORES_A_PRODUCTOS_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
@@ -616,7 +623,11 @@ def crear_producto_desde_cosecha(
         registro_produccion_id=datos.registro_produccion_id,
     )
     db.add(nuevo)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya existe un producto para esta cosecha.")
     db.refresh(nuevo)
     # Sin invalidar CLAVE_CATALOGO: un producto en "borrador" no aparece en GET /productos de
     # todos modos (filtrado por estado == "publicado"), así que esta alta no le cambia el
