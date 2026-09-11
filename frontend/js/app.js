@@ -10,6 +10,8 @@ const Estado = {
   productorId: null,
   repartidorId: null,
   enviosRepartidor: [],
+  chacras: [], // chacras del productor autenticado — las usan tanto "Mis chacras" (panel-productor)
+               // como el selector de chacra en "Registrar nueva siembra" (Mi Perfil)
   imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
 };
 
@@ -2591,6 +2593,8 @@ async function iniciarPanelProductor() {
     poblarSelectCategoriaProducto();
     reiniciarFormularioProducto();
     cargarMisProductos();
+    inicializarMapaUbicacionChacra();
+    cargarMisChacras();
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
@@ -2774,7 +2778,12 @@ async function crearRegistroProduccion(e) {
   const btn = e.target.querySelector('button[type="submit"]');
   const unidad = document.getElementById('produccion-unidad').value;
   const equivalenciaValor = document.getElementById('produccion-equivalencia').value;
+  const chacraId = document.getElementById('produccion-chacra').value;
 
+  if (!chacraId) {
+    toast('Registra una chacra antes de poder registrar una siembra', 'error');
+    return;
+  }
   if (unidad !== 'kg' && !equivalenciaValor) {
     toast('Indica la equivalencia a kg para esta unidad de medida', 'error');
     return;
@@ -2784,6 +2793,7 @@ async function crearRegistroProduccion(e) {
   try {
     const datos = {
       cultivo: document.getElementById('produccion-cultivo').value.trim(),
+      chacra_id: chacraId,
       numero_parcelas: parseInt(document.getElementById('produccion-parcelas').value, 10),
       ubicacion_cosecha: document.getElementById('produccion-ubicacion').value.trim() || null,
       costo_semillas: parseFloat(document.getElementById('produccion-costo-semillas').value) || 0,
@@ -2929,6 +2939,116 @@ async function cargarMisProductos() {
     grid.innerHTML = mios.map((p, i) => renderTarjetaProductorProducto(p, i)).join('');
   } catch (err) {
     manejarError(err, 'cargar tus productos');
+  }
+}
+
+// ---- Mis chacras (panel-productor) — mismo patrón de mapa seleccionable que el perfil de
+// productor (inicializarMapaUbicacionProductor). Cada RegistroProduccion exige un chacra_id, así
+// que esta sección es un prerrequisito real de "Registrar nueva siembra" en Mi Perfil. ----
+let mapaUbicacionChacra = null;
+let ubicacionChacraSeleccionada = null; // { lat, lng }
+
+function inicializarMapaUbicacionChacra() {
+  if (mapaUbicacionChacra) {
+    try { mapaUbicacionChacra.mapa.remove(); } catch { /* ya estaba destruido */ }
+    mapaUbicacionChacra = null;
+  }
+  ubicacionChacraSeleccionada = null;
+  const ayuda = document.getElementById('mapa-chacra-ayuda');
+  if (ayuda) {
+    ayuda.textContent = 'Toca el mapa para marcar dónde está la chacra.';
+    ayuda.classList.remove('confirmado');
+  }
+
+  mapaUbicacionChacra = crearMapaSeleccionable('mapa-ubicacion-chacra', {
+    emoji: '<i class="ti ti-map-pin"></i>',
+    color: '#2d6a4f',
+    onSeleccionar: (lat, lng) => {
+      ubicacionChacraSeleccionada = { lat, lng };
+      actualizarAyudaUbicacionChacra();
+    },
+  });
+}
+
+function actualizarAyudaUbicacionChacra() {
+  const ayuda = document.getElementById('mapa-chacra-ayuda');
+  if (!ayuda || !ubicacionChacraSeleccionada) return;
+  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionChacraSeleccionada.lat.toFixed(5)}, ${ubicacionChacraSeleccionada.lng.toFixed(5)})`;
+  ayuda.classList.add('confirmado');
+}
+
+async function usarMiUbicacionChacra() {
+  const btn = document.getElementById('btn-ubicacion-chacra');
+  btn.disabled = true;
+  btn.textContent = 'Obteniendo ubicación...';
+  try {
+    const { lat, lng } = await obtenerUbicacionActual();
+    mapaUbicacionChacra?.moverMarcador(lat, lng);
+    ubicacionChacraSeleccionada = { lat, lng };
+    actualizarAyudaUbicacionChacra();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Usar mi ubicación';
+  }
+}
+
+async function crearChacra(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (!ubicacionChacraSeleccionada) {
+    toast('Marca la ubicación de la chacra en el mapa', 'error');
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const datos = {
+      codigo: document.getElementById('chacra-codigo').value.trim(),
+      nombre: document.getElementById('chacra-nombre').value.trim() || null,
+      ubicacion_latitud: ubicacionChacraSeleccionada.lat,
+      ubicacion_longitud: ubicacionChacraSeleccionada.lng,
+    };
+    await Api.chacras.crear(datos);
+    toast('Chacra registrada 🌱');
+    document.getElementById('form-chacra').reset();
+    inicializarMapaUbicacionChacra();
+    cargarMisChacras();
+  } catch (err) {
+    manejarError(err, 'registrar la chacra');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderTarjetaChacra(c, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms">
+      <div class="pedido-card-header">
+        <code class="pedido-id">${escapeAttr(c.codigo)}</code>
+      </div>
+      ${c.nombre ? `<p>${escapeAttr(c.nombre)}</p>` : ''}
+      <p class="pedido-fecha"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</p>
+    </div>`;
+}
+
+async function cargarMisChacras() {
+  const cont = document.getElementById('chacras-lista');
+  const vacio = document.getElementById('chacras-empty');
+  vacio.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    const chacras = await Api.chacras.misChacras();
+    Estado.chacras = chacras;
+    if (!chacras.length) {
+      cont.innerHTML = '';
+      vacio.classList.remove('hidden');
+      return;
+    }
+    cont.innerHTML = chacras.map(renderTarjetaChacra).join('');
+  } catch (err) {
+    manejarError(err, 'cargar tus chacras');
   }
 }
 
@@ -3465,6 +3585,10 @@ function renderResumenEconomico(registros) {
 }
 
 function renderFormRegistroProduccion() {
+  const chacras = Estado.chacras || [];
+  const opcionesChacra = chacras.length
+    ? `<option value="">Elige una chacra</option>` + chacras.map((c) => `<option value="${escapeAttr(c.id)}">${escapeAttr(c.codigo)}${c.nombre ? ' — ' + escapeAttr(c.nombre) : ''}</option>`).join('')
+    : '';
   return `
     <div class="card-panel">
       <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
@@ -3473,6 +3597,13 @@ function renderFormRegistroProduccion() {
           <input type="text" id="produccion-cultivo" required maxlength="80" placeholder="Ej. Papa Nativa">
         </label>
         <div id="produccion-precio-referencia" class="produccion-precio-ref hidden"></div>
+        <label>Chacra
+          <select id="produccion-chacra" required ${chacras.length ? '' : 'disabled'}>${opcionesChacra}</select>
+        </label>
+        ${chacras.length ? '' : `
+        <p class="mapa-ayuda" id="produccion-sin-chacras-aviso"><i class="ti ti-alert-circle"></i> No tienes chacras registradas.
+          <button type="button" class="btn btn-outline btn-sm" id="btn-ir-a-chacras">Registra una chacra</button> antes de continuar.
+        </p>`}
         <label>Número de parcelas
           <input type="number" id="produccion-parcelas" min="1" step="1" required placeholder="1">
         </label>
@@ -3644,6 +3775,7 @@ async function cargarPerfil() {
     try { extra = await Api.productores.miPerfil(); } catch { /* aún no tiene perfil de productor */ }
     if (extra) {
       try { registrosProduccion = await Api.productores.produccion.listarMe(); } catch (err) { manejarError(err, 'cargar tu gestión económica'); }
+      try { Estado.chacras = await Api.chacras.misChacras(); } catch (err) { manejarError(err, 'cargar tus chacras'); }
     }
   } else if (usuario.rol === 'repartidor') {
     try { extra = await Api.repartidores.miPerfil(); } catch { /* aún no tiene perfil de repartidor */ }
@@ -3932,6 +4064,8 @@ function inicializarEventos() {
 
   document.getElementById('form-productor').addEventListener('submit', crearPerfilProductor);
   document.getElementById('btn-ubicacion-productor').addEventListener('click', usarMiUbicacionProductor);
+  document.getElementById('form-chacra').addEventListener('submit', crearChacra);
+  document.getElementById('btn-ubicacion-chacra').addEventListener('click', usarMiUbicacionChacra);
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
 
@@ -4040,6 +4174,11 @@ function inicializarEventos() {
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
     if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
     if (e.target.closest('#btn-perfil-ir-pedidos')) { cambiarVista('mis-pedidos'); return; }
+    if (e.target.closest('#btn-ir-a-chacras')) {
+      cambiarVista('panel-productor');
+      document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const btnCompletar = e.target.closest('.btn-toggle-completar-cosecha');
     if (btnCompletar) { alternarFormCompletarCosecha(btnCompletar.dataset.id); return; }
   });

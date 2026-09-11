@@ -112,6 +112,10 @@ const Api = {
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
     },
   },
+  chacras: {
+    misChacras: () => request('productores', '/chacras/me', { auth: true }),
+    crear: (datos) => request('productores', '/chacras', { method: 'POST', body: datos, auth: true }),
+  },
   productos: {
     listar: () => request('productos', '/productos'),
     obtener: (id) => request('productos', `/productos/${id}`),

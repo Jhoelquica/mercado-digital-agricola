@@ -390,6 +390,37 @@
         <p class="muted">Completa el formulario de arriba para publicar tu primer producto y empezar a vender sin intermediarios.</p>
         <button type="button" class="btn btn-primary" id="btn-empezar-publicar">Publicar mi primer producto</button>
       </div>
+
+      <div class="section-header inner">
+        <h3><i class="ti ti-map-pin"></i> Mis chacras</h3>
+      </div>
+      <div class="card-panel">
+        <h4>Registrar nueva chacra</h4>
+        <p class="muted">Cada siembra que registres en "Mi Perfil" se asocia a una de tus chacras.</p>
+        <form id="form-chacra" class="form-grid">
+          <label>Código
+            <input type="text" id="chacra-codigo" required maxlength="30" placeholder="Ej. CH-01">
+          </label>
+          <label>Nombre (opcional)
+            <input type="text" id="chacra-nombre" maxlength="80" placeholder="Ej. Parcela norte">
+          </label>
+          <div class="mapa-selector-bloque">
+            <div class="mapa-selector-label">
+              <span><i class="ti ti-map-pin"></i> Ubicación de la chacra</span>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-chacra">Usar mi ubicación</button>
+            </div>
+            <div id="mapa-ubicacion-chacra" class="mapa-seleccionable"></div>
+            <p class="mapa-ayuda" id="mapa-chacra-ayuda">Toca el mapa para marcar dónde está la chacra.</p>
+          </div>
+          <button type="submit" class="btn btn-primary">Registrar chacra</button>
+        </form>
+      </div>
+      <div id="chacras-lista" class="pedidos-list"></div>
+      <div id="chacras-empty" class="empty-state hidden">
+        <span class="empty-state-icon"><i class="ti ti-map-pin"></i></span>
+        <p><strong>Aún no registraste ninguna chacra</strong></p>
+        <p class="muted">Registra tu primera chacra para poder asociarle siembras y cosechas desde "Mi Perfil".</p>
+      </div>
     </div>
   </section>
 
@@ -679,7 +710,7 @@
 
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="js/api.js?v=a58e13d4"></script>
-<script src="js/app.js?v=e470b1d9"></script>
+<script src="js/api.js?v=f2c8a715"></script>
+<script src="js/app.js?v=a3d97e62"></script>
 </body>
 </html>
