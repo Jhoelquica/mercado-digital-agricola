@@ -3258,6 +3258,7 @@ async function iniciarPanelVerificador() {
 
   // Al entrar al panel siempre se muestra la primera sección (por si quedó otra activa de antes).
   seleccionarSeccionVerificador('cosechas');
+  cargarCosechasPendientes();
 
   const nombreEl = document.getElementById('verificador-cuenta-nombre');
   const detalleEl = document.getElementById('verificador-cuenta-detalle');
@@ -3286,6 +3287,147 @@ function seleccionarSeccionVerificador(seccion) {
   document.querySelectorAll('#view-panel-verificador .verificador-seccion').forEach((s) => {
     s.classList.toggle('hidden', s.dataset.vseccion !== seccion);
   });
+  // El historial se recarga cada vez que se entra a la pestaña (no solo la primera vez): una
+  // aprobación/rechazo hecha en "Cosechas pendientes" en la misma sesión agrega una fila nueva.
+  if (seccion === 'historial') cargarHistorialVerificacion();
+}
+
+// ---- Cosechas pendientes ----
+function renderTarjetaCosechaPendiente(r, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-registro-id="${escapeAttr(r.id)}">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(r.cultivo)}</h4>
+        ${r.fue_rechazado_antes ? '<span class="pill pill-estado pill-reenviado"><i class="ti ti-recycle"></i> Reenviado</span>' : ''}
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(r.productor_nombre || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(r.chacra_codigo || '—')}${r.chacra_nombre ? ' — ' + escapeAttr(r.chacra_nombre) : ''}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Cosecha real</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_cosecha_real)}</span></div>
+      </div>
+      <div class="verificador-cosecha-acciones">
+        <button type="button" class="btn btn-primary btn-sm btn-aprobar-cosecha" data-registro-id="${escapeAttr(r.id)}"><i class="ti ti-check"></i> Aprobar</button>
+        <button type="button" class="btn btn-danger btn-sm btn-rechazar-cosecha" data-registro-id="${escapeAttr(r.id)}"><i class="ti ti-x"></i> Rechazar</button>
+      </div>
+    </div>`;
+}
+
+async function cargarCosechasPendientes() {
+  const cont = document.getElementById('verificador-cosechas-lista');
+  const vacio = document.getElementById('verificador-cosechas-empty');
+  vacio.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    const registros = await Api.productores.produccion.verificacion.pendientes();
+    if (!registros.length) {
+      cont.innerHTML = '';
+      vacio.classList.remove('hidden');
+      return;
+    }
+    cont.innerHTML = registros.map(renderTarjetaCosechaPendiente).join('');
+  } catch (err) {
+    manejarError(err, 'cargar las cosechas pendientes');
+  }
+}
+
+// Saca la tarjeta ya resuelta de la lista sin recargar toda la vista — mismo criterio que
+// cargarInvitaciones() en Panel Admin, pero acá alcanza con quitar un nodo del DOM (no hace
+// falta volver a pedir la lista completa, la tarjeta resuelta ya no pertenece a "pendientes").
+function quitarTarjetaCosechaPendiente(registroId) {
+  document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`)?.remove();
+  const cont = document.getElementById('verificador-cosechas-lista');
+  if (cont && !cont.children.length) {
+    document.getElementById('verificador-cosechas-empty').classList.remove('hidden');
+  }
+}
+
+async function aprobarCosecha(registroId) {
+  const card = document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`);
+  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    await Api.productores.produccion.verificacion.aprobar(registroId);
+    toast('Cosecha aprobada — el producto ya está en el catálogo del productor, en borrador 🌱');
+    quitarTarjetaCosechaPendiente(registroId);
+  } catch (err) {
+    // Acá cae, entre otros, el 502 del circuit breaker si Productos no pudo crear el producto
+    // (ver aprobar_cosecha en productores/main.py) — manejarError muestra err.message tal cual
+    // vino del backend, y la tarjeta queda en la lista (no se llama a quitarTarjetaCosechaPendiente)
+    // para que el Verificador pueda simplemente tocar "Aprobar" de nuevo.
+    manejarError(err, 'aprobar la cosecha');
+    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  }
+}
+
+let registroIdParaRechazar = null;
+
+function abrirModalRechazarCosecha(registroId) {
+  registroIdParaRechazar = registroId;
+  document.getElementById('form-rechazar-cosecha').reset();
+  abrirModal('modal-rechazar-cosecha');
+}
+
+async function confirmarRechazoCosecha(e) {
+  e.preventDefault();
+  const motivo = document.getElementById('rechazar-cosecha-motivo').value.trim();
+  if (!motivo) {
+    toast('Indica el motivo del rechazo', 'error');
+    return;
+  }
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    await Api.productores.produccion.verificacion.rechazar(registroIdParaRechazar, motivo);
+    toast('Cosecha rechazada.');
+    cerrarModal('modal-rechazar-cosecha');
+    quitarTarjetaCosechaPendiente(registroIdParaRechazar);
+    registroIdParaRechazar = null;
+  } catch (err) {
+    manejarError(err, 'rechazar la cosecha');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- Historial ----
+function renderTarjetaHistorialVerificacion(h, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  const aprobado = h.accion === 'aprobado';
+  const badge = aprobado
+    ? '<span class="pill pill-estado pill-vigente"><i class="ti ti-circle-check"></i> Aprobado</span>'
+    : '<span class="pill pill-estado pill-expirada"><i class="ti ti-circle-x"></i> Rechazado</span>';
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(h.cultivo || 'Cultivo no disponible')}</h4>
+        ${badge}
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(h.productor_nombre || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(h.chacra_codigo || '—')}${h.chacra_nombre ? ' — ' + escapeAttr(h.chacra_nombre) : ''}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Fecha</span><span class="perfil-dato-valor">${formatearFecha(h.fecha)}</span></div>
+      </div>
+      ${!aprobado && h.motivo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(h.motivo)}</p>` : ''}
+    </div>`;
+}
+
+async function cargarHistorialVerificacion() {
+  const cont = document.getElementById('verificador-historial-lista');
+  const vacio = document.getElementById('verificador-historial-empty');
+  vacio.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    const historial = await Api.productores.produccion.verificacion.historial();
+    if (!historial.length) {
+      cont.innerHTML = '';
+      vacio.classList.remove('hidden');
+      return;
+    }
+    cont.innerHTML = historial.map(renderTarjetaHistorialVerificacion).join('');
+  } catch (err) {
+    manejarError(err, 'cargar tu historial de verificación');
+  }
 }
 
 // ============ PANEL ADMIN ============
@@ -4364,6 +4506,14 @@ function inicializarEventos() {
     if (tab) seleccionarSeccionVerificador(tab.dataset.vseccion);
   });
   document.getElementById('btn-verificador-logout').addEventListener('click', cerrarSesion);
+
+  document.getElementById('verificador-cosechas-lista').addEventListener('click', (e) => {
+    const aprobar = e.target.closest('.btn-aprobar-cosecha');
+    if (aprobar) { aprobarCosecha(aprobar.dataset.registroId); return; }
+    const rechazar = e.target.closest('.btn-rechazar-cosecha');
+    if (rechazar) { abrirModalRechazarCosecha(rechazar.dataset.registroId); return; }
+  });
+  document.getElementById('form-rechazar-cosecha').addEventListener('submit', confirmarRechazoCosecha);
 
   // ---- Panel Admin: generar invitación, copiar código, refrescar, revocar ----
   document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);

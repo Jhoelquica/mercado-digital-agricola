@@ -1690,6 +1690,26 @@ input, select { font-family: inherit; }
 #verificador-cuenta-nombre { color: var(--color-primario); }
 #btn-verificador-logout { margin-top: 4px; }
 
+.verificador-cosecha-acciones { display: flex; gap: 10px; margin-top: 14px; }
+.verificador-cosecha-acciones .btn-sm { margin-left: 0; flex: 1; } /* .btn-sm trae margin-left:auto pensado para un botón solo — acá van dos en fila, repartiendo el ancho */
+
+/* Reusa .pill-estado (ver PANEL ADMIN) — solo suma el tono propio de "reenviado", que no es ni
+   un estado positivo (vigente) ni uno negativo (expirada), es un aviso. Mismo ámbar que
+   .disponibilidad-ambar / .ubicacion-espera en Gestionar Envíos, no un color inventado. */
+.pill-reenviado { background: #fff3cd; color: #8a6d1a; }
+
+.verificador-historial-motivo {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--color-superficie);
+  font-size: 0.85rem;
+  color: var(--texto-suave);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
 /* ---------- PANEL ADMIN ---------- */
 #view-panel-admin .card-panel { border-color: var(--color-borde); max-width: 560px; }
 .invitacion-resultado {
@@ -1834,7 +1854,7 @@ input, select { font-family: inherit; }
   font-weight: 600;
   color: var(--texto);
 }
-.form-grid input, .form-grid select,
+.form-grid input, .form-grid select, .form-grid textarea,
 .auth-form input, .auth-form select {
   padding: 11px 14px;
   border-radius: 10px;
@@ -1843,7 +1863,8 @@ input, select { font-family: inherit; }
   outline: none;
   transition: border-color 0.2s ease;
 }
-.form-grid input:focus, .form-grid select:focus,
+.form-grid textarea { font-family: inherit; resize: vertical; }
+.form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus,
 .auth-form input:focus, .auth-form select:focus {
   border-color: var(--color-borde);
 }

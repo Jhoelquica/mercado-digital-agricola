@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=b9e64d02">
+<link rel="stylesheet" href="css/style.css?v=c37a1f6e">
 </head>
 <body>
 
@@ -486,18 +486,20 @@
     </nav>
 
     <div class="verificador-seccion" data-vseccion="cosechas">
-      <div class="empty-state">
+      <div id="verificador-cosechas-lista" class="pedidos-list"></div>
+      <div id="verificador-cosechas-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-plant-2"></i></span>
-        <p><strong>Cosechas pendientes</strong></p>
-        <p class="muted">Próximamente — acá vas a revisar y certificar las cosechas que esperan verificación.</p>
+        <p><strong>No hay cosechas pendientes</strong></p>
+        <p class="muted">Cuando un productor complete una cosecha, aparece acá para tu revisión.</p>
       </div>
     </div>
 
     <div class="verificador-seccion hidden" data-vseccion="historial">
-      <div class="empty-state">
+      <div id="verificador-historial-lista" class="pedidos-list"></div>
+      <div id="verificador-historial-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-history"></i></span>
-        <p><strong>Historial</strong></p>
-        <p class="muted">Próximamente — el registro de todo lo que verificaste.</p>
+        <p><strong>Todavía no verificaste ninguna cosecha</strong></p>
+        <p class="muted">Tus decisiones de aprobación y rechazo van a aparecer acá.</p>
       </div>
     </div>
 
@@ -713,9 +715,24 @@
   </div>
 </div>
 
+<!-- MODAL: RECHAZAR COSECHA (Verificador) -->
+<div class="modal-overlay hidden" id="modal-rechazar-cosecha">
+  <div class="modal">
+    <button class="modal-close" data-close="modal-rechazar-cosecha"><i class="ti ti-x"></i></button>
+    <h3><i class="ti ti-circle-x"></i> Rechazar cosecha</h3>
+    <p class="muted">Explica brevemente el motivo — el productor lo va a ver y puede reenviar la cosecha después de corregirlo.</p>
+    <form id="form-rechazar-cosecha" class="form-grid">
+      <label>Motivo del rechazo
+        <textarea id="rechazar-cosecha-motivo" rows="4" required placeholder="Ej. La cantidad reportada no coincide con la ubicación registrada."></textarea>
+      </label>
+      <button type="submit" class="btn btn-danger">Confirmar rechazo</button>
+    </form>
+  </div>
+</div>
+
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="js/api.js?v=f2c8a715"></script>
-<script src="js/app.js?v=d5296f14"></script>
+<script src="js/api.js?v=b625e3d0"></script>
+<script src="js/app.js?v=f7c3a162"></script>
 </body>
 </html>

@@ -110,6 +110,15 @@ const Api = {
       crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
       listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
+      verificacion: {
+        // Mismo recurso (RegistroProduccion) que las 3 funciones de arriba, pero consumido por
+        // el Verificador en vez del Productor — de ahí el sub-namespace en vez de mezclarlas
+        // sueltas con crear/listarMe/completarCosecha.
+        pendientes: () => request('productores', '/productores/produccion/pendientes-verificacion', { auth: true }),
+        historial: () => request('productores', '/productores/produccion/historial-verificacion', { auth: true }),
+        aprobar: (id) => request('productores', `/productores/produccion/${id}/aprobar`, { method: 'POST', auth: true }),
+        rechazar: (id, motivo) => request('productores', `/productores/produccion/${id}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
+      },
     },
   },
   chacras: {
