@@ -1604,6 +1604,58 @@ input, select { font-family: inherit; }
 .card-panel h3 { margin-bottom: 6px; }
 .muted { color: var(--texto-suave); font-size: 0.9rem; margin-bottom: 16px; }
 
+/* ---------- RESUMEN DE PANEL (dashboard de Productor/Repartidor/Admin) ----------
+   Extiende .perfil-datos-grid/.perfil-dato (Mi Perfil) con más peso visual — no se reutilizan
+   esas clases tal cual porque acá varias cosas son nuevas: ícono en círculo por métrica, un
+   tamaño más grande para la métrica más importante (.resumen-stat-destacado) y un bloque de
+   contenido libre para texto que no es un simple conteo (próxima cosecha, código por vencer). */
+.resumen-panel { max-width: none; margin-bottom: 24px; border-left: 4px solid var(--color-primario); }
+
+.resumen-stats { display: flex; flex-wrap: wrap; gap: 24px; }
+.resumen-stat { display: flex; align-items: center; gap: 12px; flex: 1 1 170px; }
+.resumen-stat-icono {
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--color-superficie);
+  color: var(--color-primario);
+  font-size: 1.25rem;
+  flex-shrink: 0;
+}
+.resumen-stat-valor { display: block; font-family: var(--font-titulo); font-weight: 700; font-size: 1.6rem; line-height: 1.15; color: var(--texto); }
+.resumen-stat-label { display: block; font-size: 0.74rem; color: var(--texto-suave); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* La métrica más importante de cada dashboard (definida por cada renderResumen*()) usa esta
+   clase — círculo relleno + número más grande, para que no compita en peso con las demás. */
+.resumen-stat-destacado .resumen-stat-icono { width: 56px; height: 56px; font-size: 1.6rem; background: var(--color-primario); color: white; }
+.resumen-stat-destacado .resumen-stat-valor { font-size: 2.3rem; color: var(--color-primario); }
+
+.resumen-destacado {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--color-superficie);
+  border: 1px dashed var(--color-borde);
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 0.88rem;
+  color: var(--color-primario);
+  margin-top: 18px;
+}
+/* Variante para contenido que pide atención pronto (entrega en camino, código por vencer) —
+   mismo tono de alerta que .pill-expirada/.btn-danger, no un color inventado. */
+.resumen-destacado-urgente { background: #fff0ee; border-color: #f3b8a8; color: #b3401f; }
+.resumen-destacado code { background: rgba(0, 0, 0, 0.06); padding: 1px 6px; border-radius: 4px; }
+
+.resumen-acciones { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.resumen-acciones .btn-sm { margin-left: 0; } /* .btn-sm trae margin-left:auto pensado para un botón solo en un header — acá son varios en fila */
+
+.resumen-ver-mas { margin-top: 14px; }
+
+@media (max-width: 560px) {
+  .resumen-stat { flex: 1 1 100%; }
+  .resumen-acciones { flex-direction: column; }
+  .resumen-acciones .btn { width: 100%; }
+}
+
 /* ---------- PANEL VERIFICADOR ---------- */
 /* Contenido nuevo — nace con la paleta de marca (--color-*), sin la escala --verde-* vieja.
    Tabs tipo pill, mismo patrón que .pedidos-tabs pero con los tokens nuevos. */

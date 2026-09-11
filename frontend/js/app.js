@@ -12,6 +12,7 @@ const Estado = {
   enviosRepartidor: [],
   chacras: [], // chacras del productor autenticado — las usan tanto "Mis chacras" (panel-productor)
                // como el selector de chacra en "Registrar nueva siembra" (Mi Perfil)
+  registrosProduccion: [], // RegistroProduccion del productor — resumen de panel-productor y Mi Perfil
   imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
 };
 
@@ -285,6 +286,23 @@ function escapeAttr(valor) {
     .replace(/>/g, '&gt;');
 }
 
+// Espera a que un elemento renderizado async (p. ej. tras un cambiarVista a una vista que carga
+// datos antes de pintar, como Mi Perfil) aparezca en el DOM, y recién entonces hace scroll. Un
+// scrollIntoView inmediato fallaría porque el contenido todavía es el skeleton de carga.
+function esperarElementoYScroll(id, intentosMax = 40) {
+  let intentos = 0;
+  const intervalo = setInterval(() => {
+    const el = document.getElementById(id);
+    intentos++;
+    if (el) {
+      clearInterval(intervalo);
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (intentos >= intentosMax) {
+      clearInterval(intervalo);
+    }
+  }, 50);
+}
+
 function renderMediaProducto(producto, contenedorClase = 'product-emoji') {
   const emoji = emojiParaProducto(producto);
   const url = (producto.imagen_url || producto.imagen_principal || '').trim();
@@ -507,6 +525,22 @@ function renderSkeletonFilas(n = 3) {
       <div class="skeleton skeleton-line w-60"></div>
     </div>`;
   return fila.repeat(n);
+}
+
+// Usado por los 3 dashboards de panel (productor/repartidor/admin) mientras cargan sus métricas.
+function renderSkeletonResumen(n = 3) {
+  const stat = `
+    <div class="resumen-stat">
+      <div class="skeleton" style="width:44px;height:44px;border-radius:50%;flex-shrink:0;"></div>
+      <div style="flex:1">
+        <div class="skeleton skeleton-line w-40" style="margin-bottom:8px;"></div>
+        <div class="skeleton skeleton-line w-70"></div>
+      </div>
+    </div>`;
+  return `
+    <div class="card-panel resumen-panel">
+      <div class="resumen-stats">${stat.repeat(n)}</div>
+    </div>`;
 }
 
 // ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
@@ -2592,9 +2626,13 @@ async function iniciarPanelProductor() {
     panel.classList.remove('hidden');
     poblarSelectCategoriaProducto();
     reiniciarFormularioProducto();
-    cargarMisProductos();
     inicializarMapaUbicacionChacra();
-    cargarMisChacras();
+    document.getElementById('productor-resumen').innerHTML = renderSkeletonResumen(3);
+    // Las 3 cargas son independientes entre sí (cada una pinta su propia sección), pero el
+    // resumen necesita las tres resueltas antes de poder calcular sus métricas — de ahí el
+    // Promise.all en vez de simplemente dispararlas sueltas como antes.
+    await Promise.all([cargarMisProductos(), cargarMisChacras(), cargarRegistrosProduccionProductor()]);
+    document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
@@ -3052,6 +3090,68 @@ async function cargarMisChacras() {
   }
 }
 
+// No pinta nada por sí sola — solo alimenta Estado.registrosProduccion, que consume el resumen
+// del panel (renderResumenProductor). "Mis siembras" en sí se ve y se gestiona en Mi Perfil
+// (cargarPerfil), que también deja los mismos datos en Estado.registrosProduccion al visitarla.
+async function cargarRegistrosProduccionProductor() {
+  try {
+    Estado.registrosProduccion = await Api.productores.produccion.listarMe();
+  } catch (err) {
+    manejarError(err, 'cargar tus siembras');
+    Estado.registrosProduccion = [];
+  }
+}
+
+// ---- Resumen / dashboard de "Panel del Productor" — lee de Estado.productos (ya filtrado por
+// productor_id, cargado por cargarMisProductos), Estado.chacras y Estado.registrosProduccion. ----
+function renderResumenProductor() {
+  const misProductos = (Estado.productos || []).filter((p) => p.productor_id === Estado.productorId);
+  const chacras = Estado.chacras || [];
+  const registros = Estado.registrosProduccion || [];
+  const enCurso = registros.filter((r) => r.estado !== 'cosechado');
+
+  const proximaCosecha = enCurso
+    .filter((r) => r.fecha_cosecha_estimada)
+    .sort((a, b) => new Date(a.fecha_cosecha_estimada) - new Date(b.fecha_cosecha_estimada))[0];
+
+  return `
+    <div class="card-panel resumen-panel">
+      <div class="resumen-stats">
+        <div class="resumen-stat resumen-stat-destacado">
+          <span class="resumen-stat-icono"><i class="ti ti-seedling"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${enCurso.length}</span>
+            <span class="resumen-stat-label">Cosecha${enCurso.length === 1 ? '' : 's'} en curso</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-map-pin"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${chacras.length}</span>
+            <span class="resumen-stat-label">Chacra${chacras.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-shopping-bag"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${misProductos.length}</span>
+            <span class="resumen-stat-label">${misProductos.length === 1 ? 'Producto publicado' : 'Productos publicados'}</span>
+          </div>
+        </div>
+      </div>
+      ${proximaCosecha ? `
+      <div class="resumen-destacado">
+        <i class="ti ti-calendar-event"></i>
+        Próxima cosecha estimada: <strong>${escapeAttr(proximaCosecha.cultivo)}</strong> el ${formatearFecha(proximaCosecha.fecha_cosecha_estimada)}
+      </div>` : ''}
+      <div class="resumen-acciones">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-publicar"><i class="ti ti-seedling"></i> Publicar producto</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-siembra"><i class="ti ti-plant-2"></i> Registrar siembra</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-chacra"><i class="ti ti-map-pin"></i> Registrar chacra</button>
+      </div>
+    </div>`;
+}
+
 // ============ GESTIÓN DE ENVÍOS (repartidor) ============
 // icono queda como un punto de color dibujado en CSS (.disponibilidad-punto), no un ícono de
 // Tabler: el set outline no trae una variante de círculo sólido/relleno, y un anillo hueco
@@ -3104,9 +3204,45 @@ async function cargarGestionEnvios() {
   panel.classList.remove('hidden');
   Estado.repartidorId = miRepartidor.id;
   document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(miRepartidor.estado_disponibilidad);
+  document.getElementById('repartidor-resumen').innerHTML = renderSkeletonResumen(2);
 
   await cargarListaEnvios(miRepartidor.id);
+  document.getElementById('repartidor-resumen').innerHTML = renderResumenRepartidor();
   iniciarSeguimientoRepartidor();
+}
+
+// ---- Resumen / dashboard de "Gestionar Envíos" — lee de Estado.enviosRepartidor, ya cargado
+// por cargarListaEnvios() (no incluye las propuestas pendientes, que son una cosa aparte). ----
+function renderResumenRepartidor() {
+  const envios = Estado.enviosRepartidor || [];
+  const pendientes = envios.filter((e) => ['asignado', 'en_camino'].includes(e.estado));
+  const entregados = envios.filter((e) => e.estado === 'entregado');
+  const enCamino = envios.filter((e) => e.estado === 'en_camino');
+
+  return `
+    <div class="card-panel resumen-panel">
+      <div class="resumen-stats">
+        <div class="resumen-stat resumen-stat-destacado">
+          <span class="resumen-stat-icono"><i class="ti ti-truck-delivery"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${pendientes.length}</span>
+            <span class="resumen-stat-label">Pendiente${pendientes.length === 1 ? '' : 's'} de entrega</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-circle-check"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${entregados.length}</span>
+            <span class="resumen-stat-label">Entregado${entregados.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      </div>
+      ${enCamino.length ? `
+      <div class="resumen-destacado resumen-destacado-urgente">
+        <i class="ti ti-navigation"></i> Tienes ${enCamino.length} entrega${enCamino.length === 1 ? '' : 's'} en camino ahora
+      </div>` : ''}
+      <button type="button" class="btn btn-ghost btn-sm resumen-ver-mas" id="btn-resumen-ver-envios"><i class="ti ti-chevron-down"></i> Ver mis envíos</button>
+    </div>`;
 }
 
 // ============ PANEL VERIFICADOR ============
@@ -3182,6 +3318,7 @@ async function iniciarPanelAdmin() {
   poblarSelectRolDestino();
   document.getElementById('invitacion-resultado').classList.add('hidden');
   document.getElementById('form-invitacion').reset();
+  document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   await cargarInvitaciones();
 }
 
@@ -3217,9 +3354,62 @@ async function cargarInvitaciones() {
     const invitaciones = await Api.admin.listarInvitaciones();
     vacio.classList.toggle('hidden', invitaciones.length > 0);
     cont.innerHTML = invitaciones.map(renderInvitacionCard).join('');
+    document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(invitaciones);
   } catch (err) {
     manejarError(err, 'cargar las invitaciones');
   }
+}
+
+// ---- Resumen / dashboard de "Panel Admin" — reusa estadoInvitacion() (la misma función que ya
+// clasifica cada tarjeta de la lista) sobre el array que acaba de traer cargarInvitaciones(). ----
+function renderResumenAdmin(invitaciones) {
+  const porEstado = { vigente: 0, usada: 0, expirada: 0 };
+  let masProximaAVencer = null;
+  invitaciones.forEach((inv) => {
+    const estado = estadoInvitacion(inv);
+    porEstado[estado.clave]++;
+    if (estado.clave === 'vigente' && (!masProximaAVencer || new Date(inv.fecha_expiracion) < new Date(masProximaAVencer.fecha_expiracion))) {
+      masProximaAVencer = inv;
+    }
+  });
+
+  let avisoVencimiento = '';
+  if (masProximaAVencer) {
+    const diasRestantes = Math.max(0, Math.ceil((new Date(masProximaAVencer.fecha_expiracion) - new Date()) / 86400000));
+    const texto = diasRestantes === 0 ? 'vence hoy' : `vence en ${diasRestantes} día${diasRestantes === 1 ? '' : 's'}`;
+    avisoVencimiento = `<i class="ti ti-alert-triangle"></i> El código <code>${escapeAttr(masProximaAVencer.codigo)}</code> ${texto}`;
+  }
+
+  return `
+    <div class="card-panel resumen-panel">
+      <div class="resumen-stats">
+        <div class="resumen-stat resumen-stat-destacado">
+          <span class="resumen-stat-icono"><i class="ti ti-ticket"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${porEstado.vigente}</span>
+            <span class="resumen-stat-label">Vigente${porEstado.vigente === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-user-check"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${porEstado.usada}</span>
+            <span class="resumen-stat-label">Usada${porEstado.usada === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-clock-x"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${porEstado.expirada}</span>
+            <span class="resumen-stat-label">Expirada${porEstado.expirada === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+      </div>
+      ${avisoVencimiento ? `<div class="resumen-destacado resumen-destacado-urgente">${avisoVencimiento}</div>` : ''}
+      <div class="resumen-acciones">
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-generar-codigo"><i class="ti ti-plus"></i> Generar nuevo código</button>
+      </div>
+    </div>`;
 }
 
 function mostrarInvitacionGenerada(inv) {
@@ -3774,7 +3964,7 @@ async function cargarPerfil() {
   if (usuario.rol === 'productor') {
     try { extra = await Api.productores.miPerfil(); } catch { /* aún no tiene perfil de productor */ }
     if (extra) {
-      try { registrosProduccion = await Api.productores.produccion.listarMe(); } catch (err) { manejarError(err, 'cargar tu gestión económica'); }
+      try { registrosProduccion = await Api.productores.produccion.listarMe(); Estado.registrosProduccion = registrosProduccion; } catch (err) { manejarError(err, 'cargar tu gestión económica'); }
       try { Estado.chacras = await Api.chacras.misChacras(); } catch (err) { manejarError(err, 'cargar tus chacras'); }
     }
   } else if (usuario.rol === 'repartidor') {
@@ -4069,6 +4259,29 @@ function inicializarEventos() {
   document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
 
+  // Accesos rápidos del resumen de "Panel del Productor" — delegados sobre #productor-resumen
+  // (su contenido se reemplaza por completo en cada iniciarPanelProductor(), así que un
+  // addEventListener directo sobre los botones no sobreviviría al primer refresco).
+  document.getElementById('productor-resumen').addEventListener('click', (e) => {
+    if (e.target.closest('#btn-resumen-publicar')) {
+      document.getElementById('producto-nombre')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('producto-nombre')?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest('#btn-resumen-chacra')) {
+      document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    if (e.target.closest('#btn-resumen-siembra')) {
+      // "Registrar siembra" vive en Mi Perfil, no en este panel — cambiamos de vista y
+      // esperamos a que cargarPerfil() termine de pintar antes de hacer scroll (ver
+      // esperarElementoYScroll).
+      cambiarVista('perfil');
+      esperarElementoYScroll('form-registro-produccion');
+      return;
+    }
+  });
+
   ['producto-nombre', 'producto-categoria', 'producto-unidad', 'producto-precio', 'producto-stock'].forEach((id) => {
     document.getElementById(id).addEventListener('input', actualizarVistaPreviaProducto);
     document.getElementById(id).addEventListener('change', actualizarVistaPreviaProducto);
@@ -4139,6 +4352,11 @@ function inicializarEventos() {
 
   document.getElementById('form-repartidor').addEventListener('submit', crearPerfilRepartidor);
   document.getElementById('btn-refrescar-envios').addEventListener('click', cargarGestionEnvios);
+  document.getElementById('repartidor-resumen').addEventListener('click', (e) => {
+    if (e.target.closest('#btn-resumen-ver-envios')) {
+      document.getElementById('envios-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
 
   // ---- Panel Verificador: navegación entre secciones + logout ----
   document.getElementById('verificador-tabs').addEventListener('click', (e) => {
@@ -4151,6 +4369,12 @@ function inicializarEventos() {
   document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);
   document.getElementById('btn-copiar-codigo').addEventListener('click', copiarCodigoInvitacion);
   document.getElementById('btn-refrescar-invitaciones').addEventListener('click', cargarInvitaciones);
+  document.getElementById('admin-resumen').addEventListener('click', (e) => {
+    if (e.target.closest('#btn-resumen-generar-codigo')) {
+      document.getElementById('invitacion-rol-destino')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      document.getElementById('invitacion-rol-destino')?.focus({ preventScroll: true });
+    }
+  });
   document.getElementById('invitaciones-lista').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-revocar-invitacion');
     if (btn) revocarInvitacionDesdeLista(btn.dataset.invitacionId);
