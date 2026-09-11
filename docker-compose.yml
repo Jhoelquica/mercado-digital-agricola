@@ -215,6 +215,10 @@ services:
       DB_HOST: db-usuarios
       JWT_SECRET: ${JWT_SECRET}
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      # Bootstrap del primer admin (ver comentario junto a sembrar_admin_inicial() en
+      # usuarios/main.py). Solo corre si la BD todavía no tiene ningún admin.
+      ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
+      ADMIN_BOOTSTRAP_PASSWORD: dev-admin-12345
     depends_on:
       - db-usuarios
 

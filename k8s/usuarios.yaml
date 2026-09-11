@@ -43,6 +43,18 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            # Bootstrap del primer admin — ver sembrar_admin_inicial() en usuarios/main.py.
+            # Idempotente: solo crea el admin si la tabla usuarios todavía no tiene ninguno.
+            - name: ADMIN_BOOTSTRAP_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: ADMIN_BOOTSTRAP_EMAIL
+            - name: ADMIN_BOOTSTRAP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: ADMIN_BOOTSTRAP_PASSWORD
 ---
 apiVersion: v1
 kind: Service

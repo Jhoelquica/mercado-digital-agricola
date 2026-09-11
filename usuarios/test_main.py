@@ -1,16 +1,16 @@
 """
-Tests del sistema de invitaciones por código de un solo uso (rol admin).
+Tests del sistema de invitaciones + registro gateado por rol restringido.
 
-Cubre: creación por admin, rechazo por no-admin (403), revocación de invitación no usada,
-rechazo de revocación de invitación ya usada (400), validación de código expirado y de
-código inexistente. (+1 extra: validación de código válido, para cubrir el camino feliz
-de validar_codigo_invitacion.)
+Cubre: admin/invitaciones (crear, 403 no-admin, revocar, revocar-usada, validar
+existente/expirado/inexistente) y POST /usuarios/registro (comprador abierto, verificador
+sin código -> 400, con código válido -> 200 + invitación usada, código de otro rol_destino
+-> 400, código usado -> 400, código expirado -> 400, y todo-o-nada: si el registro falla
+por email duplicado la invitación NO queda usada).
 
-Requiere Postgres real según database.py (tipos UUID de postgresql + FK a usuarios +
-create_all() al importar main). No se mockea nada; el admin y los usuarios consumidores
-se crean vía POST /usuarios/registro (que hoy acepta cualquier rol sin validar — eso lo
-gatea la sub-entrega B). Las invitaciones "usada" y "expirada" se insertan directo por
-SessionLocal porque su consumo real todavía no existe.
+Requiere Postgres real según database.py (UUID de postgresql + FK a usuarios + create_all()
+al importar main). No se mockea nada. Los usuarios de rol restringido (admin/verificador)
+se insertan directo por SessionLocal porque /usuarios/registro ya no los deja auto-crearse
+sin invitación; los estados "usada"/"expirada" de invitación también se siembran directo.
 """
 import uuid
 from datetime import datetime, timedelta
@@ -27,16 +27,31 @@ def _auth(user_id: str, rol: str):
     main.app.dependency_overrides[verificar_token] = lambda: {"sub": user_id, "rol": rol}
 
 
+def _email():
+    # dominio real (no .test/.example, que email-validator rechaza como reservados)
+    return f"qa-{uuid.uuid4().hex}@chakrashop.pe"
+
+
 def _crear_usuario(rol: str) -> str:
-    resp = client.post("/usuarios/registro", json={
-        "nombre": f"Usuario {rol}",
-        # dominio real (no .test/.example, que email-validator rechaza como reservados)
-        "email": f"qa-{uuid.uuid4().hex}@chakrashop.pe",
-        "password": "test1234",
-        "rol": rol,
-    })
-    assert resp.status_code == 200, resp.text
-    return resp.json()["id"]
+    """Roles abiertos -> vía POST /usuarios/registro. Roles restringidos (verificador/admin)
+    -> insert directo, porque ese endpoint ahora exige un código de invitación para ellos."""
+    if rol in main.ROLES_DE_REGISTRO_ABIERTO:
+        resp = client.post("/usuarios/registro", json={
+            "nombre": f"Usuario {rol}", "email": _email(), "password": "test1234", "rol": rol,
+        })
+        assert resp.status_code == 200, resp.text
+        return resp.json()["id"]
+
+    db = main.SessionLocal()
+    try:
+        u = main.models.Usuario(nombre=f"Usuario {rol}", email=_email(),
+                                password_hash="x", rol=rol)
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        return str(u.id)
+    finally:
+        db.close()
 
 
 def _admin_autenticado() -> str:
@@ -146,3 +161,177 @@ def test_validar_codigo_valido():
     assert cuerpo["valido"] is True
     assert cuerpo["rol_destino"] == "verificador"
     assert cuerpo["motivo"] is None
+
+
+# ============ Registro gateado por invitación (sub-entrega D) ============
+
+def _registro(rol, codigo=None):
+    body = {"nombre": f"Reg {rol}", "email": _email(), "password": "test1234", "rol": rol}
+    if codigo is not None:
+        body["codigo_invitacion"] = codigo
+    return client.post("/usuarios/registro", json=body)
+
+
+def _invitacion_directa(rol_destino="verificador", **kw):
+    admin_id = _crear_usuario("admin")
+    return _insertar_invitacion(creado_por=admin_id, rol_destino=rol_destino, **kw)
+
+
+def test_registro_comprador_sin_codigo_sigue_abierto():
+    resp = _registro("comprador")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["rol"] == "comprador"
+
+
+def test_registro_verificador_sin_codigo_falla_400():
+    resp = _registro("verificador")
+    assert resp.status_code == 400
+    assert "invitación" in resp.json()["detail"].lower()
+
+
+def test_registro_verificador_con_codigo_valido_ok_y_marca_usada():
+    inv = _invitacion_directa("verificador")
+    resp = _registro("verificador", codigo=inv["codigo"])
+    assert resp.status_code == 200, resp.text
+    nuevo_id = resp.json()["id"]
+    assert resp.json()["rol"] == "verificador"
+
+    db = main.SessionLocal()
+    try:
+        row = db.query(main.models.Invitacion).filter(
+            main.models.Invitacion.codigo == inv["codigo"]
+        ).first()
+        assert row.usado is True
+        assert str(row.usado_por) == nuevo_id
+    finally:
+        db.close()
+
+
+def test_registro_verificador_con_codigo_de_otro_rol_falla_400():
+    inv = _invitacion_directa("admin")  # código emitido para "admin"
+    resp = _registro("verificador", codigo=inv["codigo"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Este código no habilita el rol solicitado."
+
+
+def test_registro_verificador_con_codigo_usado_falla_400():
+    consumidor_id = _crear_usuario("verificador")
+    inv = _invitacion_directa("verificador", usado=True, usado_por=consumidor_id)
+    resp = _registro("verificador", codigo=inv["codigo"])
+    assert resp.status_code == 400
+    assert "utiliz" in resp.json()["detail"].lower()
+
+
+def test_registro_con_codigo_expirado_falla_400():
+    inv = _invitacion_directa("verificador", fecha_expiracion=datetime.utcnow() - timedelta(days=1))
+    resp = _registro("verificador", codigo=inv["codigo"])
+    assert resp.status_code == 400
+    assert "expir" in resp.json()["detail"].lower()
+
+
+def test_codigo_valido_pero_email_duplicado_no_marca_invitacion_usada():
+    """Todo o nada: si la creación del usuario falla (email repetido), la invitación NO
+    debe quedar marcada como usada."""
+    email = _email()
+    primera = client.post("/usuarios/registro", json={
+        "nombre": "Primero", "email": email, "password": "test1234", "rol": "comprador",
+    })
+    assert primera.status_code == 200
+
+    inv = _invitacion_directa("verificador")
+    repetida = client.post("/usuarios/registro", json={
+        "nombre": "Segundo", "email": email, "password": "test1234",
+        "rol": "verificador", "codigo_invitacion": inv["codigo"],
+    })
+    assert repetida.status_code == 409
+
+    db = main.SessionLocal()
+    try:
+        row = db.query(main.models.Invitacion).filter(
+            main.models.Invitacion.codigo == inv["codigo"]
+        ).first()
+        assert row.usado is False
+        assert row.usado_por is None
+    finally:
+        db.close()
+
+
+# ============ Bootstrap del primer admin (sembrar_admin_inicial) ============
+# Se llama a la función directo (no vía TestClient/lifespan ASGI, cuyo timing de startup varía
+# entre versiones de starlette) — sigue siendo la función real, sin mockear la BD.
+#
+# `_borrar_todos_los_admins()` deja la tabla sin admins para poder probar "no hay ninguno" de
+# forma determinística en una BD que comparten todos los tests de este archivo. Es seguro:
+# ningún otro test de este archivo asume que los admins de OTROS tests sigan existiendo (cada
+# uno crea el suyo con email random cuando lo necesita) — por eso estos tests van al final.
+
+def _borrar_todos_los_admins():
+    """Deja la tabla usuarios sin ningún rol=admin. Primero hay que soltar las Invitacion que
+    los referencian (creado_por / usado_por) o el DELETE choca con la FK."""
+    db = main.SessionLocal()
+    try:
+        admin_ids = [a.id for a in db.query(main.models.Usuario).filter(
+            main.models.Usuario.rol == "admin"
+        ).all()]
+        if admin_ids:
+            db.query(main.models.Invitacion).filter(
+                main.models.Invitacion.creado_por.in_(admin_ids)
+            ).delete(synchronize_session=False)
+            db.query(main.models.Invitacion).filter(
+                main.models.Invitacion.usado_por.in_(admin_ids)
+            ).delete(synchronize_session=False)
+            db.query(main.models.Usuario).filter(
+                main.models.Usuario.id.in_(admin_ids)
+            ).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_bootstrap_sin_env_vars_no_hace_nada(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_EMAIL", None)
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_PASSWORD", None)
+    _borrar_todos_los_admins()
+
+    main.sembrar_admin_inicial()
+
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Usuario).filter(main.models.Usuario.rol == "admin").first() is None
+    finally:
+        db.close()
+
+
+def test_bootstrap_crea_admin_si_no_hay_ninguno(monkeypatch):
+    email = f"boot-{uuid.uuid4().hex}@chakrashop.pe"
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_EMAIL", email)
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_PASSWORD", "un-password-cualquiera")
+    _borrar_todos_los_admins()
+
+    main.sembrar_admin_inicial()
+
+    db = main.SessionLocal()
+    try:
+        creado = db.query(main.models.Usuario).filter(main.models.Usuario.email == email).first()
+        assert creado is not None
+        assert creado.rol == "admin"
+    finally:
+        db.close()
+
+
+def test_bootstrap_no_duplica_si_ya_existe_admin(monkeypatch):
+    _crear_usuario("admin")  # ya hay al menos un admin (con email random, no el del bootstrap)
+    email_que_no_deberia_crearse = f"boot-{uuid.uuid4().hex}@chakrashop.pe"
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_EMAIL", email_que_no_deberia_crearse)
+    monkeypatch.setattr(main, "ADMIN_BOOTSTRAP_PASSWORD", "otro-password")
+
+    main.sembrar_admin_inicial()
+
+    db = main.SessionLocal()
+    try:
+        no_se_creo = db.query(main.models.Usuario).filter(
+            main.models.Usuario.email == email_que_no_deberia_crearse
+        ).first()
+        assert no_se_creo is None
+    finally:
+        db.close()

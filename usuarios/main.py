@@ -19,6 +19,53 @@ app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
 
+# ============ Bootstrap del primer admin ============
+# Patrón "seed superuser por env var al arrancar" — el mismo que ya usa este proyecto para
+# Grafana (ver k8s/grafana.yaml: GF_SECURITY_ADMIN_USER/PASSWORD). Es NECESARIO acá porque el
+# sistema de invitaciones es circular: solo un admin puede generar invitaciones, así que tiene
+# que existir una forma de crear el primero sin invitación.
+#
+# VÁLIDO PARA ESTE ENTORNO (sustentación/QA), NO para un despliegue de producción real: si este
+# proyecto migra más allá de la sustentación, esto debería reemplazarse por un k8s Job de un solo
+# uso (la opción "script standalone" que se evaluó junto con esta y se descartó por ahora) y esta
+# función de auto-siembra en el startup debería eliminarse del código — un servicio que puede
+# crear un superusuario automáticamente en cada arranque no debería quedar viviendo en prod
+# indefinidamente, aunque esté gateado por env vars.
+ADMIN_BOOTSTRAP_EMAIL = os.getenv("ADMIN_BOOTSTRAP_EMAIL")
+ADMIN_BOOTSTRAP_PASSWORD = os.getenv("ADMIN_BOOTSTRAP_PASSWORD")
+
+@app.on_event("startup")
+def sembrar_admin_inicial():
+    if not ADMIN_BOOTSTRAP_EMAIL or not ADMIN_BOOTSTRAP_PASSWORD:
+        return  # sin ambas env vars, no se toca nada — no rompe entornos que no las seteen
+
+    db = SessionLocal()
+    try:
+        # Idempotente por EXISTENCIA DE CUALQUIER ADMIN, no por el email puntual: si ya hay un
+        # admin (creado por este bootstrap en un arranque anterior, o por invitación), no se
+        # crea otro aunque las env vars sigan seteadas en cada restart.
+        ya_existe_admin = db.query(models.Usuario).filter(models.Usuario.rol == "admin").first()
+        if ya_existe_admin:
+            return
+
+        admin = models.Usuario(
+            nombre="Administrador",
+            email=ADMIN_BOOTSTRAP_EMAIL,
+            password_hash=hashear_password(ADMIN_BOOTSTRAP_PASSWORD),
+            rol="admin",
+        )
+        db.add(admin)
+        try:
+            db.commit()
+        except IntegrityError:
+            # usuarios corre con 3 réplicas (ver k8s/usuarios.yaml) — si arrancan a la vez con la
+            # BD recién creada, más de una puede pasar el chequeo "no existe admin" antes de que
+            # cualquiera haga commit. El UNIQUE en email deja pasar solo a la primera; las demás
+            # caen acá y ceden el bootstrap sin romper el arranque del pod.
+            db.rollback()
+    finally:
+        db.close()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -38,6 +85,7 @@ class UsuarioRegistro(BaseModel):
     email: EmailStr
     password: str
     rol: str = "comprador"
+    codigo_invitacion: str | None = None  # obligatorio solo para roles restringidos
 
 class UsuarioLogin(BaseModel):
     email: EmailStr
@@ -45,6 +93,12 @@ class UsuarioLogin(BaseModel):
 
 class InvitacionCrear(BaseModel):
     rol_destino: str
+
+# Roles de registro ABIERTO: cualquier persona puede auto-registrarse con estos.
+# Deny-by-default: TODO lo que no esté acá (verificador, admin, y cualquier rol futuro)
+# exige un codigo_invitacion válido cuyo rol_destino coincida — así, agregar un rol
+# sensible sin acordarse de esta lista NO abre un agujero: por defecto queda restringido.
+ROLES_DE_REGISTRO_ABIERTO = frozenset({"comprador", "productor", "repartidor"})
 
 # Sin fallback hardcodeado a propósito: si el Deployment se olvida de wirear esta env var, el
 # endpoint queda inutilizable (rechaza todo) en vez de aceptar en silencio un valor conocido.
@@ -58,18 +112,42 @@ def salud():
 
 @app.post("/usuarios/registro")
 def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
+    rol = datos.rol
+
+    # Roles restringidos: exigen un código de invitación válido cuyo rol_destino coincida
+    # con el rol pedido. El chequeo de validez lo hace validar_codigo_invitacion() (definida
+    # más abajo, disponible en runtime); acá solo se agrega el match de rol.
+    invitacion = None
+    if rol not in ROLES_DE_REGISTRO_ABIERTO:
+        codigo = (datos.codigo_invitacion or "").strip()
+        chequeo = validar_codigo_invitacion(db, codigo)
+        if not chequeo["valido"]:
+            motivo = chequeo["motivo"] if codigo else f"Registrarse como '{rol}' requiere un código de invitación"
+            raise HTTPException(status_code=400, detail=motivo)
+        if chequeo["rol_destino"] != rol:
+            raise HTTPException(status_code=400, detail="Este código no habilita el rol solicitado.")
+        invitacion = db.query(models.Invitacion).filter(models.Invitacion.codigo == codigo).first()
+
     nuevo = models.Usuario(
         nombre=datos.nombre,
         email=datos.email,
         password_hash=hashear_password(datos.password),
-        rol=datos.rol,
+        rol=rol,
     )
     db.add(nuevo)
     try:
-        db.commit()
+        db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=409, detail="Ese email ya está registrado")
+
+    # Consumir la invitación en la MISMA transacción que la creación del usuario: si algo
+    # falla antes del commit, el rollback deshace ambas (la invitación no queda "usada" en falso).
+    if invitacion is not None:
+        invitacion.usado = True
+        invitacion.usado_por = nuevo.id
+
+    db.commit()
     db.refresh(nuevo)
     return {"id": nuevo.id, "nombre": nuevo.nombre, "email": nuevo.email, "rol": nuevo.rol}
 
