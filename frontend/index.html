@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=7b2e05a1">
+<link rel="stylesheet" href="css/style.css?v=a58e13d4">
 </head>
 <body>
 
@@ -31,6 +31,7 @@
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
       <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
       <button class="nav-link nav-verificador hidden" data-nav="panel-verificador">Panel Verificador</button>
+      <button class="nav-link nav-admin hidden" data-nav="panel-admin">Panel Admin</button>
     </nav>
 
     <div class="nav-actions">
@@ -475,6 +476,46 @@
     </div>
   </section>
 
+  <!-- PANEL ADMIN — generación y gestión de códigos de invitación (rol admin). Vista SPA como
+       panel-verificador (mismo patrón: sección propia + nav-link condicional + guard en
+       iniciarPanelAdmin()). -->
+  <section id="view-panel-admin" class="view">
+    <div class="section-header">
+      <h2><i class="ti ti-shield-lock"></i> Panel Admin</h2>
+      <button class="btn btn-outline" id="btn-refrescar-invitaciones">↻ Refrescar</button>
+    </div>
+
+    <div class="card-panel">
+      <h3>Generar código de invitación</h3>
+      <p class="muted">El código habilita a una persona a registrarse con el rol elegido. Es de un solo uso y expira a los 7 días.</p>
+      <form id="form-invitacion" class="form-grid">
+        <label>Rol a habilitar
+          <!-- Opciones pobladas por poblarSelectRolDestino() desde ROLES_INVITABLES en app.js —
+               agregar un rol restringido nuevo es sumarlo ahí, no tocar este HTML. -->
+          <select id="invitacion-rol-destino"></select>
+        </label>
+        <button type="submit" class="btn btn-primary">Generar código de invitación</button>
+      </form>
+      <div id="invitacion-resultado" class="invitacion-resultado hidden">
+        <span class="muted">Código generado — compártelo con la persona invitada:</span>
+        <div class="invitacion-codigo-caja">
+          <code id="invitacion-codigo-texto"></code>
+          <button type="button" class="btn btn-sm btn-outline" id="btn-copiar-codigo"><i class="ti ti-copy"></i> Copiar</button>
+        </div>
+        <span class="muted" id="invitacion-expira-texto"></span>
+      </div>
+    </div>
+
+    <div class="section-header inner">
+      <h3><i class="ti ti-ticket"></i> Invitaciones generadas</h3>
+    </div>
+    <div id="invitaciones-lista" class="pedidos-list"></div>
+    <div id="invitaciones-empty" class="empty-state hidden">
+      <span class="empty-state-icon"><i class="ti ti-mail-off"></i></span>
+      <p><strong>Todavía no generaste ninguna invitación</strong></p>
+    </div>
+  </section>
+
   <!-- MI PERFIL -->
   <section id="view-perfil" class="view">
     <div class="section-header">
@@ -535,6 +576,12 @@
           <option value="repartidor">Repartidor</option>
           <option value="verificador">Verificador (certifica el origen de las cosechas)</option>
         </select>
+      </label>
+      <!-- Oculto por defecto: solo se muestra para roles restringidos (ver ROLES_INVITABLES /
+           actualizarCampoCodigoInvitacion en app.js — mismo array que ya usa el panel admin como
+           fuente de verdad de qué roles necesitan invitación, sin repetir "verificador" acá). -->
+      <label id="registro-codigo-invitacion-wrap" class="hidden">Código de invitación
+        <input type="text" id="registro-codigo-invitacion" placeholder="Pega el código que te compartieron">
       </label>
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
     </form>
@@ -632,7 +679,7 @@
 
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="js/api.js?v=7b2e05a1"></script>
-<script src="js/app.js?v=7b2e05a1"></script>
+<script src="js/api.js?v=a58e13d4"></script>
+<script src="js/app.js?v=a58e13d4"></script>
 </body>
 </html>

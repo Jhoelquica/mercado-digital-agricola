@@ -642,6 +642,7 @@ function actualizarUIAuth() {
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
   document.querySelector('.nav-verificador').classList.toggle('hidden', !(logueado && Estado.rol === 'verificador'));
+  document.querySelector('.nav-admin').classList.toggle('hidden', !(logueado && Estado.rol === 'admin'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
   if (logueado) {
@@ -776,6 +777,7 @@ function cambiarVista(nombre, parametro) {
   if (nombre === 'panel-productor') iniciarPanelProductor();
   if (nombre === 'gestion-envios') cargarGestionEnvios();
   if (nombre === 'panel-verificador') iniciarPanelVerificador();
+  if (nombre === 'panel-admin') iniciarPanelAdmin();
   if (nombre === 'perfil') cargarPerfil();
   if (nombre === 'detalle-producto') cargarDetalleProducto(parametro);
 }
@@ -784,7 +786,21 @@ function abrirRegistroConRol(rol) {
   cambiarTabAuth('registro');
   const select = document.getElementById('registro-rol');
   if (rol) select.value = rol;
+  actualizarCampoCodigoInvitacion();
   abrirModal('modal-auth');
+}
+
+// Muestra/oculta el campo "Código de invitación" del formulario de registro según el rol
+// elegido. ROLES_INVITABLES (definido más abajo, junto al Panel Admin) es la única fuente de
+// verdad de qué roles lo requieren — nada de repetir "verificador" hardcodeado acá.
+function actualizarCampoCodigoInvitacion() {
+  const rol = document.getElementById('registro-rol').value;
+  const wrap = document.getElementById('registro-codigo-invitacion-wrap');
+  const input = document.getElementById('registro-codigo-invitacion');
+  const requiere = rolRequiereInvitacion(rol);
+  wrap.classList.toggle('hidden', !requiere);
+  input.required = requiere;
+  if (!requiere) input.value = ''; // no arrastrar un código viejo si el usuario cambia de rol
 }
 
 // ============ MODALES ============
@@ -2988,6 +3004,120 @@ function seleccionarSeccionVerificador(seccion) {
   });
 }
 
+// ============ PANEL ADMIN ============
+// Generación y gestión de códigos de invitación. Mismo guard que el resto de paneles por rol.
+
+// Roles restringidos que un admin puede invitar — agregar uno acá habilita la opción en el
+// <select> del formulario (poblarSelectRolDestino) sin tocar el HTML ni el resto de esta lógica.
+const ROLES_INVITABLES = [
+  { value: 'verificador', label: 'Verificador' },
+];
+
+// Única fuente de verdad de "¿este rol necesita código de invitación?" — la usan tanto el
+// formulario de registro (actualizarCampoCodigoInvitacion, más arriba) como este panel.
+function rolRequiereInvitacion(rol) {
+  return ROLES_INVITABLES.some((r) => r.value === rol);
+}
+
+function poblarSelectRolDestino() {
+  const select = document.getElementById('invitacion-rol-destino');
+  if (!select || select.dataset.poblado) return;
+  select.innerHTML = ROLES_INVITABLES.map((r) => `<option value="${escapeAttr(r.value)}">${escapeAttr(r.label)}</option>`).join('');
+  select.dataset.poblado = '1';
+}
+
+async function iniciarPanelAdmin() {
+  if (!Estado.token || Estado.rol !== 'admin') {
+    cambiarVista('inicio');
+    return;
+  }
+  poblarSelectRolDestino();
+  document.getElementById('invitacion-resultado').classList.add('hidden');
+  document.getElementById('form-invitacion').reset();
+  await cargarInvitaciones();
+}
+
+// El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
+// desde /admin/invitaciones (a diferencia de /admin/invitaciones/validar/{codigo}, que sí la
+// calcula), así que se deriva acá comparando contra la hora actual del navegador.
+function estadoInvitacion(inv) {
+  if (inv.usado) return { clave: 'usada', etiqueta: 'Usada' };
+  if (new Date(inv.fecha_expiracion) < new Date()) return { clave: 'expirada', etiqueta: 'Expirada' };
+  return { clave: 'vigente', etiqueta: 'Vigente' };
+}
+
+function renderInvitacionCard(inv) {
+  const estado = estadoInvitacion(inv);
+  return `
+    <div class="pedido-card" data-invitacion-id="${escapeAttr(inv.id)}">
+      <div class="pedido-card-header">
+        <code class="pedido-id">${escapeAttr(inv.codigo)}</code>
+        <span class="pill pill-estado pill-${estado.clave}">${estado.etiqueta}</span>
+      </div>
+      <p><strong>Rol:</strong> ${escapeAttr(inv.rol_destino)}</p>
+      <p class="pedido-fecha">Creada: ${formatearFecha(inv.fecha_creacion)} · Vence: ${formatearFecha(inv.fecha_expiracion)}</p>
+      ${estado.clave === 'vigente'
+        ? `<button type="button" class="btn btn-outline btn-sm btn-revocar-invitacion" data-invitacion-id="${escapeAttr(inv.id)}">Revocar</button>`
+        : ''}
+    </div>`;
+}
+
+async function cargarInvitaciones() {
+  const cont = document.getElementById('invitaciones-lista');
+  const vacio = document.getElementById('invitaciones-empty');
+  try {
+    const invitaciones = await Api.admin.listarInvitaciones();
+    vacio.classList.toggle('hidden', invitaciones.length > 0);
+    cont.innerHTML = invitaciones.map(renderInvitacionCard).join('');
+  } catch (err) {
+    manejarError(err, 'cargar las invitaciones');
+  }
+}
+
+function mostrarInvitacionGenerada(inv) {
+  document.getElementById('invitacion-codigo-texto').textContent = inv.codigo;
+  document.getElementById('invitacion-expira-texto').textContent = `Vence: ${formatearFecha(inv.fecha_expiracion)}`;
+  document.getElementById('invitacion-resultado').classList.remove('hidden');
+}
+
+async function generarInvitacion(e) {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  const rolDestino = document.getElementById('invitacion-rol-destino').value;
+  btn.disabled = true;
+  try {
+    const invitacion = await Api.admin.crearInvitacion(rolDestino);
+    mostrarInvitacionGenerada(invitacion);
+    await cargarInvitaciones(); // la nueva invitación aparece en la lista sin recargar la página
+    toast('Código de invitación generado');
+  } catch (err) {
+    manejarError(err, 'generar la invitación');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function copiarCodigoInvitacion() {
+  const codigo = document.getElementById('invitacion-codigo-texto').textContent;
+  if (!codigo) return;
+  try {
+    await navigator.clipboard.writeText(codigo);
+    toast('Código copiado al portapapeles');
+  } catch {
+    toast('No se pudo copiar. Selecciona el código manualmente.', 'error');
+  }
+}
+
+async function revocarInvitacionDesdeLista(invitacionId) {
+  try {
+    await Api.admin.revocarInvitacion(invitacionId);
+    toast('Invitación revocada');
+    await cargarInvitaciones(); // saca la fila revocada sin recargar toda la página
+  } catch (err) {
+    manejarError(err, 'revocar la invitación');
+  }
+}
+
 async function crearPerfilRepartidor(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
@@ -3529,12 +3659,18 @@ async function manejarRegistro(e) {
     const password = document.getElementById('registro-password').value;
     const rol = document.getElementById('registro-rol').value;
 
-    await Api.usuarios.registrar({ nombre, email, password, rol });
+    const datos = { nombre, email, password, rol };
+    if (rolRequiereInvitacion(rol)) {
+      datos.codigo_invitacion = document.getElementById('registro-codigo-invitacion').value.trim();
+    }
+
+    await Api.usuarios.registrar(datos);
     const resp = await Api.usuarios.login({ email, password });
     Estado.nombre = nombre;
     await iniciarSesionConToken(resp.access_token);
 
     document.getElementById('form-registro').reset();
+    actualizarCampoCodigoInvitacion(); // el reset vuelve el <select> a "comprador" — resincroniza el campo
     cerrarModal('modal-auth');
     cambiarVista('inicio');
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
@@ -3648,6 +3784,7 @@ function inicializarEventos() {
 
   document.getElementById('form-login').addEventListener('submit', manejarLogin);
   document.getElementById('form-registro').addEventListener('submit', manejarRegistro);
+  document.getElementById('registro-rol').addEventListener('change', actualizarCampoCodigoInvitacion);
 
   document.getElementById('btn-abrir-busqueda').addEventListener('click', abrirPanelBusqueda);
   document.getElementById('panel-busqueda').addEventListener('click', (e) => {
@@ -3847,6 +3984,15 @@ function inicializarEventos() {
     if (tab) seleccionarSeccionVerificador(tab.dataset.vseccion);
   });
   document.getElementById('btn-verificador-logout').addEventListener('click', cerrarSesion);
+
+  // ---- Panel Admin: generar invitación, copiar código, refrescar, revocar ----
+  document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);
+  document.getElementById('btn-copiar-codigo').addEventListener('click', copiarCodigoInvitacion);
+  document.getElementById('btn-refrescar-invitaciones').addEventListener('click', cargarInvitaciones);
+  document.getElementById('invitaciones-lista').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-revocar-invitacion');
+    if (btn) revocarInvitacionDesdeLista(btn.dataset.invitacionId);
+  });
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-actualizar-envio');
     if (!btn) return;

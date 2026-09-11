@@ -94,6 +94,13 @@ const Api = {
     login: (datos) => request('usuarios', '/usuarios/login', { method: 'POST', body: datos }),
     obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
   },
+  admin: {
+    // El rol Admin vive en el servicio de usuarios (mismo servicio del login/registro) —
+    // mismo caso que Api.verificadores, que apunta a un servicio propio del rol.
+    crearInvitacion: (rolDestino) => request('usuarios', '/admin/invitaciones', { method: 'POST', body: { rol_destino: rolDestino }, auth: true }),
+    listarInvitaciones: () => request('usuarios', '/admin/invitaciones', { auth: true }),
+    revocarInvitacion: (id) => request('usuarios', `/admin/invitaciones/${id}`, { method: 'DELETE', auth: true }),
+  },
   productores: {
     listar: () => request('productores', '/productores'),
     obtener: (id) => request('productores', `/productores/${id}`),

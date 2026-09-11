@@ -1638,6 +1638,36 @@ input, select { font-family: inherit; }
 #verificador-cuenta-nombre { color: var(--color-primario); }
 #btn-verificador-logout { margin-top: 4px; }
 
+/* ---------- PANEL ADMIN ---------- */
+#view-panel-admin .card-panel { border-color: var(--color-borde); max-width: 560px; }
+.invitacion-resultado {
+  margin-top: 18px;
+  padding: 16px 20px;
+  border-radius: var(--radio);
+  background: var(--color-fondo-secundario);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.invitacion-codigo-caja { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.invitacion-codigo-caja code {
+  font-family: monospace;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--color-primario);
+  background: white;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--color-borde);
+  word-break: break-all;
+}
+/* Mismo esquema que .pill-estado del resto del sitio (pedidos/envíos), con los tokens nuevos
+   para vigente/usada — "expirada" reusa el rojo ya establecido para estados fallidos/inactivos
+   (.pill-cancelado/.pill-rechazado/.pill-error), no es --verde-* así que no aplica la migración. */
+.pill-vigente { background: var(--color-fondo-secundario); color: var(--color-primario); }
+.pill-usada { background: var(--color-superficie); color: var(--color-secundario); }
+.pill-expirada { background: #ffe0da; color: #b3401f; }
+
 /* ---------- MI PERFIL ---------- */
 #perfil-contenido { display: flex; flex-direction: column; gap: 20px; }
 #perfil-contenido > * { animation: aparecerTarjeta 0.35s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
