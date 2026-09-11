@@ -87,6 +87,9 @@ class CompletarCosechaDatos(BaseModel):
     costo_mano_obra: float
     costo_envio: float
 
+class RechazarCosechaDatos(BaseModel):
+    motivo: str
+
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
@@ -359,7 +362,17 @@ def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict)
     return base
 
 
-def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dict) -> dict:
+def _motivo_ultimo_rechazo(registro: models.RegistroProduccion, db: Session) -> str | None:
+    if registro.estado != "rechazado":
+        return None
+    ultimo = db.query(models.HistorialVerificacionCosecha).filter(
+        models.HistorialVerificacionCosecha.registro_produccion_id == registro.id,
+        models.HistorialVerificacionCosecha.accion == "rechazado",
+    ).order_by(models.HistorialVerificacionCosecha.fecha.desc()).first()
+    return ultimo.motivo if ultimo else None
+
+
+def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dict, db: Session) -> dict:
     return {
         "id": registro.id,
         "productor_id": registro.productor_id,
@@ -379,6 +392,7 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "fecha_cosecha_real": registro.fecha_cosecha_real,
         "estado": registro.estado,
         "fecha_registro": registro.fecha_registro,
+        "motivo_rechazo": _motivo_ultimo_rechazo(registro, db),
         **_calcular_metricas(registro, cache_precios),
     }
 
@@ -424,7 +438,7 @@ def crear_registro_produccion(
     db.add(nuevo)
     db.commit()
     db.refresh(nuevo)
-    return _serializar_registro(nuevo, {})
+    return _serializar_registro(nuevo, {}, db)
 
 
 @app.get("/productores/produccion/me")
@@ -441,7 +455,7 @@ def listar_mi_produccion(
     # de esta respuesta — evita pedirle a Productos el mismo precio varias veces si hay más de
     # un registro con el mismo cultivo.
     cache_precios = {}
-    return [_serializar_registro(r, cache_precios) for r in registros]
+    return [_serializar_registro(r, cache_precios, db) for r in registros]
 
 
 @app.patch("/productores/produccion/{registro_id}/completar-cosecha")
@@ -460,8 +474,12 @@ def completar_cosecha(
         raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
     if str(registro.productor_id) != str(productor.id):
         raise HTTPException(status_code=403, detail="Este registro de producción no te pertenece")
-    if registro.estado == "cosechado":
-        raise HTTPException(status_code=409, detail="Esta cosecha ya fue registrada como completa")
+    # "planificado": primera vez que se completa la cosecha. "rechazado": el productor reenvía
+    # tras un rechazo del Verificador — mismo endpoint, no uno nuevo (ver comentario del estado
+    # en models.py). Cualquier otro estado (pendiente_verificacion, aprobado, o el ya-superado
+    # "cosechado") significa que ya está en manos del Verificador o ya fue aprobada.
+    if registro.estado not in ("planificado", "rechazado"):
+        raise HTTPException(status_code=409, detail="Esta cosecha no está en un estado que permita completarla")
 
     if datos.cantidad_cosechada <= 0:
         raise HTTPException(status_code=422, detail="La cantidad cosechada debe ser mayor a 0")
@@ -470,10 +488,123 @@ def completar_cosecha(
     registro.fecha_cosecha_real = datos.fecha_cosecha_real
     registro.costo_mano_obra = datos.costo_mano_obra
     registro.costo_envio = datos.costo_envio
-    registro.estado = "cosechado"
+    # Va directo a pendiente_verificacion: para el productor "marcar cosechado" es un solo paso,
+    # no dos llamadas separadas (completar-cosecha + enviar-a-verificación).
+    registro.estado = "pendiente_verificacion"
     db.commit()
     db.refresh(registro)
-    return _serializar_registro(registro, {})
+    return _serializar_registro(registro, {}, db)
+
+
+# ============ Verificación de cosechas (rol Verificador) ============
+
+@app.get("/productores/produccion/pendientes-verificacion")
+def listar_pendientes_verificacion(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("verificador")),
+):
+    registros = db.query(models.RegistroProduccion).filter(
+        models.RegistroProduccion.estado == "pendiente_verificacion"
+    ).order_by(models.RegistroProduccion.fecha_registro.asc()).all()  # más antigua primero
+
+    if not registros:
+        return []
+
+    # Mismo patrón que certificacion/main.py:historial() para evitar N+1: se junta el set de
+    # ids referenciados y se trae cada tabla relacionada en una sola query, no una por registro.
+    chacra_ids = {r.chacra_id for r in registros}
+    productor_ids = {r.productor_id for r in registros}
+    chacras_por_id = {
+        c.id: c for c in db.query(models.Chacra).filter(models.Chacra.id.in_(chacra_ids)).all()
+    }
+    productores_por_id = {
+        p.id: p for p in db.query(models.Productor).filter(models.Productor.id.in_(productor_ids)).all()
+    }
+
+    resultado = []
+    for r in registros:
+        chacra = chacras_por_id.get(r.chacra_id)
+        productor = productores_por_id.get(r.productor_id)
+        resultado.append({
+            "id": r.id,
+            "cultivo": r.cultivo,
+            "numero_parcelas": r.numero_parcelas,
+            "cantidad_cosechada": r.cantidad_cosechada,
+            "unidad_medida": r.unidad_medida,
+            "ubicacion_cosecha": r.ubicacion_cosecha,
+            "fecha_siembra": r.fecha_siembra,
+            "fecha_cosecha_estimada": r.fecha_cosecha_estimada,
+            "fecha_cosecha_real": r.fecha_cosecha_real,
+            "fecha_registro": r.fecha_registro,
+            "chacra_id": r.chacra_id,
+            "chacra_codigo": chacra.codigo if chacra else None,
+            "chacra_nombre": chacra.nombre if chacra else None,
+            "productor_id": r.productor_id,
+            "productor_nombre": productor.nombre if productor else None,
+        })
+    return resultado
+
+
+def _obtener_registro_pendiente_verificacion(registro_id: str, db: Session) -> models.RegistroProduccion:
+    """Sin chequeo de dueño a propósito: a diferencia de los endpoints de productor, acá el
+    llamante es el Verificador — revisa cosechas de cualquier productor, no solo las propias."""
+    registro = db.query(models.RegistroProduccion).filter(
+        models.RegistroProduccion.id == registro_id
+    ).first()
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
+    if registro.estado != "pendiente_verificacion":
+        raise HTTPException(status_code=409, detail="Esta cosecha no está pendiente de verificación")
+    return registro
+
+
+@app.post("/productores/produccion/{registro_id}/aprobar")
+def aprobar_cosecha(
+    registro_id: str,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("verificador")),
+):
+    registro = _obtener_registro_pendiente_verificacion(registro_id, db)
+
+    registro.estado = "aprobado"
+    db.add(models.HistorialVerificacionCosecha(
+        registro_produccion_id=registro.id,
+        verificador_id=usuario.get("sub"),
+        accion="aprobado",
+    ))
+    db.commit()
+    db.refresh(registro)
+
+    # TODO(sub-entrega 3 — creación de producto): acá va la llamada que crea automáticamente el
+    # Producto en el catálogo (servicio Productos) a partir de este RegistroProduccion. Todavía
+    # no existe el vínculo Producto <-> RegistroProduccion ni el mapeo de campos (cultivo-> nombre,
+    # unidad_medida, etc.) — ver el reporte de la investigación previa a esta sub-entrega.
+
+    return _serializar_registro(registro, {}, db)
+
+
+@app.post("/productores/produccion/{registro_id}/rechazar")
+def rechazar_cosecha(
+    registro_id: str,
+    datos: RechazarCosechaDatos,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("verificador")),
+):
+    if not datos.motivo.strip():
+        raise HTTPException(status_code=422, detail="Debes indicar un motivo de rechazo")
+
+    registro = _obtener_registro_pendiente_verificacion(registro_id, db)
+
+    registro.estado = "rechazado"
+    db.add(models.HistorialVerificacionCosecha(
+        registro_produccion_id=registro.id,
+        verificador_id=usuario.get("sub"),
+        accion="rechazado",
+        motivo=datos.motivo,
+    ))
+    db.commit()
+    db.refresh(registro)
+    return _serializar_registro(registro, {}, db)
 
 
 @app.delete("/productores/produccion/{registro_id}")

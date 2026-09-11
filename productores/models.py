@@ -72,5 +72,34 @@ class RegistroProduccion(Base):
     fecha_cosecha_estimada = Column(DateTime, nullable=False)
     fecha_cosecha_real = Column(DateTime, nullable=True)
 
-    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado
+    # Máquina de estados (ampliada — ver HistorialVerificacionCosecha):
+    #   planificado -> pendiente_verificacion -> aprobado
+    #                                          -> rechazado -> pendiente_verificacion (reenvío)
+    # "cosechado" sigue en el vocabulario (compatibilidad con datos/tests viejos) pero ya no
+    # queda como valor de reposo: completar_cosecha() en main.py transiciona directo a
+    # pendiente_verificacion en la misma llamada — desde la perspectiva del productor "marcar
+    # cosechado" es un solo paso, no dos.
+    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado | pendiente_verificacion | aprobado | rechazado
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+
+
+class HistorialVerificacionCosecha(Base):
+    """Historial de decisiones del Verificador sobre una cosecha — calcado de EnvioRechazo en
+    Transporte (transporte/models.py): guarda CADA decisión (no solo la última), así que un
+    reenvío tras un rechazo no borra el rastro de por qué se rechazó la primera vez.
+
+    verificador_id NO es un ForeignKey real a pesar del nombre: Verificador vive en la base de
+    datos del servicio Certificación, una BD completamente distinta a la de este servicio — no
+    hay integridad referencial posible entre bases de datos separadas. Mismo caso que
+    Bloque.verificador_id en Certificación (certificacion/models.py) o Envio.pedido_id acá mismo
+    (referencia a Pedidos). Se guarda el usuario_id del verificador autenticado (claim `sub` del
+    JWT), no se busca su fila real de Verificador — requiere_rol("verificador") ya garantiza que
+    ese usuario tiene el rol, sin necesidad de otra llamada a Certificación para confirmarlo."""
+    __tablename__ = "historial_verificacion_cosecha"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    registro_produccion_id = Column(UUID(as_uuid=True), ForeignKey("registros_produccion.id"), nullable=False)
+    verificador_id = Column(UUID(as_uuid=True), nullable=False)
+    accion = Column(String, nullable=False)  # aprobado | rechazado
+    motivo = Column(String, nullable=True)  # obligatorio en la práctica solo para "rechazado" (validado en main.py)
+    fecha = Column(DateTime, default=datetime.utcnow)
