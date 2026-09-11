@@ -1870,7 +1870,7 @@ input, select { font-family: inherit; }
 }
 
 /* ---------- PUBLICAR PRODUCTO: VISTA PREVIA EN VIVO ---------- */
-.card-panel-publicar { max-width: 920px; }
+.btn-publicar-borrador { margin-top: 18px; }
 
 .publicar-layout {
   display: grid;

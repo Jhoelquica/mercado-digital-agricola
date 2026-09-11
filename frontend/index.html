@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=c37a1f6e">
+<link rel="stylesheet" href="css/style.css?v=d48b2e91">
 </head>
 <body>
 
@@ -334,51 +334,14 @@
     <div id="productor-panel" class="hidden">
       <div id="productor-resumen"></div>
 
-      <div class="card-panel card-panel-publicar">
-        <h3 id="titulo-form-producto"><i class="ti ti-seedling"></i> Publicar nuevo producto</h3>
-        <p class="muted">Completa los datos y mira cómo se verá en el catálogo.</p>
-
-        <div class="publicar-layout">
-          <form id="form-producto" class="form-grid">
-            <label>Nombre del producto
-              <input type="text" id="producto-nombre" required maxlength="80" placeholder="Ej. Palta Hass">
-            </label>
-            <label>Categoría
-              <select id="producto-categoria" required>
-                <option value="">Elige una categoría</option>
-              </select>
-            </label>
-            <label>Unidad de medida
-              <select id="producto-unidad" required>
-                <option value="kg">Kilogramo (kg)</option>
-                <option value="unidad">Unidad</option>
-                <option value="saco">Saco</option>
-                <option value="arroba">Arroba</option>
-              </select>
-            </label>
-            <label>Precio (S/)
-              <input type="number" id="producto-precio" min="0" step="0.01" required placeholder="0.00">
-            </label>
-            <label>Stock disponible
-              <input type="number" id="producto-stock" min="0" step="1" required placeholder="0">
-            </label>
-            <button type="submit" class="btn btn-primary">Publicar producto</button>
-          </form>
-
-          <div class="publicar-preview">
-            <span class="publicar-preview-label"><i class="ti ti-eye"></i> Vista previa</span>
-            <div id="preview-producto-card"></div>
-          </div>
-        </div>
-
-        <div id="producto-fotos-bloque" class="fotos-upload-bloque hidden">
-          <div class="fotos-upload-header">
-            <h4><i class="ti ti-camera"></i> Sube fotos de tu producto</h4>
-          </div>
-          <p class="muted">La primera foto será la principal en el catálogo. Formatos: JPG, PNG o WEBP.</p>
-          <div id="gestor-fotos-nuevo"></div>
-          <button type="button" class="btn btn-primary btn-block" id="btn-terminar-publicacion">Listo, ver mis productos</button>
-        </div>
+      <div class="section-header inner">
+        <h3><i class="ti ti-pencil"></i> Borradores pendientes de completar</h3>
+      </div>
+      <div id="productor-borradores-lista" class="pedidos-list"></div>
+      <div id="productor-borradores-empty" class="empty-state hidden">
+        <span class="empty-state-icon"><i class="ti ti-pencil"></i></span>
+        <p><strong>No tienes borradores pendientes</strong></p>
+        <p class="muted">Cuando el Verificador apruebe una de tus cosechas, el producto nace acá como borrador — completa categoría, precio y fotos para publicarlo.</p>
       </div>
 
       <div class="section-header inner">
@@ -389,8 +352,7 @@
       <div id="mis-productos-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-seedling"></i></span>
         <p><strong>Aún no tienes productos publicados</strong></p>
-        <p class="muted">Completa el formulario de arriba para publicar tu primer producto y empezar a vender sin intermediarios.</p>
-        <button type="button" class="btn btn-primary" id="btn-empezar-publicar">Publicar mi primer producto</button>
+        <p class="muted">Completa un borrador de arriba y publícalo para que aparezca en el catálogo.</p>
       </div>
 
       <div class="section-header inner">
@@ -732,7 +694,7 @@
 
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="js/api.js?v=b625e3d0"></script>
-<script src="js/app.js?v=f7c3a162"></script>
+<script src="js/api.js?v=c936f4e1"></script>
+<script src="js/app.js?v=a29d8c53"></script>
 </body>
 </html>

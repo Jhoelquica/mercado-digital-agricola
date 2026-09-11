@@ -59,6 +59,10 @@ class ProductoCrearDesdeCosecha(BaseModel):
     stock: int
     registro_produccion_id: str
 
+class ProductoActualizar(BaseModel):
+    categoria: str | None = None
+    precio: float | None = None
+
 class ImagenCrear(BaseModel):
     url: str
     orden: int = 0
@@ -533,6 +537,54 @@ def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto:
     if producto.stock < datos.cantidad:
         raise HTTPException(status_code=409, detail="Stock insuficiente")
     producto.stock -= datos.cantidad
+    db.commit()
+    db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
+    return producto
+
+@app.patch("/productos/{producto_id}")
+def actualizar_producto(
+        producto_id: str,
+        datos: ProductoActualizar,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Edita categoria/precio de un producto propio — de a uno o los dos juntos, lo que venga en
+    el body (None = no tocar ese campo). Solo mientras está en "borrador": editar un producto ya
+    publicado es una conversación aparte (¿republicar? ¿efecto inmediato en el catálogo?), no se
+    resuelve acá."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes modificar un producto que no te pertenece")
+
+    if producto.estado != "borrador":
+        raise HTTPException(status_code=400, detail="Solo se puede editar un producto mientras está en borrador")
+
+    if datos.precio is not None:
+        if datos.precio <= 0:
+            raise HTTPException(status_code=422, detail="El precio debe ser mayor a 0")
+        producto.precio = datos.precio
+    if datos.categoria is not None:
+        producto.categoria = datos.categoria
+
     db.commit()
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))

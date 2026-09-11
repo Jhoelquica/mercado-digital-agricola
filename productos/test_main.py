@@ -6,6 +6,8 @@ Cubre:
 - GET /productos/mios trae ambos estados, solo del productor autenticado
 - PATCH .../publicar: sin precio -> 400, sin imagen -> 400, con todo completo -> 200,
   ya publicado -> 400
+- PATCH /productos/{id}: edita categoria y/o precio de un borrador propio; falla si no es el
+  dueño, si el producto ya está publicado, o si el precio es <= 0
 - POST /productos/interno/crear-desde-cosecha: sin el secreto correcto -> 403,
   con el secreto correcto crea el borrador esperado (sin precio/categoría, no visible en el
   catálogo)
@@ -250,6 +252,89 @@ def test_publicar_producto_ajeno_falla_403(monkeypatch):
 
     resp = client.patch(f"/productos/{producto.id}/publicar", headers=HEADERS_AUTH)
     assert resp.status_code == 403
+
+
+# ============ PATCH /productos/{id} (editar categoria/precio de un borrador) ============
+
+def test_actualizar_categoria_sola(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(
+        productor_id=productor_id, estado="borrador", precio=None, categoria=None,
+    )
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(f"/productos/{producto.id}", json={"categoria": "verdura"}, headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["categoria"] == "verdura"
+    assert resp.json()["precio"] is None
+
+
+def test_actualizar_precio_solo(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(
+        productor_id=productor_id, estado="borrador", precio=None, categoria="fruta",
+    )
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(f"/productos/{producto.id}", json={"precio": 15.5}, headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["precio"]) == 15.5
+    assert resp.json()["categoria"] == "fruta"
+
+
+def test_actualizar_categoria_y_precio_juntos(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(
+        productor_id=productor_id, estado="borrador", precio=None, categoria=None,
+    )
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(
+        f"/productos/{producto.id}", json={"categoria": "tuberculo", "precio": 8.0}, headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["categoria"] == "tuberculo"
+    assert float(resp.json()["precio"]) == 8.0
+
+
+def test_actualizar_producto_ajeno_falla_403(monkeypatch):
+    dueño_real = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=dueño_real, estado="borrador", precio=None, categoria=None)
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # otro productor autenticado
+
+    resp = client.patch(f"/productos/{producto.id}", json={"precio": 9.0}, headers=HEADERS_AUTH)
+    assert resp.status_code == 403
+
+
+def test_actualizar_producto_ya_publicado_falla_400(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="publicado")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(f"/productos/{producto.id}", json={"precio": 20.0}, headers=HEADERS_AUTH)
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Solo se puede editar un producto mientras está en borrador"
+
+
+def test_actualizar_precio_invalido_falla_422(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador", precio=None, categoria="fruta")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(f"/productos/{producto.id}", json={"precio": 0}, headers=HEADERS_AUTH)
+    assert resp.status_code == 422
 
 
 # ============ POST /productos/interno/crear-desde-cosecha ============

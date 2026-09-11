@@ -13,6 +13,8 @@ const Estado = {
   chacras: [], // chacras del productor autenticado — las usan tanto "Mis chacras" (panel-productor)
                // como el selector de chacra en "Registrar nueva siembra" (Mi Perfil)
   registrosProduccion: [], // RegistroProduccion del productor — resumen de panel-productor y Mi Perfil
+  misProductos: [], // Api.productos.mios() — borradores Y publicados del productor autenticado,
+                     // separado de Estado.productos (que es el catálogo público, solo publicados)
   imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
 };
 
@@ -377,6 +379,7 @@ async function subirFotosProducto(productoId, fileList) {
       actuales.push(nuevaImagen);
       Estado.imagenesPorProducto[productoId] = [...actuales];
       rerenderGestorFotos(productoId);
+      sincronizarBorradorTrasCambioDeFotos(productoId);
     } catch (err) {
       manejarError(err, 'subir la foto');
     }
@@ -388,10 +391,21 @@ async function eliminarFotoProducto(productoId, imagenId) {
     await Api.productos.eliminarImagen(imagenId);
     Estado.imagenesPorProducto[productoId] = (Estado.imagenesPorProducto[productoId] || []).filter((img) => img.id !== imagenId);
     rerenderGestorFotos(productoId);
+    sincronizarBorradorTrasCambioDeFotos(productoId);
     toast('Foto eliminada.');
   } catch (err) {
     manejarError(err, 'eliminar la foto');
   }
+}
+
+// subirFotosProducto/eliminarFotoProducto/moverFotoProducto son genéricas (las usa tanto un
+// borrador como el panel de fotos de un producto ya publicado) — este helper es un no-op seguro
+// cuando productoId no corresponde a un borrador visible en pantalla (sincronizarBotonPublicar
+// Borrador ya se protege con ese caso; actualizarPreviewBorrador simplemente no encuentra la
+// tarjeta ni el producto en Estado.misProductos y no hace nada).
+function sincronizarBorradorTrasCambioDeFotos(productoId) {
+  sincronizarBotonPublicarBorrador(productoId);
+  actualizarPreviewBorrador(productoId);
 }
 
 async function moverFotoProducto(productoId, imagenId, direccion) {
@@ -413,6 +427,7 @@ async function moverFotoProducto(productoId, imagenId, direccion) {
 
   Estado.imagenesPorProducto[productoId] = [...lista];
   rerenderGestorFotos(productoId);
+  actualizarPreviewBorrador(productoId); // el orden decide cuál es la "principal" en la preview
 
   try {
     await Promise.all([
@@ -422,6 +437,7 @@ async function moverFotoProducto(productoId, imagenId, direccion) {
   } catch (err) {
     Estado.imagenesPorProducto[productoId] = snapshot;
     rerenderGestorFotos(productoId);
+    actualizarPreviewBorrador(productoId);
     manejarError(err, 'reordenar las fotos');
   }
 }
@@ -2624,8 +2640,6 @@ async function iniciarPanelProductor() {
   if (Estado.productorId) {
     setup.classList.add('hidden');
     panel.classList.remove('hidden');
-    poblarSelectCategoriaProducto();
-    reiniciarFormularioProducto();
     inicializarMapaUbicacionChacra();
     document.getElementById('productor-resumen').innerHTML = renderSkeletonResumen(3);
     // Las 3 cargas son independientes entre sí (cada una pinta su propia sección), pero el
@@ -2643,38 +2657,12 @@ async function iniciarPanelProductor() {
 // ---- Categorías fijas (mismo catálogo de 8 usado en toda la app) ----
 const CATEGORIAS_PRODUCTO = ['fruta', 'verdura', 'tuberculo', 'grano', 'legumbre', 'lacteo', 'huevo', 'hierba'];
 
-function poblarSelectCategoriaProducto() {
-  const select = document.getElementById('producto-categoria');
-  if (!select || select.dataset.poblado) return;
-  select.innerHTML = '<option value="">Elige una categoría</option>' +
-    CATEGORIAS_PRODUCTO.map((c) => `<option value="${c}">${ICONOS_CATEGORIA[c]} ${NOMBRE_CATEGORIA[c]}</option>`).join('');
-  select.dataset.poblado = '1';
-}
-
-// ---- Vista previa en vivo de la tarjeta mientras se llena el formulario ----
-function leerBorradorProducto() {
-  return {
-    nombre: document.getElementById('producto-nombre').value.trim() || 'Nombre del producto',
-    categoria: document.getElementById('producto-categoria').value,
-    unidad_medida: document.getElementById('producto-unidad').value,
-    precio: parseFloat(document.getElementById('producto-precio').value) || 0,
-    stock: parseInt(document.getElementById('producto-stock').value, 10) || 0,
-    productor_nombre: Estado.nombre || 'Tu emprendimiento',
-  };
-}
-
-function actualizarVistaPreviaProducto() {
-  const cont = document.getElementById('preview-producto-card');
-  if (!cont) return;
-  cont.innerHTML = renderTarjetaProductoCatalogo(leerBorradorProducto(), { clickable: false, indice: 0 });
-}
-
-function reiniciarFormularioProducto() {
-  document.getElementById('form-producto')?.reset();
-  document.getElementById('producto-fotos-bloque')?.classList.add('hidden');
-  document.getElementById('form-producto')?.classList.remove('hidden');
-  document.getElementById('titulo-form-producto').innerHTML = '<i class="ti ti-seedling"></i> Publicar nuevo producto';
-  actualizarVistaPreviaProducto();
+// Opciones <option> del selector de categoría de un borrador — mismo catálogo de 8 que ya
+// puebla el resto de la app (CATEGORIAS_PRODUCTO), pero como string reusable por tarjeta en vez
+// de un <select> único poblado una sola vez (ya no hay un solo formulario, hay uno por borrador).
+function opcionesCategoriaHTML(seleccionada) {
+  return '<option value="">Elige una categoría</option>' +
+    CATEGORIAS_PRODUCTO.map((c) => `<option value="${c}" ${c === seleccionada ? 'selected' : ''}>${ICONOS_CATEGORIA[c]} ${NOMBRE_CATEGORIA[c]}</option>`).join('');
 }
 
 // ---- Selector de ubicación (mapa del perfil del productor) ----
@@ -2747,39 +2735,7 @@ async function crearPerfilProductor(e) {
   }
 }
 
-async function publicarProducto(e) {
-  e.preventDefault();
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  try {
-    const datos = {
-      productor_id: Estado.productorId,
-      nombre: document.getElementById('producto-nombre').value.trim(),
-      categoria: document.getElementById('producto-categoria').value || null,
-      unidad_medida: document.getElementById('producto-unidad').value,
-      precio: parseFloat(document.getElementById('producto-precio').value),
-      stock: parseInt(document.getElementById('producto-stock').value, 10),
-    };
-    const nuevoProducto = await Api.productos.crear(datos);
-    toast('Producto publicado con éxito 🎉');
-
-    document.getElementById('form-producto').classList.add('hidden');
-    document.getElementById('titulo-form-producto').innerHTML = `<i class="ti ti-circle-check"></i> ${escapeAttr(nuevoProducto.nombre)}`;
-    Estado.imagenesPorProducto[nuevoProducto.id] = [];
-    const bloqueFotos = document.getElementById('producto-fotos-bloque');
-    bloqueFotos.classList.remove('hidden');
-    bloqueFotos.dataset.productoId = nuevoProducto.id;
-    document.getElementById('gestor-fotos-nuevo').innerHTML = renderGestorFotosHTML(nuevoProducto.id, []);
-
-    cargarMisProductos();
-  } catch (err) {
-    manejarError(err, 'publicar el producto');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// ---- Gestión Económica: siembra ↔ unidad de medida (mismo patrón que "Publicar producto") ----
+// ---- Gestión Económica: siembra ↔ unidad de medida (mismo patrón que el resto del panel) ----
 function actualizarVisibilidadEquivalenciaProduccion() {
   const unidad = document.getElementById('produccion-unidad')?.value;
   const bloque = document.getElementById('produccion-equivalencia-bloque');
@@ -2958,23 +2914,138 @@ async function alternarFotosProductor(id) {
   panel.innerHTML = renderGestorFotosHTML(id, Estado.imagenesPorProducto[id]);
 }
 
+// ---- Borradores (nacen de una cosecha aprobada por el Verificador — ver
+// crear_producto_desde_cosecha en productos/main.py) ----
+function renderTarjetaBorrador(p, indice, imagenes) {
+  const retraso = Math.min(indice, 12) * 35;
+  const puedePublicar = p.precio != null && Number(p.precio) > 0 && imagenes.length > 0;
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(p.nombre)}</h4>
+        <span class="pill pill-estado pill-pendiente"><i class="ti ti-pencil"></i> Borrador</span>
+      </div>
+      <p class="muted">${Number(p.stock)} ${escapeAttr(p.unidad_medida)} de tu cosecha aprobada — completa lo que falta para publicarlo.</p>
+
+      <div class="publicar-layout">
+        <div class="form-grid">
+          <label>Categoría
+            <select class="borrador-categoria">${opcionesCategoriaHTML(p.categoria)}</select>
+          </label>
+          <label>Precio (S/)
+            <input type="number" class="borrador-precio" min="0" step="0.01" placeholder="0.00" value="${p.precio != null ? p.precio : ''}">
+          </label>
+        </div>
+        <div class="publicar-preview">
+          <span class="publicar-preview-label"><i class="ti ti-eye"></i> Vista previa</span>
+          <div class="borrador-preview-card"></div>
+        </div>
+      </div>
+
+      <div class="fotos-upload-bloque">
+        <div class="fotos-upload-header">
+          <h4><i class="ti ti-camera"></i> Fotos del producto</h4>
+        </div>
+        <p class="muted">La primera foto será la principal en el catálogo. Formatos: JPG, PNG o WEBP.</p>
+        <div class="gestor-fotos-borrador">${renderGestorFotosHTML(p.id, imagenes)}</div>
+      </div>
+
+      <button type="button" class="btn btn-primary btn-block btn-publicar-borrador" data-producto-id="${escapeAttr(p.id)}" ${puedePublicar ? '' : 'disabled'}>Publicar</button>
+    </div>`;
+}
+
+// Recalcula la vista previa de un borrador con lo que hay ahora mismo en pantalla (categoría,
+// precio, primera foto ya subida) — mismo componente que usaba el formulario viejo
+// (renderTarjetaProductoCatalogo), solo que ahora lee de un borrador real en vez de inputs vacíos.
+function actualizarPreviewBorrador(productoId) {
+  const card = document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`);
+  const cont = card?.querySelector('.borrador-preview-card');
+  const producto = (Estado.misProductos || []).find((p) => p.id === productoId);
+  if (!cont || !producto) return;
+
+  const categoria = card.querySelector('.borrador-categoria')?.value || producto.categoria;
+  const precio = parseFloat(card.querySelector('.borrador-precio')?.value);
+  const imagenes = Estado.imagenesPorProducto[productoId] || [];
+  const primeraImagen = [...imagenes].sort((a, b) => a.orden - b.orden)[0]?.url;
+
+  cont.innerHTML = renderTarjetaProductoCatalogo({
+    ...producto,
+    categoria,
+    precio: Number.isFinite(precio) ? precio : 0,
+    imagen_principal: primeraImagen || producto.imagen_principal,
+  }, { clickable: false, indice: 0 });
+}
+
+// Habilita "Publicar" solo cuando precio > 0 y hay al menos 1 foto — ayuda visual, el backend
+// igual valida esto mismo en PATCH /productos/{id}/publicar.
+function sincronizarBotonPublicarBorrador(productoId) {
+  const btn = document.querySelector(`.btn-publicar-borrador[data-producto-id="${productoId}"]`);
+  if (!btn) return; // no es (o ya no es) un borrador visible en pantalla
+  const card = btn.closest('.pedido-card');
+  const precio = parseFloat(card?.querySelector('.borrador-precio')?.value);
+  const tieneImagen = (Estado.imagenesPorProducto[productoId] || []).length > 0;
+  btn.disabled = !(Number.isFinite(precio) && precio > 0 && tieneImagen);
+}
+
+async function publicarBorrador(productoId) {
+  const card = document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`);
+  if (!card) return;
+  const categoria = card.querySelector('.borrador-categoria').value || null;
+  const precio = parseFloat(card.querySelector('.borrador-precio').value);
+  card.querySelectorAll('button, select, input').forEach((el) => { el.disabled = true; });
+  try {
+    await Api.productos.actualizar(productoId, { categoria, precio: Number.isFinite(precio) ? precio : null });
+    await Api.productos.publicar(productoId);
+    toast('Producto publicado — ya está visible en el catálogo 🎉');
+    // Recarga la sección completa (no toda la vista) — mismo criterio que cargarInvitaciones()
+    // en Panel Admin: más simple y correcto que mover la tarjeta a mano, porque "publicados"
+    // necesita datos que este borrador no tenía (imagen_principal calculada del lado del
+    // backend, por ejemplo).
+    cargarMisProductos();
+  } catch (err) {
+    manejarError(err, 'publicar el producto');
+    card.querySelectorAll('button, select, input').forEach((el) => { el.disabled = false; });
+  }
+}
+
 async function cargarMisProductos() {
+  const contBorradores = document.getElementById('productor-borradores-lista');
+  const vacioBorradores = document.getElementById('productor-borradores-empty');
   const grid = document.getElementById('mis-productos-grid');
   const vacio = document.getElementById('mis-productos-empty');
+  vacioBorradores.classList.add('hidden');
   vacio.classList.add('hidden');
+  contBorradores.innerHTML = renderSkeletonFilas(1);
   grid.innerHTML = renderSkeletonProductos(3);
   try {
-    const todos = await Api.productos.listar();
-    const mios = todos.filter((p) => p.productor_id === Estado.productorId);
-    Estado.productos = todos;
+    const productos = await Api.productos.mios();
+    Estado.misProductos = productos;
+    const borradores = productos.filter((p) => p.estado === 'borrador');
+    const publicados = productos.filter((p) => p.estado === 'publicado');
 
-    if (!mios.length) {
+    if (!borradores.length) {
+      contBorradores.innerHTML = '';
+      vacioBorradores.classList.remove('hidden');
+    } else {
+      // GET /productos/mios trae imagen_principal (una sola url) pero no la lista completa con
+      // id/orden que necesita el gestor de fotos para eliminar/reordenar — eso solo lo trae el
+      // detalle de cada producto (GET /productos/{id}), igual que ya usa alternarFotosProductor.
+      const detalles = await Promise.all(
+        borradores.map((p) => Api.productos.obtener(p.id).catch(() => null))
+      );
+      borradores.forEach((p, i) => {
+        Estado.imagenesPorProducto[p.id] = detalles[i]?.imagenes || [];
+      });
+      contBorradores.innerHTML = borradores.map((p, i) => renderTarjetaBorrador(p, i, Estado.imagenesPorProducto[p.id])).join('');
+      borradores.forEach((p) => actualizarPreviewBorrador(p.id));
+    }
+
+    if (!publicados.length) {
       grid.innerHTML = '';
       vacio.classList.remove('hidden');
-      return;
+    } else {
+      grid.innerHTML = publicados.map((p, i) => renderTarjetaProductorProducto(p, i)).join('');
     }
-    vacio.classList.add('hidden');
-    grid.innerHTML = mios.map((p, i) => renderTarjetaProductorProducto(p, i)).join('');
   } catch (err) {
     manejarError(err, 'cargar tus productos');
   }
@@ -3105,7 +3176,10 @@ async function cargarRegistrosProduccionProductor() {
 // ---- Resumen / dashboard de "Panel del Productor" — lee de Estado.productos (ya filtrado por
 // productor_id, cargado por cargarMisProductos), Estado.chacras y Estado.registrosProduccion. ----
 function renderResumenProductor() {
-  const misProductos = (Estado.productos || []).filter((p) => p.productor_id === Estado.productorId);
+  // Estado.misProductos (Api.productos.mios()) trae borradores Y publicados — a diferencia de
+  // Estado.productos (el catálogo público, solo lo publicado por TODOS los productores), que ya
+  // no hace falta filtrar por productor_id acá.
+  const misProductosPublicados = (Estado.misProductos || []).filter((p) => p.estado === 'publicado');
   const chacras = Estado.chacras || [];
   const registros = Estado.registrosProduccion || [];
   const enCurso = registros.filter((r) => r.estado !== 'cosechado');
@@ -3134,8 +3208,8 @@ function renderResumenProductor() {
         <div class="resumen-stat">
           <span class="resumen-stat-icono"><i class="ti ti-shopping-bag"></i></span>
           <div>
-            <span class="resumen-stat-valor">${misProductos.length}</span>
-            <span class="resumen-stat-label">${misProductos.length === 1 ? 'Producto publicado' : 'Productos publicados'}</span>
+            <span class="resumen-stat-valor">${misProductosPublicados.length}</span>
+            <span class="resumen-stat-label">${misProductosPublicados.length === 1 ? 'Producto publicado' : 'Productos publicados'}</span>
           </div>
         </div>
       </div>
@@ -3145,7 +3219,7 @@ function renderResumenProductor() {
         Próxima cosecha estimada: <strong>${escapeAttr(proximaCosecha.cultivo)}</strong> el ${formatearFecha(proximaCosecha.fecha_cosecha_estimada)}
       </div>` : ''}
       <div class="resumen-acciones">
-        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-publicar"><i class="ti ti-seedling"></i> Publicar producto</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-publicar"><i class="ti ti-pencil"></i> Completar borradores</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-siembra"><i class="ti ti-plant-2"></i> Registrar siembra</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-chacra"><i class="ti ti-map-pin"></i> Registrar chacra</button>
       </div>
@@ -3965,12 +4039,23 @@ function renderFormRegistroProduccion() {
     </div>`;
 }
 
+// Máquina de estados real de RegistroProduccion (ver productores/models.py): planificado ->
+// pendiente_verificacion -> aprobado | rechazado -> pendiente_verificacion (reenvío). "cosechado"
+// nunca debería llegar acá (completar_cosecha salta directo a pendiente_verificacion), pero
+// queda como fallback defensivo si algún dato viejo lo tuviera.
+const BADGES_ESTADO_REGISTRO = {
+  planificado: { clase: 'pill-pendiente', icono: 'seedling', etiqueta: 'Planificado' },
+  pendiente_verificacion: { clase: 'pill-pendiente', icono: 'hourglass', etiqueta: 'En revisión' },
+  aprobado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Aprobado' },
+  rechazado: { clase: 'pill-rechazado', icono: 'circle-x', etiqueta: 'Rechazado' },
+};
+
 function renderTarjetaRegistroProduccion(r, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   const esPlanificado = r.estado === 'planificado';
-  const badge = esPlanificado
-    ? '<span class="pill pill-estado pill-pendiente"><i class="ti ti-seedling"></i> Planificado</span>'
-    : '<span class="pill pill-estado pill-entregado"><i class="ti ti-circle-check"></i> Cosechado</span>';
+  const esRechazado = r.estado === 'rechazado';
+  const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
+  const badge = `<span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span>`;
 
   const datosBase = `
     <div class="perfil-datos-grid">
@@ -3982,23 +4067,33 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     </div>`;
 
   let bloqueEstado;
-  if (esPlanificado) {
+  if (esPlanificado || esRechazado) {
+    // Reenvío tras rechazo = el MISMO mini-form y el MISMO endpoint (completar-cosecha) que ya
+    // usa "planificado" — el backend ya acepta estado in ('planificado', 'rechazado') para esta
+    // transición (ver productores/main.py). Precargado con lo ya guardado para que el productor
+    // solo corrija lo que causó el rechazo, no vuelva a escribir todo desde cero.
+    const valorCantidad = r.cantidad_cosechada != null ? Number(r.cantidad_cosechada) : '';
+    const valorFecha = r.fecha_cosecha_real ? new Date(r.fecha_cosecha_real).toISOString().slice(0, 10) : '';
+    const valorManoObra = r.costo_mano_obra != null ? Number(r.costo_mano_obra) : 0;
+    const valorEnvio = r.costo_envio != null ? Number(r.costo_envio) : 0;
+
     bloqueEstado = `
-      <button type="button" class="btn btn-outline btn-sm btn-toggle-completar-cosecha" data-id="${r.id}">Completar cosecha</button>
+      ${esRechazado && r.motivo_rechazo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(r.motivo_rechazo)}</p>` : ''}
+      <button type="button" class="btn btn-outline btn-sm btn-toggle-completar-cosecha" data-id="${r.id}">${esRechazado ? 'Corregir y reenviar' : 'Completar cosecha'}</button>
       <form class="form-grid form-completar-cosecha hidden" data-id="${r.id}">
         <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
-          <input type="number" name="cantidad_cosechada" min="0.01" step="0.01" required>
+          <input type="number" name="cantidad_cosechada" min="0.01" step="0.01" required value="${valorCantidad}">
         </label>
         <label>Fecha real de cosecha
-          <input type="date" name="fecha_cosecha_real" required>
+          <input type="date" name="fecha_cosecha_real" required value="${valorFecha}">
         </label>
         <label>Costo de mano de obra final (S/)
-          <input type="number" name="costo_mano_obra" min="0" step="0.01" value="0" required>
+          <input type="number" name="costo_mano_obra" min="0" step="0.01" value="${valorManoObra}" required>
         </label>
         <label>Costo de envío final (S/)
-          <input type="number" name="costo_envio" min="0" step="0.01" value="0" required>
+          <input type="number" name="costo_envio" min="0" step="0.01" value="${valorEnvio}" required>
         </label>
-        <button type="submit" class="btn btn-primary btn-sm">Confirmar cosecha</button>
+        <button type="submit" class="btn btn-primary btn-sm">${esRechazado ? 'Reenviar a verificación' : 'Confirmar cosecha'}</button>
       </form>`;
   } else if (r.ingreso_estimado != null) {
     bloqueEstado = `
@@ -4398,7 +4493,6 @@ function inicializarEventos() {
   document.getElementById('btn-ubicacion-productor').addEventListener('click', usarMiUbicacionProductor);
   document.getElementById('form-chacra').addEventListener('submit', crearChacra);
   document.getElementById('btn-ubicacion-chacra').addEventListener('click', usarMiUbicacionChacra);
-  document.getElementById('form-producto').addEventListener('submit', publicarProducto);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
 
   // Accesos rápidos del resumen de "Panel del Productor" — delegados sobre #productor-resumen
@@ -4406,8 +4500,7 @@ function inicializarEventos() {
   // addEventListener directo sobre los botones no sobreviviría al primer refresco).
   document.getElementById('productor-resumen').addEventListener('click', (e) => {
     if (e.target.closest('#btn-resumen-publicar')) {
-      document.getElementById('producto-nombre')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      document.getElementById('producto-nombre')?.focus({ preventScroll: true });
+      document.getElementById('productor-borradores-lista')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     if (e.target.closest('#btn-resumen-chacra')) {
@@ -4424,16 +4517,24 @@ function inicializarEventos() {
     }
   });
 
-  ['producto-nombre', 'producto-categoria', 'producto-unidad', 'producto-precio', 'producto-stock'].forEach((id) => {
-    document.getElementById(id).addEventListener('input', actualizarVistaPreviaProducto);
-    document.getElementById(id).addEventListener('change', actualizarVistaPreviaProducto);
+  // Borradores — delegado sobre #productor-borradores-lista (el contenido se reemplaza por
+  // completo en cada cargarMisProductos(), así que listeners directos sobre cada tarjeta no
+  // sobrevivirían a un refresco).
+  document.getElementById('productor-borradores-lista').addEventListener('input', (e) => {
+    if (!e.target.matches('.borrador-precio')) return;
+    const productoId = e.target.closest('.pedido-card')?.dataset.productoId;
+    if (!productoId) return;
+    sincronizarBotonPublicarBorrador(productoId);
+    actualizarPreviewBorrador(productoId);
   });
-
-  document.getElementById('btn-terminar-publicacion').addEventListener('click', reiniciarFormularioProducto);
-  document.getElementById('btn-empezar-publicar').addEventListener('click', () => {
-    const campo = document.getElementById('producto-nombre');
-    campo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    campo.focus({ preventScroll: true });
+  document.getElementById('productor-borradores-lista').addEventListener('change', (e) => {
+    if (!e.target.matches('.borrador-categoria')) return;
+    const productoId = e.target.closest('.pedido-card')?.dataset.productoId;
+    if (productoId) actualizarPreviewBorrador(productoId);
+  });
+  document.getElementById('productor-borradores-lista').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-publicar-borrador');
+    if (btn) publicarBorrador(btn.dataset.productoId);
   });
 
   document.getElementById('mis-productos-grid').addEventListener('click', (e) => {

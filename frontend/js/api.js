@@ -127,9 +127,12 @@ const Api = {
   },
   productos: {
     listar: () => request('productos', '/productos'),
+    mios: () => request('productos', '/productos/mios', { auth: true }),
     obtener: (id) => request('productos', `/productos/${id}`),
     precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
     crear: (datos) => request('productos', '/productos', { method: 'POST', body: datos, auth: true }),
+    actualizar: (id, datos) => request('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
+    publicar: (id) => request('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
     subirImagen: (id, archivo, orden = 0) => {
