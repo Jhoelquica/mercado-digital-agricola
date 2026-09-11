@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: productos
-          image: mercado_agricola-productos:latest
+          image: localhost:5000/productos:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8002
@@ -71,6 +71,11 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            - name: PRODUCTORES_A_PRODUCTOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTORES_A_PRODUCTOS_SECRETO
             # Caché del catálogo (ver productos/cache.py). Valor fijo por ahora: Redis solo es
             # alcanzable dentro del clúster (Service ClusterIP en k8s/redis.yaml) y hoy no tiene
             # contraseña — cuando se le active requirepass, esto pasa a secretKeyRef igual que

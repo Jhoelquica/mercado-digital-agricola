@@ -10,3 +10,4 @@ python-multipart
 pybreaker
 prometheus-fastapi-instrumentator
 redis
+pytest
