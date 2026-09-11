@@ -15,6 +15,24 @@ const Estado = {
 
 const SESSION_KEY = 'agro_sesion';
 
+// A qué vista aterriza cada rol apenas hay sesión activa — login exitoso (manejarLogin) o F5 con
+// sesión restaurada desde localStorage (iniciar). Único lugar donde vive este mapeo, para no
+// duplicar "qué vista le corresponde a cada rol" en dos sitios que puedan desincronizarse.
+// Comprador (y cualquier rol no listado acá, incl. sin sesión) sigue aterrizando en 'inicio' —
+// esto SOLO decide el destino inicial, no restringe la navegación: cualquier rol puede seguir
+// entrando a 'inicio' manualmente (navbar/logo) en cualquier momento, cambiarVista('inicio') no
+// tiene ningún guard de rol.
+const VISTA_INICIAL_POR_ROL = {
+  productor: 'panel-productor',
+  repartidor: 'gestion-envios',
+  verificador: 'panel-verificador',
+  admin: 'panel-admin',
+};
+
+function vistaInicialPara(rol) {
+  return VISTA_INICIAL_POR_ROL[rol] || 'inicio';
+}
+
 // ============ UTILIDADES ============
 function toast(mensaje, tipo = 'ok') {
   const cont = document.getElementById('toast-container');
@@ -3640,7 +3658,7 @@ async function manejarLogin(e) {
     await iniciarSesionConToken(resp.access_token);
     document.getElementById('form-login').reset();
     cerrarModal('modal-auth');
-    cambiarVista('inicio');
+    cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Bienvenido de nuevo, ${Estado.nombre}! 🌱`);
   } catch (err) {
     manejarError(err, 'iniciar sesión');
@@ -3672,7 +3690,7 @@ async function manejarRegistro(e) {
     document.getElementById('form-registro').reset();
     actualizarCampoCodigoInvitacion(); // el reset vuelve el <select> a "comprador" — resincroniza el campo
     cerrarModal('modal-auth');
-    cambiarVista('inicio');
+    cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     manejarError(err, 'crear la cuenta');
@@ -4044,7 +4062,7 @@ function iniciar() {
   actualizarUIAuth();
   renderNavCategorias();
   inicializarEventos();
-  cambiarVista('inicio');
+  cambiarVista(vistaInicialPara(Estado.rol));
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);
