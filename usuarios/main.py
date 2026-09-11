@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header, Response
@@ -6,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr
-from auth import verificar_token
+from auth import verificar_token, requiere_rol
 
 from database import Base, engine, SessionLocal
 import models
@@ -41,6 +42,9 @@ class UsuarioRegistro(BaseModel):
 class UsuarioLogin(BaseModel):
     email: EmailStr
     password: str
+
+class InvitacionCrear(BaseModel):
+    rol_destino: str
 
 # Sin fallback hardcodeado a propósito: si el Deployment se olvida de wirear esta env var, el
 # endpoint queda inutilizable (rechaza todo) en vez de aceptar en silencio un valor conocido.
@@ -113,3 +117,99 @@ def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_
     db.delete(usuario)
     db.commit()
     return {"mensaje": "Usuario eliminado"}
+
+
+# ============ Admin: invitaciones por código de un solo uso ============
+# requiere_rol("admin") ya funciona sin cambios: verifica `usuario.get("rol") not in roles_permitidos`
+# contra el `rol` que viaja en el JWT (lo pone crear_token en el login). Solo faltaba que
+# existiera un usuario real con rol "admin" y algún endpoint que lo exija — esto es eso.
+
+def _serializar_invitacion(inv: models.Invitacion) -> dict:
+    return {
+        "id": inv.id,
+        "codigo": inv.codigo,
+        "rol_destino": inv.rol_destino,
+        "usado": inv.usado,
+        "usado_por": inv.usado_por,
+        "creado_por": inv.creado_por,
+        "fecha_creacion": inv.fecha_creacion,
+        "fecha_expiracion": inv.fecha_expiracion,
+    }
+
+
+def validar_codigo_invitacion(db: Session, codigo: str) -> dict:
+    """Chequeo reusable: ¿el código existe, no está usado y no expiró? Devuelve el rol_destino
+    que habilita. Pensado para que /usuarios/registro lo llame directo (mismo proceso) en la
+    sub-entrega B — todavía NO está conectado a registro."""
+    inv = db.query(models.Invitacion).filter(models.Invitacion.codigo == codigo).first()
+    if inv is None:
+        return {"codigo": codigo, "valido": False, "rol_destino": None,
+                "motivo": "El código de invitación no existe"}
+    if inv.usado:
+        return {"codigo": codigo, "valido": False, "rol_destino": inv.rol_destino,
+                "motivo": "El código de invitación ya fue utilizado"}
+    if inv.fecha_expiracion < datetime.utcnow():
+        return {"codigo": codigo, "valido": False, "rol_destino": inv.rol_destino,
+                "motivo": "El código de invitación expiró"}
+    return {"codigo": codigo, "valido": True, "rol_destino": inv.rol_destino, "motivo": None}
+
+
+@app.post("/admin/invitaciones")
+def crear_invitacion(
+    datos: InvitacionCrear,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(requiere_rol("admin")),
+):
+    if not datos.rol_destino.strip():
+        raise HTTPException(status_code=422, detail="rol_destino no puede estar vacío")
+
+    invitacion = models.Invitacion(
+        rol_destino=datos.rol_destino.strip(),
+        creado_por=admin.get("sub"),
+    )
+    db.add(invitacion)
+    db.commit()
+    db.refresh(invitacion)
+    return _serializar_invitacion(invitacion)
+
+
+@app.get("/admin/invitaciones")
+def listar_invitaciones(
+    db: Session = Depends(get_db),
+    admin: dict = Depends(requiere_rol("admin")),
+):
+    invitaciones = db.query(models.Invitacion).order_by(
+        models.Invitacion.fecha_creacion.desc()
+    ).all()
+    return [_serializar_invitacion(i) for i in invitaciones]
+
+
+# No público: protegido con requiere_rol("admin") igual que los demás. La reutilización real
+# viene de la función validar_codigo_invitacion() de arriba, que registro consumirá en la
+# sub-entrega B. Este endpoint deja el chequeo disponible para el panel admin y los tests.
+@app.get("/admin/invitaciones/validar/{codigo}")
+def validar_invitacion(
+    codigo: str,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(requiere_rol("admin")),
+):
+    return validar_codigo_invitacion(db, codigo)
+
+
+@app.delete("/admin/invitaciones/{invitacion_id}")
+def revocar_invitacion(
+    invitacion_id: str,
+    db: Session = Depends(get_db),
+    admin: dict = Depends(requiere_rol("admin")),
+):
+    invitacion = db.query(models.Invitacion).filter(
+        models.Invitacion.id == invitacion_id
+    ).first()
+    if not invitacion:
+        raise HTTPException(status_code=404, detail="Invitación no encontrada")
+    if invitacion.usado:
+        raise HTTPException(status_code=400, detail="No se puede revocar una invitación ya utilizada")
+
+    db.delete(invitacion)
+    db.commit()
+    return {"mensaje": "Invitación revocada"}

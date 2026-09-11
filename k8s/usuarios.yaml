@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: usuarios
-          image: mercado_agricola-usuarios:latest
+          image: localhost:5000/usuarios:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8006
