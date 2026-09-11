@@ -45,10 +45,18 @@ def get_db():
 class ProductoCrear(BaseModel):
     nombre: str
     categoria: str | None = None
-    precio: float
+    precio: float | None = None
     stock: int = 0
     unidad_medida: str = "kg"
     imagen_url: str | None = None
+
+class ProductoCrearDesdeCosecha(BaseModel):
+    productor_id: str
+    productor_nombre: str
+    nombre: str
+    unidad_medida: str = "kg"
+    stock: int
+    registro_produccion_id: str
 
 class ImagenCrear(BaseModel):
     url: str
@@ -142,6 +150,7 @@ def crear_resena(
 PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # reponer_stock (Pagos llama tras un pago rechazado)
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # descontar_stock (Pedidos llama al crear un pedido)
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_producto (DELETE de limpieza QA)
+PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")  # crear_producto_desde_cosecha (Productores llama al aprobar una cosecha — sub-entrega 3, todavía no conectado)
 
 @app.post("/productos/{producto_id}/stock/reponer")
 def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
@@ -185,6 +194,12 @@ def crear_producto(
         precio=datos.precio,
         stock=datos.stock,
         unidad_medida=datos.unidad_medida,
+        # Publicado de inmediato: este es el flujo manual de siempre (el productor ya llena
+        # precio en el mismo formulario), a diferencia del alta automática desde una cosecha
+        # aprobada (crear_producto_desde_cosecha), que sí nace en "borrador" porque no tiene
+        # precio ni imágenes todavía. El default de la columna es "borrador" — se pisa acá a
+        # propósito para no cambiar el comportamiento de este endpoint.
+        estado="publicado",
     )
     db.add(nuevo)
     db.commit()
@@ -342,7 +357,7 @@ def listar_productos(db: Session = Depends(get_db)):
     if cacheado is not None:
         return cacheado
 
-    productos = db.query(models.Producto).all()
+    productos = db.query(models.Producto).filter(models.Producto.estado == "publicado").all()
 
     imagenes = db.query(models.ProductoImagen).order_by(models.ProductoImagen.orden).all()
     primera_imagen_por_producto = {}
@@ -381,6 +396,64 @@ def listar_productos(db: Session = Depends(get_db)):
     ]
     cache.guardar(cache.CLAVE_CATALOGO, resultado)
     return resultado
+
+@app.get("/productos/mios")
+def listar_mis_productos(
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Reemplaza el patrón del frontend de traer TODO el catálogo (GET /productos) y filtrar del
+    lado del cliente por productor_id — acá el filtro ya viene hecho, y a diferencia del
+    catálogo público, incluye los productos en "borrador" (para que el productor pueda verlos y
+    completarlos). Sin caché a propósito: es data personal de bajo tráfico, no el catálogo
+    compartido por todos los compradores."""
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de ver tus productos")
+
+    productor_id = resp.json()["id"]
+
+    productos = db.query(models.Producto).filter(
+        models.Producto.productor_id == productor_id
+    ).order_by(models.Producto.fecha_publicacion.desc()).all()
+
+    imagenes = db.query(models.ProductoImagen).filter(
+        models.ProductoImagen.producto_id.in_([p.id for p in productos])
+    ).order_by(models.ProductoImagen.orden).all() if productos else []
+    primera_imagen_por_producto = {}
+    for img in imagenes:
+        pid = str(img.producto_id)
+        if pid not in primera_imagen_por_producto:
+            primera_imagen_por_producto[pid] = img.url
+
+    return [
+        {
+            "id": p.id,
+            "productor_id": p.productor_id,
+            "productor_nombre": p.productor_nombre,
+            "nombre": p.nombre,
+            "categoria": p.categoria,
+            "precio": p.precio,
+            "stock": p.stock,
+            "unidad_medida": p.unidad_medida,
+            "imagen_url": p.imagen_url,
+            "fecha_publicacion": p.fecha_publicacion,
+            "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
+            "estado": p.estado,
+            "registro_produccion_id": p.registro_produccion_id,
+        }
+        for p in productos
+    ]
 
 @app.post("/productos/busquedas/registrar")
 def registrar_busqueda(datos: BusquedaRegistrar, db: Session = Depends(get_db)):
@@ -463,6 +536,92 @@ def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto:
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
+
+@app.patch("/productos/{producto_id}/publicar")
+def publicar_producto(
+        producto_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes publicar un producto que no te pertenece")
+
+    if producto.estado == "publicado":
+        raise HTTPException(status_code=400, detail="Este producto ya está publicado")
+
+    # Se valida en orden y se corta en el primer faltante — un solo detail específico por
+    # respuesta, no una lista acumulada (mismo estilo que el resto de las validaciones del
+    # proyecto, ej. crear_registro_produccion en Productores).
+    if producto.precio is None or producto.precio <= 0:
+        raise HTTPException(status_code=400, detail="Agrega un precio mayor a 0 antes de publicar.")
+    if not producto.categoria or not producto.categoria.strip():
+        raise HTTPException(status_code=400, detail="Elige una categoría antes de publicar.")
+    tiene_imagen = db.query(models.ProductoImagen).filter(
+        models.ProductoImagen.producto_id == producto_id
+    ).first() is not None
+    if not tiene_imagen:
+        raise HTTPException(status_code=400, detail="Agrega al menos una imagen antes de publicar.")
+
+    producto.estado = "publicado"
+    db.commit()
+    db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
+    return producto
+
+@app.post("/productos/interno/crear-desde-cosecha")
+def crear_producto_desde_cosecha(
+        datos: ProductoCrearDesdeCosecha,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None),
+):
+    """Llamado por Productores al aprobar una cosecha (sub-entrega 3 — todavía NO conectado ahí,
+    este endpoint solo existe y se prueba de forma aislada por ahora). Nace en "borrador", sin
+    precio ni categoría: el productor todavía tiene que completar precio + imágenes y publicar
+    a mano (PATCH /productos/{id}/publicar) antes de que sea visible en el catálogo.
+
+    productor_nombre viaja en el body en vez de resolverse acá: quien llama (Productores) ya
+    tiene ese dato en su propia base, así que no hace falta una llamada cruzada solo para
+    obtenerlo (mismo criterio que productor_id, que tampoco se resuelve desde un token)."""
+    if x_servicio_secreto != PRODUCTORES_A_PRODUCTOS_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    nuevo = models.Producto(
+        productor_id=datos.productor_id,
+        productor_nombre=datos.productor_nombre,
+        nombre=datos.nombre,
+        categoria=None,
+        precio=None,
+        stock=datos.stock,
+        unidad_medida=datos.unidad_medida,
+        estado="borrador",
+        registro_produccion_id=datos.registro_produccion_id,
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    # Sin invalidar CLAVE_CATALOGO: un producto en "borrador" no aparece en GET /productos de
+    # todos modos (filtrado por estado == "publicado"), así que esta alta no le cambia el
+    # resultado a nadie — invalidar un caché válido sin necesidad sería puro desperdicio.
+    return nuevo
 
 @app.patch("/productos/imagenes/{imagen_id}/orden")
 def actualizar_orden_imagen(
