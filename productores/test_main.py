@@ -19,6 +19,10 @@ Cubre:
   y un reintento posterior sí se completa
 - aprobar cuando Productos responde 409 (producto ya creado en un intento anterior) se trata
   como éxito idempotente, no como falla
+- pendientes-verificacion marca fue_rechazado_antes correctamente (true en un reenvío, false en
+  uno que nunca se rechazó)
+- historial-verificacion solo trae decisiones del verificador autenticado, ordenadas por fecha
+  descendente
 
 Requiere una base de datos Postgres real accesible según database.py (tipos UUID de
 postgresql + create_all() al importar main) — no se puede sustituir por SQLite.
@@ -466,3 +470,90 @@ def test_listar_pendientes_verificacion_solo_trae_correctos(monkeypatch):
     fila = next(r for r in resp.json() if r["id"] == pendiente_id)
     assert fila["chacra_codigo"] is not None
     assert fila["productor_nombre"] is not None
+
+
+def test_pendientes_verificacion_marca_fue_rechazado_antes(monkeypatch):
+    # Uno rechazado y reenviado -> fue_rechazado_antes debe ser True.
+    reenviado_id, sub_productor = _crear_registro_pendiente_verificacion(monkeypatch)
+    _como_verificador()
+    rechazo = client.post(
+        f"/productores/produccion/{reenviado_id}/rechazar", json={"motivo": "Falta evidencia"},
+    )
+    assert rechazo.status_code == 200, rechazo.text
+
+    _auth(sub_productor, rol="productor")
+    reenvio = _completar_cosecha(monkeypatch, reenviado_id, cantidad=30.0)
+    assert reenvio.status_code == 200, reenvio.text
+    assert reenvio.json()["estado"] == "pendiente_verificacion"
+
+    # Uno que nunca se rechazó -> fue_rechazado_antes debe ser False.
+    nunca_rechazado_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+
+    _como_verificador()
+    resp = client.get("/productores/produccion/pendientes-verificacion")
+    assert resp.status_code == 200, resp.text
+    por_id = {r["id"]: r for r in resp.json()}
+
+    assert por_id[reenviado_id]["fue_rechazado_antes"] is True
+    assert por_id[nunca_rechazado_id]["fue_rechazado_antes"] is False
+
+
+# ============ Historial de verificación ============
+
+def test_historial_verificacion_solo_trae_decisiones_del_verificador_autenticado(monkeypatch):
+    aprobado_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-hist-1")
+    sub_verificador_a = _como_verificador()
+    aprobar = client.post(f"/productores/produccion/{aprobado_id}/aprobar")
+    assert aprobar.status_code == 200, aprobar.text
+
+    # Otro verificador rechaza un registro distinto — no debe aparecer en el historial de A.
+    rechazado_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _como_verificador()
+    rechazar = client.post(
+        f"/productores/produccion/{rechazado_id}/rechazar", json={"motivo": "No cumple criterio"},
+    )
+    assert rechazar.status_code == 200, rechazar.text
+
+    _auth(sub_verificador_a, rol="verificador")
+    resp = client.get("/productores/produccion/historial-verificacion")
+    assert resp.status_code == 200, resp.text
+    ids = {fila["registro_produccion_id"] for fila in resp.json()}
+
+    assert aprobado_id in ids
+    assert rechazado_id not in ids
+
+    fila_aprobada = next(f for f in resp.json() if f["registro_produccion_id"] == aprobado_id)
+    assert fila_aprobada["accion"] == "aprobado"
+    assert fila_aprobada["motivo"] is None
+    assert fila_aprobada["cultivo"] is not None
+    assert fila_aprobada["productor_nombre"] is not None
+
+
+def test_historial_verificacion_orden_mas_reciente_primero(monkeypatch):
+    verificador_sub = str(uuid.uuid4())
+
+    primero_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _auth(verificador_sub, rol="verificador")
+    r1 = client.post(f"/productores/produccion/{primero_id}/rechazar", json={"motivo": "primero"})
+    assert r1.status_code == 200, r1.text
+
+    segundo_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _auth(verificador_sub, rol="verificador")
+    r2 = client.post(f"/productores/produccion/{segundo_id}/rechazar", json={"motivo": "segundo"})
+    assert r2.status_code == 200, r2.text
+
+    _auth(verificador_sub, rol="verificador")
+    resp = client.get("/productores/produccion/historial-verificacion")
+    assert resp.status_code == 200, resp.text
+    ids_en_orden = [
+        f["registro_produccion_id"] for f in resp.json()
+        if f["registro_produccion_id"] in (primero_id, segundo_id)
+    ]
+    assert ids_en_orden == [segundo_id, primero_id]
+
+
+def test_historial_verificacion_requiere_rol_verificador():
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.get("/productores/produccion/historial-verificacion")
+    assert resp.status_code == 403

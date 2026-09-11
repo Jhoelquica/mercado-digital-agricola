@@ -532,11 +532,22 @@ def listar_pendientes_verificacion(
     # ids referenciados y se trae cada tabla relacionada en una sola query, no una por registro.
     chacra_ids = {r.chacra_id for r in registros}
     productor_ids = {r.productor_id for r in registros}
+    registro_ids = {r.id for r in registros}
     chacras_por_id = {
         c.id: c for c in db.query(models.Chacra).filter(models.Chacra.id.in_(chacra_ids)).all()
     }
     productores_por_id = {
         p.id: p for p in db.query(models.Productor).filter(models.Productor.id.in_(productor_ids)).all()
+    }
+    # Un registro "reenviado" (rechazado y luego vuelto a completar) pasa otra vez por acá con
+    # el mismo estado pendiente_verificacion que uno nuevo — nada en RegistroProduccion lo
+    # distingue. La única fuente real es si ya tiene algún rechazo en su historial.
+    ids_con_rechazo_previo = {
+        h.registro_produccion_id
+        for h in db.query(models.HistorialVerificacionCosecha.registro_produccion_id).filter(
+            models.HistorialVerificacionCosecha.registro_produccion_id.in_(registro_ids),
+            models.HistorialVerificacionCosecha.accion == "rechazado",
+        ).all()
     }
 
     resultado = []
@@ -558,6 +569,58 @@ def listar_pendientes_verificacion(
             "chacra_codigo": chacra.codigo if chacra else None,
             "chacra_nombre": chacra.nombre if chacra else None,
             "productor_id": r.productor_id,
+            "productor_nombre": productor.nombre if productor else None,
+            "fue_rechazado_antes": r.id in ids_con_rechazo_previo,
+        })
+    return resultado
+
+
+@app.get("/productores/produccion/historial-verificacion")
+def listar_historial_verificacion(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("verificador")),
+):
+    """Decisiones (aprobado/rechazado) del verificador autenticado — no de todos los
+    verificadores. Sin paginación a propósito (fase de demo, volumen bajo); si el volumen real
+    crece, acá es donde habría que agregar limit/offset o cursor."""
+    historial = db.query(models.HistorialVerificacionCosecha).filter(
+        models.HistorialVerificacionCosecha.verificador_id == usuario.get("sub")
+    ).order_by(models.HistorialVerificacionCosecha.fecha.desc()).all()
+
+    if not historial:
+        return []
+
+    registro_ids = {h.registro_produccion_id for h in historial}
+    registros_por_id = {
+        r.id: r for r in db.query(models.RegistroProduccion).filter(
+            models.RegistroProduccion.id.in_(registro_ids)
+        ).all()
+    }
+    chacra_ids = {r.chacra_id for r in registros_por_id.values()}
+    productor_ids = {r.productor_id for r in registros_por_id.values()}
+    chacras_por_id = {
+        c.id: c for c in db.query(models.Chacra).filter(models.Chacra.id.in_(chacra_ids)).all()
+    } if chacra_ids else {}
+    productores_por_id = {
+        p.id: p for p in db.query(models.Productor).filter(models.Productor.id.in_(productor_ids)).all()
+    } if productor_ids else {}
+
+    resultado = []
+    for h in historial:
+        registro = registros_por_id.get(h.registro_produccion_id)
+        chacra = chacras_por_id.get(registro.chacra_id) if registro else None
+        productor = productores_por_id.get(registro.productor_id) if registro else None
+        resultado.append({
+            "id": h.id,
+            "registro_produccion_id": h.registro_produccion_id,
+            "accion": h.accion,
+            "motivo": h.motivo,
+            "fecha": h.fecha,
+            "cultivo": registro.cultivo if registro else None,
+            "cantidad_cosechada": registro.cantidad_cosechada if registro else None,
+            "unidad_medida": registro.unidad_medida if registro else None,
+            "chacra_codigo": chacra.codigo if chacra else None,
+            "chacra_nombre": chacra.nombre if chacra else None,
             "productor_nombre": productor.nombre if productor else None,
         })
     return resultado
