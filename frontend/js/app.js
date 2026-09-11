@@ -663,6 +663,16 @@ function actualizarUIAuth() {
   document.querySelector('.nav-admin').classList.toggle('hidden', !(logueado && Estado.rol === 'admin'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
+  // Categorías, búsqueda y carrito son controles de compra — solo tienen sentido para comprador
+  // (o un visitante anónimo, comprador potencial). Los demás roles no compran, así que no los ven.
+  const esCompradorOInvitado = !logueado || Estado.rol === 'comprador';
+  document.getElementById('nav-categorias').classList.toggle('hidden', !esCompradorOInvitado);
+  document.getElementById('btn-abrir-busqueda').classList.toggle('hidden', !esCompradorOInvitado);
+  document.getElementById('btn-cart').classList.toggle('hidden', !esCompradorOInvitado);
+  // "Mis Pedidos" también es un ítem de comprador — vive dentro de #nav-account-user, que ya está
+  // oculto por completo sin sesión, así que acá solo importa el caso logueado-pero-no-comprador.
+  document.querySelector('.nav-account-mis-pedidos').classList.toggle('hidden', !(logueado && Estado.rol === 'comprador'));
+
   if (logueado) {
     document.getElementById('user-name').textContent = Estado.nombre || 'Usuario';
   }
