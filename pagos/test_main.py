@@ -345,3 +345,67 @@ def test_listar_sin_liquidaciones_como_admin():
     assert resp.status_code == 200, resp.text
     ids = {p["pedido_id"] for p in resp.json()}
     assert str(pago.pedido_id) in ids
+
+
+# ============ POST /pagos/interno/liquidar-repartidor ============
+
+def test_liquidar_repartidor_crea_liquidacion_90_10():
+    pedido_id = str(uuid.uuid4())
+    repartidor_id = str(uuid.uuid4())
+
+    resp = client.post(
+        "/pagos/interno/liquidar-repartidor",
+        json={"pedido_id": pedido_id, "repartidor_id": repartidor_id, "costo_envio": 20.0},
+        headers={"X-Servicio-Secreto": main.TRANSPORTE_A_PAGOS_SECRETO},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db = main.SessionLocal()
+    try:
+        liquidacion = db.query(main.models.Liquidacion).filter(
+            main.models.Liquidacion.pedido_id == pedido_id
+        ).first()
+    finally:
+        db.close()
+
+    assert liquidacion is not None
+    assert liquidacion.beneficiario_tipo == "repartidor"
+    assert str(liquidacion.beneficiario_id) == repartidor_id
+    assert float(liquidacion.monto_bruto) == 20.00
+    assert float(liquidacion.comision_plataforma) == 2.00
+    assert float(liquidacion.monto_neto) == 18.00
+    assert liquidacion.estado == "pendiente"
+
+
+def test_liquidar_repartidor_sin_secreto_falla_403():
+    resp = client.post(
+        "/pagos/interno/liquidar-repartidor",
+        json={"pedido_id": str(uuid.uuid4()), "repartidor_id": str(uuid.uuid4()), "costo_envio": 10.0},
+        headers={"X-Servicio-Secreto": "secreto-incorrecto"},
+    )
+    assert resp.status_code == 403
+
+
+def test_liquidar_repartidor_llamado_dos_veces_no_duplica():
+    """Simula el reintento de Transporte tras un fallo de red que sí había llegado a completarse
+    la primera vez: mismo pedido_id, segunda llamada — debe responder 200 igual (idempotente, no
+    un error), y sin crear una segunda fila."""
+    pedido_id = str(uuid.uuid4())
+    repartidor_id = str(uuid.uuid4())
+    payload = {"pedido_id": pedido_id, "repartidor_id": repartidor_id, "costo_envio": 15.0}
+    headers = {"X-Servicio-Secreto": main.TRANSPORTE_A_PAGOS_SECRETO}
+
+    primera = client.post("/pagos/interno/liquidar-repartidor", json=payload, headers=headers)
+    assert primera.status_code == 200, primera.text
+
+    segunda = client.post("/pagos/interno/liquidar-repartidor", json=payload, headers=headers)
+    assert segunda.status_code == 200, segunda.text
+
+    db = main.SessionLocal()
+    try:
+        liquidaciones = db.query(main.models.Liquidacion).filter(
+            main.models.Liquidacion.pedido_id == pedido_id
+        ).all()
+    finally:
+        db.close()
+    assert len(liquidaciones) == 1

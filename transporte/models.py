@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -15,6 +15,12 @@ class Envio(Base):
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     repartidor_latitud = Column(String, nullable=True)
     repartidor_longitud = Column(String, nullable=True)
+    # False hasta que Pagos confirme que ya creó la Liquidacion del repartidor para este envío
+    # (ver logica_liquidacion_repartidor.py) — mismo espíritu que la notificación a Certificación,
+    # pero con un campo propio en vez de un simple try/except sin rastro: acá SÍ hace falta poder
+    # encontrar después "cuáles quedaron sin liquidar" (reintento_liquidacion_repartidor.py),
+    # cosa que notificar_entrega_a_certificacion no tiene resuelta todavía.
+    liquidacion_confirmada = Column(Boolean, nullable=False, default=False)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"

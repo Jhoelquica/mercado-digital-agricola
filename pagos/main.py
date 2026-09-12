@@ -23,7 +23,7 @@ from auth import verificar_token, requiere_rol
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
-from logica_liquidaciones import crear_liquidaciones, pagos_sin_liquidaciones
+from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, pagos_sin_liquidaciones
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 
 logger = logging.getLogger("pagos.main")
@@ -32,6 +32,7 @@ PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # para llamar a reponer_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pago (DELETE de limpieza QA)
+TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO")  # para /pagos/interno/liquidar-repartidor
 
 Base.metadata.create_all(bind=engine)
 
@@ -82,6 +83,11 @@ class ProcesarPago(BaseModel):
     token_culqi: str
     email: str
 
+class LiquidarRepartidor(BaseModel):
+    pedido_id: str
+    repartidor_id: str
+    costo_envio: float
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "pagos"}
@@ -118,6 +124,23 @@ def eliminar_pago(pago_id: str, db: Session = Depends(get_db), x_servicio_secret
     db.delete(pago)
     db.commit()
     return {"mensaje": "Pago eliminado"}
+
+@app.post("/pagos/interno/liquidar-repartidor")
+def liquidar_repartidor(
+        datos: LiquidarRepartidor,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None),
+):
+    """Llamado por Transporte cuando un Envio pasa a "entregado" (y por su propio job de
+    reintento si la primera llamada falló) — mismo espíritu que crear_liquidaciones, pero para el
+    repartidor: acá el monto ya viene resuelto (costo_envio), no hace falta ninguna llamada
+    cruzada para calcularlo. Ver el docstring de crear_liquidacion_repartidor sobre por qué esto
+    responde 200 incluso ante un duplicado (idempotente vía UniqueConstraint, no un 409)."""
+    if x_servicio_secreto != TRANSPORTE_A_PAGOS_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    crear_liquidacion_repartidor(db, datos.pedido_id, datos.repartidor_id, datos.costo_envio)
+    return {"mensaje": "Liquidación de repartidor registrada"}
 
 @app.post("/pagos/procesar")
 def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):

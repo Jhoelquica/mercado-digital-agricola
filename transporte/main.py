@@ -1,5 +1,13 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import logging
+
+# Sin esto, el proceso nunca queda con un handler configurado y Python cae al "handler de
+# último recurso": solo WARNING y superior salen por stderr — cualquier logger.info()/error() de
+# acá o de reintento_liquidacion_repartidor.py (cuyo hilo corre en este mismo proceso) queda mudo
+# sin ningún aviso, simplemente no aparece en `kubectl logs`. Mismo problema que ya resolvimos en
+# pagos/main.py — va antes de crear cualquier logger o importar cualquier módulo del proyecto.
+logging.basicConfig(level=logging.INFO)
 
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -11,10 +19,14 @@ from auth import verificar_token, requiere_rol
 from database import Base, engine, SessionLocal
 import models
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
+from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
 from reintento_huerfanos import lanzar_reintento_huerfanos_en_hilo
+from reintento_liquidacion_repartidor import lanzar_reintento_liquidacion_repartidor_en_hilo
 import math
+
+logger = logging.getLogger("transporte.main")
 
 Base.metadata.create_all(bind=engine)
 
@@ -33,6 +45,7 @@ app.add_middleware(
 def iniciar():
     lanzar_consumidor_en_hilo()
     lanzar_reintento_huerfanos_en_hilo()
+    lanzar_reintento_liquidacion_repartidor_en_hilo()
 
 def get_db():
     db = SessionLocal()
@@ -295,6 +308,21 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
             notificar_entrega_a_certificacion(str(envio.pedido_id))
         except Exception as e:
             print(f"[Transporte] No se pudo notificar a Certificación: {e}")
+
+        # Igual que con Certificación arriba: un fallo acá no bloquea nada ni deshace la entrega
+        # ya confirmada. A diferencia de Certificación, sí queda un rastro reintentable —
+        # envio.liquidacion_confirmada sigue en False y reintento_liquidacion_repartidor.py lo va
+        # a reintentar cada INTERVALO_SEGUNDOS hasta que Pagos responda.
+        try:
+            notificar_liquidacion_repartidor(db, envio)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.error(
+                "No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
+                envio.pedido_id,
+                exc_info=True,
+            )
 
     return envio
 

@@ -156,7 +156,9 @@ services:
       RABBITMQ_PASSWORD: admin123
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
+      PAGOS_URL: http://pagos:8007
       TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
+      TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-transporte
@@ -255,6 +257,7 @@ services:
         JWT_SECRET: ${JWT_SECRET}
         CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
         PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
+        TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
         QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
         PRODUCTOS_URL: http://productos:8002
       depends_on:

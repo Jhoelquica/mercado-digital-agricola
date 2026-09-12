@@ -47,13 +47,19 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: CULQI_SECRET_KEY
-            # Reemplaza SERVICIO_SECRETO: Pagos solo necesita la clave del par Pagos→Productos
-            # (para reponer_stock) más la de limpieza QA — no las de ningún otro par.
+            # Reemplaza SERVICIO_SECRETO: Pagos necesita la clave del par donde ES quien llama
+            # (Pagos→Productos, para reponer_stock) y la del par donde es quien RECIBE la llamada
+            # (Transporte→Pagos, para /pagos/interno/liquidar-repartidor), más la de limpieza QA.
             - name: PAGOS_A_PRODUCTOS_SECRETO
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
                   key: PAGOS_A_PRODUCTOS_SECRETO
+            - name: TRANSPORTE_A_PAGOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: TRANSPORTE_A_PAGOS_SECRETO
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:

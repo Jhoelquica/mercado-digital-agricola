@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: transporte
-          image: mercado_agricola-transporte:latest
+          image: localhost:5000/transporte:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8004
@@ -46,13 +46,20 @@ spec:
               value: http://pedidos:8003
             - name: CERTIFICACION_URL
               value: http://certificacion:8008
-            # Reemplaza SERVICIO_SECRETO: Transporte solo necesita la clave del par
-            # Transporte→Certificación más la de limpieza QA.
+            - name: PAGOS_URL
+              value: http://pagos:8007
+            # Reemplaza SERVICIO_SECRETO: Transporte necesita la clave de cada par donde ES quien
+            # llama (Transporte→Certificación, Transporte→Pagos) más la de limpieza QA.
             - name: TRANSPORTE_A_CERTIFICACION_SECRETO
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
                   key: TRANSPORTE_A_CERTIFICACION_SECRETO
+            - name: TRANSPORTE_A_PAGOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: TRANSPORTE_A_PAGOS_SECRETO
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:

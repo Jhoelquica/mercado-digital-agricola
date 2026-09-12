@@ -7,3 +7,4 @@ pika
 python-jose[cryptography]
 httpx
 prometheus-fastapi-instrumentator
+pytest

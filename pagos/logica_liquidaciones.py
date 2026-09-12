@@ -12,13 +12,25 @@ from decimal import Decimal, ROUND_HALF_UP
 
 import httpx
 from sqlalchemy import exists
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import models
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
-# 10% para la plataforma, 90% neto para el beneficiario — ver Liquidacion en models.py.
+# 10% para la plataforma, 90% neto para el beneficiario — ver Liquidacion en models.py. Mismo
+# porcentaje para cualquier tipo de beneficiario (productor o repartidor).
 COMISION_PLATAFORMA_PORCENTAJE = Decimal("0.10")
+
+
+def calcular_comision_y_neto(monto_bruto: Decimal):
+    """Redondea monto_bruto a 2 decimales y calcula (comision_plataforma, monto_neto) sobre él —
+    usado tanto por crear_liquidaciones (productor) como por crear_liquidacion_repartidor, para
+    no repetir el redondeo con ROUND_HALF_UP en dos lugares."""
+    monto_bruto = monto_bruto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    comision = (monto_bruto * COMISION_PLATAFORMA_PORCENTAJE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    monto_neto = monto_bruto - comision
+    return monto_bruto, comision, monto_neto
 
 
 def crear_liquidaciones(db: Session, pago: models.Pago):
@@ -64,9 +76,7 @@ def crear_liquidaciones(db: Session, pago: models.Pago):
 
     ahora = datetime.utcnow()
     for productor_id, monto_bruto in subtotal_por_productor.items():
-        monto_bruto = monto_bruto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        comision = (monto_bruto * COMISION_PLATAFORMA_PORCENTAJE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        monto_neto = monto_bruto - comision
+        monto_bruto, comision, monto_neto = calcular_comision_y_neto(monto_bruto)
         db.add(models.Liquidacion(
             pedido_id=pago.pedido_id,
             beneficiario_tipo="productor",
@@ -78,6 +88,42 @@ def crear_liquidaciones(db: Session, pago: models.Pago):
             fecha_creacion=ahora,
             fecha_limite=ahora + timedelta(hours=24),
         ))
+
+
+def crear_liquidacion_repartidor(db: Session, pedido_id: str, repartidor_id: str, costo_envio) -> None:
+    """Crea la Liquidacion del repartidor para un pedido ya entregado — la llama
+    POST /pagos/interno/liquidar-repartidor (ver main.py), a su vez llamado por Transporte cuando
+    un Envio pasa a "entregado" (y por su propio job de reintento si la primera llamada falló).
+
+    A diferencia de crear_liquidaciones (productor), acá no hace falta ninguna llamada cruzada
+    para calcular el monto: costo_envio ya viene resuelto — lo calculó Transporte contra la
+    ubicación del almacén al crear el pedido originalmente (ver calcular_costo_envio en
+    pedidos/main.py).
+
+    Idempotente por construcción: el mismo UniqueConstraint(pedido_id, beneficiario_tipo,
+    beneficiario_id) de Liquidacion que ya usa crear_liquidaciones es quien de verdad evita un
+    duplicado si Transporte reintenta tras un fallo de red que sí había llegado a completarse acá
+    — se traduce ese choque en un no-op silencioso, no en un error: un reintento
+    exitoso-pero-tarde no es una falla del lado de Transporte, mismo criterio que
+    crear_producto_desde_cosecha en Productos (409 tratado ahí; acá ni eso, éxito silencioso,
+    porque quien llama no tiene por qué distinguir "ya estaba" de "se acaba de crear")."""
+    monto_bruto, comision, monto_neto = calcular_comision_y_neto(Decimal(str(costo_envio)))
+    ahora = datetime.utcnow()
+    db.add(models.Liquidacion(
+        pedido_id=pedido_id,
+        beneficiario_tipo="repartidor",
+        beneficiario_id=repartidor_id,
+        monto_bruto=monto_bruto,
+        comision_plataforma=comision,
+        monto_neto=monto_neto,
+        estado="pendiente",
+        fecha_creacion=ahora,
+        fecha_limite=ahora + timedelta(hours=24),
+    ))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
 
 
 def pagos_sin_liquidaciones(db: Session):
