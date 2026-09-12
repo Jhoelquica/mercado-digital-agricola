@@ -34,6 +34,7 @@ POST /productos, para no depender de ese mock en cada test que no está probando
 puntual.
 """
 import uuid
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -297,6 +298,49 @@ def test_confirmar_llegada_requiere_admin():
     _auth(str(uuid.uuid4()), rol="productor")
     resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen", headers=HEADERS_AUTH)
     assert resp.status_code == 403
+
+
+def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
+    """No se levanta un RabbitMQ real: se reemplaza publicar_evento por un mock y se revisa qué
+    se le pasó, mismo criterio que _mockear_productores_me con httpx."""
+    producto = _crear_producto_directo(estado="en_transito")
+    comprador_1 = str(uuid.uuid4())
+    comprador_2 = str(uuid.uuid4())
+
+    _auth(comprador_1, rol="comprador")
+    resp1 = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert resp1.status_code == 200, resp1.text
+
+    _auth(comprador_2, rol="comprador")
+    resp2 = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert resp2.status_code == 200, resp2.text
+
+    mock_publicar = MagicMock()
+    monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    assert resp.status_code == 200, resp.text
+
+    assert mock_publicar.call_count == 2
+    eventos = [llamada.args[0] for llamada in mock_publicar.call_args_list]
+    for evento in eventos:
+        assert evento["evento"] == "producto_disponible"
+        assert evento["producto_id"] == str(producto.id)
+        assert evento["nombre_producto"] == producto.nombre
+    assert {e["usuario_id"] for e in eventos} == {comprador_1, comprador_2}
+
+
+def test_confirmar_llegada_sin_reservas_no_publica_nada(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito")
+
+    mock_publicar = MagicMock()
+    monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    assert resp.status_code == 200, resp.text
+    mock_publicar.assert_not_called()
 
 
 # ============ POST /productos/{id}/reservar ============

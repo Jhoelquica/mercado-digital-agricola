@@ -3542,7 +3542,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('invitacion-resultado').classList.add('hidden');
   document.getElementById('form-invitacion').reset();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
-  await cargarInvitaciones();
+  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito()]);
 }
 
 // El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
@@ -3570,14 +3570,25 @@ function renderInvitacionCard(inv) {
     </div>`;
 }
 
+// cargarInvitaciones() y cargarProductosEnTransito() corren en paralelo (ver iniciarPanelAdmin) y
+// las dos alimentan el mismo resumen — cada una guarda acá lo último que trajo y dispara un
+// re-render con ambos datos, sin importar cuál de las dos termine primero.
+let invitacionesActualesAdmin = [];
+let productosTransitoActualesAdmin = [];
+
+function refrescarResumenAdmin() {
+  document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(invitacionesActualesAdmin, productosTransitoActualesAdmin.length);
+}
+
 async function cargarInvitaciones() {
   const cont = document.getElementById('invitaciones-lista');
   const vacio = document.getElementById('invitaciones-empty');
   try {
     const invitaciones = await Api.admin.listarInvitaciones();
+    invitacionesActualesAdmin = invitaciones;
     vacio.classList.toggle('hidden', invitaciones.length > 0);
     cont.innerHTML = invitaciones.map(renderInvitacionCard).join('');
-    document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(invitaciones);
+    refrescarResumenAdmin();
   } catch (err) {
     manejarError(err, 'cargar las invitaciones');
   }
@@ -3585,7 +3596,7 @@ async function cargarInvitaciones() {
 
 // ---- Resumen / dashboard de "Panel Admin" — reusa estadoInvitacion() (la misma función que ya
 // clasifica cada tarjeta de la lista) sobre el array que acaba de traer cargarInvitaciones(). ----
-function renderResumenAdmin(invitaciones) {
+function renderResumenAdmin(invitaciones, totalProductosTransito = 0) {
   const porEstado = { vigente: 0, usada: 0, expirada: 0 };
   let masProximaAVencer = null;
   invitaciones.forEach((inv) => {
@@ -3625,6 +3636,13 @@ function renderResumenAdmin(invitaciones) {
           <div>
             <span class="resumen-stat-valor">${porEstado.expirada}</span>
             <span class="resumen-stat-label">Expirada${porEstado.expirada === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-building-warehouse"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${totalProductosTransito}</span>
+            <span class="resumen-stat-label">Producto${totalProductosTransito === 1 ? '' : 's'} en tránsito</span>
           </div>
         </div>
       </div>
@@ -3676,6 +3694,81 @@ async function revocarInvitacionDesdeLista(invitacionId) {
     await cargarInvitaciones(); // saca la fila revocada sin recargar toda la página
   } catch (err) {
     manejarError(err, 'revocar la invitación');
+  }
+}
+
+// ---- Productos en tránsito (confirmar llegada al almacén) ----
+function renderTarjetaProductoTransito(p, totalReservas, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(p.nombre)}</h4>
+        <span class="pill pill-estado pill-en_transito"><i class="ti ti-truck"></i> En tránsito</span>
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(p.productor_nombre || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Categoría</span><span class="perfil-dato-valor">${escapeAttr(nombreCategoria(p.categoria))}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Precio</span><span class="perfil-dato-valor">${formatearMoneda(p.precio)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Reservas</span><span class="perfil-dato-valor">${totalReservas}</span></div>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm btn-confirmar-llegada" data-producto-id="${escapeAttr(p.id)}"><i class="ti ti-building-warehouse"></i> Confirmar llegada al almacén</button>
+    </div>`;
+}
+
+async function cargarProductosEnTransito() {
+  const cont = document.getElementById('productos-transito-lista');
+  const vacio = document.getElementById('productos-transito-empty');
+  vacio.classList.add('hidden');
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    // GET /productos (catálogo público) ya trae en_transito + disponible juntos — el filtro por
+    // estado se hace acá porque no existe (ni hace falta) un endpoint separado solo para esto.
+    const productos = await Api.productos.listar();
+    const enTransito = productos.filter((p) => p.estado === 'en_transito');
+    productosTransitoActualesAdmin = enTransito;
+
+    if (!enTransito.length) {
+      cont.innerHTML = '';
+      vacio.classList.remove('hidden');
+    } else {
+      // Una llamada a GET /productos/{id}/reservas por tarjeta — aceptable para el volumen de
+      // una demo (mismo criterio que cargarMisProductos trayendo el detalle de cada borrador por
+      // separado). Si el catálogo creciera de verdad, esto se resuelve mejor agregando un conteo
+      // de reservas directo en la respuesta de GET /productos en vez de N llamadas adicionales.
+      const reservasPorProducto = await Promise.all(
+        enTransito.map((p) => Api.productos.reservas(p.id).catch(() => []))
+      );
+      cont.innerHTML = enTransito.map((p, i) => renderTarjetaProductoTransito(p, reservasPorProducto[i].length, i)).join('');
+    }
+    refrescarResumenAdmin();
+  } catch (err) {
+    manejarError(err, 'cargar los productos en tránsito');
+  }
+}
+
+// Saca la tarjeta ya confirmada de la lista sin recargar toda la vista — mismo criterio que
+// quitarTarjetaCosechaPendiente() en Panel Verificador.
+function quitarTarjetaProductoTransito(productoId) {
+  document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`)?.remove();
+  productosTransitoActualesAdmin = productosTransitoActualesAdmin.filter((p) => String(p.id) !== String(productoId));
+  const cont = document.getElementById('productos-transito-lista');
+  if (cont && !cont.children.length) {
+    document.getElementById('productos-transito-empty').classList.remove('hidden');
+  }
+  refrescarResumenAdmin();
+}
+
+async function confirmarLlegadaAlmacen(productoId) {
+  const card = document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`);
+  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    await Api.productos.confirmarLlegadaAlmacen(productoId);
+    toast('Llegada confirmada — el producto ya está disponible para comprar y se avisó a quienes lo reservaron 📦');
+    quitarTarjetaProductoTransito(productoId);
+  } catch (err) {
+    manejarError(err, 'confirmar la llegada al almacén');
+    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -4636,6 +4729,11 @@ function inicializarEventos() {
   document.getElementById('invitaciones-lista').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-revocar-invitacion');
     if (btn) revocarInvitacionDesdeLista(btn.dataset.invitacionId);
+  });
+  document.getElementById('btn-refrescar-productos-transito').addEventListener('click', cargarProductosEnTransito);
+  document.getElementById('productos-transito-lista').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-confirmar-llegada');
+    if (btn) confirmarLlegadaAlmacen(btn.dataset.productoId);
   });
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-actualizar-envio');

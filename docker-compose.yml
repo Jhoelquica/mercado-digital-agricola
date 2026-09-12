@@ -83,10 +83,14 @@ services:
       PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
     depends_on:
       - db-productos
       - productores
       - redis
+      - rabbitmq
 
   db-pedidos:
     image: postgres:16
