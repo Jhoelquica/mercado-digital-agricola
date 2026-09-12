@@ -12,16 +12,22 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
-def _guardar_notificacion(pedido_id: str, tipo: str, mensaje: str, usuario_id: str = None):
+def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, producto_id: str = None, usuario_id: str = None):
     db = SessionLocal()
     try:
-        if usuario_id is None:
+        # La inferencia por pedido_id (cuando el evento no trae usuario_id, ej.
+        # envio_actualizado) solo tiene sentido si el evento es de un pedido — un evento de
+        # producto siempre trae su propio usuario_id (la reserva ya lo tiene), así que acá no
+        # hace falta ni tiene con qué inferirlo.
+        if usuario_id is None and pedido_id is not None:
             anterior = db.query(models.Notificacion).filter(
                 models.Notificacion.pedido_id == pedido_id
             ).first()
             usuario_id = anterior.usuario_id if anterior else None
 
-        nueva = models.Notificacion(pedido_id=pedido_id, tipo=tipo, mensaje=mensaje, usuario_id=usuario_id)
+        nueva = models.Notificacion(
+            pedido_id=pedido_id, producto_id=producto_id, tipo=tipo, mensaje=mensaje, usuario_id=usuario_id,
+        )
         db.add(nueva)
         db.commit()
         print(f"[Notificaciones] {mensaje}")
@@ -46,6 +52,13 @@ def _procesar_mensaje(ch, method, properties, body):
             tipo="envio_actualizado",
             mensaje=f"Tu envío cambió de estado a: {datos.get('estado')}.",
         )
+    elif evento == "producto_disponible":
+        _guardar_notificacion(
+            producto_id=datos["producto_id"],
+            usuario_id=datos.get("usuario_id"),
+            tipo="producto_disponible",
+            mensaje=f"¡Buenas noticias! El producto \"{datos.get('nombre_producto')}\" que reservaste ya está disponible para comprar.",
+        )
 
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -69,7 +82,12 @@ def _iniciar_consumo():
             channel.queue_bind(exchange="eventos_envios", queue="notificaciones_envios")
             channel.basic_consume(queue="notificaciones_envios", on_message_callback=_procesar_mensaje)
 
-            print("[Notificaciones] Escuchando eventos de pedidos y envíos...")
+            channel.exchange_declare(exchange="eventos_productos", exchange_type="fanout", durable=True)
+            channel.queue_declare(queue="notificaciones_productos", durable=True)
+            channel.queue_bind(exchange="eventos_productos", queue="notificaciones_productos")
+            channel.basic_consume(queue="notificaciones_productos", on_message_callback=_procesar_mensaje)
+
+            print("[Notificaciones] Escuchando eventos de pedidos, envíos y productos...")
             channel.start_consuming()
 
         except Exception as e:

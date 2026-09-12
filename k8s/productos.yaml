@@ -40,6 +40,12 @@ spec:
                   key: JWT_SECRET
             - name: USUARIOS_URL
               value: http://usuarios:8006
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: RABBITMQ_USER
+              value: admin
+            - name: RABBITMQ_PASSWORD
+              value: admin123
 
             - name: MINIO_ENDPOINT
               value: minio:9000

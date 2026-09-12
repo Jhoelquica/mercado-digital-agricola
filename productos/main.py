@@ -18,6 +18,7 @@ from fastapi import UploadFile, File
 from minio_client import subir_imagen
 import pybreaker
 import cache
+from rabbitmq_publisher import publicar_evento
 
 
 Base.metadata.create_all(bind=engine)
@@ -674,11 +675,17 @@ def confirmar_llegada_almacen(
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
 
-    # TODO(sub-entrega siguiente — notificar reservas): acá va la llamada al servicio de
-    # Notificaciones para avisar a cada comprador que reservó este producto (ver
-    # GET /productos/{id}/reservas) que ya está disponible para comprar. Todavía no está
-    # conectado — mismo patrón que el TODO de creación de producto en
-    # productores/main.py::aprobar_cosecha.
+    # Un evento por cada reserva (fanout, mismo patrón que pedidos/transporte con
+    # eventos_pedidos/eventos_envios) — Notificaciones lo consume y crea el aviso; acá no hace
+    # falta saber nada de Notificaciones, solo publicar.
+    reservas = db.query(models.Reserva).filter(models.Reserva.producto_id == producto_id).all()
+    for reserva in reservas:
+        publicar_evento({
+            "evento": "producto_disponible",
+            "usuario_id": str(reserva.comprador_id),
+            "producto_id": str(producto.id),
+            "nombre_producto": producto.nombre,
+        })
 
     return producto
 

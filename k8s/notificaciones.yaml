@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: notificaciones
-          image: mercado_agricola-notificaciones:latest
+          image: localhost:5000/notificaciones:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8005

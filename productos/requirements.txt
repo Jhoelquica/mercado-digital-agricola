@@ -4,6 +4,7 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 httpx
+pika
 python-jose[cryptography]
 minio
 python-multipart
