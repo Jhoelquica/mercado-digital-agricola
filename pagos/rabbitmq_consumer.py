@@ -12,8 +12,9 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
-def _calcular_monto(items: list) -> float:
-    return sum(item.get("cantidad", 1) * item.get("precio_unitario", 0) for item in items)
+def _calcular_monto(items: list, costo_envio: float = 0) -> float:
+    subtotal = sum(item.get("cantidad", 1) * item.get("precio_unitario", 0) for item in items)
+    return subtotal + costo_envio
 
 
 def _procesar_mensaje(ch, method, properties, body):
@@ -22,7 +23,10 @@ def _procesar_mensaje(ch, method, properties, body):
     if datos.get("evento") == "pedido_creado":
         db = SessionLocal()
         try:
-            monto = _calcular_monto(datos.get("items", []))
+            # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del
+            # almacén, ver calcular_costo_envio en pedidos/main.py) — el default 0 es solo para
+            # no romper si algún día llega un evento viejo sin esa clave.
+            monto = _calcular_monto(datos.get("items", []), datos.get("costo_envio", 0))
             nuevo_pago = models.Pago(
                 pedido_id=datos["pedido_id"],
                 monto=monto,

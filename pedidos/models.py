@@ -24,6 +24,10 @@ class Pedido(Base):
     # destino_longitud tal cual — cambiar el nombre habría roto ambos sin necesidad.
     destino_latitud = Column(Float, nullable=False)
     destino_longitud = Column(Float, nullable=False)
+    # Calculado y guardado al crear el pedido (ver calcular_costo_envio en main.py) — no se
+    # recalcula después, así que un pedido conserva el costo que tenía al momento de crearse
+    # aunque el Admin cambie la ubicación del almacén más tarde.
+    costo_envio = Column(Numeric(10, 2), nullable=False, default=0)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"
@@ -33,3 +37,17 @@ class PedidoItem(Base):
     producto_id = Column(UUID(as_uuid=True), nullable=False)
     cantidad = Column(Integer, nullable=False)
     precio_unitario = Column(Numeric(10, 2), nullable=False)
+
+
+class ConfiguracionSistema(Base):
+    """Valores editables por el Admin sin tocar código — hoy solo la ubicación del almacén
+    central (origen para calcular_costo_envio en main.py), pero la clave es genérica por si más
+    adelante hace falta configurar algo más acá. Una fila por clave (UNIQUE), no una tabla
+    clave-valor gigante con una sola fila — así cada valor tiene su propia fecha_actualizacion."""
+    __tablename__ = "configuracion_sistema"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    clave = Column(String, nullable=False, unique=True)
+    valor_latitud = Column(Float, nullable=False)
+    valor_longitud = Column(Float, nullable=False)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
