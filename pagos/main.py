@@ -6,13 +6,27 @@ from pydantic import BaseModel
 import os
 import json
 import httpx
+import logging
+
+# Sin esto, el proceso nunca queda con un handler configurado y Python cae al "handler de
+# último recurso": solo WARNING y superior salen por stderr, cualquier logger.info() de acá o de
+# cualquier módulo que importemos (ej. reintento_liquidaciones, cuyo hilo corre en este mismo
+# proceso) queda mudo sin ningún aviso ni error — simplemente no aparece en `kubectl logs`. Va
+# antes de crear cualquier logger o importar cualquier módulo del proyecto a propósito: el nivel
+# efectivo de un logger se resuelve recién cuando se llama .info()/.error(), así que en principio
+# el orden no sería crítico, pero dejarlo primero evita tener que razonar sobre eso cada vez.
+logging.basicConfig(level=logging.INFO)
 
 from database import Base, engine, SessionLocal
 import models
-from auth import verificar_token
+from auth import verificar_token, requiere_rol
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
+from logica_liquidaciones import crear_liquidaciones, pagos_sin_liquidaciones
+from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
+
+logger = logging.getLogger("pagos.main")
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
@@ -35,6 +49,7 @@ app.add_middleware(
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    lanzar_reintento_liquidaciones_en_hilo()
 
 def get_db():
     db = SessionLocal()
@@ -70,6 +85,19 @@ class ProcesarPago(BaseModel):
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "pagos"}
+
+@app.get("/pagos/sin-liquidaciones")
+def listar_pagos_sin_liquidaciones(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    """Pagos "aprobado" que todavía no tienen ninguna Liquidacion — normalmente el job de fondo
+    (reintento_liquidaciones.py) los resuelve solo cada INTERVALO_SEGUNDOS, pero el Admin puede
+    querer verlo en cualquier momento (ej. si Productos lleva caído más que ese intervalo). Sin
+    endpoint de reintento manual: el hilo ya lo cubre, no hace falta uno aparte.
+
+    Registrada ANTES de /pagos/{pedido_id} a propósito: FastAPI resuelve rutas en el orden en que
+    se registran, así que si "sin-liquidaciones" quedara después, un GET acá lo capturaría esa
+    ruta con pedido_id="sin-liquidaciones" en vez de esta (mismo criterio que /productos/mios
+    antes de /productos/{producto_id} en Productos)."""
+    return pagos_sin_liquidaciones(db)
 
 @app.get("/pagos/{pedido_id}")
 def obtener_pago(pedido_id: str, db: Session = Depends(get_db)):
@@ -114,6 +142,22 @@ def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: d
             "evento": "pago_confirmado",
             "pedido_id": str(pago.pedido_id),
         })
+
+        # Separado del commit de arriba a propósito — ver el docstring de crear_liquidaciones: el
+        # cargo ya se hizo y el pago ya quedó "aprobado", así que un fallo acá no debe deshacer
+        # ni ocultar eso. Se degrada a "faltan liquidaciones, revisar a mano" en vez de fingir que
+        # el pago no se confirmó.
+        try:
+            crear_liquidaciones(db, pago)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.error(
+                "No se pudieron crear las liquidaciones del pedido %s (el pago ya quedó aprobado — revisar manualmente)",
+                pago.pedido_id,
+                exc_info=True,
+            )
+
         return {"estado": "aprobado", "detalle": resultado["data"]}
     else:
         pago.estado = "rechazado"
