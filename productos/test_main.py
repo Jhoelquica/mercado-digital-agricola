@@ -1,11 +1,18 @@
 """
-Tests del estado borrador/publicado de Producto y su interacción con el catálogo público.
+Tests del ciclo de vida borrador -> en_transito -> disponible de Producto (antes solo
+borrador/publicado — "publicado" se renombró a "disponible" y se agregó el estado intermedio
+"en_transito") y su interacción con el catálogo público y las reservas de compradores.
 
 Cubre:
-- GET /productos (catálogo público) excluye productos en "borrador"
-- GET /productos/mios trae ambos estados, solo del productor autenticado
-- PATCH .../publicar: sin precio -> 400, sin imagen -> 400, con todo completo -> 200,
-  ya publicado -> 400
+- GET /productos (catálogo público) incluye "en_transito" y "disponible", excluye "borrador"
+- GET /productos/mios trae los tres estados, solo del productor autenticado
+- PATCH .../publicar: sin precio -> 400, sin imagen -> 400, con todo completo -> 200 y pasa a
+  "en_transito" (no a "disponible" directo), ya publicado -> 400
+- PATCH /productos/{id}/confirmar-llegada-almacen: requiere rol admin, solo funciona desde
+  "en_transito", pasa a "disponible"
+- POST /productos/{id}/reservar: requiere rol comprador, solo funciona desde "en_transito",
+  falla si el mismo comprador ya reservó ese producto
+- GET /productos/{id}/reservas: admin o el productor dueño del producto
 - PATCH /productos/{id}: edita categoria y/o precio de un borrador propio; falla si no es el
   dueño, si el producto ya está publicado, o si el precio es <= 0
 - POST /productos/interno/crear-desde-cosecha: sin el secreto correcto -> 403,
@@ -90,7 +97,7 @@ def _crear_producto_directo(**overrides) -> "main.models.Producto":
             precio=10.0,
             stock=5,
             unidad_medida="kg",
-            estado="publicado",
+            estado="disponible",
         )
         valores.update(overrides)
         producto = main.models.Producto(**valores)
@@ -114,16 +121,24 @@ def _agregar_imagen(producto_id) -> None:
 
 # ============ GET /productos (catálogo público) ============
 
-def test_listar_productos_excluye_borradores():
-    publicado = _crear_producto_directo(nombre="Publicado Test", estado="publicado")
+def test_listar_productos_incluye_en_transito_y_disponible_excluye_borrador():
+    en_transito = _crear_producto_directo(nombre="En transito Test", estado="en_transito")
+    disponible = _crear_producto_directo(nombre="Disponible Test", estado="disponible")
     borrador = _crear_producto_directo(nombre="Borrador Test", estado="borrador", precio=None, categoria=None)
 
     resp = client.get("/productos")
     assert resp.status_code == 200, resp.text
-    ids = {p["id"] for p in resp.json()}
+    cuerpo = resp.json()
+    ids = {p["id"] for p in cuerpo}
 
-    assert str(publicado.id) in ids
+    assert str(en_transito.id) in ids
+    assert str(disponible.id) in ids
     assert str(borrador.id) not in ids
+
+    fila_en_transito = next(p for p in cuerpo if p["id"] == str(en_transito.id))
+    fila_disponible = next(p for p in cuerpo if p["id"] == str(disponible.id))
+    assert fila_en_transito["estado"] == "en_transito"
+    assert fila_disponible["estado"] == "disponible"
 
 
 # ============ GET /productos/mios ============
@@ -133,11 +148,11 @@ def test_mios_trae_ambos_estados_del_productor_correcto(monkeypatch):
     borrador = _crear_producto_directo(
         productor_id=productor_id, nombre="Mi borrador", estado="borrador", precio=None, categoria=None,
     )
-    publicado = _crear_producto_directo(
-        productor_id=productor_id, nombre="Mi publicado", estado="publicado",
+    disponible = _crear_producto_directo(
+        productor_id=productor_id, nombre="Mi disponible", estado="disponible",
     )
     # Producto de otro productor: no debe aparecer.
-    ajeno = _crear_producto_directo(nombre="Producto ajeno", estado="publicado")
+    ajeno = _crear_producto_directo(nombre="Producto ajeno", estado="disponible")
 
     _auth(str(uuid.uuid4()))
     _mockear_productores_me(monkeypatch, productor_id)
@@ -147,7 +162,7 @@ def test_mios_trae_ambos_estados_del_productor_correcto(monkeypatch):
     ids = {p["id"] for p in resp.json()}
 
     assert str(borrador.id) in ids
-    assert str(publicado.id) in ids
+    assert str(disponible.id) in ids
     assert str(ajeno.id) not in ids
 
     fila_borrador = next(p for p in resp.json() if p["id"] == str(borrador.id))
@@ -219,9 +234,11 @@ def test_publicar_con_todo_completo_funciona(monkeypatch):
 
     resp = client.patch(f"/productos/{producto.id}/publicar", headers=HEADERS_AUTH)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["estado"] == "publicado"
+    # Transiciona a "en_transito", no directo a "disponible" — todavía tiene que llegar
+    # físicamente al almacén y ser confirmado por un Admin.
+    assert resp.json()["estado"] == "en_transito"
 
-    # Ahora sí debe aparecer en el catálogo público.
+    # Ya visible en el catálogo público (reservable, aunque no comprable todavía).
     catalogo = client.get("/productos")
     assert catalogo.status_code == 200, catalogo.text
     ids_catalogo = {p["id"] for p in catalogo.json()}
@@ -230,7 +247,7 @@ def test_publicar_con_todo_completo_funciona(monkeypatch):
 
 def test_publicar_ya_publicado_falla_400(monkeypatch):
     productor_id = str(uuid.uuid4())
-    producto = _crear_producto_directo(productor_id=productor_id, estado="publicado")
+    producto = _crear_producto_directo(productor_id=productor_id, estado="disponible")
 
     _auth(str(uuid.uuid4()))
     _mockear_productores_me(monkeypatch, productor_id)
@@ -251,6 +268,103 @@ def test_publicar_producto_ajeno_falla_403(monkeypatch):
     _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # otro productor autenticado
 
     resp = client.patch(f"/productos/{producto.id}/publicar", headers=HEADERS_AUTH)
+    assert resp.status_code == 403
+
+
+# ============ PATCH /productos/{id}/confirmar-llegada-almacen ============
+
+def test_confirmar_llegada_desde_en_transito_funciona():
+    producto = _crear_producto_directo(estado="en_transito")
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "disponible"
+
+
+def test_confirmar_llegada_falla_si_no_esta_en_transito():
+    producto = _crear_producto_directo(estado="borrador", precio=None, categoria=None)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Este producto no está en tránsito hacia el almacén"
+
+
+def test_confirmar_llegada_requiere_admin():
+    producto = _crear_producto_directo(estado="en_transito")
+
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen", headers=HEADERS_AUTH)
+    assert resp.status_code == 403
+
+
+# ============ POST /productos/{id}/reservar ============
+
+def test_reservar_en_transito_funciona():
+    producto = _crear_producto_directo(estado="en_transito")
+
+    _auth(str(uuid.uuid4()), rol="comprador")
+    resp = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["producto_id"] == str(producto.id)
+
+
+def test_reservar_producto_disponible_falla_400():
+    producto = _crear_producto_directo(estado="disponible")
+
+    _auth(str(uuid.uuid4()), rol="comprador")
+    resp = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert resp.status_code == 400
+    assert "en tránsito" in resp.json()["detail"]
+
+
+def test_reservar_dos_veces_el_mismo_comprador_falla_400():
+    producto = _crear_producto_directo(estado="en_transito")
+    comprador_id = str(uuid.uuid4())
+
+    _auth(comprador_id, rol="comprador")
+    primera = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert primera.status_code == 200, primera.text
+
+    segunda = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+    assert segunda.status_code == 400
+    assert segunda.json()["detail"] == "Ya reservaste este producto"
+
+
+# ============ GET /productos/{id}/reservas ============
+
+def test_listar_reservas_admin_funciona():
+    producto = _crear_producto_directo(estado="en_transito")
+    _auth(str(uuid.uuid4()), rol="comprador")
+    client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.get(f"/productos/{producto.id}/reservas", headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 1
+
+
+def test_listar_reservas_productor_dueno_funciona(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="en_transito")
+
+    _auth(str(uuid.uuid4()), rol="comprador")
+    client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
+
+    _auth(str(uuid.uuid4()), rol="productor")
+    _mockear_productores_me(monkeypatch, productor_id)
+    resp = client.get(f"/productos/{producto.id}/reservas", headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 1
+
+
+def test_listar_reservas_productor_ajeno_falla_403(monkeypatch):
+    producto = _crear_producto_directo(productor_id=str(uuid.uuid4()), estado="en_transito")
+
+    _auth(str(uuid.uuid4()), rol="productor")
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # otro productor autenticado
+    resp = client.get(f"/productos/{producto.id}/reservas", headers=HEADERS_AUTH)
     assert resp.status_code == 403
 
 
@@ -316,7 +430,7 @@ def test_actualizar_producto_ajeno_falla_403(monkeypatch):
 
 def test_actualizar_producto_ya_publicado_falla_400(monkeypatch):
     productor_id = str(uuid.uuid4())
-    producto = _crear_producto_directo(productor_id=productor_id, estado="publicado")
+    producto = _crear_producto_directo(productor_id=productor_id, estado="disponible")
 
     _auth(str(uuid.uuid4()))
     _mockear_productores_me(monkeypatch, productor_id)

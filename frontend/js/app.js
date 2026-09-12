@@ -3021,7 +3021,12 @@ async function cargarMisProductos() {
     const productos = await Api.productos.mios();
     Estado.misProductos = productos;
     const borradores = productos.filter((p) => p.estado === 'borrador');
-    const publicados = productos.filter((p) => p.estado === 'publicado');
+    // TODO(sub-entrega de UI de reservas): agrupar "en_transito" junto con "disponible" acá es
+    // temporal — el ciclo real ahora tiene 3 estados, y esta sección debería separarse en
+    // Borradores / En tránsito / Disponibles (con su propia UI de reservas). Por ahora, con tal
+    // de no romper el filtro silenciosamente, "publicados" sigue siendo todo lo que no es
+    // borrador.
+    const publicados = productos.filter((p) => p.estado !== 'borrador');
 
     if (!borradores.length) {
       contBorradores.innerHTML = '';
@@ -3179,7 +3184,9 @@ function renderResumenProductor() {
   // Estado.misProductos (Api.productos.mios()) trae borradores Y publicados — a diferencia de
   // Estado.productos (el catálogo público, solo lo publicado por TODOS los productores), que ya
   // no hace falta filtrar por productor_id acá.
-  const misProductosPublicados = (Estado.misProductos || []).filter((p) => p.estado === 'publicado');
+  // Solo "disponible" cuenta acá — "en_transito" ya se publicó pero todavía no es una venta
+  // real (solo reservable), contarlo como "disponible" sería engañoso para el productor.
+  const misProductosDisponibles = (Estado.misProductos || []).filter((p) => p.estado === 'disponible');
   const chacras = Estado.chacras || [];
   const registros = Estado.registrosProduccion || [];
   const enCurso = registros.filter((r) => r.estado !== 'cosechado');
@@ -3208,8 +3215,8 @@ function renderResumenProductor() {
         <div class="resumen-stat">
           <span class="resumen-stat-icono"><i class="ti ti-shopping-bag"></i></span>
           <div>
-            <span class="resumen-stat-valor">${misProductosPublicados.length}</span>
-            <span class="resumen-stat-label">${misProductosPublicados.length === 1 ? 'Producto publicado' : 'Productos publicados'}</span>
+            <span class="resumen-stat-valor">${misProductosDisponibles.length}</span>
+            <span class="resumen-stat-label">${misProductosDisponibles.length === 1 ? 'Producto disponible' : 'Productos disponibles'}</span>
           </div>
         </div>
       </div>

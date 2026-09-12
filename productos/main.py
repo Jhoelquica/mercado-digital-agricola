@@ -199,12 +199,16 @@ def crear_producto(
         precio=datos.precio,
         stock=datos.stock,
         unidad_medida=datos.unidad_medida,
-        # Publicado de inmediato: este es el flujo manual de siempre (el productor ya llena
-        # precio en el mismo formulario), a diferencia del alta automática desde una cosecha
-        # aprobada (crear_producto_desde_cosecha), que sí nace en "borrador" porque no tiene
-        # precio ni imágenes todavía. El default de la columna es "borrador" — se pisa acá a
-        # propósito para no cambiar el comportamiento de este endpoint.
-        estado="publicado",
+        # Disponible de inmediato (sin pasar por "en_transito"): este es el flujo manual de
+        # siempre (el productor ya llena precio en el mismo formulario), a diferencia del alta
+        # automática desde una cosecha aprobada (crear_producto_desde_cosecha), que sí nace en
+        # "borrador" porque no tiene precio ni imágenes todavía. NOTA: el ciclo
+        # borrador -> en_transito -> disponible se pensó para productos físicos que viajan desde
+        # una chacra hasta el almacén central — este endpoint (sin uso desde el frontend, el
+        # formulario de alta manual se quitó en una sub-entrega anterior) preserva el
+        # comportamiento previo de visibilidad inmediata en vez de forzarlo también por el
+        # tránsito. El default de la columna es "borrador" — se pisa acá a propósito.
+        estado="disponible",
     )
     db.add(nuevo)
     db.commit()
@@ -362,7 +366,13 @@ def listar_productos(db: Session = Depends(get_db)):
     if cacheado is not None:
         return cacheado
 
-    productos = db.query(models.Producto).filter(models.Producto.estado == "publicado").all()
+    # en_transito Y disponible: el comprador necesita ver ambos para poder reservar los que
+    # todavía están en camino (POST /productos/{id}/reservar) o comprar directo los que ya
+    # llegaron al almacén — el campo "estado" en la respuesta es lo que el frontend usa para
+    # distinguir qué botón mostrar.
+    productos = db.query(models.Producto).filter(
+        models.Producto.estado.in_(["en_transito", "disponible"])
+    ).all()
 
     imagenes = db.query(models.ProductoImagen).order_by(models.ProductoImagen.orden).all()
     primera_imagen_por_producto = {}
@@ -396,6 +406,7 @@ def listar_productos(db: Session = Depends(get_db)):
             "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
             "calificacion_promedio": stats_por_producto.get(str(p.id), (None, 0))[0],
             "total_resenas": stats_por_producto.get(str(p.id), (None, 0))[1],
+            "estado": p.estado,
         }
         for p in productos
     ]
@@ -618,7 +629,7 @@ def publicar_producto(
     if str(producto.productor_id) != str(productor["id"]):
         raise HTTPException(status_code=403, detail="No puedes publicar un producto que no te pertenece")
 
-    if producto.estado == "publicado":
+    if producto.estado != "borrador":
         raise HTTPException(status_code=400, detail="Este producto ya está publicado")
 
     # Se valida en orden y se corta en el primer faltante — un solo detail específico por
@@ -634,11 +645,114 @@ def publicar_producto(
     if not tiene_imagen:
         raise HTTPException(status_code=400, detail="Agrega al menos una imagen antes de publicar.")
 
-    producto.estado = "publicado"
+    # No pasa directo a "disponible": todavía tiene que viajar físicamente hasta el almacén
+    # central. Queda "en_transito" — visible en el catálogo y reservable — hasta que un Admin
+    # confirme la llegada (PATCH /productos/{id}/confirmar-llegada-almacen).
+    producto.estado = "en_transito"
     db.commit()
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
+
+@app.patch("/productos/{producto_id}/confirmar-llegada-almacen")
+def confirmar_llegada_almacen(
+        producto_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("admin")),
+):
+    """El Admin confirma que un producto "en_transito" llegó físicamente al almacén central —
+    recién ahí pasa a "disponible" (comprable de verdad, no solo reservable)."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    if producto.estado != "en_transito":
+        raise HTTPException(status_code=400, detail="Este producto no está en tránsito hacia el almacén")
+
+    producto.estado = "disponible"
+    db.commit()
+    db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
+
+    # TODO(sub-entrega siguiente — notificar reservas): acá va la llamada al servicio de
+    # Notificaciones para avisar a cada comprador que reservó este producto (ver
+    # GET /productos/{id}/reservas) que ya está disponible para comprar. Todavía no está
+    # conectado — mismo patrón que el TODO de creación de producto en
+    # productores/main.py::aprobar_cosecha.
+
+    return producto
+
+@app.post("/productos/{producto_id}/reservar")
+def reservar_producto(
+        producto_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("comprador")),
+):
+    """Reserva de interés (sin monto, sin pago) sobre un producto todavía "en_transito" — no
+    tiene sentido reservar algo que ya está "disponible", ahí se compra directo."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    if producto.estado != "en_transito":
+        raise HTTPException(
+            status_code=400,
+            detail="Este producto no está en tránsito — si ya está disponible, cómpralo directamente",
+        )
+
+    comprador_id = usuario.get("sub")
+    ya_reservado = db.query(models.Reserva).filter(
+        models.Reserva.producto_id == producto_id,
+        models.Reserva.comprador_id == comprador_id,
+    ).first()
+    if ya_reservado:
+        raise HTTPException(status_code=400, detail="Ya reservaste este producto")
+
+    nueva_reserva = models.Reserva(producto_id=producto_id, comprador_id=comprador_id)
+    db.add(nueva_reserva)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Carrera entre el SELECT de arriba y este insert (ej. doble clic) — el
+        # UniqueConstraint("producto_id", "comprador_id") del modelo es quien de verdad evita el
+        # duplicado, acá solo se traduce a un 400 legible en vez de un 500.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Ya reservaste este producto")
+    db.refresh(nueva_reserva)
+    return nueva_reserva
+
+@app.get("/productos/{producto_id}/reservas")
+def listar_reservas(
+        producto_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(verificar_token),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Quién reservó este producto — la va a consumir el servicio de Notificaciones en la
+    sub-entrega siguiente para avisarles cuando el Admin confirme la llegada al almacén (ver el
+    TODO en confirmar_llegada_almacen), todavía no conectado acá. Acceso: admin, o el productor
+    dueño del producto."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    if usuario.get("rol") != "admin":
+        with httpx.Client() as client:
+            try:
+                resp = client.get(
+                    f"{PRODUCTORES_URL}/productores/me",
+                    headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                    timeout=5,
+                )
+            except httpx.RequestError:
+                raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+        if resp.status_code != 200 or str(producto.productor_id) != str(resp.json().get("id")):
+            raise HTTPException(status_code=403, detail="No tienes permiso para ver las reservas de este producto")
+
+    return db.query(models.Reserva).filter(
+        models.Reserva.producto_id == producto_id
+    ).order_by(models.Reserva.fecha_creacion.asc()).all()
 
 @app.post("/productos/interno/crear-desde-cosecha")
 def crear_producto_desde_cosecha(
