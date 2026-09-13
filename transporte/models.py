@@ -16,11 +16,14 @@ class Envio(Base):
     repartidor_latitud = Column(String, nullable=True)
     repartidor_longitud = Column(String, nullable=True)
     # False hasta que Pagos confirme que ya creó la Liquidacion del repartidor para este envío
-    # (ver logica_liquidacion_repartidor.py) — mismo espíritu que la notificación a Certificación,
-    # pero con un campo propio en vez de un simple try/except sin rastro: acá SÍ hace falta poder
-    # encontrar después "cuáles quedaron sin liquidar" (reintento_liquidacion_repartidor.py),
-    # cosa que notificar_entrega_a_certificacion no tiene resuelta todavía.
+    # (ver logica_liquidacion_repartidor.py) — permite encontrar después "cuáles quedaron sin
+    # liquidar" (reintento_liquidacion_repartidor.py). Mismo patrón que certificacion_confirmada
+    # de abajo, aplicado primero acá.
     liquidacion_confirmada = Column(Boolean, nullable=False, default=False)
+    # False hasta que Certificación confirme que ya registró este envío (ver
+    # logica_certificacion.py) — mismo patrón que liquidacion_confirmada de arriba, para que
+    # reintento_certificacion.py pueda encontrar "cuáles quedaron sin certificar".
+    certificacion_confirmada = Column(Boolean, nullable=False, default=False)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"

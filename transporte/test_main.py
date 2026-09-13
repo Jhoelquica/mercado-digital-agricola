@@ -1,21 +1,22 @@
 """
-Tests de la liquidación de repartidor al entregar un envío (transporte/main.py +
-logica_liquidacion_repartidor.py + reintento_liquidacion_repartidor.py).
+Tests de las dos notificaciones al entregar un envío: liquidación de repartidor
+(transporte/main.py + logica_liquidacion_repartidor.py + reintento_liquidacion_repartidor.py) y
+certificación (logica_certificacion.py + reintento_certificacion.py) — mismo patrón para las dos,
+implementado primero para liquidación y calcado después para certificación.
 
-Cubre:
-- PATCH /envios/{id}/estado a "entregado" con Pagos respondiendo bien -> liquidacion_confirmada=True
-- lo mismo con Pagos fallando -> liquidacion_confirmada queda False, pero la respuesta al
+Cubre, para cada una:
+- PATCH /envios/{id}/estado a "entregado" con el servicio externo respondiendo bien ->
+  *_confirmada=True
+- lo mismo con el servicio externo fallando -> *_confirmada queda False, pero la respuesta al
   repartidor sigue siendo 200 (la transición de estado no se bloquea)
-- reintentar_liquidaciones_repartidor_pendientes(db) (la función de "un ciclo" del job de fondo,
-  sin loop ni sleep) resuelve un envío "entregado" que había quedado sin liquidar
+- la función de "un ciclo" del job de fondo correspondiente (sin loop ni sleep) resuelve un envío
+  "entregado" que había quedado sin confirmar
 
 No se levantan Pedidos, Pagos, Certificación ni RabbitMQ reales:
 - httpx.Client (usado por logica_liquidacion_repartidor para GET /pedidos/{id} y
-  POST /pagos/interno/liquidar-repartidor) se mockea con stubs.
-- notificar_entrega_a_certificacion usa httpx.get/httpx.post crudos contra PEDIDOS_URL/
-  CERTIFICACION_URL (default localhost, sin nada escuchando en el contenedor de test) — falla
-  con ConnectError, que esa función ya atrapa y ver con un print(); no hace falta mockearla para
-  estos tests, que no dependen de ese resultado.
+  POST /pagos/interno/liquidar-repartidor, y por logica_certificacion para GET /pedidos/{id} y
+  las llamadas a Certificación) se mockea con stubs en cada módulo por separado — cada uno tiene
+  su propio `import httpx`, ver el docstring de logica_certificacion.py sobre por qué.
 - publicar_evento se mockea para no depender de RabbitMQ.
 
 Requiere una base de datos Postgres real accesible según database.py (tipos UUID de postgresql +
@@ -29,7 +30,9 @@ from fastapi.testclient import TestClient
 
 import main
 import logica_liquidacion_repartidor
+import logica_certificacion
 from reintento_liquidacion_repartidor import reintentar_liquidaciones_repartidor_pendientes
+from reintento_certificacion import reintentar_certificaciones_pendientes
 from auth import verificar_token
 
 client = TestClient(main.app)
@@ -91,6 +94,36 @@ def _mockear_pagos_ok(monkeypatch, costo_envio=8.0):
 
 def _mockear_pagos_roto(monkeypatch):
     monkeypatch.setattr(logica_liquidacion_repartidor.httpx, "Client", lambda *a, **kw: _ClienteRoto())
+
+
+class _ClienteCertificacionFalso:
+    """Reemplaza httpx.Client() dentro de logica_certificacion: GET /pedidos/{id} devuelve items
+    con un producto_id fijo, cualquier POST a Certificación devuelve 200, sin tocar la red."""
+    def __init__(self, producto_id):
+        self._producto_id = producto_id
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        return _RespuestaFalsa(200, {"items": [{"producto_id": self._producto_id}]})
+
+    def post(self, url, **kwargs):
+        return _RespuestaFalsa(200, {"mensaje": "ok"})
+
+
+def _mockear_certificacion_ok(monkeypatch, producto_id=None):
+    monkeypatch.setattr(
+        logica_certificacion.httpx, "Client",
+        lambda *a, **kw: _ClienteCertificacionFalso(producto_id or str(uuid.uuid4())),
+    )
+
+
+def _mockear_certificacion_rota(monkeypatch):
+    monkeypatch.setattr(logica_certificacion.httpx, "Client", lambda *a, **kw: _ClienteRoto())
 
 
 def _crear_repartidor_directo(usuario_id=None) -> "main.models.Repartidor":
@@ -184,3 +217,53 @@ def test_reintento_resuelve_envio_entregado_pendiente(monkeypatch):
         db.close()
 
     assert _envio_recargado(envio.id).liquidacion_confirmada is True
+
+
+def test_entregar_envio_con_certificacion_ok_marca_certificacion_confirmada(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="asignado")
+
+    _mockear_certificacion_ok(monkeypatch)
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    _auth(usuario_id)
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    assert resp.status_code == 200, resp.text
+
+    assert _envio_recargado(envio.id).certificacion_confirmada is True
+
+
+def test_entregar_envio_con_certificacion_fallando_no_bloquea_respuesta(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="asignado")
+
+    _mockear_certificacion_rota(monkeypatch)
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    _auth(usuario_id)
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    assert resp.status_code == 200, resp.text
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "entregado"  # la transición ocurrió igual
+    assert envio_recargado.certificacion_confirmada is False  # queda pendiente para el reintento
+
+
+def test_reintento_resuelve_envio_sin_certificar(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    # Ya "entregado" de entrada (certificacion_confirmada=False por default) — simula el
+    # resultado de una entrega cuya notificación a Certificación falló la primera vez.
+    envio = _crear_envio_directo(repartidor.id, estado="entregado")
+
+    _mockear_certificacion_ok(monkeypatch)
+
+    db = main.SessionLocal()
+    try:
+        reintentar_certificaciones_pendientes(db)
+    finally:
+        db.close()
+
+    assert _envio_recargado(envio.id).certificacion_confirmada is True

@@ -20,10 +20,12 @@ from database import Base, engine, SessionLocal
 import models
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
+from logica_certificacion import notificar_entrega_a_certificacion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
 from reintento_huerfanos import lanzar_reintento_huerfanos_en_hilo
 from reintento_liquidacion_repartidor import lanzar_reintento_liquidacion_repartidor_en_hilo
+from reintento_certificacion import lanzar_reintento_certificacion_en_hilo
 import math
 
 logger = logging.getLogger("transporte.main")
@@ -46,6 +48,7 @@ def iniciar():
     lanzar_consumidor_en_hilo()
     lanzar_reintento_huerfanos_en_hilo()
     lanzar_reintento_liquidacion_repartidor_en_hilo()
+    lanzar_reintento_certificacion_en_hilo()
 
 def get_db():
     db = SessionLocal()
@@ -102,9 +105,6 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
     ).all()
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
-CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://certificacion:8008")
-# Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # para llamar a eventos-internos y certificado-pedido en Certificación
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
 
 @app.get("/envios/{envio_id}/ruta")
@@ -224,47 +224,6 @@ def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secr
     db.commit()
     return {"mensaje": "Envío eliminado"}
 
-def notificar_entrega_a_certificacion(pedido_id: str):
-    try:
-        respuesta_pedido = httpx.get(f"{PEDIDOS_URL}/pedidos/{pedido_id}", timeout=5)
-    except httpx.RequestError:
-        print(f"No se pudo consultar el pedido {pedido_id} para certificación")
-        return
-
-    if respuesta_pedido.status_code != 200:
-        print(f"Pedido {pedido_id} no encontrado al intentar certificar entrega")
-        return
-
-    pedido = respuesta_pedido.json()
-    items = pedido.get("items", [])
-    productos_ids = []
-
-    for item in items:
-        producto_id = item.get("producto_id")
-        if not producto_id:
-            continue
-        productos_ids.append(producto_id)
-        try:
-            httpx.post(
-                f"{CERTIFICACION_URL}/certificacion/{producto_id}/eventos-internos",
-                json={"evento": "verificado_punto_venta", "datos": f"pedido {pedido_id} entregado"},
-                headers={"X-Servicio-Secreto": TRANSPORTE_A_CERTIFICACION_SECRETO},
-                timeout=5
-            )
-        except httpx.RequestError:
-            print(f"No se pudo certificar el producto {producto_id} del pedido {pedido_id}")
-
-    if productos_ids:
-        try:
-            httpx.post(
-                f"{CERTIFICACION_URL}/certificacion/pedido/{pedido_id}/certificado",
-                json={"productos_ids": productos_ids},
-                headers={"X-Servicio-Secreto": TRANSPORTE_A_CERTIFICACION_SECRETO},
-                timeout=5
-            )
-        except httpx.RequestError:
-            print(f"No se pudo generar el certificado Merkle para el pedido {pedido_id}")
-
 @app.patch("/envios/{envio_id}/estado")
 def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
@@ -302,17 +261,25 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
             intentar_resolver_envio_huerfano(db)
 
         # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
-        # Por ahora solo evitamos que un fallo aquí (p.ej. CERTIFICACION_URL/TRANSPORTE_A_CERTIFICACION_SECRETO sin definir)
-        # tumbe la respuesta al repartidor; el error queda en logs para investigarlo después de la entrega.
+        # Un fallo acá no bloquea nada ni deshace la entrega ya confirmada — igual que con la
+        # liquidación de repartidor de abajo, queda un rastro reintentable:
+        # envio.certificacion_confirmada sigue en False y reintento_certificacion.py lo va a
+        # reintentar cada INTERVALO_SEGUNDOS hasta que Certificación responda.
         try:
-            notificar_entrega_a_certificacion(str(envio.pedido_id))
-        except Exception as e:
-            print(f"[Transporte] No se pudo notificar a Certificación: {e}")
+            notificar_entrega_a_certificacion(db, envio)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.error(
+                "No se pudo notificar a Certificación para el pedido %s (queda pendiente para el reintento)",
+                envio.pedido_id,
+                exc_info=True,
+            )
 
-        # Igual que con Certificación arriba: un fallo acá no bloquea nada ni deshace la entrega
-        # ya confirmada. A diferencia de Certificación, sí queda un rastro reintentable —
-        # envio.liquidacion_confirmada sigue en False y reintento_liquidacion_repartidor.py lo va
-        # a reintentar cada INTERVALO_SEGUNDOS hasta que Pagos responda.
+        # Mismo criterio no intrusivo que arriba: un fallo acá no bloquea nada ni deshace la
+        # entrega ya confirmada. envio.liquidacion_confirmada sigue en False y
+        # reintento_liquidacion_repartidor.py lo va a reintentar cada INTERVALO_SEGUNDOS hasta
+        # que Pagos responda.
         try:
             notificar_liquidacion_repartidor(db, envio)
             db.commit()
