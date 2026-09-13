@@ -2049,6 +2049,52 @@ input, select { font-family: inherit; }
 }
 .panel-expandible.hidden { display: none; }
 
+/* ---------- UNIDADES DE VENTA ALTERNATIVAS ---------- */
+.unidades-alt-lista { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
+.unidades-alt-fila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--color-superficie);
+  border-radius: 12px;
+}
+.unidades-alt-fila-edicion { align-items: flex-end; flex-wrap: wrap; }
+
+.unidades-alt-info { display: flex; flex-direction: column; gap: 2px; }
+.unidades-alt-info strong { color: var(--color-primario); }
+.unidades-alt-info span { font-size: 0.82rem; color: var(--texto-suave); }
+.unidades-alt-fila-edicion .unidades-alt-info { flex: 1 1 220px; gap: 8px; }
+.unidades-alt-fila-edicion .unidades-alt-info label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--texto);
+}
+.unidades-alt-fila-edicion input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1.5px solid var(--color-borde);
+  font-size: 0.9rem;
+}
+
+.unidades-alt-acciones { display: flex; gap: 8px; flex-shrink: 0; }
+.unidades-alt-acciones .btn-sm { margin-left: 0; padding: 6px 10px; }
+
+.unidad-alt-form {
+  padding-top: 14px;
+  border-top: 1px solid var(--color-borde);
+}
+.unidad-alt-factor-ayuda {
+  margin: -6px 0 0;
+  font-size: 0.78rem;
+  color: var(--color-secundario);
+}
+
 /* ---------- MODAL CERTIFICACIÓN ---------- */
 .modal-certificacion { max-width: 540px; }
 .certificacion-qr-bloque {

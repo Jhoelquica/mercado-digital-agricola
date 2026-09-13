@@ -99,6 +99,16 @@ QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 # producto en el catálogo — Productos valida este mismo valor en crear_producto_desde_cosecha.
 PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")
 
+# Solo unidades chicas/granulares como unidad_medida de una cosecha — una unidad de empaque
+# grande (saco, arroba) como base generaría, en cualquier unidad de venta alternativa que se
+# agregue después en Productos (ver UnidadAlternativa.factor_a_base), conversiones con
+# fracciones raras en vez de números enteros cómodos. Esas unidades de empaque siguen
+# existiendo, pero recién como unidad alternativa del producto ya publicado, no acá. Mismo
+# conjunto que UNIDADES_VALIDAS en productos/main.py menos "saco"/"arroba" — no se comparte
+# literalmente entre servicios (no hay librería común entre microservicios en este proyecto);
+# si se agrega una unidad chica nueva en un lado, hay que revisar si corresponde en el otro.
+UNIDADES_COSECHA_VALIDAS = ["kg", "unidad", "litro"]
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "productores"}
@@ -433,10 +443,16 @@ def crear_registro_produccion(
         raise HTTPException(status_code=422, detail="El número de parcelas debe ser mayor a 0")
     if datos.fecha_cosecha_estimada < datos.fecha_siembra:
         raise HTTPException(status_code=422, detail="La fecha de cosecha estimada no puede ser anterior a la de siembra")
+    if datos.unidad_medida not in UNIDADES_COSECHA_VALIDAS:
+        raise HTTPException(
+            status_code=422,
+            detail="La unidad de la cosecha debe ser kg, unidad o litro. Las unidades de empaque "
+                   "(saco, arroba) se agregan después, como unidad de venta alternativa del producto.",
+        )
     if datos.unidad_medida != "kg" and not datos.equivalencia_kg:
         raise HTTPException(
             status_code=422,
-            detail="Cuando la unidad de medida no es 'kg', debes indicar la equivalencia a kg (ej. 1 saco = X kg)",
+            detail="Cuando la unidad de medida no es 'kg', debes indicar la equivalencia a kg (ej. 1 litro = X kg)",
         )
 
     nuevo = models.RegistroProduccion(

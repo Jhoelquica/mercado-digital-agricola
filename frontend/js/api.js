@@ -144,6 +144,12 @@ const Api = {
     },
     eliminarImagen: (imagenId) => request('productos', `/productos/imagenes/${imagenId}`, { method: 'DELETE', auth: true }),
     actualizarOrdenImagen: (imagenId, orden) => request('productos', `/productos/imagenes/${imagenId}/orden`, { method: 'PATCH', body: { orden }, auth: true }),
+    unidades: {
+      listar: (id) => request('productos', `/productos/${id}/unidades`),
+      crear: (id, datos) => request('productos', `/productos/${id}/unidades`, { method: 'POST', body: datos, auth: true }),
+      editar: (unidadId, datos) => request('productos', `/productos/unidades/${unidadId}`, { method: 'PATCH', body: datos, auth: true }),
+      eliminar: (unidadId) => request('productos', `/productos/unidades/${unidadId}`, { method: 'DELETE', auth: true }),
+    },
     registrarBusqueda: (termino) => request('productos', '/productos/busquedas/registrar', { method: 'POST', body: { termino } }),
     busquedasPopulares: () => request('productos', '/productos/busquedas/populares'),
   },

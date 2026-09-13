@@ -145,6 +145,43 @@ def test_registro_produccion_con_chacra_propia_ok():
     assert resp.json()["chacra_id"] == chacra_id
 
 
+def test_crear_registro_produccion_con_unidad_chica_valida_funciona():
+    """kg, unidad y litro son las únicas unidades chicas/granulares permitidas como base de una
+    cosecha — las de empaque (saco, arroba) se agregan después en Productos, como unidad
+    alternativa del producto ya publicado."""
+    _nuevo_productor()
+    chacra = client.post("/chacras", json=_chacra_payload(codigo="CH-UNI"))
+    assert chacra.status_code == 200, chacra.text
+    chacra_id = chacra.json()["id"]
+
+    for unidad in ["kg", "unidad", "litro"]:
+        payload = _registro_payload(chacra_id)
+        payload["unidad_medida"] = unidad
+        if unidad != "kg":
+            payload["equivalencia_kg"] = 1.5
+        resp = client.post("/productores/produccion", json=payload)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["unidad_medida"] == unidad
+
+
+def test_crear_registro_produccion_con_unidad_de_empaque_falla_422():
+    _nuevo_productor()
+    chacra = client.post("/chacras", json=_chacra_payload(codigo="CH-EMP"))
+    assert chacra.status_code == 200, chacra.text
+    chacra_id = chacra.json()["id"]
+
+    for unidad in ["saco", "arroba"]:
+        payload = _registro_payload(chacra_id)
+        payload["unidad_medida"] = unidad
+        payload["equivalencia_kg"] = 10.0  # aunque venga, la unidad en sí ya no es válida como base
+        resp = client.post("/productores/produccion", json=payload)
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["detail"] == (
+            "La unidad de la cosecha debe ser kg, unidad o litro. Las unidades de empaque "
+            "(saco, arroba) se agregan después, como unidad de venta alternativa del producto."
+        )
+
+
 # ============ Verificación de cosechas ============
 
 def _como_verificador() -> str:

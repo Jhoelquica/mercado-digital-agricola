@@ -16,6 +16,7 @@ const Estado = {
   misProductos: [], // Api.productos.mios() — borradores Y publicados del productor autenticado,
                      // separado de Estado.productos (que es el catálogo público, solo publicados)
   imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
+  unidadesAlternativasPorProducto: {}, // producto_id -> [{id, unidad, precio, factor_a_base}], mismo patrón que imagenesPorProducto
 };
 
 const SESSION_KEY = 'agro_sesion';
@@ -473,25 +474,31 @@ function badgeEstadoEnvio(estado) {
 }
 
 // Única fuente de verdad de las unidades de medida válidas — la usan tanto la visualización
-// (catálogo, carrito, detalle, vía infoUnidad/unidadCorta/unidadPlural/unidadEtiqueta) como el
-// <select> de "Registrar nueva siembra" (opcionesUnidadMedidaHtml). Mismo criterio que
-// ROLES_INVITABLES: agregar una unidad nueva es sumarla acá, no tocar el HTML ni duplicar la
-// lista en otro lado. "label" es el texto que ve el productor en ese <select>; singular/plural/
-// etiqueta son para los textos de catálogo/carrito ("S/ X / kg", "3 sacos", etc.).
+// (catálogo, carrito, detalle, vía infoUnidad/unidadCorta/unidadPlural/unidadEtiqueta) como los
+// dos <select> que la consumen (opcionesUnidadMedidaHtml): unidad_medida de una cosecha
+// (RegistroProduccion, "Registrar nueva siembra") y unidad alternativa de un producto ya
+// publicado. Mismo criterio que ROLES_INVITABLES: agregar una unidad nueva es sumarla acá, no
+// tocar el HTML ni duplicar la lista en otro lado. "label" es el texto que ve el productor en
+// esos <select>; singular/plural/etiqueta son para los textos de catálogo/carrito ("S/ X / kg",
+// "3 sacos", etc.). "esBase": true = unidad chica/granular válida como unidad_medida de una
+// cosecha (kg, unidad, litro) — las de empaque grande (saco, arroba) quedan fuera de esa
+// categoría a propósito: solo se agregan después, como unidad alternativa del producto (ver
+// UNIDADES_COSECHA_VALIDAS en productores/main.py, que valida esto mismo del lado del backend).
 const UNIDADES_MEDIDA = {
-  kg: { singular: 'kg', plural: 'kg', etiqueta: 'kg', label: 'Kilogramo (kg)' },
-  unidad: { singular: 'unidad', plural: 'unidades', etiqueta: 'unidades', label: 'Unidad' },
-  saco: { singular: 'saco', plural: 'sacos', etiqueta: 'sacos', label: 'Saco' },
-  arroba: { singular: 'arroba', plural: 'arrobas', etiqueta: 'arrobas', label: 'Arroba' },
-  litro: { singular: 'litro', plural: 'litros', etiqueta: 'litros', label: 'Litro' },
+  kg: { singular: 'kg', plural: 'kg', etiqueta: 'kg', label: 'Kilogramo (kg)', esBase: true },
+  unidad: { singular: 'unidad', plural: 'unidades', etiqueta: 'unidades', label: 'Unidad', esBase: true },
+  saco: { singular: 'saco', plural: 'sacos', etiqueta: 'sacos', label: 'Saco', esBase: false },
+  arroba: { singular: 'arroba', plural: 'arrobas', etiqueta: 'arrobas', label: 'Arroba', esBase: false },
+  litro: { singular: 'litro', plural: 'litros', etiqueta: 'litros', label: 'Litro', esBase: true },
 };
 
 function infoUnidad(codigo) {
   return UNIDADES_MEDIDA[codigo] || UNIDADES_MEDIDA.unidad;
 }
 
-function opcionesUnidadMedidaHtml() {
+function opcionesUnidadMedidaHtml(excluir = [], { soloBase = false } = {}) {
   return Object.entries(UNIDADES_MEDIDA)
+    .filter(([valor, info]) => !excluir.includes(valor) && (!soloBase || info.esBase))
     .map(([valor, info]) => `<option value="${escapeAttr(valor)}">${escapeAttr(info.label)}</option>`)
     .join('');
 }
@@ -2874,10 +2881,12 @@ function renderTarjetaProductorProducto(p, indice) {
           </button>
           <button type="button" class="btn btn-outline btn-sm btn-toggle-fotos" data-id="${p.id}"><i class="ti ti-camera"></i> Fotos</button>
           <button type="button" class="btn btn-outline btn-sm btn-ver-certificacion" data-id="${p.id}"><i class="ti ti-link"></i> Certificación</button>
+          <button type="button" class="btn btn-outline btn-sm btn-toggle-unidades" data-id="${p.id}"><i class="ti ti-scale"></i> Unidades</button>
         </div>
 
         <div class="panel-expandible hidden" data-panel="resenas" data-id="${p.id}"></div>
         <div class="panel-expandible hidden" data-panel="fotos" data-id="${p.id}"></div>
+        <div class="panel-expandible hidden" data-panel="unidades" data-id="${p.id}"></div>
       </div>
     </div>`;
 }
@@ -2927,6 +2936,187 @@ async function alternarFotosProductor(id) {
   panel.innerHTML = renderGestorFotosHTML(id, Estado.imagenesPorProducto[id]);
 }
 
+// ---- Unidades de venta alternativas — editable en cualquier estado del producto (borrador,
+// en_transito, disponible), a diferencia de categoría/precio que solo se editan en borrador. Mismo
+// patrón de panel-expandible + carga perezosa + caché que Fotos/Reseñas arriba, pero reusable
+// tanto en la tarjeta de publicados (que ya tiene ese mecanismo) como en la de borradores (que
+// hoy no tiene ninguno, se agrega acá por primera vez). ----
+
+function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
+  if (modoEdicion) {
+    return `
+      <div class="unidades-alt-fila unidades-alt-fila-edicion" data-unidad-id="${u.id}">
+        <div class="unidades-alt-info">
+          <strong>${escapeAttr(infoUnidad(u.unidad).label)}</strong>
+          <label>Precio (S/)
+            <input type="number" class="unidad-alt-editar-precio" min="0.01" step="0.01" value="${u.precio}">
+          </label>
+          <label>Factor (1 ${unidadCorta(u.unidad)} = X ${unidadPlural(unidadBase, 2)})
+            <input type="number" class="unidad-alt-editar-factor" min="0.0001" step="0.0001" value="${u.factor_a_base}">
+          </label>
+        </div>
+        <div class="unidades-alt-acciones">
+          <button type="button" class="btn btn-primary btn-sm btn-guardar-unidad-alt" data-unidad-id="${u.id}">Guardar</button>
+          <button type="button" class="btn btn-outline btn-sm btn-cancelar-edicion-unidad-alt">Cancelar</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="unidades-alt-fila" data-unidad-id="${u.id}">
+      <div class="unidades-alt-info">
+        <strong>${escapeAttr(infoUnidad(u.unidad).label)}</strong>
+        <span>${formatearMoneda(u.precio)} / ${unidadCorta(u.unidad)}</span>
+        <span class="muted">1 ${unidadCorta(u.unidad)} = ${Number(u.factor_a_base)} ${unidadPlural(unidadBase, Number(u.factor_a_base))}</span>
+      </div>
+      <div class="unidades-alt-acciones">
+        <button type="button" class="btn btn-outline btn-sm btn-editar-unidad-alt" data-unidad-id="${u.id}" aria-label="Editar"><i class="ti ti-pencil"></i></button>
+        <button type="button" class="btn btn-danger btn-sm btn-eliminar-unidad-alt" data-unidad-id="${u.id}" aria-label="Eliminar"><i class="ti ti-trash"></i></button>
+      </div>
+    </div>`;
+}
+
+function renderUnidadesAlternativasHTML(producto, unidades) {
+  const unidadBase = producto.unidad_medida;
+  // Excluye del selector la unidad base y las que ya están agregadas — no tiene sentido
+  // ofrecerlas de nuevo (la base ya sale 400 del backend, las repetidas también).
+  const opciones = opcionesUnidadMedidaHtml([unidadBase, ...unidades.map((u) => u.unidad)]);
+
+  return `
+    <div class="unidades-alt-gestor" data-producto-id="${escapeAttr(producto.id)}" data-unidad-base="${escapeAttr(unidadBase)}">
+      <div class="unidades-alt-lista">
+        ${unidades.length
+          ? unidades.map((u) => renderUnidadAltFila(u, unidadBase)).join('')
+          : '<p class="muted">Todavía no agregaste unidades de venta adicionales.</p>'}
+      </div>
+      ${opciones ? `
+      <form class="unidad-alt-form form-grid">
+        <label>Nueva unidad
+          <select class="unidad-alt-nueva-select">${opciones}</select>
+        </label>
+        <label>Precio (S/)
+          <input type="number" class="unidad-alt-nuevo-precio" min="0.01" step="0.01" required placeholder="0.00">
+        </label>
+        <label>Factor de conversión
+          <input type="number" class="unidad-alt-nuevo-factor" min="0.0001" step="0.0001" required placeholder="Ej. 10">
+        </label>
+        <p class="unidad-alt-factor-ayuda muted"></p>
+        <button type="submit" class="btn btn-outline btn-sm">Agregar unidad</button>
+      </form>` : '<p class="muted">Ya agregaste todas las unidades de medida disponibles para este producto.</p>'}
+    </div>`;
+}
+
+// "¿Cuántos {unidad base} equivalen a 1 {unidad elegida}?" — se recalcula cada vez que el
+// productor cambia la unidad en el <select>, para que el factor nunca se sienta un número
+// abstracto.
+function actualizarAyudaFactorUnidadAlt(form) {
+  const ayuda = form?.querySelector('.unidad-alt-factor-ayuda');
+  const unidadBase = form?.closest('.unidades-alt-gestor')?.dataset.unidadBase;
+  const nuevaUnidad = form?.querySelector('.unidad-alt-nueva-select')?.value;
+  if (!ayuda || !unidadBase || !nuevaUnidad) return;
+  ayuda.textContent = `¿Cuántos ${unidadPlural(unidadBase, 2)} equivalen a 1 ${unidadCorta(nuevaUnidad)}?`;
+}
+
+function renderGestorUnidadesAlt(productoId) {
+  const producto = (Estado.misProductos || []).find((p) => p.id === productoId);
+  if (!producto) return '<p class="muted">No se pudo cargar la información del producto.</p>';
+  return renderUnidadesAlternativasHTML(producto, Estado.unidadesAlternativasPorProducto[productoId] || []);
+}
+
+// Reemplaza solo el gestor (lista + form), no todo el panel ni la tarjeta — mismo criterio que
+// rerenderGestorFotos.
+function rerenderUnidadesAlternativas(productoId) {
+  document.querySelectorAll(`.unidades-alt-gestor[data-producto-id="${productoId}"]`).forEach((el) => {
+    el.outerHTML = renderGestorUnidadesAlt(productoId);
+    actualizarAyudaFactorUnidadAlt(document.querySelector(`.unidades-alt-gestor[data-producto-id="${productoId}"] .unidad-alt-form`));
+  });
+}
+
+async function alternarUnidadesProductor(id) {
+  const panel = document.querySelector(`.panel-expandible[data-panel="unidades"][data-id="${id}"]`);
+  if (!panel) return;
+  // Cierra cualquier otro panel-expandible hermano dentro de la misma tarjeta — mismo acordeón
+  // que ya usan Reseñas/Fotos, generalizado para funcionar también en la tarjeta de borradores
+  // (que hoy no tiene ningún otro panel, pero por si el día de mañana lo tiene).
+  panel.closest('.product-card, .pedido-card')?.querySelectorAll('.panel-expandible').forEach((p) => {
+    if (p !== panel) p.classList.add('hidden');
+  });
+
+  if (!panel.classList.contains('hidden')) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+
+  if (!Estado.unidadesAlternativasPorProducto[id]) {
+    panel.innerHTML = '<p class="muted">Cargando unidades de venta...</p>';
+    try {
+      Estado.unidadesAlternativasPorProducto[id] = await Api.productos.unidades.listar(id);
+    } catch {
+      Estado.unidadesAlternativasPorProducto[id] = [];
+    }
+  }
+  panel.innerHTML = renderGestorUnidadesAlt(id);
+  actualizarAyudaFactorUnidadAlt(panel.querySelector('.unidad-alt-form'));
+}
+
+async function agregarUnidadAlternativa(productoId, form) {
+  const unidad = form.querySelector('.unidad-alt-nueva-select').value;
+  const precio = parseFloat(form.querySelector('.unidad-alt-nuevo-precio').value);
+  const factor_a_base = parseFloat(form.querySelector('.unidad-alt-nuevo-factor').value);
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const nueva = await Api.productos.unidades.crear(productoId, { unidad, precio, factor_a_base });
+    Estado.unidadesAlternativasPorProducto[productoId] = [...(Estado.unidadesAlternativasPorProducto[productoId] || []), nueva];
+    rerenderUnidadesAlternativas(productoId);
+    toast('Unidad de venta agregada');
+  } catch (err) {
+    manejarError(err, 'agregar la unidad de venta');
+    btn.disabled = false;
+  }
+}
+
+function iniciarEdicionUnidadAlternativa(productoId, unidadId) {
+  const unidad = (Estado.unidadesAlternativasPorProducto[productoId] || []).find((u) => u.id === unidadId);
+  const fila = document.querySelector(`.unidades-alt-fila[data-unidad-id="${unidadId}"]`);
+  const producto = (Estado.misProductos || []).find((p) => p.id === productoId);
+  if (!unidad || !fila || !producto) return;
+  fila.outerHTML = renderUnidadAltFila(unidad, producto.unidad_medida, true);
+}
+
+async function guardarEdicionUnidadAlternativa(productoId, unidadId) {
+  const fila = document.querySelector(`.unidades-alt-fila[data-unidad-id="${unidadId}"]`);
+  if (!fila) return;
+  const precio = parseFloat(fila.querySelector('.unidad-alt-editar-precio').value);
+  const factor_a_base = parseFloat(fila.querySelector('.unidad-alt-editar-factor').value);
+  fila.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
+  try {
+    const actualizada = await Api.productos.unidades.editar(unidadId, { precio, factor_a_base });
+    const unidades = Estado.unidadesAlternativasPorProducto[productoId] || [];
+    Estado.unidadesAlternativasPorProducto[productoId] = unidades.map((u) => (u.id === unidadId ? actualizada : u));
+    rerenderUnidadesAlternativas(productoId);
+    toast('Unidad de venta actualizada');
+  } catch (err) {
+    manejarError(err, 'actualizar la unidad de venta');
+    fila.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+  }
+}
+
+async function eliminarUnidadAlternativa(productoId, unidadId) {
+  const fila = document.querySelector(`.unidades-alt-fila[data-unidad-id="${unidadId}"]`);
+  fila?.querySelectorAll('button').forEach((el) => { el.disabled = true; });
+  try {
+    await Api.productos.unidades.eliminar(unidadId);
+    const unidades = Estado.unidadesAlternativasPorProducto[productoId] || [];
+    Estado.unidadesAlternativasPorProducto[productoId] = unidades.filter((u) => u.id !== unidadId);
+    rerenderUnidadesAlternativas(productoId);
+    toast('Unidad de venta eliminada');
+  } catch (err) {
+    manejarError(err, 'eliminar la unidad de venta');
+    fila?.querySelectorAll('button').forEach((el) => { el.disabled = false; });
+  }
+}
+
 // ---- Borradores (nacen de una cosecha aprobada por el Verificador — ver
 // crear_producto_desde_cosecha en productos/main.py) ----
 function renderTarjetaBorrador(p, indice, imagenes) {
@@ -2961,6 +3151,15 @@ function renderTarjetaBorrador(p, indice, imagenes) {
         </div>
         <p class="muted">La primera foto será la principal en el catálogo. Formatos: JPG, PNG o WEBP.</p>
         <div class="gestor-fotos-borrador">${renderGestorFotosHTML(p.id, imagenes)}</div>
+      </div>
+
+      <div class="fotos-upload-bloque">
+        <div class="fotos-upload-header">
+          <h4><i class="ti ti-scale"></i> Unidades de venta adicionales</h4>
+          <button type="button" class="btn btn-outline btn-sm btn-toggle-unidades" data-id="${p.id}">Ver / editar</button>
+        </div>
+        <p class="muted">Editable en cualquier momento, publicado o no.</p>
+        <div class="panel-expandible hidden" data-panel="unidades" data-id="${p.id}"></div>
       </div>
 
       <button type="button" class="btn btn-primary btn-block btn-publicar-borrador" data-producto-id="${escapeAttr(p.id)}" ${puedePublicar ? '' : 'disabled'}>Publicar</button>
@@ -4131,7 +4330,7 @@ function renderFormRegistroProduccion() {
           <input type="number" id="produccion-costo-insumos" min="0" step="0.01" value="0">
         </label>
         <label>Unidad de medida
-          <select id="produccion-unidad">${opcionesUnidadMedidaHtml()}</select>
+          <select id="produccion-unidad">${opcionesUnidadMedidaHtml([], { soloBase: true })}</select>
         </label>
         <label id="produccion-equivalencia-bloque" class="hidden">Equivalencia a kg (1 unidad = X kg)
           <input type="number" id="produccion-equivalencia" min="0.0001" step="0.0001" placeholder="Ej. 11.5">
@@ -4642,7 +4841,9 @@ function inicializarEventos() {
   });
   document.getElementById('productor-borradores-lista').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-publicar-borrador');
-    if (btn) publicarBorrador(btn.dataset.productoId);
+    if (btn) { publicarBorrador(btn.dataset.productoId); return; }
+    const btnUnidades = e.target.closest('.btn-toggle-unidades');
+    if (btnUnidades) alternarUnidadesProductor(btnUnidades.dataset.id);
   });
 
   document.getElementById('mis-productos-grid').addEventListener('click', (e) => {
@@ -4652,6 +4853,8 @@ function inicializarEventos() {
     if (btnFotos) { alternarFotosProductor(btnFotos.dataset.id); return; }
     const btnCert = e.target.closest('.btn-ver-certificacion');
     if (btnCert) { abrirModalCertificacion(btnCert.dataset.id); return; }
+    const btnUnidades = e.target.closest('.btn-toggle-unidades');
+    if (btnUnidades) { alternarUnidadesProductor(btnUnidades.dataset.id); return; }
   });
 
   // ---- Gestor de fotos: subida/eliminación delegadas (se usan tanto al publicar como en "Mis productos") ----
@@ -4680,6 +4883,48 @@ function inicializarEventos() {
     const productoId = e.target.closest('.gestor-fotos')?.dataset.productoId;
     if (productoId && e.target.files.length) subirFotosProducto(productoId, e.target.files);
     e.target.value = '';
+  });
+
+  // ---- Unidades de venta alternativas: delegado globalmente, mismo criterio que el gestor de
+  // fotos de arriba (el contenido del panel se reemplaza por completo en cada toggle/refresco,
+  // así que un listener puesto directo sobre un botón no sobreviviría). ----
+  document.addEventListener('click', (e) => {
+    const editar = e.target.closest('.btn-editar-unidad-alt');
+    if (editar) {
+      const productoId = editar.closest('.unidades-alt-gestor')?.dataset.productoId;
+      if (productoId) iniciarEdicionUnidadAlternativa(productoId, editar.dataset.unidadId);
+      return;
+    }
+    const cancelar = e.target.closest('.btn-cancelar-edicion-unidad-alt');
+    if (cancelar) {
+      const productoId = cancelar.closest('.unidades-alt-gestor')?.dataset.productoId;
+      if (productoId) rerenderUnidadesAlternativas(productoId);
+      return;
+    }
+    const guardar = e.target.closest('.btn-guardar-unidad-alt');
+    if (guardar) {
+      const productoId = guardar.closest('.unidades-alt-gestor')?.dataset.productoId;
+      if (productoId) guardarEdicionUnidadAlternativa(productoId, guardar.dataset.unidadId);
+      return;
+    }
+    const eliminar = e.target.closest('.btn-eliminar-unidad-alt');
+    if (eliminar) {
+      const productoId = eliminar.closest('.unidades-alt-gestor')?.dataset.productoId;
+      if (productoId) eliminarUnidadAlternativa(productoId, eliminar.dataset.unidadId);
+    }
+  });
+
+  document.addEventListener('submit', (e) => {
+    const form = e.target.closest('.unidad-alt-form');
+    if (!form) return;
+    e.preventDefault();
+    const productoId = form.closest('.unidades-alt-gestor')?.dataset.productoId;
+    if (productoId) agregarUnidadAlternativa(productoId, form);
+  });
+
+  document.addEventListener('change', (e) => {
+    const select = e.target.closest('.unidad-alt-nueva-select');
+    if (select) actualizarAyudaFactorUnidadAlt(select.closest('.unidad-alt-form'));
   });
 
   document.addEventListener('dragover', (e) => {
