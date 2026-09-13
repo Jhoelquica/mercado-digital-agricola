@@ -122,6 +122,11 @@ def get_db():
 class ItemPedido(BaseModel):
     producto_id: str
     cantidad: int
+    # None = unidad base del producto (comportamiento de siempre). Un valor (ej. "saco") busca esa
+    # unidad dentro de producto["unidades_alternativas"] al validar (ver crear_pedido) — nunca se
+    # acepta un precio del cliente, solo el nombre de la unidad; el precio siempre sale de
+    # Productos.
+    unidad: str | None = None
 
 class PedidoCrear(BaseModel):
     comprador_nombre: str
@@ -216,14 +221,39 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no existe")
 
             producto = resp.json()
-            if producto["stock"] < item.cantidad:
+
+            if item.unidad is None:
+                # Comportamiento de siempre, sin cambios: precio y cantidad ya están en la unidad
+                # base del producto.
+                precio_unitario = producto["precio"]
+                cantidad_base = item.cantidad
+            else:
+                # Busca la unidad alternativa DENTRO de la respuesta fresca de Productos — nunca
+                # se confía en un precio que mande el cliente (acá ni siquiera existe ese campo
+                # en ItemPedido), solo en el nombre de la unidad.
+                unidad_alt = next(
+                    (u for u in producto.get("unidades_alternativas", []) if u["unidad"] == item.unidad),
+                    None,
+                )
+                if unidad_alt is None:
+                    raise HTTPException(status_code=400, detail="Este producto no está disponible en esa unidad.")
+                precio_unitario = unidad_alt["precio"]
+                # Conversión a unidad base SOLO para validar stock y para lo que se le manda a
+                # descontar_stock (que sigue recibiendo todo en unidad base, sin cambios de su
+                # lado) — precio_unitario y la cantidad guardada en PedidoItem quedan en la
+                # unidad que eligió el comprador.
+                cantidad_base = item.cantidad * unidad_alt["factor_a_base"]
+
+            if producto["stock"] < cantidad_base:
                 raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
 
-            items_validados.append((item, producto))
+            items_validados.append((item, producto, precio_unitario, cantidad_base))
 
         # Validación 2 (fail-fast, todavía antes de tocar la base de datos): el subtotal (precio ×
-        # cantidad de cada item, sin contar envío) debe alcanzar el mínimo de compra.
-        subtotal = sum(producto["precio"] * item.cantidad for item, producto in items_validados)
+        # cantidad de cada item, sin contar envío) debe alcanzar el mínimo de compra. precio_unitario
+        # y cantidad ya están en la MISMA unidad (la que eligió el comprador), así que la cuenta es
+        # correcta sin importar si es la unidad base o una alternativa.
+        subtotal = sum(precio_unitario * item.cantidad for item, producto, precio_unitario, cantidad_base in items_validados)
         if subtotal < MONTO_MINIMO_PEDIDO:
             raise HTTPException(
                 status_code=400,
@@ -242,10 +272,10 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía
 
-        for item, producto in items_validados:
+        for item, producto, precio_unitario, cantidad_base in items_validados:
             client.patch(
                 f"{PRODUCTOS_URL}/productos/{item.producto_id}/stock",
-                json={"cantidad": item.cantidad},
+                json={"cantidad": cantidad_base},
                 headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO},
                 timeout=5,
             )
@@ -253,7 +283,8 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 pedido_id=nuevo_pedido.id,
                 producto_id=item.producto_id,
                 cantidad=item.cantidad,
-                precio_unitario=producto["precio"],
+                unidad=item.unidad,
+                precio_unitario=precio_unitario,
             )
             db.add(nuevo_item)
 

@@ -35,8 +35,17 @@ class PedidoItem(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), ForeignKey("pedidos.id"), nullable=False)
     producto_id = Column(UUID(as_uuid=True), nullable=False)
+    # cantidad está siempre en la unidad en que compró el comprador (unidad si no es None, la
+    # unidad base del producto si lo es) — NO en la unidad base convertida. La conversión a base
+    # (cantidad * factor_a_base) se usa solo al validar stock y al llamar a descontar_stock en
+    # Productos (ver crear_pedido en main.py); acá se guarda tal cual la eligió el comprador, para
+    # que el historial del pedido tenga sentido ("3 sacos", no "30 kg").
     cantidad = Column(Integer, nullable=False)
     precio_unitario = Column(Numeric(10, 2), nullable=False)
+    # None = compró en la unidad base del producto (comportamiento de siempre, sin cambio). Un
+    # valor (ej. "saco") = compró en esa unidad alternativa — ver Producto.unidades_alternativas
+    # en Productos, resuelto contra GET /productos/{id} al crear el pedido.
+    unidad = Column(String, nullable=True)
 
 
 class ConfiguracionSistema(Base):

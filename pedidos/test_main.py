@@ -39,7 +39,7 @@ DESTINO_DENTRO_AYACUCHO = {"destino_latitud": -13.1588, "destino_longitud": -74.
 DESTINO_FUERA_AYACUCHO = {"destino_latitud": -12.0464, "destino_longitud": -77.0428}
 
 
-def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba"):
+def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
     PATCH (descuento de stock) no hace nada real."""
     mock_client = MagicMock()
@@ -53,18 +53,22 @@ def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba"):
         "nombre": nombre,
         "precio": precio,
         "stock": stock,
+        "unidades_alternativas": unidades_alternativas or [],
     }
     mock_client.get.return_value = respuesta_get
     mock_client.patch.return_value = MagicMock(status_code=200)
     return mock_client
 
 
-def _payload(destino, precio_item, cantidad=1):
+def _payload(destino, precio_item, cantidad=1, unidad=None):
+    item = {"producto_id": str(uuid.uuid4()), "cantidad": cantidad}
+    if unidad is not None:
+        item["unidad"] = unidad
     return {
         "comprador_nombre": "Cliente de prueba",
         "destino_latitud": destino["destino_latitud"],
         "destino_longitud": destino["destino_longitud"],
-        "items": [{"producto_id": str(uuid.uuid4()), "cantidad": cantidad}],
+        "items": [item],
     }
 
 
@@ -220,3 +224,79 @@ def test_obtener_ubicacion_almacen_no_requiere_autenticacion():
     resp = client.get("/configuracion/almacen")
     assert resp.status_code == 200, resp.text
     assert "latitud" in resp.json() and "longitud" in resp.json()
+
+
+# ============ Compra en unidad alternativa (item.unidad) ============
+
+def test_pedido_en_unidad_base_guarda_unidad_null():
+    """Regresión: sin "unidad" en el payload, todo se comporta exactamente igual que antes —
+    precio y cantidad en la unidad base, PedidoItem.unidad queda en null."""
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["items"][0]
+    assert item["unidad"] is None
+    assert float(item["precio_unitario"]) == 50.0
+
+
+def test_pedido_en_unidad_alternativa_cobra_precio_y_descuenta_stock_convertido():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=3, unidad="saco")
+    unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
+    mock_client = _mock_httpx_client(precio=5.0, stock=100, unidades_alternativas=unidades_alt)
+
+    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["items"][0]
+    assert item["unidad"] == "saco"
+    # Precio de la unidad alternativa (45.0/saco), NUNCA el precio base (5.0/kg).
+    assert float(item["precio_unitario"]) == 45.0
+    assert item["cantidad"] == 3  # se guarda en la unidad que compró, no convertida
+
+    # descontar_stock recibe la cantidad YA convertida a unidad base: 3 sacos * 10 kg/saco = 30 kg.
+    llamada_stock = mock_client.patch.call_args
+    assert llamada_stock.kwargs["json"]["cantidad"] == 30.0
+
+
+def test_pedido_en_unidad_alternativa_valida_stock_ya_convertido():
+    # 5 sacos * 10 kg/saco = 50 kg, pero el producto solo tiene 40 kg de stock — insuficiente,
+    # aunque "5" en sí sea un número chico. Si la validación comparara sin convertir, pasaría mal.
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=5, unidad="saco")
+    unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
+    mock_client = _mock_httpx_client(precio=5.0, stock=40, unidades_alternativas=unidades_alt)
+
+    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 409
+    mock_publicar.assert_not_called()
+
+
+def test_pedido_en_unidad_no_existente_para_el_producto_falla_400():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=1, unidad="saco")
+    mock_client = _mock_httpx_client(precio=5.0, unidades_alternativas=[])  # sin "saco" registrado
+
+    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Este producto no está disponible en esa unidad."
+    mock_publicar.assert_not_called()
+
+
+def test_precio_unitario_ignora_precio_enviado_en_el_payload():
+    """ItemPedido no tiene (ni debería tener) un campo "precio" — si un payload malicioso lo
+    manda igual, Pydantic simplemente lo descarta al parsear el body: el precio_unitario guardado
+    siempre sale de la respuesta fresca de Productos, nunca de lo que mande el cliente."""
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    payload["items"][0]["precio"] = 0.01  # intento de manipular el precio
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["items"][0]["precio_unitario"]) == 50.0
