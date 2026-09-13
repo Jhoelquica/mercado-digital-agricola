@@ -37,6 +37,14 @@ app.add_middleware(
 
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 
+# Lista fija de unidades válidas — hasta ahora Producto.unidad_medida no se validaba contra nada
+# (string libre), pero UnidadAlternativa.unidad sí lo necesita para no terminar con valores
+# inconsistentes ("Kg", "kilos", etc.) mezclados con los ya establecidos. Constante Python
+# compartida en este servicio (la usa crear_unidad_alternativa) en vez de repetirla en cada
+# endpoint. Mismo conjunto que ya usa el frontend en UNIDADES_MEDIDA/OPCIONES_UNIDAD_MEDIDA_HTML
+# (app.js) — si se agrega una unidad acá, hay que agregarla ahí también.
+UNIDADES_VALIDAS = ["kg", "unidad", "saco", "arroba", "litro"]
+
 def get_db():
     db = SessionLocal()
     try:
@@ -83,6 +91,15 @@ class OrdenImagen(BaseModel):
 
 class BusquedaRegistrar(BaseModel):
     termino: str
+
+class UnidadAlternativaCrear(BaseModel):
+    unidad: str
+    precio: float
+    factor_a_base: float
+
+class UnidadAlternativaActualizar(BaseModel):
+    precio: float | None = None
+    factor_a_base: float | None = None
 
 @breaker_productores
 def llamar_productores_me(token: str):
@@ -392,6 +409,21 @@ def listar_productos(db: Session = Depends(get_db)):
         for pid, promedio, total in stats_resenas
     }
 
+    # Join simple, una sola query para todo el catálogo — igual que imagenes/stats_resenas de
+    # arriba: el frontend necesita ver las unidades alternativas de cada producto para poder
+    # ofrecer "comprar por saco" además de "comprar por kg" sin una llamada aparte por producto.
+    unidades_alt = db.query(models.UnidadAlternativa).filter(
+        models.UnidadAlternativa.producto_id.in_([p.id for p in productos])
+    ).order_by(models.UnidadAlternativa.unidad).all() if productos else []
+    unidades_por_producto = {}
+    for u in unidades_alt:
+        unidades_por_producto.setdefault(str(u.producto_id), []).append({
+            "id": u.id,
+            "unidad": u.unidad,
+            "precio": u.precio,
+            "factor_a_base": u.factor_a_base,
+        })
+
     resultado = [
         {
             "id": p.id,
@@ -408,6 +440,7 @@ def listar_productos(db: Session = Depends(get_db)):
             "calificacion_promedio": stats_por_producto.get(str(p.id), (None, 0))[0],
             "total_resenas": stats_por_producto.get(str(p.id), (None, 0))[1],
             "estado": p.estado,
+            "unidades_alternativas": unidades_por_producto.get(str(p.id), []),
         }
         for p in productos
     ]
@@ -520,6 +553,10 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
     promedio, total_resenas = stats
     promedio = round(float(promedio), 1) if promedio else None
 
+    unidades_alt = db.query(models.UnidadAlternativa).filter(
+        models.UnidadAlternativa.producto_id == producto_id
+    ).order_by(models.UnidadAlternativa.unidad).all()
+
     resultado = {
         "id": producto.id,
         "productor_id": producto.productor_id,
@@ -534,6 +571,10 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
         "imagenes": [{"id": img.id, "url": img.url, "orden": img.orden} for img in imagenes],
         "calificacion_promedio": promedio,
         "total_resenas": total_resenas,
+        "unidades_alternativas": [
+            {"id": u.id, "unidad": u.unidad, "precio": u.precio, "factor_a_base": u.factor_a_base}
+            for u in unidades_alt
+        ],
     }
     cache.guardar(clave, resultado)
     return resultado
@@ -601,6 +642,164 @@ def actualizar_producto(
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
+
+@app.get("/productos/{producto_id}/unidades")
+def listar_unidades_alternativas(producto_id: str, db: Session = Depends(get_db)):
+    # Público, sin auth: el comprador necesita verlas en el catálogo/detalle (aunque en la
+    # práctica el frontend las trae embebidas en GET /productos y GET /productos/{id} — este
+    # endpoint queda para consultarlas sueltas si hace falta). Mismo criterio que listar_resenas:
+    # sin 404 si el producto no existe, simplemente no hay filas que devolver.
+    return db.query(models.UnidadAlternativa).filter(
+        models.UnidadAlternativa.producto_id == producto_id
+    ).order_by(models.UnidadAlternativa.unidad).all()
+
+@app.post("/productos/{producto_id}/unidades")
+def crear_unidad_alternativa(
+        producto_id: str,
+        datos: UnidadAlternativaCrear,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Unidad adicional en la que se puede comprar este producto, con su propio precio — no
+    reemplaza precio/unidad_medida del producto (la unidad "base"), la complementa. Sin gate de
+    estado a propósito, a diferencia de PATCH /productos/{id}: el productor puede ajustar sus
+    unidades alternativas en cualquier momento, publicado o no."""
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes modificar un producto que no te pertenece")
+
+    if datos.unidad not in UNIDADES_VALIDAS:
+        raise HTTPException(status_code=422, detail=f"Unidad no válida. Debe ser una de: {', '.join(UNIDADES_VALIDAS)}")
+    if datos.unidad == producto.unidad_medida:
+        raise HTTPException(status_code=400, detail="Esa unidad ya es la unidad base del producto, no tiene sentido agregarla como alternativa")
+    if datos.precio <= 0:
+        raise HTTPException(status_code=422, detail="El precio debe ser mayor a 0")
+    if datos.factor_a_base <= 0:
+        raise HTTPException(status_code=422, detail="El factor de conversión debe ser mayor a 0")
+
+    ya_existe = db.query(models.UnidadAlternativa).filter(
+        models.UnidadAlternativa.producto_id == producto_id,
+        models.UnidadAlternativa.unidad == datos.unidad,
+    ).first()
+    if ya_existe:
+        raise HTTPException(status_code=400, detail="Ya existe una unidad alternativa con esa unidad para este producto")
+
+    nueva = models.UnidadAlternativa(
+        producto_id=producto_id,
+        unidad=datos.unidad,
+        precio=datos.precio,
+        factor_a_base=datos.factor_a_base,
+    )
+    db.add(nueva)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Carrera entre el SELECT de arriba y este insert — el UniqueConstraint del modelo es
+        # quien de verdad evita el duplicado, acá solo se traduce a un 400 legible en vez de 500.
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Ya existe una unidad alternativa con esa unidad para este producto")
+    db.refresh(nueva)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
+    return nueva
+
+@app.patch("/productos/unidades/{unidad_id}")
+def actualizar_unidad_alternativa(
+        unidad_id: str,
+        datos: UnidadAlternativaActualizar,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    unidad_alt = db.query(models.UnidadAlternativa).filter(models.UnidadAlternativa.id == unidad_id).first()
+    if not unidad_alt:
+        raise HTTPException(status_code=404, detail="Unidad alternativa no encontrada")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == unidad_alt.producto_id).first()
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes modificar una unidad alternativa de un producto que no te pertenece")
+
+    if datos.precio is not None:
+        if datos.precio <= 0:
+            raise HTTPException(status_code=422, detail="El precio debe ser mayor a 0")
+        unidad_alt.precio = datos.precio
+    if datos.factor_a_base is not None:
+        if datos.factor_a_base <= 0:
+            raise HTTPException(status_code=422, detail="El factor de conversión debe ser mayor a 0")
+        unidad_alt.factor_a_base = datos.factor_a_base
+
+    db.commit()
+    db.refresh(unidad_alt)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(str(producto.id)))
+    return unidad_alt
+
+@app.delete("/productos/unidades/{unidad_id}")
+def eliminar_unidad_alternativa(
+        unidad_id: str,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("productor")),
+        credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    unidad_alt = db.query(models.UnidadAlternativa).filter(models.UnidadAlternativa.id == unidad_id).first()
+    if not unidad_alt:
+        raise HTTPException(status_code=404, detail="Unidad alternativa no encontrada")
+
+    producto = db.query(models.Producto).filter(models.Producto.id == unidad_alt.producto_id).first()
+
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
+
+    productor = resp.json()
+    if str(producto.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="No puedes eliminar una unidad alternativa de un producto que no te pertenece")
+
+    producto_id_afectado = str(producto.id)
+    db.delete(unidad_alt)
+    db.commit()
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id_afectado))
+    return {"mensaje": "Unidad alternativa eliminada"}
 
 @app.patch("/productos/{producto_id}/publicar")
 def publicar_producto(

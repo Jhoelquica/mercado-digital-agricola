@@ -472,15 +472,28 @@ function badgeEstadoEnvio(estado) {
   return `<span class="pill pill-estado ${clase}">${icono} ${estado || 'pendiente'}</span>`;
 }
 
+// Única fuente de verdad de las unidades de medida válidas — la usan tanto la visualización
+// (catálogo, carrito, detalle, vía infoUnidad/unidadCorta/unidadPlural/unidadEtiqueta) como el
+// <select> de "Registrar nueva siembra" (opcionesUnidadMedidaHtml). Mismo criterio que
+// ROLES_INVITABLES: agregar una unidad nueva es sumarla acá, no tocar el HTML ni duplicar la
+// lista en otro lado. "label" es el texto que ve el productor en ese <select>; singular/plural/
+// etiqueta son para los textos de catálogo/carrito ("S/ X / kg", "3 sacos", etc.).
 const UNIDADES_MEDIDA = {
-  kg: { singular: 'kg', plural: 'kg', etiqueta: 'kg' },
-  unidad: { singular: 'unidad', plural: 'unidades', etiqueta: 'unidades' },
-  saco: { singular: 'saco', plural: 'sacos', etiqueta: 'sacos' },
-  arroba: { singular: 'arroba', plural: 'arrobas', etiqueta: 'arrobas' },
+  kg: { singular: 'kg', plural: 'kg', etiqueta: 'kg', label: 'Kilogramo (kg)' },
+  unidad: { singular: 'unidad', plural: 'unidades', etiqueta: 'unidades', label: 'Unidad' },
+  saco: { singular: 'saco', plural: 'sacos', etiqueta: 'sacos', label: 'Saco' },
+  arroba: { singular: 'arroba', plural: 'arrobas', etiqueta: 'arrobas', label: 'Arroba' },
+  litro: { singular: 'litro', plural: 'litros', etiqueta: 'litros', label: 'Litro' },
 };
 
 function infoUnidad(codigo) {
   return UNIDADES_MEDIDA[codigo] || UNIDADES_MEDIDA.unidad;
+}
+
+function opcionesUnidadMedidaHtml() {
+  return Object.entries(UNIDADES_MEDIDA)
+    .map(([valor, info]) => `<option value="${escapeAttr(valor)}">${escapeAttr(info.label)}</option>`)
+    .join('');
 }
 
 function unidadPlural(codigo, cantidad) {
@@ -4056,11 +4069,6 @@ function renderPerfilProductor(extra, registrosProduccion) {
 }
 
 // ============ GESTIÓN ECONÓMICA (Módulo 1) ============
-const OPCIONES_UNIDAD_MEDIDA_HTML = `
-  <option value="kg">Kilogramo (kg)</option>
-  <option value="unidad">Unidad</option>
-  <option value="saco">Saco</option>
-  <option value="arroba">Arroba</option>`;
 
 function renderResumenEconomico(registros) {
   const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
@@ -4123,7 +4131,7 @@ function renderFormRegistroProduccion() {
           <input type="number" id="produccion-costo-insumos" min="0" step="0.01" value="0">
         </label>
         <label>Unidad de medida
-          <select id="produccion-unidad">${OPCIONES_UNIDAD_MEDIDA_HTML}</select>
+          <select id="produccion-unidad">${opcionesUnidadMedidaHtml()}</select>
         </label>
         <label id="produccion-equivalencia-bloque" class="hidden">Equivalencia a kg (1 unidad = X kg)
           <input type="number" id="produccion-equivalencia" min="0.0001" step="0.0001" placeholder="Ej. 11.5">

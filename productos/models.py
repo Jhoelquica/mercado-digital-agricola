@@ -86,6 +86,31 @@ class Reserva(Base):
     comprador_id = Column(UUID(as_uuid=True), nullable=False)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 
+class UnidadAlternativa(Base):
+    """Una unidad adicional en la que se puede comprar un Producto, con su propio precio — no
+    reemplaza ni modifica precio/unidad_medida del producto (la unidad "base"), los complementa.
+    Ej.: un producto base en "kg" a S/5/kg puede venderse TAMBIÉN por "saco" a S/45, con
+    factor_a_base=10 (1 saco = 10 kg)."""
+    __tablename__ = "unidades_alternativas"
+    __table_args__ = (
+        # Un producto no puede tener dos filas para la misma unidad alternativa — mismo criterio
+        # que uq_producto_registro_produccion: constraint de base de datos, no solo el chequeo de
+        # aplicación (que por sí solo sería vulnerable a una carrera entre el chequeo y el insert).
+        UniqueConstraint("producto_id", "unidad", name="uq_unidad_alternativa_producto_unidad"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # FK real: UnidadAlternativa vive en la misma base que Producto.
+    producto_id = Column(UUID(as_uuid=True), ForeignKey("productos.id"), nullable=False)
+    unidad = Column(String, nullable=False)
+    precio = Column(Numeric(10, 2), nullable=False)
+    # "1 unidad de ESTA unidad alternativa = factor_a_base unidades de Producto.unidad_medida" —
+    # mismo espíritu que RegistroProduccion.equivalencia_kg en Productores, pero generalizado a
+    # cualquier unidad base (no siempre kg) y con precio propio, no solo para un cálculo interno.
+    factor_a_base = Column(Numeric(10, 4), nullable=False)
+
+    producto = relationship("Producto", backref="unidades_alternativas")
+
 class BusquedaLog(Base):
     __tablename__ = "busqueda_logs"
 

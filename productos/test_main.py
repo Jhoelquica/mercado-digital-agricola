@@ -412,6 +412,180 @@ def test_listar_reservas_productor_ajeno_falla_403(monkeypatch):
     assert resp.status_code == 403
 
 
+# ============ Unidades alternativas (POST/GET/PATCH/DELETE) ============
+
+def test_crear_unidad_alternativa_valida(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["unidad"] == "saco"
+    assert float(cuerpo["precio"]) == 45.0
+    assert float(cuerpo["factor_a_base"]) == 10.0
+
+    listado = client.get(f"/productos/{producto.id}/unidades")
+    assert listado.status_code == 200, listado.text
+    assert len(listado.json()) == 1
+
+
+def test_crear_unidad_alternativa_duplica_base_falla_400(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "kg", "precio": 5.0, "factor_a_base": 1.0},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 400
+
+
+def test_crear_unidad_alternativa_duplicada_falla_400(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    primera = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    )
+    assert primera.status_code == 200, primera.text
+
+    segunda = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 50.0, "factor_a_base": 12.0},
+        headers=HEADERS_AUTH,
+    )
+    assert segunda.status_code == 400
+
+
+def test_crear_unidad_alternativa_no_dueno_falla_403(monkeypatch):
+    dueño_real = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=dueño_real, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # otro productor autenticado
+
+    resp = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 403
+
+
+def test_crear_unidad_alternativa_no_valida_falla_422(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "tonelada", "precio": 500.0, "factor_a_base": 1000.0},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 422
+
+
+def test_actualizar_unidad_alternativa_precio_y_factor(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    creada = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    ).json()
+
+    resp = client.patch(
+        f"/productos/unidades/{creada['id']}",
+        json={"precio": 48.0, "factor_a_base": 11.0},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["precio"]) == 48.0
+    assert float(resp.json()["factor_a_base"]) == 11.0
+
+
+def test_eliminar_unidad_alternativa(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    creada = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    ).json()
+
+    resp = client.delete(f"/productos/unidades/{creada['id']}", headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+
+    listado = client.get(f"/productos/{producto.id}/unidades")
+    assert listado.json() == []
+
+
+def test_listar_productos_incluye_unidades_alternativas(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg", estado="disponible")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+    creada = client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0},
+        headers=HEADERS_AUTH,
+    )
+    assert creada.status_code == 200, creada.text
+
+    catalogo = client.get("/productos")
+    assert catalogo.status_code == 200, catalogo.text
+    fila = next(p for p in catalogo.json() if p["id"] == str(producto.id))
+    assert len(fila["unidades_alternativas"]) == 1
+    assert fila["unidades_alternativas"][0]["unidad"] == "saco"
+    assert float(fila["unidades_alternativas"][0]["precio"]) == 45.0
+
+
+def test_obtener_producto_incluye_unidades_alternativas(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+    client.post(
+        f"/productos/{producto.id}/unidades",
+        json={"unidad": "arroba", "precio": 30.0, "factor_a_base": 11.5},
+        headers=HEADERS_AUTH,
+    )
+
+    detalle = client.get(f"/productos/{producto.id}")
+    assert detalle.status_code == 200, detalle.text
+    assert len(detalle.json()["unidades_alternativas"]) == 1
+    assert detalle.json()["unidades_alternativas"][0]["unidad"] == "arroba"
+
+
 # ============ PATCH /productos/{id} (editar categoria/precio de un borrador) ============
 
 def test_actualizar_categoria_sola(monkeypatch):
