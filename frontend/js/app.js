@@ -516,6 +516,29 @@ function unidadEtiqueta(codigo) {
   return infoUnidad(codigo).etiqueta;
 }
 
+// ---- Precio/stock de un producto según la unidad de compra elegida — unidad=null siempre
+// significa "unidad base" (Producto.precio/Producto.stock tal cual), un valor busca esa unidad
+// dentro de producto.unidades_alternativas (ya viene embebida en GET /productos y
+// GET /productos/{id}). Usadas tanto en la página de detalle como en agregarAlCarrito. ----
+function unidadAlternativaDe(producto, unidad) {
+  if (!unidad) return null;
+  return (producto.unidades_alternativas || []).find((u) => u.unidad === unidad) || null;
+}
+
+function precioEnUnidad(producto, unidad) {
+  const alt = unidadAlternativaDe(producto, unidad);
+  return Number(alt ? alt.precio : producto.precio);
+}
+
+// Stock disponible EXPRESADO en la unidad elegida — si es una alternativa, el stock real
+// (siempre en la unidad base) se convierte con factor_a_base. Math.floor a propósito: no tiene
+// sentido ofrecer "2.7 sacos" como tope si sobran kg pero no alcanzan para un saco completo más.
+function stockEnUnidad(producto, unidad) {
+  const alt = unidadAlternativaDe(producto, unidad);
+  if (!alt) return producto.stock;
+  return Math.floor(producto.stock / Number(alt.factor_a_base));
+}
+
 function renderEstrellas(promedio) {
   // Un solo ícono (ti-star): "llena" vs "vacía" se distingue por color (ver .estrella-llena en
   // CSS), no por cambiar de ícono — el set outline de Tabler no trae una variante rellena sin
@@ -1594,11 +1617,24 @@ function inicializarBannerCinematico() {
   contenidos.forEach((c) => observer.observe(c));
 }
 
+// Unidad base (con su propio precio) + cada unidad alternativa, mismo formato de label que ya
+// usan los <select> de unidad en Registrar-siembra / gestión de unidades del productor
+// (infoUnidad(...).label) — así el comprador ve el mismo vocabulario en todo el sitio. value=""
+// para la base (select.value || null da directamente lo que espera unidadSeleccionada).
+function opcionesUnidadCompraHtml(p) {
+  const base = `<option value="">${escapeAttr(infoUnidad(p.unidad_medida).label)} — ${formatearMoneda(p.precio)}</option>`;
+  const alternativas = (p.unidades_alternativas || [])
+    .map((u) => `<option value="${escapeAttr(u.unidad)}">${escapeAttr(infoUnidad(u.unidad).label)} — ${formatearMoneda(u.precio)}</option>`)
+    .join('');
+  return base + alternativas;
+}
+
 function renderPaginaDetalleProducto(p, resenas, productor) {
   const contenido = document.getElementById('detalle-producto-content');
   const favorito = esFavorito(p.id);
   const stockBajo = p.stock > 0 && p.stock <= 5;
   const sinStock = p.stock <= 0;
+  const tieneAlternativas = (p.unidades_alternativas || []).length > 0;
   const precioHtml = `${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span>`;
 
   contenido.innerHTML = `
@@ -1606,7 +1642,7 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
       <button type="button" class="detalle-volver" id="btn-volver-detalle"><i class="ti ti-arrow-left"></i> Volver</button>
       <div class="detalle-sticky-info">
         <span class="detalle-sticky-nombre">${escapeAttr(p.nombre)}</span>
-        <span class="detalle-sticky-precio">${precioHtml}</span>
+        <span class="detalle-sticky-precio" id="detalle-sticky-precio">${precioHtml}</span>
         ${p.calificacion_promedio ? `<span class="detalle-sticky-rating"><span class="rating-stars">${renderEstrellas(p.calificacion_promedio)}</span> ${Number(p.calificacion_promedio).toFixed(1)}</span>` : ''}
       </div>
       <button type="button" class="btn btn-primary" id="btn-agregar-sticky" ${sinStock ? 'disabled' : ''}>
@@ -1635,10 +1671,15 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
         <h2>${escapeAttr(p.nombre)}</h2>
         ${renderResumenCalificacion(p)}
         <div class="detalle-precio-row">
-          <span class="product-price">${precioHtml}</span>
-          <span class="product-stock ${stockBajo ? 'low' : ''}">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
+          <span class="product-price" id="detalle-precio-principal">${precioHtml}</span>
+          <span class="product-stock ${stockBajo ? 'low' : ''}" id="detalle-stock-texto">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
         </div>
       </div>
+
+      ${!sinStock && tieneAlternativas ? `
+      <label class="detalle-unidad-label">Unidad de compra
+        <select id="detalle-unidad-selector">${opcionesUnidadCompraHtml(p)}</select>
+      </label>` : ''}
 
       <div class="detalle-accion-principal">
         ${!sinStock ? `
@@ -1669,7 +1710,51 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   `;
 
   let cantidadSeleccionada = 1;
+  let unidadSeleccionada = null; // null = unidad base del producto (comportamiento de siempre)
   const cantidadValorEl = document.getElementById('detalle-cantidad-valor');
+
+  const stockMaximoActual = () => stockEnUnidad(p, unidadSeleccionada);
+
+  // Se llama solo al cambiar la unidad elegida (el render inicial ya muestra los valores de la
+  // unidad base correctos) — actualiza precio (header fijo + fila principal), el texto de stock
+  // convertido a esa unidad, y recorta la cantidad si ya no entra en el nuevo tope.
+  function refrescarPrecioYStockDetalle() {
+    const unidadParaMostrar = unidadSeleccionada || p.unidad_medida;
+    const precioHtmlActual = `${formatearMoneda(precioEnUnidad(p, unidadSeleccionada))} <span class="price-unit">/ ${unidadCorta(unidadParaMostrar)}</span>`;
+    document.getElementById('detalle-sticky-precio').innerHTML = precioHtmlActual;
+    document.getElementById('detalle-precio-principal').innerHTML = precioHtmlActual;
+
+    const maximo = stockMaximoActual();
+    const sinStockEnEstaUnidad = maximo <= 0;
+    const stockTextoEl = document.getElementById('detalle-stock-texto');
+    stockTextoEl.textContent = sinStockEnEstaUnidad
+      ? 'Sin stock disponible en esta unidad'
+      : `${maximo} ${unidadPlural(unidadParaMostrar, maximo)} disponibles`;
+    stockTextoEl.classList.toggle('low', !sinStockEnEstaUnidad && maximo <= 5);
+
+    // Caso borde: el factor de conversión deja la unidad elegida sin stock entero disponible
+    // (ej. 5 kg en stock, 1 saco = 10 kg) — no tiene sentido dejar seleccionada esa unidad.
+    document.querySelector('.detalle-cantidad-selector')?.classList.toggle('hidden', sinStockEnEstaUnidad);
+    [
+      { el: document.getElementById('btn-agregar-detalle'), textoActivo: '+ Agregar al pedido' },
+      { el: document.getElementById('btn-agregar-sticky'), textoActivo: '+ Agregar al carrito' },
+    ].forEach(({ el, textoActivo }) => {
+      if (!el) return;
+      el.disabled = sinStockEnEstaUnidad;
+      el.textContent = sinStockEnEstaUnidad ? 'Agotado' : textoActivo;
+    });
+
+    if (cantidadSeleccionada > maximo) {
+      cantidadSeleccionada = Math.max(1, maximo);
+    }
+    if (cantidadValorEl) cantidadValorEl.textContent = cantidadSeleccionada;
+  }
+
+  document.getElementById('detalle-unidad-selector')?.addEventListener('change', (e) => {
+    unidadSeleccionada = e.target.value || null;
+    refrescarPrecioYStockDetalle();
+  });
+
   document.getElementById('btn-cantidad-menos')?.addEventListener('click', () => {
     if (cantidadSeleccionada > 1) {
       cantidadSeleccionada--;
@@ -1677,7 +1762,7 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
     }
   });
   document.getElementById('btn-cantidad-mas')?.addEventListener('click', () => {
-    if (cantidadSeleccionada < p.stock) {
+    if (cantidadSeleccionada < stockMaximoActual()) {
       cantidadSeleccionada++;
       cantidadValorEl.textContent = cantidadSeleccionada;
     } else {
@@ -1685,11 +1770,11 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
     }
   });
 
-  // Botón grande (bajo el precio) y botón compacto del header fijo comparten la misma cantidad
-  // seleccionada — a diferencia del modal viejo, agregar al carrito ya NO navega fuera de la
-  // página (no hay "cerrar" en una página propia; el usuario sigue viendo el producto).
+  // Botón grande (bajo el precio) y botón compacto del header fijo comparten la misma cantidad Y
+  // unidad seleccionadas — a diferencia del modal viejo, agregar al carrito ya NO navega fuera de
+  // la página (no hay "cerrar" en una página propia; el usuario sigue viendo el producto).
   const agregarConFeedback = (btn) => {
-    agregarAlCarrito(p.id, cantidadSeleccionada);
+    agregarAlCarrito(p.id, cantidadSeleccionada, unidadSeleccionada);
     destellarBoton(btn, '<i class="ti ti-check"></i> Agregado');
   };
   document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => agregarConFeedback(e.currentTarget));
@@ -1856,7 +1941,11 @@ async function enviarResena(productoId, calificacion, comentario) {
 }
 
 // ============ CARRITO / PEDIDO ============
-function agregarAlCarrito(productoId, cantidad = 1) {
+// unidad: null = unidad base del producto (comportamiento de siempre); un valor = unidad
+// alternativa elegida en la página de detalle. Dos líneas del mismo producto en unidades
+// DISTINTAS no se combinan (precio y equivalencia de stock son distintos) — por eso identificar
+// una línea de acá en adelante es siempre (producto_id, unidad), no solo producto_id.
+function agregarAlCarrito(productoId, cantidad = 1, unidad = null) {
   if (!Estado.token) {
     toast('Inicia sesión para armar tu pedido 🌱', 'error');
     abrirModal('modal-auth');
@@ -1865,31 +1954,40 @@ function agregarAlCarrito(productoId, cantidad = 1) {
   const producto = Estado.productos.find((p) => p.id === productoId);
   if (!producto) return;
 
-  const existente = Estado.carrito.find((i) => i.producto_id === productoId);
+  const stockMax = stockEnUnidad(producto, unidad);
+  const existente = Estado.carrito.find((i) => i.producto_id === productoId && (i.unidad || null) === unidad);
   if (existente) {
-    const nuevaCantidad = Math.min(existente.cantidad + cantidad, producto.stock);
+    const nuevaCantidad = Math.min(existente.cantidad + cantidad, stockMax);
     if (nuevaCantidad === existente.cantidad) toast('No hay más stock disponible de este producto.', 'error');
     existente.cantidad = nuevaCantidad;
   } else {
     Estado.carrito.push({
       producto_id: producto.id,
       nombre: producto.nombre,
-      precio: Number(producto.precio),
-      cantidad: Math.min(cantidad, producto.stock),
-      stockDisponible: producto.stock,
-      unidad_medida: producto.unidad_medida,
+      // Snapshot del precio de la unidad elegida al momento de agregar — solo para mostrar en el
+      // carrito. El backend nunca confía en este valor de todas formas: Pedidos vuelve a
+      // resolver el precio real contra Productos al confirmar (ver crear_pedido), snapshot o no
+      // acá no cambia eso — evita además tener que volver a llamar a la API solo para pintar el
+      // carrito.
+      precio: precioEnUnidad(producto, unidad),
+      cantidad: Math.min(cantidad, stockMax),
+      stockDisponible: stockMax,
+      unidad,
+      // Unidad EFECTIVA de esta línea (base o alternativa) — unidadCorta/unidadPlural/
+      // unidadEtiqueta ya reciben esto tal cual, no hace falta tocar su uso en renderCarrito.
+      unidad_medida: unidad || producto.unidad_medida,
     });
   }
   renderCarrito();
   toast(`${producto.nombre} agregado al pedido 🧺`);
 }
 
-function cambiarCantidadCarrito(productoId, delta) {
-  const item = Estado.carrito.find((i) => i.producto_id === productoId);
+function cambiarCantidadCarrito(productoId, delta, unidad = null) {
+  const item = Estado.carrito.find((i) => i.producto_id === productoId && (i.unidad || null) === unidad);
   if (!item) return;
   item.cantidad += delta;
   if (item.cantidad <= 0) {
-    Estado.carrito = Estado.carrito.filter((i) => i.producto_id !== productoId);
+    Estado.carrito = Estado.carrito.filter((i) => i !== item);
   } else if (item.cantidad > item.stockDisponible) {
     item.cantidad = item.stockDisponible;
     toast('Alcanzaste el stock máximo disponible.', 'error');
@@ -1897,8 +1995,8 @@ function cambiarCantidadCarrito(productoId, delta) {
   renderCarrito();
 }
 
-function quitarDelCarrito(productoId) {
-  Estado.carrito = Estado.carrito.filter((i) => i.producto_id !== productoId);
+function quitarDelCarrito(productoId, unidad = null) {
+  Estado.carrito = Estado.carrito.filter((i) => !(i.producto_id === productoId && (i.unidad || null) === unidad));
   renderCarrito();
 }
 
@@ -1936,11 +2034,11 @@ function renderCarrito() {
         <span class="qty-label">Cantidad en ${unidadEtiqueta(i.unidad_medida)}</span>
       </div>
       <div class="carrito-qty">
-        <button data-accion="menos" data-id="${i.producto_id}">−</button>
+        <button data-accion="menos" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}">−</button>
         <span>${i.cantidad} ${unidadPlural(i.unidad_medida, i.cantidad)}</span>
-        <button data-accion="mas" data-id="${i.producto_id}">+</button>
+        <button data-accion="mas" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}">+</button>
       </div>
-      <button class="carrito-remove" data-accion="quitar" data-id="${i.producto_id}"><i class="ti ti-trash"></i></button>
+      <button class="carrito-remove" data-accion="quitar" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}"><i class="ti ti-trash"></i></button>
     </div>
   `).join('');
 
@@ -2094,7 +2192,12 @@ async function confirmarYPagar() {
       comprador_telefono: document.getElementById('pedido-telefono').value.trim() || null,
       destino_latitud: destinoSeleccionado ? String(destinoSeleccionado.lat) : null,
       destino_longitud: destinoSeleccionado ? String(destinoSeleccionado.lng) : null,
-      items: Estado.carrito.map((i) => ({ producto_id: i.producto_id, cantidad: i.cantidad })),
+      // Sin precio acá — nunca lo tuvo, el backend siempre lo resuelve solo contra Productos
+      // (ver crear_pedido). "unidad" solo se manda si no es null (unidad base, comportamiento
+      // de siempre); si viene, Pedidos la busca en unidades_alternativas del producto.
+      items: Estado.carrito.map((i) => (i.unidad
+        ? { producto_id: i.producto_id, cantidad: i.cantidad, unidad: i.unidad }
+        : { producto_id: i.producto_id, cantidad: i.cantidad })),
     };
     const pedido = await Api.pedidos.crear(datos);
     guardarPedidoTrackeado(pedido.id);
@@ -4748,10 +4851,11 @@ function inicializarEventos() {
   document.getElementById('carrito-items').addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-accion]');
     if (!btn) return;
-    const { accion, id } = btn.dataset;
-    if (accion === 'mas') cambiarCantidadCarrito(id, 1);
-    if (accion === 'menos') cambiarCantidadCarrito(id, -1);
-    if (accion === 'quitar') quitarDelCarrito(id);
+    const { accion, id, unidad } = btn.dataset;
+    const unidadNormalizada = unidad || null; // dataset siempre da string; '' -> null (unidad base)
+    if (accion === 'mas') cambiarCantidadCarrito(id, 1, unidadNormalizada);
+    if (accion === 'menos') cambiarCantidadCarrito(id, -1, unidadNormalizada);
+    if (accion === 'quitar') quitarDelCarrito(id, unidadNormalizada);
   });
 
   document.getElementById('btn-usar-mi-ubicacion').addEventListener('click', usarMiUbicacionDestino);

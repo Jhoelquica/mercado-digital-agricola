@@ -1154,6 +1154,25 @@ input, select { font-family: inherit; }
 }
 .detalle-precio-row .product-price { margin-top: 0; font-size: 1.5rem; }
 
+.detalle-unidad-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--texto);
+}
+.detalle-unidad-label select {
+  padding: 11px 14px;
+  border-radius: 10px;
+  border: 1.5px solid var(--color-borde);
+  font-size: 0.95rem;
+  background: white;
+  outline: none;
+}
+.detalle-unidad-label select:focus { border-color: var(--color-primario); }
+
 .detalle-accion-principal {
   display: flex;
   align-items: center;
