@@ -3941,7 +3941,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('invitacion-resultado').classList.add('hidden');
   document.getElementById('form-invitacion').reset();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
-  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito()]);
+  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad()]);
 }
 
 // El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
@@ -3969,14 +3969,19 @@ function renderInvitacionCard(inv) {
     </div>`;
 }
 
-// cargarInvitaciones() y cargarProductosEnTransito() corren en paralelo (ver iniciarPanelAdmin) y
-// las dos alimentan el mismo resumen — cada una guarda acá lo último que trajo y dispara un
-// re-render con ambos datos, sin importar cuál de las dos termine primero.
+// cargarInvitaciones(), cargarProductosEnTransito() y cargarEnviosPendientesPorCapacidad() corren
+// en paralelo (ver iniciarPanelAdmin) y las tres alimentan el mismo resumen — cada una guarda acá
+// lo último que trajo y dispara un re-render con los tres datos, sin importar cuál termine primero.
 let invitacionesActualesAdmin = [];
 let productosTransitoActualesAdmin = [];
+let enviosPorCapacidadActualesAdmin = [];
 
 function refrescarResumenAdmin() {
-  document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(invitacionesActualesAdmin, productosTransitoActualesAdmin.length);
+  document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(
+    invitacionesActualesAdmin,
+    productosTransitoActualesAdmin.length,
+    enviosPorCapacidadActualesAdmin.length,
+  );
 }
 
 async function cargarInvitaciones() {
@@ -3995,7 +4000,7 @@ async function cargarInvitaciones() {
 
 // ---- Resumen / dashboard de "Panel Admin" — reusa estadoInvitacion() (la misma función que ya
 // clasifica cada tarjeta de la lista) sobre el array que acaba de traer cargarInvitaciones(). ----
-function renderResumenAdmin(invitaciones, totalProductosTransito = 0) {
+function renderResumenAdmin(invitaciones, totalProductosTransito = 0, totalPendientesPorCapacidad = 0) {
   const porEstado = { vigente: 0, usada: 0, expirada: 0 };
   let masProximaAVencer = null;
   invitaciones.forEach((inv) => {
@@ -4046,6 +4051,11 @@ function renderResumenAdmin(invitaciones, totalProductosTransito = 0) {
         </div>
       </div>
       ${avisoVencimiento ? `<div class="resumen-destacado resumen-destacado-urgente">${avisoVencimiento}</div>` : ''}
+      ${totalPendientesPorCapacidad ? `
+      <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-pendientes-capacidad">
+        <i class="ti ti-truck"></i>
+        ${totalPendientesPorCapacidad} pedido${totalPendientesPorCapacidad === 1 ? '' : 's'} esperando un vehículo con más capacidad
+      </div>` : ''}
       <div class="resumen-acciones">
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-generar-codigo"><i class="ti ti-plus"></i> Generar nuevo código</button>
       </div>
@@ -4094,6 +4104,49 @@ async function revocarInvitacionDesdeLista(invitacionId) {
   } catch (err) {
     manejarError(err, 'revocar la invitación');
   }
+}
+
+// ---- Pedidos esperando vehículo con más capacidad (caso poco frecuente: motivo_pendiente ==
+// "sin_capacidad_suficiente" — ver GET /envios/pendientes-por-capacidad en transporte) ----
+
+function renderTarjetaPendienteCapacidad(envio, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  // Sin peso del pedido (Envio no lo trae, y pedirlo de a uno por tarjeta sería una llamada
+  // extra por cada envío listado — mismo criterio que "Entregas directas pendientes" en
+  // panel-productor): la instrucción queda en términos generales, sin un número de kg concreto.
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-envio-id="${escapeAttr(envio.id)}">
+      <div class="pedido-card-header">
+        <h4>Pedido #${escapeAttr(String(envio.pedido_id).slice(0, 8))}</h4>
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFecha(envio.fecha_creacion)}</span></div>
+      </div>
+      <p class="muted">Este pedido necesita un vehículo con más capacidad — ningún repartidor disponible alcanzaba. Contrata o coordina uno, y pide a quien lo va a manejar que se registre como Repartidor desde su propia cuenta (pantalla de inicio → "Soy repartidor" → completar perfil con capacidad y tipo de vehículo).</p>
+    </div>`;
+}
+
+async function cargarEnviosPendientesPorCapacidad() {
+  const seccion = document.getElementById('pendientes-capacidad-section');
+  const cont = document.getElementById('pendientes-capacidad-lista');
+  try {
+    const envios = await Api.transporte.pendientesPorCapacidad();
+    enviosPorCapacidadActualesAdmin = envios;
+    if (!envios.length) {
+      seccion.classList.add('hidden');
+      cont.innerHTML = '';
+    } else {
+      seccion.classList.remove('hidden');
+      cont.innerHTML = envios.map(renderTarjetaPendienteCapacidad).join('');
+    }
+  } catch (err) {
+    // Silencioso a propósito, mismo criterio que cargarEntregasDirectasPendientes() en
+    // panel-productor: es una sección discreta y poco frecuente — un error acá no debería
+    // interrumpir el resto del panel (invitaciones, productos en tránsito siguen cargando igual).
+    enviosPorCapacidadActualesAdmin = [];
+    seccion.classList.add('hidden');
+  }
+  refrescarResumenAdmin();
 }
 
 // ---- Productos en tránsito (confirmar llegada al almacén) ----
@@ -5179,6 +5232,10 @@ function inicializarEventos() {
     if (e.target.closest('#btn-resumen-generar-codigo')) {
       document.getElementById('invitacion-rol-destino')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       document.getElementById('invitacion-rol-destino')?.focus({ preventScroll: true });
+      return;
+    }
+    if (e.target.closest('#btn-resumen-pendientes-capacidad')) {
+      document.getElementById('pendientes-capacidad-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   });
   document.getElementById('invitaciones-lista').addEventListener('click', (e) => {

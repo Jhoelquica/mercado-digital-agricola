@@ -171,6 +171,10 @@ const Api = {
     // (mismo endpoint que ya usa el repartidor) en vez de duplicar la llamada HTTP.
     pendientesEntregaDirecta: () => request('transporte', '/envios/pendientes-entrega-directa', { auth: true }),
     marcarEntregado: (envioId) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado: 'entregado' }, auth: true }),
+    // Rol admin: envíos "pendiente_asignacion" cuyo motivo es específicamente falta de
+    // capacidad (no "nadie disponible en absoluto", que se resuelve solo) — ver
+    // motivo_pendiente en transporte/models.py.
+    pendientesPorCapacidad: () => request('transporte', '/envios/pendientes-por-capacidad', { auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

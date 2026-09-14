@@ -539,6 +539,17 @@
       <p><strong>Todavía no generaste ninguna invitación</strong></p>
     </div>
 
+    <!-- Sección discreta a propósito, mismo criterio que "Entregas directas pendientes" en
+         panel-productor: solo se muestra (JS quita "hidden") si hay al menos un envío esperando
+         un vehículo con más capacidad — caso poco frecuente por diseño (ver
+         cargarEnviosPendientesPorCapacidad en app.js). -->
+    <div id="pendientes-capacidad-section" class="hidden">
+      <div class="section-header inner">
+        <h3><i class="ti ti-truck"></i> Pedidos esperando vehículo con más capacidad</h3>
+      </div>
+      <div id="pendientes-capacidad-lista" class="pedidos-list"></div>
+    </div>
+
     <div class="section-header inner">
       <h3><i class="ti ti-building-warehouse"></i> Productos en tránsito</h3>
       <button class="btn btn-outline" id="btn-refrescar-productos-transito">↻ Refrescar</button>
