@@ -26,11 +26,13 @@ los servicios de este proyecto.
 import uuid
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 import main
 import logica_liquidacion_repartidor
 import logica_certificacion
+import logica_repartidores
 from reintento_liquidacion_repartidor import reintentar_liquidaciones_repartidor_pendientes
 from reintento_certificacion import reintentar_certificaciones_pendientes
 from auth import verificar_token
@@ -267,6 +269,253 @@ def test_reintento_resuelve_envio_sin_certificar(monkeypatch):
         db.close()
 
     assert _envio_recargado(envio.id).certificacion_confirmada is True
+
+
+# ============ Matching por peso/capacidad (proponer_envio_a_repartidor) ============
+
+class _ClienteRepartidoresFalso:
+    """Reemplaza httpx.Client() dentro de logica_repartidores: distingue la URL de Pedidos de la
+    de Productos por el path pedido, sin tocar la red. pedido: dict que devuelve GET
+    /pedidos/{id}. productor_por_producto: dict producto_id -> productor_id para GET
+    /productos/{id} (usado solo por _pedido_es_de_un_solo_productor)."""
+    def __init__(self, pedido, productor_por_producto=None, pedidos_no_disponible=False):
+        self._pedido = pedido
+        self._productor_por_producto = productor_por_producto or {}
+        self._pedidos_no_disponible = pedidos_no_disponible
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        if "/pedidos/" in url:
+            if self._pedidos_no_disponible:
+                raise logica_repartidores.httpx.RequestError("boom", request=None)
+            return _RespuestaFalsa(200, self._pedido)
+        producto_id = url.rstrip("/").split("/")[-1]
+        return _RespuestaFalsa(200, {"productor_id": self._productor_por_producto.get(producto_id)})
+
+
+def _mockear_pedido(monkeypatch, pedido, productor_por_producto=None, pedidos_no_disponible=False):
+    monkeypatch.setattr(
+        logica_repartidores.httpx, "Client",
+        lambda *a, **kw: _ClienteRepartidoresFalso(pedido, productor_por_producto, pedidos_no_disponible),
+    )
+
+
+def _pedido_falso(peso_total_kg=None, requiere_vehiculo_grande=False, items=None):
+    return {
+        "peso_total_kg": peso_total_kg,
+        "requiere_vehiculo_grande": requiere_vehiculo_grande,
+        "items": items if items is not None else [{"producto_id": str(uuid.uuid4())}],
+    }
+
+
+def _crear_repartidor_disponible(capacidad_maxima_kg=None, tipo_vehiculo="moto") -> "main.models.Repartidor":
+    """A diferencia de _crear_repartidor_directo (que arranca "ocupado", pensado para los tests
+    de liquidación/certificación de arriba), este arranca "disponible" — el estado que
+    proponer_envio_a_repartidor exige para considerar un candidato."""
+    db = main.SessionLocal()
+    try:
+        repartidor = main.models.Repartidor(
+            usuario_id=uuid.uuid4(),
+            nombre="Repartidor Test",
+            dni="12345678",
+            estado_disponibilidad="disponible",
+            tipo_vehiculo=tipo_vehiculo,
+            capacidad_maxima_kg=capacidad_maxima_kg,
+        )
+        db.add(repartidor)
+        db.commit()
+        db.refresh(repartidor)
+        db.expunge(repartidor)
+        return repartidor
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def matching():
+    """Los tests de matching de abajo, a diferencia de _crear_repartidor_directo (que arranca
+    "ocupado" justamente para NUNCA ser un candidato real para otro test), crean repartidores
+    "disponible" a propósito — es lo que proponer_envio_a_repartidor necesita para encontrarlos.
+    Sin este archivo aislar tests por transacción (comparten un único Postgres real, ver docstring
+    del módulo), un repartidor "disponible" que un test deja sin consumir queda como candidato
+    fantasma para CUALQUIER test posterior que dispare intentar_resolver_envio_huerfano —
+    crear_repartidor siempre lo hace al registrar uno nuevo. Este fixture borra al terminar (pase
+    o falle el test) todo lo que el test haya registrado en las listas que devuelve.
+
+    Antes de arrancar, además, neutraliza cualquier repartidor "disponible" que ya exista en la
+    tabla: los tests de liquidación/certificación de más arriba en este archivo dejan sus propios
+    repartidores "disponible" otra vez al completar una entrega real (ver actualizar_estado en
+    main.py, líneas 200/263) — sin capacidad declarada (NULL), esos son candidatos fantasma
+    igual de válidos que cualquier otro cuando un test de acá abajo prueba el caso "peso
+    desconocido" (sin filtro de capacidad, exactamente el hueco por el que se cuelan). No hace
+    falta revertir este cambio al terminar: son repartidores de tests ya completados, que no
+    vuelven a mirar su propio estado_disponibilidad después de terminar."""
+    db_previo = main.SessionLocal()
+    try:
+        db_previo.query(main.models.Repartidor).filter(
+            main.models.Repartidor.estado_disponibilidad == "disponible"
+        ).update({"estado_disponibilidad": "ocupado"}, synchronize_session=False)
+        db_previo.commit()
+    finally:
+        db_previo.close()
+
+    repartidor_ids, envio_ids = [], []
+    yield repartidor_ids, envio_ids
+    db = main.SessionLocal()
+    try:
+        if repartidor_ids:
+            db.query(main.models.Repartidor).filter(main.models.Repartidor.id.in_(repartidor_ids)).delete(synchronize_session=False)
+        if envio_ids:
+            db.query(main.models.Envio).filter(main.models.Envio.id.in_(envio_ids)).delete(synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_proponer_envio_con_peso_bajo_capacidad_de_todos_prioriza_el_mas_chico(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    chico = _crear_repartidor_disponible(capacidad_maxima_kg=50)
+    grande = _crear_repartidor_disponible(capacidad_maxima_kg=200)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids += [chico.id, grande.id]
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=20))
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "propuesto"
+    assert str(envio_recargado.repartidor_id) == str(chico.id)  # el más chico que alcanza, no cualquiera
+
+
+def test_proponer_envio_con_peso_que_solo_un_vehiculo_grande_puede_llevar(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    pequeno = _crear_repartidor_disponible(capacidad_maxima_kg=10)  # insuficiente, aunque se crea primero
+    grande = _crear_repartidor_disponible(capacidad_maxima_kg=100)  # suficiente
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids += [pequeno.id, grande.id]
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=50))
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "propuesto"
+    assert str(envio_recargado.repartidor_id) == str(grande.id)  # NO el primero disponible (el pequeño)
+
+
+def test_proponer_envio_sin_capacidad_suficiente_y_un_solo_productor_queda_pendiente_entrega_directa(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    insuficiente = _crear_repartidor_disponible(capacidad_maxima_kg=10)  # insuficiente para los 50 kg de abajo
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(insuficiente.id)
+    envio_ids.append(envio.id)
+
+    producto_a, producto_b = str(uuid.uuid4()), str(uuid.uuid4())
+    mismo_productor = str(uuid.uuid4())
+    pedido = _pedido_falso(
+        peso_total_kg=50,
+        requiere_vehiculo_grande=True,
+        items=[{"producto_id": producto_a}, {"producto_id": producto_b}],
+    )
+    _mockear_pedido(monkeypatch, pedido, productor_por_producto={producto_a: mismo_productor, producto_b: mismo_productor})
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "pendiente_entrega_directa"
+    assert envio_recargado.repartidor_id is None
+
+
+def test_proponer_envio_sin_capacidad_suficiente_y_varios_productores_sigue_pendiente_asignacion(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    insuficiente = _crear_repartidor_disponible(capacidad_maxima_kg=10)  # insuficiente para los 50 kg de abajo
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(insuficiente.id)
+    envio_ids.append(envio.id)
+
+    producto_a, producto_b = str(uuid.uuid4()), str(uuid.uuid4())
+    pedido = _pedido_falso(
+        peso_total_kg=50,
+        requiere_vehiculo_grande=True,
+        items=[{"producto_id": producto_a}, {"producto_id": producto_b}],
+    )
+    # Dos productores DISTINTOS — no se puede resolver un único productor.
+    _mockear_pedido(monkeypatch, pedido, productor_por_producto={producto_a: str(uuid.uuid4()), producto_b: str(uuid.uuid4())})
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    # Comportamiento actual: NO se inventa un estado nuevo cuando no se puede confirmar un solo
+    # productor — el hilo de reintento de huérfanos ya existente lo sigue intentando después.
+    assert _envio_recargado(envio.id).estado == "pendiente_asignacion"
+
+
+def test_proponer_envio_con_peso_desconocido_no_aplica_filtro_de_capacidad_regresion(monkeypatch, matching):
+    """Regresión: un repartidor SIN capacidad_maxima_kg declarada (legado, previo a esta
+    sub-entrega) sigue siendo un candidato válido cuando el peso del pedido es desconocido — el
+    comportamiento debe ser idéntico al de antes de este cambio, sin ningún filtro."""
+    repartidor_ids, envio_ids = matching
+    sin_capacidad = _crear_repartidor_disponible(capacidad_maxima_kg=None)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(sin_capacidad.id)
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=None))
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "propuesto"
+    assert str(envio_recargado.repartidor_id) == str(sin_capacidad.id)
+
+
+def test_proponer_envio_con_pedidos_inalcanzable_degrada_a_peso_desconocido(monkeypatch, matching):
+    """Si Pedidos no responde, no se bloquea la asignación — se comporta como si el peso fuera
+    desconocido (mismo criterio que peso_total_kg null)."""
+    repartidor_ids, envio_ids = matching
+    disponible = _crear_repartidor_disponible(capacidad_maxima_kg=None)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(disponible.id)
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, pedido=None, pedidos_no_disponible=True)
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "propuesto"
+    assert str(envio_recargado.repartidor_id) == str(disponible.id)
 
 
 # ============ POST /repartidores: tipo_vehiculo / capacidad_maxima_kg ============
