@@ -23,20 +23,23 @@ def _obtener_pedido(pedido_id):
     return resp.json()
 
 
-def _pedido_es_de_un_solo_productor(pedido):
-    """True si TODOS los items del pedido pertenecen al mismo productor. Se resuelve pidiendo
+def _resolver_productor_unico(pedido):
+    """Devuelve el productor_id (string) si TODOS los items del pedido pertenecen al mismo
+    productor, o None si hay más de uno o no se pudo resolver con certeza. Se resuelve pidiendo
     producto_id -> productor_id a Productos, un producto por llamada (no existe un endpoint de
     lote en Productos) — mismo patrón que pagos/logica_liquidaciones.py::crear_liquidaciones al
     agrupar liquidaciones por productor, incluyendo deduplicar producto_id antes de llamar.
 
     A diferencia de esa función (que deja propagar cualquier falla porque ahí resolver el
-    productor ES el objetivo del paso), acá cualquier falla se traga y devuelve False: esto es
+    productor ES el objetivo del paso), acá cualquier falla se traga y devuelve None: esto es
     solo un refinamiento para decidir un estado sobre una transición que de todos modos tiene que
     pasar — ante la duda, el envío cae al camino ya existente (pendiente_asignacion), nunca a uno
-    nuevo sin poder confirmarlo."""
+    nuevo sin poder confirmarlo. El productor_id devuelto se guarda en Envio.productor_id (ver
+    proponer_envio_a_repartidor) para que GET /envios/pendientes-entrega-directa (main.py) pueda
+    filtrar server-side sin repetir esta misma resolución en cada consulta."""
     producto_ids = {item["producto_id"] for item in pedido.get("items", []) if item.get("producto_id")}
     if not producto_ids:
-        return False
+        return None
 
     productores_ids = set()
     try:
@@ -46,9 +49,11 @@ def _pedido_es_de_un_solo_productor(pedido):
                 resp.raise_for_status()
                 productores_ids.add(resp.json()["productor_id"])
     except (httpx.RequestError, httpx.HTTPStatusError, KeyError):
-        return False
+        return None
 
-    return len(productores_ids) == 1
+    if len(productores_ids) == 1:
+        return productores_ids.pop()
+    return None
 
 
 def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
@@ -132,8 +137,13 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
         # vehículo grande (no cualquier "no alcanzó" amerita este camino — ver
         # Pedido.requiere_vehiculo_grande en pedidos/main.py), y es de un solo productor (si no
         # se puede resolver con certeza, se cae al comportamiento de siempre).
-        if peso_total_kg is not None and pedido.get("requiere_vehiculo_grande") and _pedido_es_de_un_solo_productor(pedido):
+        productor_id_unico = None
+        if peso_total_kg is not None and pedido.get("requiere_vehiculo_grande"):
+            productor_id_unico = _resolver_productor_unico(pedido)
+
+        if productor_id_unico:
             envio.estado = "pendiente_entrega_directa"
+            envio.productor_id = productor_id_unico
             db.commit()
             print(f"[Transporte] Envío {envio_id} sin repartidor con capacidad suficiente — un solo productor, marcado para entrega directa")
             return

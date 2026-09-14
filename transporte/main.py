@@ -12,9 +12,10 @@ logging.basicConfig(level=logging.INFO)
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from auth import verificar_token, requiere_rol
+from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
 import models
@@ -112,7 +113,44 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
     ).all()
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
+PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
+
+def _resolver_productor_autenticado(token: str):
+    """Resuelve el Productor autenticado llamando a GET /productores/me con el mismo bearer
+    token del caller — mismo patrón inline que ya usa Productos en varios de sus endpoints (ej.
+    subir_imagen) para lo mismo. Sin circuit breaker a propósito: a diferencia de Productos (que
+    llama a Productores en casi todos sus endpoints de escritura), este es el único call site de
+    Transporte hacia Productores, no una dependencia de alto tráfico."""
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de productor")
+    return resp.json()
+
+# Server-side real (a diferencia de GET /envios + filtro en el frontend, ver informe de la
+# sub-entrega anterior): filtra por Envio.productor_id, la columna que proponer_envio_a_repartidor
+# ya puebla al decidir esta transición (ver logica_repartidores.py) — sin repetir la resolución
+# cruzada contra Productos en cada consulta.
+@app.get("/envios/pendientes-entrega-directa")
+def envios_pendientes_entrega_directa(
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    productor = _resolver_productor_autenticado(credenciales.credentials)
+    return db.query(models.Envio).filter(
+        models.Envio.estado == "pendiente_entrega_directa",
+        models.Envio.productor_id == productor["id"],
+    ).all()
 
 @app.get("/envios/{envio_id}/ruta")
 def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
@@ -232,18 +270,41 @@ def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secr
     return {"mensaje": "Envío eliminado"}
 
 @app.patch("/envios/{envio_id}/estado")
-def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
-    repartidor = db.query(models.Repartidor).filter(
-        models.Repartidor.usuario_id == usuario.get("sub")
-    ).first()
-    if not repartidor:
-        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
-
+def actualizar_estado(
+    envio_id: str,
+    datos: EstadoEnvio,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("repartidor", "productor")),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
-    if str(envio.repartidor_id) != str(repartidor.id):
-        raise HTTPException(status_code=403, detail="No puedes actualizar el estado de un envío que no es tuyo")
+
+    if usuario.get("rol") == "repartidor":
+        # Comportamiento actual, sin cambios: cualquier estado vale (asignado/en_camino/
+        # entregado, ver el <select> del panel de repartidor en el frontend), mientras el envío
+        # sea suyo. Una whitelist de transiciones acá rompería esas transiciones legítimas —
+        # queda para una sub-entrega aparte que enumere la máquina de estados completa.
+        repartidor = db.query(models.Repartidor).filter(
+            models.Repartidor.usuario_id == usuario.get("sub")
+        ).first()
+        if not repartidor:
+            raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
+        if str(envio.repartidor_id) != str(repartidor.id):
+            raise HTTPException(status_code=403, detail="No puedes actualizar el estado de un envío que no es tuyo")
+    else:
+        # Productor: solo puede cerrar una entrega directa que ya asumió, y solo hacia
+        # "entregado" — a diferencia del repartidor, acá SÍ hay una whitelist estricta, porque
+        # no hay ninguna transición previa legítima que preservar (esta es la única que un
+        # productor puede hacer por este endpoint).
+        if datos.estado != "entregado":
+            raise HTTPException(status_code=403, detail="Un productor solo puede marcar un envío como entregado")
+        if envio.estado != "pendiente_entrega_directa":
+            raise HTTPException(status_code=409, detail="Este envío no está pendiente de entrega directa")
+        productor = _resolver_productor_autenticado(credenciales.credentials)
+        if str(envio.productor_id) != str(productor["id"]):
+            raise HTTPException(status_code=403, detail="No puedes actualizar un envío que no te corresponde")
 
     envio.estado = datos.estado
     db.commit()
@@ -256,22 +317,28 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
     })
 
     if datos.estado == "entregado":
-        repartidor_envio = db.query(models.Repartidor).filter(
-            models.Repartidor.id == envio.repartidor_id
-        ).first()
-        if repartidor_envio:
-            repartidor_envio.estado_disponibilidad = "disponible"
-            db.commit()
-            # Disparador inmediato: este repartidor recién quedó libre, revisa si hay algún
-            # envío huérfano esperando (el más antiguo primero) e intenta resolverlo ahora
-            # mismo, sin esperar al job periódico de reintento_huerfanos.py.
-            intentar_resolver_envio_huerfano(db)
+        # Solo si hubo repartidor (una entrega directa por el productor nunca tuvo uno asignado
+        # — envio.repartidor_id sigue en None de punta a punta): no hay a quién liberar ni a
+        # quién buscarle un huérfano nuevo, porque nadie quedó libre.
+        if envio.repartidor_id:
+            repartidor_envio = db.query(models.Repartidor).filter(
+                models.Repartidor.id == envio.repartidor_id
+            ).first()
+            if repartidor_envio:
+                repartidor_envio.estado_disponibilidad = "disponible"
+                db.commit()
+                # Disparador inmediato: este repartidor recién quedó libre, revisa si hay algún
+                # envío huérfano esperando (el más antiguo primero) e intenta resolverlo ahora
+                # mismo, sin esperar al job periódico de reintento_huerfanos.py.
+                intentar_resolver_envio_huerfano(db)
 
         # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
         # Un fallo acá no bloquea nada ni deshace la entrega ya confirmada — igual que con la
         # liquidación de repartidor de abajo, queda un rastro reintentable:
         # envio.certificacion_confirmada sigue en False y reintento_certificacion.py lo va a
-        # reintentar cada INTERVALO_SEGUNDOS hasta que Certificación responda.
+        # reintentar cada INTERVALO_SEGUNDOS hasta que Certificación responda. Se dispara igual
+        # sin importar quién marcó la entrega (repartidor o productor): la trazabilidad del
+        # producto no depende de quién lo entregó.
         try:
             notificar_entrega_a_certificacion(db, envio)
             db.commit()
@@ -283,20 +350,24 @@ def actualizar_estado(envio_id: str, datos: EstadoEnvio, db: Session = Depends(g
                 exc_info=True,
             )
 
-        # Mismo criterio no intrusivo que arriba: un fallo acá no bloquea nada ni deshace la
-        # entrega ya confirmada. envio.liquidacion_confirmada sigue en False y
-        # reintento_liquidacion_repartidor.py lo va a reintentar cada INTERVALO_SEGUNDOS hasta
-        # que Pagos responda.
-        try:
-            notificar_liquidacion_repartidor(db, envio)
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.error(
-                "No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
-                envio.pedido_id,
-                exc_info=True,
-            )
+        # Mismo guard que arriba: sin repartidor no hay nada que liquidarle por transporte (una
+        # entrega directa no tuvo costo de repartidor) — mandar "repartidor_id": "None" a Pagos
+        # crearía una liquidación basura para un repartidor que nunca existió.
+        if envio.repartidor_id:
+            # Mismo criterio no intrusivo que arriba: un fallo acá no bloquea nada ni deshace la
+            # entrega ya confirmada. envio.liquidacion_confirmada sigue en False y
+            # reintento_liquidacion_repartidor.py lo va a reintentar cada INTERVALO_SEGUNDOS hasta
+            # que Pagos responda.
+            try:
+                notificar_liquidacion_repartidor(db, envio)
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.error(
+                    "No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
+                    envio.pedido_id,
+                    exc_info=True,
+                )
 
     return envio
 

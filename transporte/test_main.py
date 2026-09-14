@@ -27,6 +27,7 @@ import uuid
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 import main
@@ -35,13 +36,20 @@ import logica_certificacion
 import logica_repartidores
 from reintento_liquidacion_repartidor import reintentar_liquidaciones_repartidor_pendientes
 from reintento_certificacion import reintentar_certificaciones_pendientes
-from auth import verificar_token
+from auth import verificar_token, security
 
 client = TestClient(main.app)
 
 
 def _auth(sub: str, rol: str = "repartidor"):
     main.app.dependency_overrides[verificar_token] = lambda: {"sub": sub, "rol": rol}
+    # actualizar_estado y envios_pendientes_entrega_directa además dependen de `security`
+    # (HTTPBearer crudo) para reenviar el token a Productores — sin esto, TestClient (que no
+    # manda header Authorization por defecto) recibe 401 "Not authenticated" ANTES de llegar al
+    # código, sin importar el override de verificar_token de arriba.
+    main.app.dependency_overrides[security] = lambda: HTTPAuthorizationCredentials(
+        scheme="Bearer", credentials="token-de-prueba"
+    )
 
 
 class _RespuestaFalsa:
@@ -146,13 +154,14 @@ def _crear_repartidor_directo(usuario_id=None) -> "main.models.Repartidor":
         db.close()
 
 
-def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None) -> "main.models.Envio":
+def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, productor_id=None) -> "main.models.Envio":
     db = main.SessionLocal()
     try:
         envio = main.models.Envio(
             repartidor_id=repartidor_id,
             pedido_id=pedido_id or uuid.uuid4(),
             estado=estado,
+            productor_id=productor_id,
         )
         db.add(envio)
         db.commit()
@@ -444,6 +453,9 @@ def test_proponer_envio_sin_capacidad_suficiente_y_un_solo_productor_queda_pendi
     envio_recargado = _envio_recargado(envio.id)
     assert envio_recargado.estado == "pendiente_entrega_directa"
     assert envio_recargado.repartidor_id is None
+    # El mismo productor_id ya resuelto para decidir la transición queda guardado — no se
+    # descarta, para que GET /envios/pendientes-entrega-directa lo pueda filtrar server-side.
+    assert str(envio_recargado.productor_id) == mismo_productor
 
 
 def test_proponer_envio_sin_capacidad_suficiente_y_varios_productores_sigue_pendiente_asignacion(monkeypatch, matching):
@@ -563,3 +575,135 @@ def test_crear_repartidor_con_capacidad_negativa_falla_422():
 
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"] == "La capacidad máxima debe ser mayor a 0 kg"
+
+
+# ============ Entrega directa: GET /envios/pendientes-entrega-directa y PATCH por productor ============
+
+class _ClienteProductoresFalso:
+    """Reemplaza httpx.Client() dentro de main: GET /productores/me devuelve un productor fijo,
+    sin tocar la red — mismo espíritu que _ClienteRepartidoresFalso, pero para el único call
+    site de Transporte hacia Productores."""
+    def __init__(self, productor_id, status_code=200):
+        self._productor_id = productor_id
+        self._status_code = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        return _RespuestaFalsa(self._status_code, {"id": self._productor_id})
+
+
+def _mockear_productor_autenticado(monkeypatch, productor_id, status_code=200):
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClienteProductoresFalso(productor_id, status_code))
+
+
+def test_envios_pendientes_entrega_directa_filtra_por_productor_correcto(monkeypatch):
+    productor_a, productor_b = str(uuid.uuid4()), str(uuid.uuid4())
+    envio_de_a = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=productor_a)
+    _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=productor_b)
+    # Mismo productor A, pero en otro estado — no debe aparecer aunque el productor coincida.
+    _crear_envio_directo(None, estado="propuesto", productor_id=productor_a)
+
+    _mockear_productor_autenticado(monkeypatch, productor_a)
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.get("/envios/pendientes-entrega-directa")
+
+    assert resp.status_code == 200, resp.text
+    ids = {e["id"] for e in resp.json()}
+    assert ids == {str(envio_de_a.id)}
+
+
+class _ClienteEntregaDirectaFalso:
+    """httpx.Client es el MISMO objeto de módulo compartido por TODO archivo que hace
+    `import httpx` (main.py, logica_certificacion.py, etc. — Python cachea el módulo una sola
+    vez en sys.modules) — mockearlo dos veces con dos propósitos distintos en un solo test (uno
+    para /productores/me, otro para /certificacion/...) hace que el segundo pise al primero. Este
+    cliente combinado responde según la URL, cubriendo TODAS las llamadas salientes de la
+    request completa "productor marca entregado": la propia (GET /productores/me) y la que
+    dispara notificar_entrega_a_certificacion (GET /pedidos/{id}, POST a Certificación)."""
+    def __init__(self, productor_id, producto_id=None):
+        self._productor_id = productor_id
+        self._producto_id = producto_id or str(uuid.uuid4())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        if "/productores/me" in url:
+            return _RespuestaFalsa(200, {"id": self._productor_id})
+        return _RespuestaFalsa(200, {"items": [{"producto_id": self._producto_id}]})
+
+    def post(self, url, **kwargs):
+        return _RespuestaFalsa(200, {"mensaje": "ok"})
+
+
+def test_actualizar_estado_productor_marca_entregado_si_le_corresponde(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=productor_id)
+
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClienteEntregaDirectaFalso(productor_id))
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "entregado"
+
+
+def test_actualizar_estado_productor_sobre_envio_de_otro_productor_falla_403(monkeypatch):
+    envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=str(uuid.uuid4()))
+
+    _mockear_productor_autenticado(monkeypatch, str(uuid.uuid4()))  # un productor DISTINTO
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "No puedes actualizar un envío que no te corresponde"
+
+
+def test_actualizar_estado_productor_sobre_envio_no_pendiente_entrega_directa_falla_409(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    envio = _crear_envio_directo(None, estado="propuesto", productor_id=productor_id)
+
+    _mockear_productor_autenticado(monkeypatch, productor_id)
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "Este envío no está pendiente de entrega directa"
+
+
+def test_actualizar_estado_productor_con_estado_distinto_de_entregado_falla_403(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=productor_id)
+
+    _mockear_productor_autenticado(monkeypatch, productor_id)
+    _auth(str(uuid.uuid4()), rol="productor")
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "en_camino"})
+
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"] == "Un productor solo puede marcar un envío como entregado"
+
+
+def test_actualizar_estado_repartidor_sigue_funcionando_igual_regresion(monkeypatch):
+    """El repartidor no queda sujeto a la whitelist nueva del productor — puede seguir
+    transicionando a estados intermedios como "en_camino", exactamente igual que antes."""
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="asignado")
+
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    _auth(usuario_id)  # rol="repartidor" por defecto
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "en_camino"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "en_camino"

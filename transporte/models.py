@@ -24,6 +24,13 @@ class Envio(Base):
     # logica_certificacion.py) — mismo patrón que liquidacion_confirmada de arriba, para que
     # reintento_certificacion.py pueda encontrar "cuáles quedaron sin certificar".
     certificacion_confirmada = Column(Boolean, nullable=False, default=False)
+    # NO es un ForeignKey real (cross-servicio: Productor vive en Productores) — mismo patrón que
+    # Producto.productor_id en productos/models.py. Null salvo cuando estado ==
+    # "pendiente_entrega_directa": se puebla en proponer_envio_a_repartidor (ver
+    # logica_repartidores.py) con el mismo productor_id que ya se resolvió para decidir esa
+    # transición, así GET /envios/pendientes-entrega-directa puede filtrar server-side sin
+    # repetir la resolución cruzada contra Productos en cada consulta.
+    productor_id = Column(UUID(as_uuid=True), nullable=True)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"
