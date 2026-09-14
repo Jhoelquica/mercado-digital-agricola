@@ -2196,6 +2196,16 @@ input, select { font-family: inherit; }
 .auth-form h3 { margin-bottom: 4px; }
 .auth-form.hidden { display: none; }
 
+/* Separador "o continúa con" entre el form tradicional y el botón de Google — línea propia con
+   texto centrado encima, sin depender de ningún ícono ni imagen. */
+.auth-divider { display: flex; align-items: center; gap: 10px; margin: 2px 0; color: var(--texto-suave); font-size: 0.82rem; }
+.auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: var(--color-borde); }
+
+/* El botón real lo renderiza Google (google.accounts.id.renderButton, ver
+   inicializarGoogleSignIn en app.js) dentro de este contenedor — acá solo se centra, ya que el
+   ancho lo fija JS al momento de renderizar para que combine con el resto del modal. */
+.auth-google-btn { display: flex; justify-content: center; }
+
 .carrito-items { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; max-height: 260px; overflow-y: auto; }
 .carrito-item {
   display: flex; align-items: center; gap: 10px;

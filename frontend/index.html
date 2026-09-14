@@ -601,6 +601,8 @@
         <input type="password" id="login-password" required placeholder="••••••••">
       </label>
       <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
+      <div class="auth-divider"><span>o continúa con</span></div>
+      <div id="google-btn-login" class="auth-google-btn"></div>
     </form>
 
     <form id="form-registro" class="auth-form hidden">
@@ -629,6 +631,11 @@
         <input type="text" id="registro-codigo-invitacion" placeholder="Pega el código que te compartieron">
       </label>
       <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
+      <div class="auth-divider"><span>o continúa con</span></div>
+      <!-- Lee el rol y (si aplica) el código de invitación del formulario de arriba al hacer
+           clic — mismo <select>/campo que ya usa manejarRegistro(), ver manejarRegistroGoogle
+           en app.js. -->
+      <div id="google-btn-registro" class="auth-google-btn"></div>
     </form>
   </div>
 </div>
@@ -737,6 +744,7 @@
   </div>
 </div>
 
+<script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="js/api.js?v=c936f4e1"></script>

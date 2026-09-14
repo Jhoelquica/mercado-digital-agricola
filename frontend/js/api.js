@@ -13,6 +13,16 @@ const API_BASE = {
 // Llave pública de Culqi (modo test, segura de exponer en frontend)
 const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
 
+// Client ID de Google (login/registro con Google, ver POST /usuarios/oauth/google) — no es
+// secreto (viaja público en el HTML, Google lo espera así), pero de todas formas no se
+// hardcodea inline donde se usa, mismo criterio que CULQI_PUBLIC_KEY de arriba.
+// PLACEHOLDER — reemplazar con el Client ID real generado en Google Cloud Console
+// (console.cloud.google.com → APIs & Services → Credentials → OAuth 2.0 Client ID, tipo "Web
+// application") antes de usar en cualquier entorno real. Cada entorno (dev/prod) suele tener
+// el suyo propio, ya que el Client ID está atado a los orígenes autorizados (localhost vs. el
+// dominio real).
+const GOOGLE_CLIENT_ID = 'T546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com';
+
 class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -93,6 +103,10 @@ const Api = {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
     login: (datos) => request('usuarios', '/usuarios/login', { method: 'POST', body: datos }),
     obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
+    // rol/codigo_invitacion solo aplican si el id_token no matchea ninguna cuenta existente
+    // (registro nuevo) — mismo gating de roles que Api.usuarios.registrar(), resuelto del lado
+    // del backend (ver POST /usuarios/oauth/google).
+    oauthGoogle: (datos) => request('usuarios', '/usuarios/oauth/google', { method: 'POST', body: datos }),
   },
   admin: {
     // El rol Admin vive en el servicio de usuarios (mismo servicio del login/registro) —

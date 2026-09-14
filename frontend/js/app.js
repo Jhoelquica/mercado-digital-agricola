@@ -4817,6 +4817,77 @@ async function manejarRegistro(e) {
   }
 }
 
+// ---- Login/registro con Google (POST /usuarios/oauth/google) ----
+// Un solo botón de Google por tab (login/registro), ambos apuntando al mismo callback: la API
+// de Identity Services no distingue "de qué botón vino" el credential, así que
+// manejarCredencialGoogle() mira qué tab está activo en ESE momento para decidir qué hacer con
+// él — evita inicializar dos veces o mantener dos callbacks separados para el mismo id_token.
+function inicializarGoogleSignIn() {
+  if (!window.google?.accounts?.id) return; // script de Google no cargó (bloqueado, sin red, etc.) — sin esto, no hay botón, pero el resto del modal sigue funcionando igual
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: manejarCredencialGoogle });
+
+  // Ancho fijo, no medido en el momento: el modal está oculto (display:none) cuando esto corre
+  // (llamado una sola vez desde iniciar(), antes de que el usuario abra nada), así que
+  // getBoundingClientRect() daría 0 — 380px encaja bien dentro del ancho de contenido real del
+  // modal (.modal tiene max-width:480px con 28px de padding a cada lado).
+  ['google-btn-login', 'google-btn-registro'].forEach((id) => {
+    const contenedor = document.getElementById(id);
+    if (!contenedor) return;
+    google.accounts.id.renderButton(contenedor, {
+      theme: 'outline', size: 'large', shape: 'rectangular', text: 'continue_with', width: 380,
+    });
+  });
+}
+
+function manejarCredencialGoogle(response) {
+  const tabActivo = document.querySelector('.auth-tab.active')?.dataset.tab;
+  if (tabActivo === 'registro') {
+    manejarRegistroGoogle(response.credential);
+  } else {
+    manejarLoginGoogle(response.credential);
+  }
+}
+
+async function manejarLoginGoogle(credential) {
+  try {
+    const resp = await Api.usuarios.oauthGoogle({ id_token: credential });
+    await iniciarSesionConToken(resp.access_token);
+    cerrarModal('modal-auth');
+    cambiarVista(vistaInicialPara(Estado.rol));
+    toast(`¡Bienvenido, ${Estado.nombre}! 🌱`);
+  } catch (err) {
+    if (err.status === 400) {
+      // Sin cuenta previa (ni por Google ni por email) y el tab de Login no pide un rol — el
+      // backend lo rechaza en vez de registrar a ciegas. Se invita a usar Registrarse en vez de
+      // mostrar el 400 crudo ("Selecciona un rol antes de continuar con Google").
+      toast('No encontramos una cuenta con ese Google. Usa "Registrarse" para crear una.', 'error');
+      cambiarTabAuth('registro');
+      return;
+    }
+    manejarError(err, 'iniciar sesión con Google');
+  }
+}
+
+async function manejarRegistroGoogle(credential) {
+  const rol = document.getElementById('registro-rol').value;
+  const datos = { id_token: credential, rol };
+  if (rolRequiereInvitacion(rol)) {
+    datos.codigo_invitacion = document.getElementById('registro-codigo-invitacion').value.trim();
+  }
+
+  try {
+    const resp = await Api.usuarios.oauthGoogle(datos);
+    await iniciarSesionConToken(resp.access_token);
+    document.getElementById('form-registro').reset();
+    actualizarCampoCodigoInvitacion(); // el reset vuelve el <select> a "comprador" — resincroniza el campo
+    cerrarModal('modal-auth');
+    cambiarVista(vistaInicialPara(Estado.rol));
+    toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${Estado.nombre} 🎉`);
+  } catch (err) {
+    manejarError(err, 'crear la cuenta con Google');
+  }
+}
+
 // ============ EVENTOS ============
 function inicializarEventos() {
   document.querySelectorAll('[data-nav]').forEach((el) => {
@@ -5303,6 +5374,7 @@ function iniciar() {
   actualizarUIAuth();
   renderNavCategorias();
   inicializarEventos();
+  inicializarGoogleSignIn();
   cambiarVista(vistaInicialPara(Estado.rol));
 }
 
