@@ -62,6 +62,34 @@ def sembrar_configuracion_almacen():
     finally:
         db.close()
 
+CLAVE_UMBRAL_PEDIDO_GRANDE = "umbral_pedido_grande_kg"
+# Aproximación del peso de un saco chico — valor inicial hasta que el Admin lo cambie desde
+# PATCH /configuracion/umbral-pedido-grande. Mismo criterio de siembra que el almacén: una sola
+# vez al arrancar, un cambio posterior del Admin nunca se pisa.
+UMBRAL_PEDIDO_GRANDE_KG_DEFAULT = 25.0
+
+@app.on_event("startup")
+def sembrar_configuracion_umbral_pedido_grande():
+    db = SessionLocal()
+    try:
+        ya_existe = db.query(models.ConfiguracionSistema).filter(
+            models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
+        ).first()
+        if ya_existe:
+            return
+
+        nueva = models.ConfiguracionSistema(
+            clave=CLAVE_UMBRAL_PEDIDO_GRANDE,
+            valor_numerico=UMBRAL_PEDIDO_GRANDE_KG_DEFAULT,
+        )
+        db.add(nueva)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+    finally:
+        db.close()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -139,6 +167,9 @@ class AlmacenActualizar(BaseModel):
     latitud: float
     longitud: float
 
+class UmbralActualizar(BaseModel):
+    umbral_kg: float
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "pedidos"}
@@ -177,6 +208,41 @@ def actualizar_ubicacion_almacen(
     return {
         "latitud": config.valor_latitud,
         "longitud": config.valor_longitud,
+        "fecha_actualizacion": config.fecha_actualizacion,
+    }
+
+# Público a propósito, mismo criterio que /configuracion/almacen: el comprador (o cualquier
+# integración) puede querer saber desde cuánto peso un pedido va a requerir vehículo grande, sin
+# necesitar sesión iniciada.
+@app.get("/configuracion/umbral-pedido-grande")
+def obtener_umbral_pedido_grande(db: Session = Depends(get_db)):
+    config = db.query(models.ConfiguracionSistema).filter(
+        models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
+    ).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="No se encontró la configuración del umbral de pedido grande")
+    return {
+        "umbral_kg": config.valor_numerico,
+        "fecha_actualizacion": config.fecha_actualizacion,
+    }
+
+@app.patch("/configuracion/umbral-pedido-grande")
+def actualizar_umbral_pedido_grande(
+    datos: UmbralActualizar,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("admin")),
+):
+    config = db.query(models.ConfiguracionSistema).filter(
+        models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
+    ).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="No se encontró la configuración del umbral de pedido grande")
+
+    config.valor_numerico = datos.umbral_kg
+    db.commit()
+    db.refresh(config)
+    return {
+        "umbral_kg": config.valor_numerico,
         "fecha_actualizacion": config.fecha_actualizacion,
     }
 
@@ -247,18 +313,42 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             if producto["stock"] < cantidad_base:
                 raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
 
-            items_validados.append((item, producto, precio_unitario, cantidad_base))
+            # Peso real de esta línea (cantidad ya en unidad base) SOLO si la unidad base del
+            # producto es "kg" — para "unidad"/"litro" el peso queda indeterminado por ahora (ver
+            # PedidoItem.peso_kg en models.py; se resuelve en una sub-entrega aparte).
+            peso_kg = cantidad_base if producto.get("unidad_medida") == "kg" else None
+
+            items_validados.append((item, producto, precio_unitario, cantidad_base, peso_kg))
 
         # Validación 2 (fail-fast, todavía antes de tocar la base de datos): el subtotal (precio ×
         # cantidad de cada item, sin contar envío) debe alcanzar el mínimo de compra. precio_unitario
         # y cantidad ya están en la MISMA unidad (la que eligió el comprador), así que la cuenta es
         # correcta sin importar si es la unidad base o una alternativa.
-        subtotal = sum(precio_unitario * item.cantidad for item, producto, precio_unitario, cantidad_base in items_validados)
+        subtotal = sum(precio_unitario * item.cantidad for item, producto, precio_unitario, cantidad_base, peso_kg in items_validados)
         if subtotal < MONTO_MINIMO_PEDIDO:
             raise HTTPException(
                 status_code=400,
                 detail="El monto mínimo de compra es S/30.00. Agrega más productos para continuar.",
             )
+
+        # Peso total del pedido: null si CUALQUIER línea tiene peso desconocido — no se aproxima
+        # ni se ignora la línea faltante, porque no podemos afirmar un total si falta un dato.
+        pesos = [peso_kg for _, _, _, _, peso_kg in items_validados]
+        peso_total_kg = sum(pesos) if all(p is not None for p in pesos) else None
+
+        # Mismo criterio que el almacén: el umbral se lee de ConfiguracionSistema (nunca
+        # hardcodeado), así un cambio del Admin en /configuracion/umbral-pedido-grande afecta a
+        # los pedidos nuevos sin tocar código.
+        umbral_config = db.query(models.ConfiguracionSistema).filter(
+            models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
+        ).first()
+        if not umbral_config:
+            # No debería pasar nunca en la práctica (sembrar_configuracion_umbral_pedido_grande
+            # corre al arrancar cada réplica), pero sin esto un pedido se crearía con un criterio
+            # de vehículo grande inventado.
+            raise HTTPException(status_code=503, detail="No se pudo determinar el umbral de pedido grande: falta la configuración")
+
+        requiere_vehiculo_grande = peso_total_kg is not None and peso_total_kg > umbral_config.valor_numerico
 
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(
@@ -268,11 +358,13 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             destino_latitud=datos.destino_latitud,
             destino_longitud=datos.destino_longitud,
             costo_envio=costo_envio,
+            peso_total_kg=peso_total_kg,
+            requiere_vehiculo_grande=requiere_vehiculo_grande,
         )
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía
 
-        for item, producto, precio_unitario, cantidad_base in items_validados:
+        for item, producto, precio_unitario, cantidad_base, peso_kg in items_validados:
             client.patch(
                 f"{PRODUCTOS_URL}/productos/{item.producto_id}/stock",
                 json={"cantidad": cantidad_base},
@@ -285,6 +377,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 cantidad=item.cantidad,
                 unidad=item.unidad,
                 precio_unitario=precio_unitario,
+                peso_kg=peso_kg,
             )
             db.add(nuevo_item)
 

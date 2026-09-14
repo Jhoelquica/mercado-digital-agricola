@@ -28,6 +28,7 @@ from auth import verificar_token
 
 client = TestClient(main.app)
 main.sembrar_configuracion_almacen()
+main.sembrar_configuracion_umbral_pedido_grande()
 
 # Bypassea la autenticación real: en todos los tests se simula un comprador ya autenticado.
 # Se sobreescribe la dependencia estable `verificar_token` (no `requiere_rol(...)`, que genera
@@ -39,7 +40,7 @@ DESTINO_DENTRO_AYACUCHO = {"destino_latitud": -13.1588, "destino_longitud": -74.
 DESTINO_FUERA_AYACUCHO = {"destino_latitud": -12.0464, "destino_longitud": -77.0428}
 
 
-def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None):
+def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg"):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
     PATCH (descuento de stock) no hace nada real."""
     mock_client = MagicMock()
@@ -54,6 +55,7 @@ def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_
         "precio": precio,
         "stock": stock,
         "unidades_alternativas": unidades_alternativas or [],
+        "unidad_medida": unidad_medida,
     }
     mock_client.get.return_value = respuesta_get
     mock_client.patch.return_value = MagicMock(status_code=200)
@@ -137,6 +139,17 @@ def _fijar_almacen(lat, lon):
 
 
 ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA = -13.1553, -74.2287  # mismo valor por defecto real
+
+
+def _fijar_umbral(umbral_kg):
+    """Mismo propósito que _fijar_almacen: deja el umbral de pedido grande en un valor conocido,
+    sin importar qué haya dejado el valor sembrado al arrancar o un PATCH de un test anterior."""
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": "admin"}
+    try:
+        resp = client.patch("/configuracion/umbral-pedido-grande", json={"umbral_kg": umbral_kg})
+        assert resp.status_code == 200, resp.text
+    finally:
+        main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": "comprador"}
 
 
 def test_costo_envio_tramo_hasta_10km():
@@ -300,3 +313,122 @@ def test_precio_unitario_ignora_precio_enviado_en_el_payload():
 
     assert resp.status_code == 200, resp.text
     assert float(resp.json()["items"][0]["precio_unitario"]) == 50.0
+
+
+# ============ Peso total y umbral de vehículo grande (ConfiguracionSistema) ============
+
+def test_obtener_umbral_pedido_grande_no_requiere_autenticacion():
+    resp = client.get("/configuracion/umbral-pedido-grande")
+    assert resp.status_code == 200, resp.text
+    assert "umbral_kg" in resp.json()
+
+
+def test_actualizar_umbral_sin_rol_admin_falla_403():
+    resp = client.patch("/configuracion/umbral-pedido-grande", json={"umbral_kg": 30.0})
+    assert resp.status_code == 403
+
+
+def test_pedido_en_kg_bajo_el_umbral_no_requiere_vehiculo_grande():
+    _fijar_umbral(25.0)
+    # 10 kg a S/5.00 c/u: S/50.00 de subtotal (sobre el mínimo) y 10 kg de peso, bajo el umbral.
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
+         patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert float(cuerpo["peso_total_kg"]) == 10.0
+    assert cuerpo["requiere_vehiculo_grande"] is False
+
+
+def test_pedido_en_kg_sobre_el_umbral_requiere_vehiculo_grande():
+    _fijar_umbral(25.0)
+    # 30 kg a S/5.00 c/u: S/150.00 de subtotal y 30 kg de peso, sobre el umbral de 25.
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=30)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
+         patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert float(cuerpo["peso_total_kg"]) == 30.0
+    assert cuerpo["requiere_vehiculo_grande"] is True
+
+
+def test_pedido_con_producto_unidad_no_kg_deja_peso_null_y_no_marca_vehiculo_grande():
+    """Regla explícita: si no podemos afirmar el peso (unidad base "unidad"/"litro"), no se
+    fuerza requiere_vehiculo_grande a True aunque la cantidad sea grande — queda en False."""
+    _fijar_umbral(25.0)
+    # 100 unidades a S/1.00 c/u: S/100.00 de subtotal, pero la unidad base del producto no es kg.
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=1.0, cantidad=100)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=1.0, unidad_medida="unidad")), \
+         patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["peso_total_kg"] is None
+    assert cuerpo["requiere_vehiculo_grande"] is False
+
+
+def test_pedido_con_una_linea_no_kg_entre_varias_deja_peso_total_null():
+    """Un solo item con peso desconocido invalida el total del pedido completo, aunque el resto
+    de líneas sí tengan peso — no se suma "lo que se pueda", el total pasa a ser null entero."""
+    _fijar_umbral(25.0)
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10)
+    payload["items"].append({"producto_id": str(uuid.uuid4()), "cantidad": 5})
+
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+    respuesta_kg = MagicMock(status_code=200)
+    respuesta_kg.json.return_value = {
+        "id": str(uuid.uuid4()), "nombre": "Producto kg", "precio": 5.0, "stock": 100,
+        "unidades_alternativas": [], "unidad_medida": "kg",
+    }
+    respuesta_unidad = MagicMock(status_code=200)
+    respuesta_unidad.json.return_value = {
+        "id": str(uuid.uuid4()), "nombre": "Producto por unidad", "precio": 5.0, "stock": 100,
+        "unidades_alternativas": [], "unidad_medida": "unidad",
+    }
+    mock_client.get.side_effect = [respuesta_kg, respuesta_unidad]
+    mock_client.patch.return_value = MagicMock(status_code=200)
+
+    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["peso_total_kg"] is None
+    assert cuerpo["requiere_vehiculo_grande"] is False
+
+
+def test_cambiar_umbral_afecta_pedidos_futuros_sin_tocar_los_ya_creados():
+    _fijar_umbral(25.0)
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=30)  # 30 kg, S/150.00
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
+         patch("main.publicar_evento"):
+        primero = client.post("/pedidos", json=payload)
+    assert primero.status_code == 200, primero.text
+    assert primero.json()["requiere_vehiculo_grande"] is True
+
+    # Subimos el umbral por encima de esos mismos 30 kg — un pedido nuevo con la misma carga ya
+    # NO debería requerir vehículo grande, sin tocar ninguna línea de código.
+    _fijar_umbral(50.0)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
+         patch("main.publicar_evento"):
+        segundo = client.post("/pedidos", json=payload)
+    assert segundo.status_code == 200, segundo.text
+    assert segundo.json()["requiere_vehiculo_grande"] is False
+
+    # El pedido ya creado ANTES del cambio de umbral conserva su valor original (mismo criterio
+    # que costo_envio con la ubicación del almacén: no se recalcula retroactivamente).
+    reconsulta = client.get(f"/pedidos/{primero.json()['id']}")
+    assert reconsulta.status_code == 200, reconsulta.text
+    assert reconsulta.json()["requiere_vehiculo_grande"] is True
