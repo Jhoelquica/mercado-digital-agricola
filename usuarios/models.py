@@ -11,9 +11,17 @@ class Usuario(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nombre = Column(String, nullable=False)
     email = Column(String, unique=True, nullable=False)
-    password_hash = Column(String, nullable=False)
+    # Nullable: una cuenta creada por primera vez vía Google (POST /usuarios/oauth/google) no
+    # tiene contraseña propia — ver verificar_password en seguridad.py, ajustada para no
+    # explotar contra un hash None en vez de simplemente rechazar el login normal.
+    password_hash = Column(String, nullable=True)
     rol = Column(String, default="comprador")  # productor, comprador, admin, verificador
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+    # "sub" del id_token de Google ya verificado — único por cuenta de Google, nunca compartido.
+    # Null hasta que la cuenta se vincule (login/registro con Google, ver
+    # POST /usuarios/oauth/google): tanto una cuenta 100% Google desde el principio como una
+    # cuenta con contraseña que se vincula después terminan con este campo poblado.
+    google_id = Column(String, unique=True, nullable=True)
 
 
 def _codigo_invitacion() -> str:

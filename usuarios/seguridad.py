@@ -14,7 +14,12 @@ def hashear_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def verificar_password(password: str, password_hash: str) -> bool:
+def verificar_password(password: str, password_hash: str | None) -> bool:
+    # None = cuenta creada por Google, sin contraseña propia (ver Usuario.password_hash en
+    # models.py) — pwd_context.verify() no acepta None como hash, así que sin este guard el
+    # login normal contra esa cuenta tiraría una excepción sin capturar en vez de un 401 claro.
+    if password_hash is None:
+        return False
     return pwd_context.verify(password, password_hash)
 
 

@@ -225,6 +225,8 @@ services:
       # usuarios/main.py). Solo corre si la BD todavía no tiene ningún admin.
       ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
       ADMIN_BOOTSTRAP_PASSWORD: dev-admin-12345
+      # En docker-compose.yml, bajo el servicio usuarios:
+      GOOGLE_CLIENT_ID: 546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com
     depends_on:
       - db-usuarios
 

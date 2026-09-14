@@ -55,6 +55,8 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: ADMIN_BOOTSTRAP_PASSWORD
+            - name: GOOGLE_CLIENT_ID
+              value: "546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com"
 ---
 apiVersion: v1
 kind: Service

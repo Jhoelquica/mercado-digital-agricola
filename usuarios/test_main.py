@@ -1,26 +1,52 @@
 """
-Tests del sistema de invitaciones + registro gateado por rol restringido.
+Tests del sistema de invitaciones + registro gateado por rol restringido + login/registro con
+Google (POST /usuarios/oauth/google).
 
 Cubre: admin/invitaciones (crear, 403 no-admin, revocar, revocar-usada, validar
-existente/expirado/inexistente) y POST /usuarios/registro (comprador abierto, verificador
+existente/expirado/inexistente), POST /usuarios/registro (comprador abierto, verificador
 sin código -> 400, con código válido -> 200 + invitación usada, código de otro rol_destino
 -> 400, código usado -> 400, código expirado -> 400, y todo-o-nada: si el registro falla
-por email duplicado la invitación NO queda usada).
+por email duplicado la invitación NO queda usada), y POST /usuarios/oauth/google (login por
+google_id existente, vinculación automática por email de una cuenta con contraseña, registro
+nuevo con rol abierto/restringido reusando el mismo gating que el registro normal, id_token
+inválido -> 401, y el login normal contra una cuenta sin contraseña -> 401 sin excepción).
 
 Requiere Postgres real según database.py (UUID de postgresql + FK a usuarios + create_all()
-al importar main). No se mockea nada. Los usuarios de rol restringido (admin/verificador)
-se insertan directo por SessionLocal porque /usuarios/registro ya no los deja auto-crearse
-sin invitación; los estados "usada"/"expirada" de invitación también se siembran directo.
+al importar main). No se mockea nada salvo google_id_token.verify_oauth2_token (única llamada
+saliente real de este servicio) — nunca se golpea la red de Google de verdad. Los usuarios de
+rol restringido (admin/verificador) se insertan directo por SessionLocal porque
+/usuarios/registro ya no los deja auto-crearse sin invitación; los estados "usada"/"expirada"
+de invitación también se siembran directo.
 """
 import uuid
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
+from jose import jwt as jose_jwt
 
 import main
+import seguridad
 from auth import verificar_token
 
 client = TestClient(main.app)
+
+
+def _decodificar_jwt(token: str) -> dict:
+    return jose_jwt.decode(token, seguridad.JWT_SECRET, algorithms=[seguridad.JWT_ALGORITHM])
+
+
+def _mockear_google(monkeypatch, *, sub=None, email=None, nombre="Usuario Google"):
+    """Reemplaza main.google_id_token.verify_oauth2_token: nunca golpea la red de Google de
+    verdad. Devuelve el payload usado, para que el test pueda referenciar el mismo sub/email."""
+    payload = {"sub": sub or f"google-{uuid.uuid4().hex}", "email": email or _email(), "name": nombre}
+    monkeypatch.setattr(main.google_id_token, "verify_oauth2_token", lambda *a, **kw: payload)
+    return payload
+
+
+def _mockear_google_invalido(monkeypatch):
+    def _falla(*a, **kw):
+        raise ValueError("Token inválido o expirado")
+    monkeypatch.setattr(main.google_id_token, "verify_oauth2_token", _falla)
 
 
 def _auth(user_id: str, rol: str):
@@ -254,6 +280,146 @@ def test_codigo_valido_pero_email_duplicado_no_marca_invitacion_usada():
         assert row.usado_por is None
     finally:
         db.close()
+
+
+# ============ Login/registro con Google (POST /usuarios/oauth/google) ============
+
+def test_oauth_google_login_cuenta_existente_por_google_id(monkeypatch):
+    """Ya hay un Usuario vinculado a este google_id (de un login/registro anterior) — el
+    endpoint debe reconocerlo y emitir un JWT con SU rol de siempre, sin tocar nada más."""
+    google_sub = f"google-{uuid.uuid4().hex}"
+    db = main.SessionLocal()
+    try:
+        u = main.models.Usuario(nombre="Ya Vinculado", email=_email(), password_hash=None,
+                                 google_id=google_sub, rol="productor")
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        usuario_id = str(u.id)
+    finally:
+        db.close()
+
+    _mockear_google(monkeypatch, sub=google_sub)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+
+    assert resp.status_code == 200, resp.text
+    payload = _decodificar_jwt(resp.json()["access_token"])
+    assert payload["sub"] == usuario_id
+    assert payload["rol"] == "productor"
+
+
+def test_oauth_google_vincula_automaticamente_cuenta_con_password_existente(monkeypatch):
+    """No hay match por google_id, pero SÍ por email — una cuenta creada con contraseña antes
+    de esta sub-entrega — debe vincularse (guardar google_id) y devolver login con su rol de
+    siempre, no un registro nuevo."""
+    usuario_id = _crear_usuario("productor")
+    db = main.SessionLocal()
+    try:
+        u = db.query(main.models.Usuario).filter(main.models.Usuario.id == usuario_id).one()
+        email = u.email
+        assert u.google_id is None
+    finally:
+        db.close()
+
+    google_sub = f"google-{uuid.uuid4().hex}"
+    _mockear_google(monkeypatch, sub=google_sub, email=email)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+
+    assert resp.status_code == 200, resp.text
+    payload = _decodificar_jwt(resp.json()["access_token"])
+    assert payload["sub"] == usuario_id
+    assert payload["rol"] == "productor"
+
+    db = main.SessionLocal()
+    try:
+        u = db.query(main.models.Usuario).filter(main.models.Usuario.id == usuario_id).one()
+        assert u.google_id == google_sub
+    finally:
+        db.close()
+
+
+def test_oauth_google_registro_nuevo_con_rol_abierto_funciona(monkeypatch):
+    for rol in ("comprador", "productor", "repartidor"):
+        email = _email()
+        _mockear_google(monkeypatch, email=email, nombre=f"Nuevo {rol}")
+        resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token", "rol": rol})
+
+        assert resp.status_code == 200, resp.text
+        payload = _decodificar_jwt(resp.json()["access_token"])
+        assert payload["rol"] == rol
+
+        db = main.SessionLocal()
+        try:
+            u = db.query(main.models.Usuario).filter(main.models.Usuario.email == email).one()
+            assert u.password_hash is None  # cuenta 100% Google, sin contraseña propia
+            assert u.google_id is not None
+            assert u.rol == rol
+        finally:
+            db.close()
+
+
+def test_oauth_google_sin_rol_en_registro_nuevo_falla_400(monkeypatch):
+    """Sin cuenta previa (ni por google_id ni por email) y sin rol elegido — el caso típico de
+    intentar "Continuar con Google" desde el tab de Login sin tener cuenta todavía."""
+    _mockear_google(monkeypatch)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Selecciona un rol antes de continuar con Google"
+
+
+def test_oauth_google_rol_restringido_sin_codigo_falla_400_mismo_mensaje_que_registro_normal(monkeypatch):
+    _mockear_google(monkeypatch)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token", "rol": "verificador"})
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Registrarse como 'verificador' requiere un código de invitación"
+
+
+def test_oauth_google_rol_restringido_con_codigo_valido_funciona_y_marca_usada(monkeypatch):
+    inv = _invitacion_directa("verificador")
+    email = _email()
+    _mockear_google(monkeypatch, email=email)
+    resp = client.post("/usuarios/oauth/google", json={
+        "id_token": "fake-token", "rol": "verificador", "codigo_invitacion": inv["codigo"],
+    })
+
+    assert resp.status_code == 200, resp.text
+    payload = _decodificar_jwt(resp.json()["access_token"])
+    assert payload["rol"] == "verificador"
+
+    db = main.SessionLocal()
+    try:
+        row = db.query(main.models.Invitacion).filter(
+            main.models.Invitacion.codigo == inv["codigo"]
+        ).first()
+        assert row.usado is True
+        assert str(row.usado_por) == payload["sub"]
+    finally:
+        db.close()
+
+
+def test_oauth_google_id_token_invalido_falla_401(monkeypatch):
+    _mockear_google_invalido(monkeypatch)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "token-basura"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Token de Google inválido o expirado"
+
+
+def test_login_normal_con_password_hash_none_falla_401_sin_excepcion():
+    """Una cuenta 100% Google (sin contraseña propia) no debe poder loguearse por el endpoint
+    normal — y sobre todo no debe explotar con una excepción sin capturar al intentarlo."""
+    email = _email()
+    db = main.SessionLocal()
+    try:
+        u = main.models.Usuario(nombre="Solo Google", email=email, password_hash=None,
+                                 google_id=f"google-{uuid.uuid4().hex}", rol="comprador")
+        db.add(u)
+        db.commit()
+    finally:
+        db.close()
+
+    resp = client.post("/usuarios/login", json={"email": email, "password": "cualquier-cosa"})
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == "Email o contraseña incorrectos"
 
 
 # ============ Bootstrap del primer admin (sembrar_admin_inicial) ============

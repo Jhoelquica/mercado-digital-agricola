@@ -7,11 +7,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, EmailStr
+from google.oauth2 import id_token as google_id_token
+from google.auth.transport import requests as google_requests
+from google.auth import exceptions as google_exceptions
 from auth import verificar_token, requiere_rol
 
 from database import Base, engine, SessionLocal
 import models
 from seguridad import hashear_password, verificar_password, crear_token
+
+# No es secreta (el Client ID de Google es público por diseño — viaja en el propio id_token como
+# audience), pero igual se maneja como env var y no hardcodeada, mismo criterio que cualquier
+# otro valor de configuración de este proyecto que varía por entorno.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 Base.metadata.create_all(bind=engine)
 
@@ -91,6 +99,11 @@ class UsuarioLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UsuarioOAuthGoogle(BaseModel):
+    id_token: str
+    rol: str | None = None  # solo aplica si el resultado es un registro nuevo (ver el endpoint)
+    codigo_invitacion: str | None = None
+
 class InvitacionCrear(BaseModel):
     rol_destino: str
 
@@ -110,23 +123,29 @@ QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 def salud():
     return {"estado": "ok", "servicio": "usuarios"}
 
+# Compartida entre /usuarios/registro y /usuarios/oauth/google (cuando ese resulta en un
+# registro nuevo, no un login/vinculación) — mismo gating de rol restringido en los dos casos,
+# sin duplicar la lógica. Roles en ROLES_DE_REGISTRO_ABIERTO no necesitan nada; cualquier otro
+# exige un codigo_invitacion válido cuyo rol_destino coincida. Devuelve la Invitacion a marcar
+# como usada (o None si el rol era abierto) — quien llama decide cuándo consumirla, recién
+# después de crear el Usuario con éxito (ver ambos endpoints).
+def _validar_rol_y_resolver_invitacion(db: Session, rol: str, codigo_invitacion: str | None) -> "models.Invitacion | None":
+    if rol in ROLES_DE_REGISTRO_ABIERTO:
+        return None
+    codigo = (codigo_invitacion or "").strip()
+    chequeo = validar_codigo_invitacion(db, codigo)
+    if not chequeo["valido"]:
+        motivo = chequeo["motivo"] if codigo else f"Registrarse como '{rol}' requiere un código de invitación"
+        raise HTTPException(status_code=400, detail=motivo)
+    if chequeo["rol_destino"] != rol:
+        raise HTTPException(status_code=400, detail="Este código no habilita el rol solicitado.")
+    return db.query(models.Invitacion).filter(models.Invitacion.codigo == codigo).first()
+
+
 @app.post("/usuarios/registro")
 def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     rol = datos.rol
-
-    # Roles restringidos: exigen un código de invitación válido cuyo rol_destino coincida
-    # con el rol pedido. El chequeo de validez lo hace validar_codigo_invitacion() (definida
-    # más abajo, disponible en runtime); acá solo se agrega el match de rol.
-    invitacion = None
-    if rol not in ROLES_DE_REGISTRO_ABIERTO:
-        codigo = (datos.codigo_invitacion or "").strip()
-        chequeo = validar_codigo_invitacion(db, codigo)
-        if not chequeo["valido"]:
-            motivo = chequeo["motivo"] if codigo else f"Registrarse como '{rol}' requiere un código de invitación"
-            raise HTTPException(status_code=400, detail=motivo)
-        if chequeo["rol_destino"] != rol:
-            raise HTTPException(status_code=400, detail="Este código no habilita el rol solicitado.")
-        invitacion = db.query(models.Invitacion).filter(models.Invitacion.codigo == codigo).first()
+    invitacion = _validar_rol_y_resolver_invitacion(db, rol, datos.codigo_invitacion)
 
     nuevo = models.Usuario(
         nombre=datos.nombre,
@@ -159,6 +178,66 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
 
     token = crear_token(str(usuario.id), usuario.rol)
     return {"access_token": token, "token_type": "bearer"}
+
+@app.post("/usuarios/oauth/google")
+def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get_db)):
+    """Login/registro alternativo con Google, para los mismos 4 roles que ya soporta el
+    registro normal. Tres casos, en este orden:
+      1. Ya existe un Usuario con este google_id -> login directo con su rol de siempre.
+      2. No hay match por google_id, pero SÍ por email (cuenta con contraseña creada antes) ->
+         se vincula (se guarda google_id en esa fila) y login con su rol de siempre.
+      3. No existe de ninguna forma -> registro nuevo, con el mismo gating de rol restringido
+         que /usuarios/registro (ver _validar_rol_y_resolver_invitacion)."""
+    try:
+        payload = google_id_token.verify_oauth2_token(
+            datos.id_token, google_requests.Request(), GOOGLE_CLIENT_ID,
+        )
+    except (ValueError, google_exceptions.GoogleAuthError):
+        raise HTTPException(status_code=401, detail="Token de Google inválido o expirado")
+
+    google_id = payload["sub"]
+    email = payload.get("email")
+    nombre = payload.get("name") or email
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.google_id == google_id).first()
+    if usuario:
+        return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
+    if usuario:
+        usuario.google_id = google_id
+        db.commit()
+        return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
+
+    # Registro nuevo: sin cuenta previa por ninguna vía. Si no viene un rol, es el intento
+    # típico desde el tab de Login (sin saber todavía que hace falta elegir un rol) — se le
+    # pide explícitamente en vez de asumir uno.
+    if datos.rol is None:
+        raise HTTPException(status_code=400, detail="Selecciona un rol antes de continuar con Google")
+
+    invitacion = _validar_rol_y_resolver_invitacion(db, datos.rol, datos.codigo_invitacion)
+
+    nuevo = models.Usuario(
+        nombre=nombre,
+        email=email,
+        password_hash=None,
+        google_id=google_id,
+        rol=datos.rol,
+    )
+    db.add(nuevo)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ese email ya está registrado")
+
+    if invitacion is not None:
+        invitacion.usado = True
+        invitacion.usado_por = nuevo.id
+
+    db.commit()
+    db.refresh(nuevo)
+    return {"access_token": crear_token(str(nuevo.id), nuevo.rol), "token_type": "bearer"}
 
 # Usado por el Middleware ForwardAuth del API Gateway (Traefik) para validar el JWT
 # ANTES de que la petición llegue a cualquier microservicio (ver k8s/traefik-middlewares.yaml).
