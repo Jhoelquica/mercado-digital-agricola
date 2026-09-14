@@ -166,6 +166,11 @@ const Api = {
     propuestas: () => request('transporte', '/envios/propuestas', { auth: true }),
     aceptar: (envioId) => request('transporte', `/envios/${envioId}/aceptar`, { method: 'POST', auth: true }),
     rechazar: (envioId) => request('transporte', `/envios/${envioId}/rechazar`, { method: 'POST', auth: true }),
+    // Rol productor: envíos en "pendiente_entrega_directa" que le corresponden a él (ningún
+    // repartidor tuvo capacidad suficiente) y la acción de cerrarlos — reusa actualizarEstado
+    // (mismo endpoint que ya usa el repartidor) en vez de duplicar la llamada HTTP.
+    pendientesEntregaDirecta: () => request('transporte', '/envios/pendientes-entrega-directa', { auth: true }),
+    marcarEntregado: (envioId) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado: 'entregado' }, auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

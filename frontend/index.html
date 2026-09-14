@@ -334,6 +334,18 @@
     <div id="productor-panel" class="hidden">
       <div id="productor-resumen"></div>
 
+      <!-- Sección discreta a propósito: solo se muestra (JS quita "hidden") si hay al menos un
+           envío pendiente de entrega directa — caso poco frecuente por diseño (ver
+           cargarEntregasDirectasPendientes en app.js), no algo que amerite un empty-state grande
+           como las secciones de abajo. -->
+      <div id="entregas-directas-section" class="hidden">
+        <div class="section-header inner">
+          <h3><i class="ti ti-truck-delivery"></i> Entregas directas pendientes</h3>
+        </div>
+        <p class="muted">Estos pedidos no encontraron un repartidor con capacidad suficiente — te toca entregarlos directamente.</p>
+        <div id="entregas-directas-lista" class="pedidos-list"></div>
+      </div>
+
       <div class="section-header inner">
         <h3><i class="ti ti-pencil"></i> Borradores pendientes de completar</h3>
       </div>

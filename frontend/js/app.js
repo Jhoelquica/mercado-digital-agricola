@@ -17,6 +17,7 @@ const Estado = {
                      // separado de Estado.productos (que es el catálogo público, solo publicados)
   imagenesPorProducto: {}, // producto_id -> [{id, url, orden}], caché en memoria para el gestor de fotos
   unidadesAlternativasPorProducto: {}, // producto_id -> [{id, unidad, precio, factor_a_base}], mismo patrón que imagenesPorProducto
+  entregasDirectasPendientes: [], // Envio en "pendiente_entrega_directa" del productor autenticado — ver cargarEntregasDirectasPendientes
 };
 
 const SESSION_KEY = 'agro_sesion';
@@ -2765,10 +2766,15 @@ async function iniciarPanelProductor() {
     panel.classList.remove('hidden');
     inicializarMapaUbicacionChacra();
     document.getElementById('productor-resumen').innerHTML = renderSkeletonResumen(3);
-    // Las 3 cargas son independientes entre sí (cada una pinta su propia sección), pero el
-    // resumen necesita las tres resueltas antes de poder calcular sus métricas — de ahí el
+    // Las 4 cargas son independientes entre sí (cada una pinta su propia sección), pero el
+    // resumen necesita las cuatro resueltas antes de poder calcular sus métricas — de ahí el
     // Promise.all en vez de simplemente dispararlas sueltas como antes.
-    await Promise.all([cargarMisProductos(), cargarMisChacras(), cargarRegistrosProduccionProductor()]);
+    await Promise.all([
+      cargarMisProductos(),
+      cargarMisChacras(),
+      cargarRegistrosProduccionProductor(),
+      cargarEntregasDirectasPendientes(),
+    ]);
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
   } else {
     setup.classList.remove('hidden');
@@ -3510,6 +3516,8 @@ function renderResumenProductor() {
     .filter((r) => r.fecha_cosecha_estimada)
     .sort((a, b) => new Date(a.fecha_cosecha_estimada) - new Date(b.fecha_cosecha_estimada))[0];
 
+  const entregasDirectas = Estado.entregasDirectasPendientes || [];
+
   return `
     <div class="card-panel resumen-panel">
       <div class="resumen-stats">
@@ -3540,12 +3548,88 @@ function renderResumenProductor() {
         <i class="ti ti-calendar-event"></i>
         Próxima cosecha estimada: <strong>${escapeAttr(proximaCosecha.cultivo)}</strong> el ${formatearFecha(proximaCosecha.fecha_cosecha_estimada)}
       </div>` : ''}
+      ${entregasDirectas.length ? `
+      <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-entregas-directas">
+        <i class="ti ti-truck-delivery"></i>
+        Tienes ${entregasDirectas.length} entrega${entregasDirectas.length === 1 ? '' : 's'} directa${entregasDirectas.length === 1 ? '' : 's'} pendiente${entregasDirectas.length === 1 ? '' : 's'} — ningún repartidor tuvo capacidad suficiente
+      </div>` : ''}
       <div class="resumen-acciones">
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-publicar"><i class="ti ti-pencil"></i> Completar borradores</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-siembra"><i class="ti ti-plant-2"></i> Registrar siembra</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-chacra"><i class="ti ti-map-pin"></i> Registrar chacra</button>
       </div>
     </div>`;
+}
+
+// ---- Entregas directas pendientes (caso poco frecuente: ningún repartidor con capacidad
+// suficiente — ver requiere_vehiculo_grande/pendiente_entrega_directa en pedidos/transporte) ----
+
+function renderTarjetaEntregaDirecta(envio, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  // Sin datos del pedido (destino, items): Envio no los trae y pedirlos de a uno por tarjeta
+  // sería una llamada extra por cada envío listado — lo único disponible sin costo es su propia
+  // fecha_creacion y el pedido_id, que alcanza como referencia para que el productor identifique
+  // cuál es cuál entre sus propios pedidos.
+  return `
+    <div class="pedido-card" style="animation-delay:${retraso}ms" data-envio-id="${escapeAttr(envio.id)}">
+      <div class="pedido-card-header">
+        <h4>Pedido #${escapeAttr(String(envio.pedido_id).slice(0, 8))}</h4>
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFecha(envio.fecha_creacion)}</span></div>
+      </div>
+      <p class="muted">No se encontró un repartidor con capacidad suficiente para este pedido — te toca entregarlo directamente.</p>
+      <div class="verificador-cosecha-acciones">
+        <button type="button" class="btn btn-primary btn-sm btn-marcar-entregado" data-envio-id="${escapeAttr(envio.id)}"><i class="ti ti-check"></i> Marcar como entregado</button>
+      </div>
+    </div>`;
+}
+
+async function cargarEntregasDirectasPendientes() {
+  const seccion = document.getElementById('entregas-directas-section');
+  const cont = document.getElementById('entregas-directas-lista');
+  try {
+    const envios = await Api.transporte.pendientesEntregaDirecta();
+    Estado.entregasDirectasPendientes = envios;
+    if (!envios.length) {
+      seccion.classList.add('hidden');
+      cont.innerHTML = '';
+      return;
+    }
+    seccion.classList.remove('hidden');
+    cont.innerHTML = envios.map(renderTarjetaEntregaDirecta).join('');
+  } catch {
+    // Silencioso a propósito, mismo criterio que Api.transporte.propuestas() en
+    // cargarListaEnvios(): es una sección discreta y poco frecuente — un error acá no debería
+    // interrumpir el resto del panel del productor (borradores, productos, chacras siguen
+    // cargando igual).
+    Estado.entregasDirectasPendientes = [];
+    seccion.classList.add('hidden');
+  }
+}
+
+// Saca la tarjeta ya entregada de la lista sin recargar toda la vista — mismo criterio que
+// quitarTarjetaCosechaPendiente() en Panel Verificador.
+function quitarTarjetaEntregaDirecta(envioId) {
+  document.querySelector(`.pedido-card[data-envio-id="${envioId}"]`)?.remove();
+  Estado.entregasDirectasPendientes = Estado.entregasDirectasPendientes.filter((e) => String(e.id) !== String(envioId));
+  const cont = document.getElementById('entregas-directas-lista');
+  if (cont && !cont.children.length) {
+    document.getElementById('entregas-directas-section')?.classList.add('hidden');
+  }
+}
+
+async function marcarEntregaDirectaComoEntregada(envioId) {
+  const card = document.querySelector(`.pedido-card[data-envio-id="${envioId}"]`);
+  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    await Api.transporte.marcarEntregado(envioId);
+    toast('¡Entrega confirmada! 🚚');
+    quitarTarjetaEntregaDirecta(envioId);
+  } catch (err) {
+    manejarError(err, 'marcar la entrega como completada');
+    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+  }
 }
 
 // ============ GESTIÓN DE ENVÍOS (repartidor) ============
@@ -4928,6 +5012,18 @@ function inicializarEventos() {
       esperarElementoYScroll('form-registro-produccion');
       return;
     }
+    if (e.target.closest('#btn-resumen-entregas-directas')) {
+      document.getElementById('entregas-directas-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+  });
+
+  // Entregas directas pendientes — delegado sobre #entregas-directas-lista (el contenido se
+  // reemplaza por completo en cada cargarEntregasDirectasPendientes(), mismo criterio que
+  // productor-borradores-lista de abajo).
+  document.getElementById('entregas-directas-lista').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-marcar-entregado');
+    if (btn) marcarEntregaDirectaComoEntregada(btn.dataset.envioId);
   });
 
   // Borradores — delegado sobre #productor-borradores-lista (el contenido se reemplaza por

@@ -1663,6 +1663,10 @@ input, select { font-family: inherit; }
    mismo tono de alerta que .pill-expirada/.btn-danger, no un color inventado. */
 .resumen-destacado-urgente { background: #fff0ee; border-color: #f3b8a8; color: #b3401f; }
 .resumen-destacado code { background: rgba(0, 0, 0, 0.06); padding: 1px 6px; border-radius: 4px; }
+/* Variante clicable: hace scroll a la sección real (ver delegación sobre #productor-resumen en
+   app.js) — mismo aviso, pero además es una acción, no solo información. */
+.resumen-destacado-clicable { cursor: pointer; }
+.resumen-destacado-clicable:hover { filter: brightness(0.97); }
 
 .resumen-acciones { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .resumen-acciones .btn-sm { margin-left: 0; } /* .btn-sm trae margin-left:auto pensado para un botón solo en un header — acá son varios en fila */
