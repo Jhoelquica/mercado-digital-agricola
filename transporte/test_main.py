@@ -154,7 +154,7 @@ def _crear_repartidor_directo(usuario_id=None) -> "main.models.Repartidor":
         db.close()
 
 
-def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, productor_id=None) -> "main.models.Envio":
+def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, productor_id=None, motivo_pendiente=None) -> "main.models.Envio":
     db = main.SessionLocal()
     try:
         envio = main.models.Envio(
@@ -162,6 +162,7 @@ def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, produ
             pedido_id=pedido_id or uuid.uuid4(),
             estado=estado,
             productor_id=productor_id,
+            motivo_pendiente=motivo_pendiente,
         )
         db.add(envio)
         db.commit()
@@ -482,7 +483,11 @@ def test_proponer_envio_sin_capacidad_suficiente_y_varios_productores_sigue_pend
 
     # Comportamiento actual: NO se inventa un estado nuevo cuando no se puede confirmar un solo
     # productor — el hilo de reintento de huérfanos ya existente lo sigue intentando después.
-    assert _envio_recargado(envio.id).estado == "pendiente_asignacion"
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "pendiente_asignacion"
+    # Había un candidato disponible (insuficiente), pero ninguno con capacidad suficiente — no
+    # "nadie disponible en absoluto".
+    assert envio_recargado.motivo_pendiente == "sin_capacidad_suficiente"
 
 
 def test_proponer_envio_con_peso_desconocido_no_aplica_filtro_de_capacidad_regresion(monkeypatch, matching):
@@ -528,6 +533,67 @@ def test_proponer_envio_con_pedidos_inalcanzable_degrada_a_peso_desconocido(monk
     envio_recargado = _envio_recargado(envio.id)
     assert envio_recargado.estado == "propuesto"
     assert str(envio_recargado.repartidor_id) == str(disponible.id)
+
+
+# ============ motivo_pendiente + GET /envios/pendientes-por-capacidad ============
+
+def test_motivo_pendiente_sin_repartidor_disponible_cuando_nadie_esta_disponible(monkeypatch, matching):
+    """Cero repartidores disponibles, aunque el peso SÍ se conoce — la ausencia total de
+    candidatos es "sin_repartidor_disponible", no "sin_capacidad_suficiente" (que implicaría que
+    había alguien, solo que no alcanzaba)."""
+    _, envio_ids = matching
+    envio = _crear_envio_directo(None, estado="pendiente")
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=50))
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "pendiente_asignacion"
+    assert envio_recargado.motivo_pendiente == "sin_repartidor_disponible"
+
+
+def test_motivo_pendiente_se_limpia_al_asignar_exitosamente(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    suficiente = _crear_repartidor_disponible(capacidad_maxima_kg=100)
+    # Simula un intento previo fallido: el envío ya venía con un motivo_pendiente asignado.
+    envio = _crear_envio_directo(None, estado="pendiente_asignacion", motivo_pendiente="sin_repartidor_disponible")
+    repartidor_ids.append(suficiente.id)
+    envio_ids.append(envio.id)
+
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=50))
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.proponer_envio_a_repartidor(envio.id, db)
+    finally:
+        db.close()
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "propuesto"
+    assert str(envio_recargado.repartidor_id) == str(suficiente.id)
+    assert envio_recargado.motivo_pendiente is None
+
+
+def test_envios_pendientes_por_capacidad_filtra_correctamente():
+    sin_capacidad = _crear_envio_directo(None, estado="pendiente_asignacion", motivo_pendiente="sin_capacidad_suficiente")
+    _crear_envio_directo(None, estado="pendiente_asignacion", motivo_pendiente="sin_repartidor_disponible")
+    _crear_envio_directo(None, estado="propuesto", motivo_pendiente=None)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.get("/envios/pendientes-por-capacidad")
+
+    assert resp.status_code == 200, resp.text
+    ids = {e["id"] for e in resp.json()}
+    assert str(sin_capacidad.id) in ids
+    for e in resp.json():
+        assert e["motivo_pendiente"] == "sin_capacidad_suficiente"
+        assert e["estado"] == "pendiente_asignacion"
 
 
 # ============ POST /repartidores: tipo_vehiculo / capacidad_maxima_kg ============

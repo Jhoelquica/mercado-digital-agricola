@@ -152,6 +152,17 @@ def envios_pendientes_entrega_directa(
         models.Envio.productor_id == productor["id"],
     ).all()
 
+# Solo los que de verdad necesitan que el Admin registre un vehículo más grande (motivo_pendiente
+# == "sin_capacidad_suficiente") — no los que simplemente esperan que se libere cualquier
+# repartidor (motivo_pendiente == "sin_repartidor_disponible"), que no requieren ninguna acción
+# del Admin y se resuelven solos apenas alguien quede disponible.
+@app.get("/envios/pendientes-por-capacidad")
+def envios_pendientes_por_capacidad(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    return db.query(models.Envio).filter(
+        models.Envio.estado == "pendiente_asignacion",
+        models.Envio.motivo_pendiente == "sin_capacidad_suficiente",
+    ).all()
+
 @app.get("/envios/{envio_id}/ruta")
 def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()

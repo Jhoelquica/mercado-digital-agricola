@@ -98,16 +98,24 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
     pedido = _obtener_pedido(envio.pedido_id)
     peso_total_kg = pedido.get("peso_total_kg") if pedido else None
 
-    # SKIP LOCKED (no bloqueante) sobre el repartidor: si el candidato que encontraríamos está
-    # con su fila bloqueada por OTRA transacción concurrente que está decidiendo asignárselo a
-    # un envío distinto, no nos quedamos esperando por él — pasamos al siguiente disponible. Sin
-    # esto, dos envíos distintos podrían terminar asignados al mismo repartidor (el problema
-    # espejo del que se protege arriba, ahora del lado del repartidor en vez del envío).
-    query = (
+    # Base de disponibilidad (sin filtro de capacidad todavía) — se guarda aparte para poder
+    # reusarla más abajo como diagnóstico si la búsqueda con capacidad no encuentra a nadie: sin
+    # esto no habría forma de distinguir "no había NADIE disponible" de "había candidatos, pero
+    # ninguno con capacidad suficiente" (ver motivo_pendiente en models.py).
+    disponibilidad_query = (
         db.query(models.Repartidor)
         .filter(models.Repartidor.estado_disponibilidad == "disponible")
         .filter(~models.Repartidor.id.in_(rechazos_previos))
     )
+    # excluir_id se mantiene y se COMBINA con el historial de arriba (no lo reemplaza): sigue
+    # haciendo falta para el caso en que todavía no hay un EnvioRechazo que cubra la exclusión
+    # —p. ej. intentar_resolver_envio_huerfano puede terminar mirando un envío DISTINTO al que
+    # el repartidor actual acaba de rechazar (ver ese mismo excluir_id en rechazar_propuesta),
+    # y para ese otro envío no existe ningún rechazo registrado todavía.
+    if excluir_id:
+        disponibilidad_query = disponibilidad_query.filter(models.Repartidor.id != excluir_id)
+
+    query = disponibilidad_query
     if peso_total_kg is not None:
         # .isnot(None) es redundante en SQL (NULL >= peso_total_kg ya es falso de por sí, así que
         # un repartidor sin capacidad declarada nunca calificaría igual) — se deja explícito por
@@ -120,16 +128,13 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
             .filter(models.Repartidor.capacidad_maxima_kg >= peso_total_kg)
             .order_by(models.Repartidor.capacidad_maxima_kg.asc())
         )
-    query = query.with_for_update(skip_locked=True)
-    # excluir_id se mantiene y se COMBINA con el historial de arriba (no lo reemplaza): sigue
-    # haciendo falta para el caso en que todavía no hay un EnvioRechazo que cubra la exclusión
-    # —p. ej. intentar_resolver_envio_huerfano puede terminar mirando un envío DISTINTO al que
-    # el repartidor actual acaba de rechazar (ver ese mismo excluir_id en rechazar_propuesta),
-    # y para ese otro envío no existe ningún rechazo registrado todavía.
-    if excluir_id:
-        query = query.filter(models.Repartidor.id != excluir_id)
 
-    repartidor = query.first()
+    # SKIP LOCKED (no bloqueante) sobre el repartidor: si el candidato que encontraríamos está
+    # con su fila bloqueada por OTRA transacción concurrente que está decidiendo asignárselo a
+    # un envío distinto, no nos quedamos esperando por él — pasamos al siguiente disponible. Sin
+    # esto, dos envíos distintos podrían terminar asignados al mismo repartidor (el problema
+    # espejo del que se protege arriba, ahora del lado del repartidor en vez del envío).
+    repartidor = query.with_for_update(skip_locked=True).first()
 
     if not repartidor:
         # Entrega directa SOLO si: el peso se conoce (si no, ni siquiera se filtró por capacidad
@@ -144,17 +149,31 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
         if productor_id_unico:
             envio.estado = "pendiente_entrega_directa"
             envio.productor_id = productor_id_unico
+            envio.motivo_pendiente = None  # ya no aplica: es un estado distinto, no una espera
             db.commit()
             print(f"[Transporte] Envío {envio_id} sin repartidor con capacidad suficiente — un solo productor, marcado para entrega directa")
             return
 
+        # Si no se filtró por capacidad (peso desconocido), la única causa posible de no
+        # encontrar a nadie es que no había nadie disponible. Si SÍ se filtró, hay que
+        # distinguir: reconsultar sin el filtro de capacidad (misma disponibilidad_query de
+        # arriba, sin FOR UPDATE porque acá no se va a asignar nada, solo diagnosticar) para ver
+        # si el problema fue la capacidad o directamente no había nadie.
+        if peso_total_kg is None:
+            motivo = "sin_repartidor_disponible"
+        else:
+            habia_disponibles = disponibilidad_query.first() is not None
+            motivo = "sin_capacidad_suficiente" if habia_disponibles else "sin_repartidor_disponible"
+
         envio.estado = "pendiente_asignacion"
+        envio.motivo_pendiente = motivo
         db.commit()
-        print(f"[Transporte] Sin repartidores disponibles para el envío {envio_id}")
+        print(f"[Transporte] Sin repartidores disponibles para el envío {envio_id} (motivo: {motivo})")
         return
 
     envio.repartidor_id = repartidor.id
     envio.estado = "propuesto"
+    envio.motivo_pendiente = None
     repartidor.estado_disponibilidad = "ocupado"
     db.commit()
     print(f"[Transporte] Envío {envio_id} propuesto a repartidor {repartidor.nombre}")

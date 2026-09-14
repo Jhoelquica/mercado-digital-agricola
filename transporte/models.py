@@ -31,6 +31,15 @@ class Envio(Base):
     # transición, así GET /envios/pendientes-entrega-directa puede filtrar server-side sin
     # repetir la resolución cruzada contra Productos en cada consulta.
     productor_id = Column(UUID(as_uuid=True), nullable=True)
+    # Solo tiene sentido cuando estado == "pendiente_asignacion" — null en cualquier otro caso
+    # (repartidor asignado, entrega directa, etc: ver proponer_envio_a_repartidor). Distingue las
+    # dos causas posibles de esa espera para que el Admin pueda filtrar server-side (ver GET
+    # /envios/pendientes-por-capacidad en main.py) los que de verdad necesitan un vehículo más
+    # grande, no los que solo esperan que se libere cualquier repartidor:
+    #   "sin_repartidor_disponible": nadie disponible en absoluto (con o sin filtro de capacidad).
+    #   "sin_capacidad_suficiente": había candidatos disponibles, pero ninguno con capacidad
+    #   suficiente para el peso del pedido.
+    motivo_pendiente = Column(String, nullable=True)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"
