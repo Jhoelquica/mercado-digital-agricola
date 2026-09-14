@@ -720,6 +720,68 @@ def test_crear_desde_cosecha_con_secreto_crea_borrador():
     assert cuerpo["id"] not in ids_catalogo
 
 
+def test_crear_desde_cosecha_con_equivalencia_kg_se_propaga_y_aparece_en_get():
+    """Producto con unidad base "litro" — equivalencia_kg viaja en el body (mismo criterio que
+    RegistroProduccion.equivalencia_kg en Productores) y queda visible en GET /productos/{id},
+    que es lo que Pedidos necesita para calcular peso real (ver crear_pedido en pedidos/main.py)."""
+    resp = client.post(
+        "/productos/interno/crear-desde-cosecha",
+        json={
+            "productor_id": str(uuid.uuid4()),
+            "productor_nombre": "Chacra de Juana",
+            "nombre": "Leche de cabra",
+            "unidad_medida": "litro",
+            "stock": 20,
+            "registro_produccion_id": str(uuid.uuid4()),
+            "equivalencia_kg": 1.03,
+        },
+        headers={"X-Servicio-Secreto": main.PRODUCTORES_A_PRODUCTOS_SECRETO},
+    )
+    assert resp.status_code == 200, resp.text
+    producto_id = resp.json()["id"]
+    assert float(resp.json()["equivalencia_kg"]) == 1.03
+
+    detalle = client.get(f"/productos/{producto_id}")
+    assert detalle.status_code == 200, detalle.text
+    assert float(detalle.json()["equivalencia_kg"]) == 1.03
+
+
+def test_crear_desde_cosecha_unidad_no_kg_sin_equivalencia_falla_422():
+    resp = client.post(
+        "/productos/interno/crear-desde-cosecha",
+        json={
+            "productor_id": str(uuid.uuid4()),
+            "productor_nombre": "Chacra de Juana",
+            "nombre": "Leche de cabra",
+            "unidad_medida": "litro",
+            "stock": 20,
+            "registro_produccion_id": str(uuid.uuid4()),
+        },
+        headers={"X-Servicio-Secreto": main.PRODUCTORES_A_PRODUCTOS_SECRETO},
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == (
+        "Cuando la unidad de medida no es 'kg', debes indicar la equivalencia a kg (ej. 1 litro = X kg)"
+    )
+
+
+def test_crear_desde_cosecha_en_kg_deja_equivalencia_null():
+    resp = client.post(
+        "/productos/interno/crear-desde-cosecha",
+        json={
+            "productor_id": str(uuid.uuid4()),
+            "productor_nombre": "Chacra de Juana",
+            "nombre": "Papa Nativa",
+            "unidad_medida": "kg",
+            "stock": 50,
+            "registro_produccion_id": str(uuid.uuid4()),
+        },
+        headers={"X-Servicio-Secreto": main.PRODUCTORES_A_PRODUCTOS_SECRETO},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["equivalencia_kg"] is None
+
+
 def test_crear_desde_cosecha_duplicado_falla_409():
     # Simula el reintento de Productores tras un fallo de red que sí había llegado a crear el
     # producto la primera vez: mismo registro_produccion_id, segunda llamada.

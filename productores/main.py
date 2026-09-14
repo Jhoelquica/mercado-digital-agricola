@@ -675,6 +675,12 @@ def aprobar_cosecha(
         # completas por un simple recorte de decimales (45.9 -> 46, no 45).
         "stock": round(float(registro.cantidad_cosechada)),
         "registro_produccion_id": str(registro.id),
+        # Ya validado y guardado en el propio registro al crearlo (ver crear_registro_produccion)
+        # — sin esto se perdía en el camino, dejando el peso de estos productos indeterminable en
+        # Pedidos (ver Producto.equivalencia_kg en productos/models.py). float(...) por el mismo
+        # motivo que "stock" arriba: es un Numeric (Decimal en Python), y httpx no serializa
+        # Decimal a JSON directamente.
+        "equivalencia_kg": float(registro.equivalencia_kg) if registro.equivalencia_kg is not None else None,
     }
 
     # Se crea el producto ANTES de tocar el estado/historial acá abajo: si esta llamada falla,

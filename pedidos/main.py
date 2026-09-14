@@ -313,10 +313,18 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             if producto["stock"] < cantidad_base:
                 raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
 
-            # Peso real de esta línea (cantidad ya en unidad base) SOLO si la unidad base del
-            # producto es "kg" — para "unidad"/"litro" el peso queda indeterminado por ahora (ver
-            # PedidoItem.peso_kg en models.py; se resuelve en una sub-entrega aparte).
-            peso_kg = cantidad_base if producto.get("unidad_medida") == "kg" else None
+            # Peso real de esta línea (cantidad ya en unidad base): directo si la unidad base del
+            # producto es "kg" (1 unidad base = 1 kg, no hace falta factor). Si no es "kg", se
+            # convierte con producto["equivalencia_kg"] cuando el producto lo tiene (llega desde
+            # RegistroProduccion.equivalencia_kg vía aprobar_cosecha — ver Producto.equivalencia_kg
+            # en productos/models.py); si el producto no lo tiene (ej. uno creado a mano, sin ese
+            # dato), el peso sigue siendo indeterminable.
+            if producto.get("unidad_medida") == "kg":
+                peso_kg = cantidad_base
+            elif producto.get("equivalencia_kg") is not None:
+                peso_kg = cantidad_base * producto["equivalencia_kg"]
+            else:
+                peso_kg = None
 
             items_validados.append((item, producto, precio_unitario, cantidad_base, peso_kg))
 

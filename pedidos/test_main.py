@@ -40,7 +40,7 @@ DESTINO_DENTRO_AYACUCHO = {"destino_latitud": -13.1588, "destino_longitud": -74.
 DESTINO_FUERA_AYACUCHO = {"destino_latitud": -12.0464, "destino_longitud": -77.0428}
 
 
-def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg"):
+def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg", equivalencia_kg=None):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
     PATCH (descuento de stock) no hace nada real."""
     mock_client = MagicMock()
@@ -56,6 +56,7 @@ def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_
         "stock": stock,
         "unidades_alternativas": unidades_alternativas or [],
         "unidad_medida": unidad_medida,
+        "equivalencia_kg": equivalencia_kg,
     }
     mock_client.get.return_value = respuesta_get
     mock_client.patch.return_value = MagicMock(status_code=200)
@@ -359,10 +360,13 @@ def test_pedido_en_kg_sobre_el_umbral_requiere_vehiculo_grande():
 
 
 def test_pedido_con_producto_unidad_no_kg_deja_peso_null_y_no_marca_vehiculo_grande():
-    """Regla explícita: si no podemos afirmar el peso (unidad base "unidad"/"litro"), no se
-    fuerza requiere_vehiculo_grande a True aunque la cantidad sea grande — queda en False."""
+    """Regla explícita: si no podemos afirmar el peso (unidad base "unidad"/"litro" y el producto
+    no tiene equivalencia_kg — ej. uno creado a mano), no se fuerza requiere_vehiculo_grande a
+    True aunque la cantidad sea grande — queda en False. Sin regresión tras agregar
+    equivalencia_kg: un producto que simplemente no la tiene se comporta exactamente igual."""
     _fijar_umbral(25.0)
-    # 100 unidades a S/1.00 c/u: S/100.00 de subtotal, pero la unidad base del producto no es kg.
+    # 100 unidades a S/1.00 c/u: S/100.00 de subtotal, pero la unidad base del producto no es kg
+    # y no trae equivalencia_kg (default del mock).
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=1.0, cantidad=100)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=1.0, unidad_medida="unidad")), \
@@ -373,6 +377,25 @@ def test_pedido_con_producto_unidad_no_kg_deja_peso_null_y_no_marca_vehiculo_gra
     cuerpo = resp.json()
     assert cuerpo["peso_total_kg"] is None
     assert cuerpo["requiere_vehiculo_grande"] is False
+
+
+def test_pedido_con_equivalencia_kg_conocida_aporta_al_peso_total():
+    """Producto con unidad base "litro" pero CON equivalencia_kg (llegó desde
+    RegistroProduccion.equivalencia_kg vía aprobar_cosecha) — a diferencia del test anterior, acá
+    sí se puede calcular un peso real: cantidad_base * equivalencia_kg."""
+    _fijar_umbral(25.0)
+    # 30 litros a S/2.00 c/u: S/60.00 de subtotal. equivalencia_kg=1.0 -> 30 kg reales, sobre el
+    # umbral de 25.
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=2.0, cantidad=30)
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=2.0, unidad_medida="litro", equivalencia_kg=1.0)), \
+         patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert float(cuerpo["peso_total_kg"]) == 30.0
+    assert cuerpo["requiere_vehiculo_grande"] is True
 
 
 def test_pedido_con_una_linea_no_kg_entre_varias_deja_peso_total_null():

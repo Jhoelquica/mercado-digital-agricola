@@ -241,13 +241,17 @@ def _mockear_crear_producto_desde_cosecha_falla(monkeypatch):
     monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", _falla)
 
 
-def _crear_registro_pendiente_verificacion(monkeypatch) -> tuple[str, str]:
+def _crear_registro_pendiente_verificacion(monkeypatch, unidad_medida="kg", equivalencia_kg=None) -> tuple[str, str]:
     """Crea productor + chacra + registro y lo completa (queda en pendiente_verificacion). Deja
     al productor como usuario autenticado al retornar. Devuelve (registro_id, productor_sub)."""
     sub_productor = _nuevo_productor()
     chacra = client.post("/chacras", json=_chacra_payload(codigo=f"CH-{uuid.uuid4().hex[:6]}"))
     assert chacra.status_code == 200, chacra.text
-    registro = client.post("/productores/produccion", json=_registro_payload(chacra.json()["id"]))
+    payload = _registro_payload(chacra.json()["id"])
+    payload["unidad_medida"] = unidad_medida
+    if equivalencia_kg is not None:
+        payload["equivalencia_kg"] = equivalencia_kg
+    registro = client.post("/productores/produccion", json=payload)
     assert registro.status_code == 200, registro.text
     registro_id = registro.json()["id"]
 
@@ -335,6 +339,30 @@ def test_aprobar_envia_el_payload_correcto_a_productos(monkeypatch):
     assert capturado["unidad_medida"] == unidad_esperada
     assert capturado["stock"] == stock_esperado
     assert capturado["productor_nombre"] == nombre_productor_esperado
+    assert capturado["equivalencia_kg"] is None  # cosecha en "kg" — no hace falta factor
+
+
+def test_aprobar_envia_equivalencia_kg_cuando_la_cosecha_no_es_en_kg(monkeypatch):
+    """Antes de este cambio, equivalencia_kg (ya validado y guardado en el propio
+    RegistroProduccion) se perdía en el camino hacia Productos, dejando el peso de estos
+    productos indeterminable en Pedidos."""
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch, unidad_medida="litro", equivalencia_kg=1.03)
+
+    capturado = {}
+    main.breaker_crear_producto.close()
+
+    def _capturar(payload):
+        capturado.update(payload)
+        return _RespuestaFalsaProductos(200, {"id": "producto-capturado"})
+
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", _capturar)
+
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+    assert resp.status_code == 200, resp.text
+
+    assert capturado["unidad_medida"] == "litro"
+    assert capturado["equivalencia_kg"] == 1.03
 
 
 def test_aprobar_cuando_productos_falla_no_transiciona_ni_registra_historial(monkeypatch):

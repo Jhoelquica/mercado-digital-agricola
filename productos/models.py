@@ -42,6 +42,12 @@ class Producto(Base):
     # a mano (el flujo de siempre); solo se llena cuando el producto nace automáticamente a
     # partir de una cosecha aprobada por un Verificador.
     registro_produccion_id = Column(UUID(as_uuid=True), nullable=True)
+    # "1 unidad de unidad_medida = equivalencia_kg kilogramos" — null si unidad_medida YA es "kg"
+    # (no hace falta factor, 1 kg = 1 kg). Mismo campo/criterio que
+    # RegistroProduccion.equivalencia_kg en Productores, copiado acá al crear el producto (ver
+    # crear_producto_desde_cosecha) para que Pedidos pueda calcular un peso real (ver
+    # crear_pedido en pedidos/main.py) sin tener que ir a buscarlo a otro servicio.
+    equivalencia_kg = Column(Numeric(10, 4), nullable=True)
 
 class ProductoImagen(Base):
     __tablename__ = "producto_imagenes"

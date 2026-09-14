@@ -67,6 +67,10 @@ class ProductoCrearDesdeCosecha(BaseModel):
     unidad_medida: str = "kg"
     stock: int
     registro_produccion_id: str
+    # Mismo campo y mismo criterio de obligatoriedad que RegistroProduccion.equivalencia_kg en
+    # Productores (obligatorio solo si unidad_medida != "kg", validado abajo) — Productores ya lo
+    # valida al crear el registro, esto es una segunda barrera del lado de Productos.
+    equivalencia_kg: float | None = None
 
 class ProductoActualizar(BaseModel):
     categoria: str | None = None
@@ -434,6 +438,7 @@ def listar_productos(db: Session = Depends(get_db)):
             "precio": p.precio,
             "stock": p.stock,
             "unidad_medida": p.unidad_medida,
+            "equivalencia_kg": p.equivalencia_kg,
             "imagen_url": p.imagen_url,
             "fecha_publicacion": p.fecha_publicacion,
             "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
@@ -566,6 +571,7 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
         "precio": producto.precio,
         "stock": producto.stock,
         "unidad_medida": producto.unidad_medida,
+        "equivalencia_kg": producto.equivalencia_kg,
         "imagen_url": producto.imagen_url,
         "fecha_publicacion": producto.fecha_publicacion,
         "imagenes": [{"id": img.id, "url": img.url, "orden": img.orden} for img in imagenes],
@@ -983,6 +989,12 @@ def crear_producto_desde_cosecha(
     if x_servicio_secreto != PRODUCTORES_A_PRODUCTOS_SECRETO:
         raise HTTPException(status_code=403, detail="No autorizado")
 
+    if datos.unidad_medida != "kg" and not datos.equivalencia_kg:
+        raise HTTPException(
+            status_code=422,
+            detail="Cuando la unidad de medida no es 'kg', debes indicar la equivalencia a kg (ej. 1 litro = X kg)",
+        )
+
     nuevo = models.Producto(
         productor_id=datos.productor_id,
         productor_nombre=datos.productor_nombre,
@@ -993,6 +1005,7 @@ def crear_producto_desde_cosecha(
         unidad_medida=datos.unidad_medida,
         estado="borrador",
         registro_produccion_id=datos.registro_produccion_id,
+        equivalencia_kg=datos.equivalencia_kg,
     )
     db.add(nuevo)
     try:
