@@ -405,6 +405,18 @@
         <label>DNI
           <input type="text" id="repartidor-dni" required maxlength="8" inputmode="numeric" placeholder="8 dígitos">
         </label>
+        <label>Tipo de vehículo
+          <select id="repartidor-tipo-vehiculo" required>
+            <option value="moto">Moto</option>
+            <option value="auto">Auto</option>
+            <option value="camioneta">Camioneta</option>
+            <option value="camion">Camión</option>
+          </select>
+        </label>
+        <label>Capacidad máxima (kg)
+          <input type="number" id="repartidor-capacidad-maxima" required min="1" step="0.1" placeholder="Ej. 30">
+          <small class="muted">¿Cuántos kg puede cargar tu vehículo como máximo?</small>
+        </label>
         <button type="submit" class="btn btn-primary">Crear perfil de repartidor</button>
       </form>
     </div>

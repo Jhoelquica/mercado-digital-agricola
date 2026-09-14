@@ -267,3 +267,50 @@ def test_reintento_resuelve_envio_sin_certificar(monkeypatch):
         db.close()
 
     assert _envio_recargado(envio.id).certificacion_confirmada is True
+
+
+# ============ POST /repartidores: tipo_vehiculo / capacidad_maxima_kg ============
+
+def _payload_repartidor(**overrides):
+    datos = {
+        "nombre": "Repartidor Test",
+        "dni": "12345678",
+        "tipo_vehiculo": "moto",
+        "capacidad_maxima_kg": 30.0,
+    }
+    datos.update(overrides)
+    return datos
+
+
+def test_crear_repartidor_con_vehiculo_y_capacidad_validos_funciona():
+    _auth(str(uuid.uuid4()))
+    resp = client.post("/repartidores", json=_payload_repartidor())
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["tipo_vehiculo"] == "moto"
+    assert float(cuerpo["capacidad_maxima_kg"]) == 30.0
+
+
+def test_crear_repartidor_con_tipo_vehiculo_invalido_falla_422():
+    _auth(str(uuid.uuid4()))
+    resp = client.post("/repartidores", json=_payload_repartidor(tipo_vehiculo="bicicleta"))
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "El tipo de vehículo debe ser uno de: moto, auto, camioneta, camion"
+
+
+def test_crear_repartidor_con_capacidad_cero_falla_422():
+    _auth(str(uuid.uuid4()))
+    resp = client.post("/repartidores", json=_payload_repartidor(capacidad_maxima_kg=0))
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "La capacidad máxima debe ser mayor a 0 kg"
+
+
+def test_crear_repartidor_con_capacidad_negativa_falla_422():
+    _auth(str(uuid.uuid4()))
+    resp = client.post("/repartidores", json=_payload_repartidor(capacidad_maxima_kg=-5))
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "La capacidad máxima debe ser mayor a 0 kg"

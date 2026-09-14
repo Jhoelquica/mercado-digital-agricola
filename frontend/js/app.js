@@ -4095,6 +4095,8 @@ async function crearPerfilRepartidor(e) {
     const datos = {
       nombre: document.getElementById('repartidor-nombre').value.trim(),
       dni: document.getElementById('repartidor-dni').value.trim(),
+      tipo_vehiculo: document.getElementById('repartidor-tipo-vehiculo').value,
+      capacidad_maxima_kg: Number(document.getElementById('repartidor-capacidad-maxima').value),
     };
     await Api.repartidores.crear(datos);
     toast('¡Perfil de repartidor creado! 🚚');

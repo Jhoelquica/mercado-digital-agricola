@@ -71,9 +71,16 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
 class EstadoEnvio(BaseModel):
     estado: str
 
+# Lista fija — mismo criterio que UNIDADES_VALIDAS en productos/main.py: sin esto, tipo_vehiculo
+# terminaría con valores inconsistentes ("Moto", "motocicleta", etc.) que el matching por
+# capacidad de la sub-entrega siguiente no podría agrupar de forma confiable.
+TIPOS_VEHICULO_VALIDOS = ["moto", "auto", "camioneta", "camion"]
+
 class RepartidorCrear(BaseModel):
     nombre: str
     dni: str
+    tipo_vehiculo: str
+    capacidad_maxima_kg: float
 
 class UbicacionActualizar(BaseModel):
     latitud: str
@@ -298,6 +305,15 @@ def crear_repartidor(datos: RepartidorCrear, db: Session = Depends(get_db), usua
     if not datos.dni.isdigit() or len(datos.dni) != 8:
         raise HTTPException(status_code=422, detail="El DNI debe tener exactamente 8 dígitos numéricos")
 
+    if datos.tipo_vehiculo not in TIPOS_VEHICULO_VALIDOS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El tipo de vehículo debe ser uno de: {', '.join(TIPOS_VEHICULO_VALIDOS)}",
+        )
+
+    if datos.capacidad_maxima_kg <= 0:
+        raise HTTPException(status_code=422, detail="La capacidad máxima debe ser mayor a 0 kg")
+
     usuario_id = usuario.get("sub")
     existente = db.query(models.Repartidor).filter(models.Repartidor.usuario_id == usuario_id).first()
     if existente:
@@ -307,6 +323,8 @@ def crear_repartidor(datos: RepartidorCrear, db: Session = Depends(get_db), usua
         usuario_id=usuario_id,
         nombre=datos.nombre,
         dni=datos.dni,
+        tipo_vehiculo=datos.tipo_vehiculo,
+        capacidad_maxima_kg=datos.capacidad_maxima_kg,
     )
     db.add(nuevo)
     db.commit()

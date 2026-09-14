@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -34,6 +34,15 @@ class Repartidor(Base):
     dni = Column(String, nullable=False)
     estado_disponibilidad = Column(String, default="disponible")  # disponible, ocupado, desconectado
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+    # Obligatorios para repartidores NUEVOS (ver RepartidorCrear/crear_repartidor en main.py) —
+    # nullable acá solo porque los repartidores YA registrados antes de este campo no lo tienen
+    # todavía. Pensados para el matching por capacidad de una sub-entrega siguiente.
+    tipo_vehiculo = Column(String, nullable=True)  # "moto", "auto", "camioneta", "camion"
+    # AUTODECLARADA por el repartidor al registrarse, sin ninguna verificación (no hay báscula ni
+    # revisión de Admin de por medio) — limitación conocida y aceptada, no un descuido: el
+    # registro es autoservicio de punta a punta (ver informe de la sub-entrega anterior), y este
+    # dato sigue ese mismo criterio.
+    capacidad_maxima_kg = Column(Numeric(10, 2), nullable=True)
 
 
 class EnvioRechazo(Base):
