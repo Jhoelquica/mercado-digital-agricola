@@ -5,3 +5,4 @@
 *.pyc
 .idea/
 k8s/secret.yaml
+backups/
