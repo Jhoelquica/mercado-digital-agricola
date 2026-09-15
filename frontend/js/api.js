@@ -21,7 +21,7 @@ const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
 // application") antes de usar en cualquier entorno real. Cada entorno (dev/prod) suele tener
 // el suyo propio, ya que el Client ID está atado a los orígenes autorizados (localhost vs. el
 // dominio real).
-const GOOGLE_CLIENT_ID = 'T546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com';
 
 class ApiError extends Error {
   constructor(message, status) {
