@@ -2247,15 +2247,25 @@ window.culqi = function () {
   if (!pagoEnCurso) return;
 
   if (window.Culqi.token) {
-    procesarPagoCulqi(window.Culqi.token.id);
+    // Culqi no cierra su propio modal solo tras tokenizar — hay que pedírselo explícitamente
+    // (Culqi.close()) o se queda mostrando el mismo formulario mientras el cobro se procesa en
+    // el backend. Sin esto, un usuario que piensa que "no pasó nada" puede volver a tocar
+    // "Pagar" ahí adentro y generar un SEGUNDO token para el mismo pedido. Capturamos
+    // pagoEnCurso en una variable local y lo limpiamos ANTES de procesar (no después, como
+    // antes) para que ese segundo click — si llega a pasar mientras este primer cobro todavía
+    // está en curso — quede bloqueado por el guard de arriba en vez de disparar un segundo cargo.
+    const datosPago = pagoEnCurso;
+    pagoEnCurso = null;
+    Culqi.close();
+    procesarPagoCulqi(window.Culqi.token.id, datosPago);
   } else if (window.Culqi.error) {
     toast(window.Culqi.error.user_message || 'Revisa los datos de tu tarjeta e intenta de nuevo.', 'error');
     resetearBotonPago();
   }
 };
 
-async function procesarPagoCulqi(tokenCulqi) {
-  const { pedidoId, email, monto } = pagoEnCurso;
+async function procesarPagoCulqi(tokenCulqi, datosPago) {
+  const { pedidoId, email, monto } = datosPago;
   let resultado = null;
   let errorMsg = null;
   try {
@@ -2269,7 +2279,6 @@ async function procesarPagoCulqi(tokenCulqi) {
   }
 
   mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg });
-  pagoEnCurso = null;
   resetearBotonPago();
   irPasoCheckout(3);
 }
