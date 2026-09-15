@@ -3727,7 +3727,33 @@ async function cargarGestionEnvios() {
 
   await cargarListaEnvios(miRepartidor.id);
   document.getElementById('repartidor-resumen').innerHTML = renderResumenRepartidor();
+  dibujarGraficoEnviosRepartidor();
   iniciarSeguimientoRepartidor();
+}
+
+let chartEnviosRepartidor = null;
+
+// Distribución de los envíos ya cargados por cargarListaEnvios() (Estado.enviosRepartidor) —
+// no dispara ninguna llamada nueva al backend. El canvas vive fijo en index.html, así que hay
+// que destruir la instancia anterior antes de redibujar (mismo motivo que en Panel Productor).
+function dibujarGraficoEnviosRepartidor() {
+  const canvas = document.getElementById('grafico-envios-estado');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const envios = Estado.enviosRepartidor || [];
+  const pendientes = envios.filter((e) => ['asignado', 'en_camino'].includes(e.estado)).length;
+  const entregados = envios.filter((e) => e.estado === 'entregado').length;
+  const otros = envios.filter((e) => ['cancelado', 'rechazado'].includes(e.estado)).length;
+
+  chartEnviosRepartidor?.destroy();
+  chartEnviosRepartidor = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: ['Pendientes', 'Entregados', 'Cancelados/Rechazados'],
+      datasets: [{ data: [pendientes, entregados, otros], backgroundColor: ['#2D3B2A', '#82907A', '#A23B22'] }],
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
+  });
 }
 
 // ---- Resumen / dashboard de "Gestionar Envíos" — lee de Estado.enviosRepartidor, ya cargado

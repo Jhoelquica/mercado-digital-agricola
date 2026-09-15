@@ -490,22 +490,31 @@
       </form>
     </div>
 
-    <div id="repartidor-panel" class="hidden">
-      <div id="repartidor-resumen"></div>
-      <div id="disponibilidad-banner"></div>
-      <div id="ubicacion-estado" class="ubicacion-estado"></div>
+    <div id="repartidor-panel" class="hidden repartidor-shell">
+      <div class="repartidor-resumen-layout">
+        <div id="repartidor-resumen"></div>
+        <div class="card-panel grafico-card">
+          <h4><i class="ti ti-chart-pie"></i> Tus envíos por estado</h4>
+          <canvas id="grafico-envios-estado"></canvas>
+        </div>
+      </div>
+
+      <div class="repartidor-estado-row">
+        <div id="disponibilidad-banner"></div>
+        <div id="ubicacion-estado" class="ubicacion-estado"></div>
+      </div>
 
       <div id="propuestas-section" class="propuestas-section hidden">
         <div class="section-header inner">
           <h3><i class="ti ti-mail"></i> Propuestas pendientes <span id="propuestas-badge" class="badge-contador hidden">0</span></h3>
         </div>
-        <div id="propuestas-list" class="propuestas-list"></div>
+        <div id="propuestas-list" class="propuestas-grid"></div>
       </div>
 
       <div class="section-header inner">
         <h3><i class="ti ti-clipboard-list"></i> Mis envíos</h3>
       </div>
-      <div id="envios-list" class="pedidos-list"></div>
+      <div id="envios-list" class="envios-grid"></div>
       <div id="envios-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-cloud"></i></span>
         <p><strong>Todo tranquilo por ahora</strong></p>

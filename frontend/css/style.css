@@ -1583,6 +1583,32 @@ input, select { font-family: inherit; }
   box-shadow: var(--sombra-hover);
 }
 
+/* ---------- GESTIONAR ENVÍOS — reorganización de ancho completo (mismo criterio que Panel
+   Productor: nada de tarjetas angostas pegadas a la izquierda con la mitad del monitor vacía). ---------- */
+.repartidor-shell { display: flex; flex-direction: column; gap: 22px; }
+
+.repartidor-resumen-layout { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 900px) {
+  .repartidor-resumen-layout { flex-direction: row; align-items: stretch; }
+  .repartidor-resumen-layout > #repartidor-resumen { flex: 1.3; }
+  .repartidor-resumen-layout > .grafico-card { flex: 1; display: flex; flex-direction: column; }
+}
+.repartidor-resumen-layout .grafico-card canvas { max-height: 220px; }
+.repartidor-resumen-layout .grafico-card h4 { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+
+.repartidor-estado-row { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 700px) {
+  .repartidor-estado-row { flex-direction: row; align-items: center; }
+  .repartidor-estado-row > * { flex: 1; margin-bottom: 0; }
+  .repartidor-estado-row .disponibilidad-banner { margin-bottom: 0; }
+}
+
+.propuestas-grid { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 760px) { .propuestas-grid { display: grid; grid-template-columns: repeat(2, 1fr); } }
+
+.envios-grid { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 760px) { .envios-grid { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
+
 /* ---------- NOTIFICACIONES ---------- */
 .notif-card {
   background: white;
