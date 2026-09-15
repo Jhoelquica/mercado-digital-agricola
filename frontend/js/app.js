@@ -2776,6 +2776,18 @@ async function iniciarPanelProductor() {
       cargarEntregasDirectasPendientes(),
     ]);
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
+
+    // Secciones dedicadas nuevas (ver activarTabProductor) — reusan Estado.registrosProduccion
+    // que las 4 cargas de arriba ya dejaron listo, sin pedir nada nuevo al backend. Se vuelve a
+    // pintar cada vez que se entra al panel, así que el flag de "ya dibujé los gráficos de
+    // economía" se resetea acá para que se redibujen si el productor visita esa pestaña otra vez.
+    const registros = Estado.registrosProduccion || [];
+    document.getElementById('productor-ultimas-siembras').innerHTML = renderTablaUltimasSiembras(registros);
+    document.getElementById('productor-economia-stats').innerHTML = renderEconomiaStatsProductor(registros);
+    document.getElementById('productor-economia-historial').innerHTML = renderTablaHistorialCosechas(registros);
+    dibujarGraficoCosechasPorMes(registros);
+    graficosEconomiaProductorListos = false;
+    activarTabProductor('inicio');
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
@@ -2983,6 +2995,7 @@ function renderTarjetaProductorProducto(p, indice) {
         <h4>${p.nombre}</h4>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
         <span class="product-stock ${stockBajo || sinStock ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
+        <div class="stock-barra"><div class="stock-barra-fill ${stockBajo || sinStock ? 'low' : ''}" style="width:${Math.min(100, (Number(p.stock) / 50) * 100)}%"></div></div>
 
         <div class="productor-card-acciones">
           <button type="button" class="btn btn-outline btn-sm btn-toggle-resenas" data-id="${p.id}">
@@ -3231,12 +3244,17 @@ async function eliminarUnidadAlternativa(productoId, unidadId) {
 function renderTarjetaBorrador(p, indice, imagenes) {
   const retraso = Math.min(indice, 12) * 35;
   const puedePublicar = p.precio != null && Number(p.precio) > 0 && imagenes.length > 0;
+  // Progreso puramente visual (categoría / precio / al menos 1 foto = 3 pasos) — no es un campo
+  // del backend, solo ayuda a priorizar qué borrador completar primero en la vista dedicada.
+  const pasosCompletos = (p.categoria ? 1 : 0) + (p.precio != null && Number(p.precio) > 0 ? 1 : 0) + (imagenes.length > 0 ? 1 : 0);
+  const progreso = Math.round((pasosCompletos / 3) * 100);
   return `
-    <div class="pedido-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
-      <div class="pedido-card-header">
-        <h4>${escapeAttr(p.nombre)}</h4>
-        <span class="pill pill-estado pill-pendiente"><i class="ti ti-pencil"></i> Borrador</span>
+    <div class="pedido-card borrador-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
+      <div class="borrador-card-header">
+        <h4>${escapeAttr(p.nombre)} <span class="pill pill-estado pill-pendiente"><i class="ti ti-pencil"></i> Borrador</span></h4>
+        <div class="borrador-progreso-wrap">${progreso}% completo <div class="borrador-progreso-barra"><div class="borrador-progreso-fill" style="width:${progreso}%"></div></div></div>
       </div>
+      <div class="borrador-card-body">
       <p class="muted">${Number(p.stock)} ${escapeAttr(p.unidad_medida)} de tu cosecha aprobada — completa lo que falta para publicarlo.</p>
 
       <div class="publicar-layout">
@@ -3272,6 +3290,7 @@ function renderTarjetaBorrador(p, indice, imagenes) {
       </div>
 
       <button type="button" class="btn btn-primary btn-block btn-publicar-borrador" data-producto-id="${escapeAttr(p.id)}" ${puedePublicar ? '' : 'disabled'}>Publicar</button>
+      </div>
     </div>`;
 }
 
@@ -3304,8 +3323,19 @@ function sincronizarBotonPublicarBorrador(productoId) {
   if (!btn) return; // no es (o ya no es) un borrador visible en pantalla
   const card = btn.closest('.pedido-card');
   const precio = parseFloat(card?.querySelector('.borrador-precio')?.value);
+  const categoria = card?.querySelector('.borrador-categoria')?.value;
   const tieneImagen = (Estado.imagenesPorProducto[productoId] || []).length > 0;
   btn.disabled = !(Number.isFinite(precio) && precio > 0 && tieneImagen);
+
+  // Barra de progreso visual del header (mismos 3 pasos que al pintar la tarjeta) —
+  // se recalcula en vivo mientras el productor completa el borrador.
+  const pasos = (categoria ? 1 : 0) + (Number.isFinite(precio) && precio > 0 ? 1 : 0) + (tieneImagen ? 1 : 0);
+  const progreso = Math.round((pasos / 3) * 100);
+  const wrap = card?.querySelector('.borrador-progreso-wrap');
+  if (wrap) {
+    wrap.firstChild.textContent = `${progreso}% completo `;
+    wrap.querySelector('.borrador-progreso-fill').style.width = `${progreso}%`;
+  }
 }
 
 async function publicarBorrador(productoId) {
@@ -3459,12 +3489,13 @@ async function crearChacra(e) {
 function renderTarjetaChacra(c, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   return `
-    <div class="pedido-card" style="animation-delay:${retraso}ms">
-      <div class="pedido-card-header">
-        <code class="pedido-id">${escapeAttr(c.codigo)}</code>
+    <div class="chacra-card" style="animation-delay:${retraso}ms">
+      <div class="chacra-card-banner"><span class="chacra-codigo-badge">${escapeAttr(c.codigo)}</span></div>
+      <div class="chacra-card-body">
+        <h4>${c.nombre ? escapeAttr(c.nombre) : escapeAttr(c.codigo)}</h4>
+        <div class="chacra-card-ubicacion"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</div>
+        <div id="mapa-chacra-mini-${c.id}" class="chacra-card-mapa-mini"></div>
       </div>
-      ${c.nombre ? `<p>${escapeAttr(c.nombre)}</p>` : ''}
-      <p class="pedido-fecha"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</p>
     </div>`;
 }
 
@@ -3482,6 +3513,14 @@ async function cargarMisChacras() {
       return;
     }
     cont.innerHTML = chacras.map(renderTarjetaChacra).join('');
+    // Mini-mapa de solo lectura por chacra (mismo helper que ya usa Mi Perfil para
+    // #mapa-perfil-productor) — se inicializa después de pintar el HTML porque Leaflet
+    // necesita que el contenedor ya exista en el DOM.
+    chacras.forEach((c) => {
+      if (hayCoordenadas(c.ubicacion_latitud, c.ubicacion_longitud)) {
+        crearMapaSoloLectura(`mapa-chacra-mini-${c.id}`, c.ubicacion_latitud, c.ubicacion_longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(c.nombre || c.codigo));
+      }
+    });
   } catch (err) {
     manejarError(err, 'cargar tus chacras');
   }
@@ -4493,28 +4532,37 @@ function renderPerfilProductor(extra, registrosProduccion) {
       </div>`;
   }
   return `
-    <div class="card-panel">
-      <h3><i class="ti ti-tractor"></i> Datos de productor</h3>
-      <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(extra.comunidad || '—')}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${escapeAttr(extra.contacto || '—')}</span></div>
+    <div class="perfil-resumen-layout">
+      <div class="card-panel">
+        <h3><i class="ti ti-tractor"></i> Datos de productor</h3>
+        <div class="perfil-datos-grid">
+          <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(extra.comunidad || '—')}</span></div>
+          <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${escapeAttr(extra.contacto || '—')}</span></div>
+        </div>
+        ${hayCoordenadas(extra.latitud, extra.longitud) ? `
+        <div class="mapa-bloque">
+          <h4 class="mapa-titulo"><i class="ti ti-map-pin"></i> Ubicación de tu chakra</h4>
+          <div id="mapa-perfil-productor" class="mapa-mini"></div>
+        </div>` : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> No has marcado la ubicación de tu chakra todavía.</div>`}
+        <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
       </div>
-      ${hayCoordenadas(extra.latitud, extra.longitud) ? `
-      <div class="mapa-bloque">
-        <h4 class="mapa-titulo"><i class="ti ti-map-pin"></i> Ubicación de tu chakra</h4>
-        <div id="mapa-perfil-productor" class="mapa-mini"></div>
-      </div>` : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> No has marcado la ubicación de tu chakra todavía.</div>`}
-      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
+      ${renderResumenEconomico(registrosProduccion || [])}
     </div>
-    ${renderGestionEconomica(registrosProduccion || [])}`;
+    ${renderProduccionSeccion(registrosProduccion || [])}`;
 }
 
 // ============ GESTIÓN ECONÓMICA (Módulo 1) ============
 
-function renderResumenEconomico(registros) {
+// Cálculo puro reusado por renderResumenEconomico (Mi Perfil) y renderEconomiaStatsProductor
+// (pestaña "Gestión Económica" del Panel Productor) — mismos números, dos presentaciones.
+function calcularResumenEconomico(registros) {
   const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
 
-  const cosechados = registros.filter((r) => r.estado === 'cosechado');
+  // "cosechado" es un valor legado (ver comentario en productores/models.py) — el flujo actual
+  // termina en "aprobado" con cantidad_cosechada ya presente; completar_cosecha() nunca deja un
+  // registro en reposo como "cosechado". Sin este OR, esta sección quedaba en "—" para casi
+  // cualquier dato real.
+  const cosechados = registros.filter((r) => r.estado === 'aprobado' || r.estado === 'cosechado');
   const totalCosechadoKg = cosechados.reduce((suma, r) => {
     if (r.cantidad_cosechada == null) return suma;
     const enKg = r.unidad_medida === 'kg'
@@ -4527,6 +4575,12 @@ function renderResumenEconomico(registros) {
   const gananciaAcumulada = conGanancia.reduce((suma, r) => suma + Number(r.ganancia_estimada), 0);
   const sinCalcular = cosechados.length - conGanancia.length;
 
+  return { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular };
+}
+
+function renderResumenEconomico(registros) {
+  const { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular } = calcularResumenEconomico(registros);
+
   return `
     <div class="card-panel gestion-economica-resumen">
       <h3><i class="ti ti-chart-bar"></i> Gestión Económica</h3>
@@ -4537,6 +4591,178 @@ function renderResumenEconomico(registros) {
       </div>
       ${sinCalcular > 0 ? `<p class="muted produccion-nota-resumen"><i class="ti ti-info-circle"></i> ${sinCalcular} registro${sinCalcular > 1 ? 's' : ''} cosechado${sinCalcular > 1 ? 's' : ''} sin datos suficientes para calcular ganancia — no se incluye${sinCalcular > 1 ? 'n' : ''} en el total.</p>` : ''}
     </div>`;
+}
+
+// ============ GESTIÓN ECONÓMICA DENTRO DE PANEL PRODUCTOR (pestaña dedicada) ============
+// Misma fuente de datos que ya carga iniciarPanelProductor (Estado.registrosProduccion vía
+// cargarRegistrosProduccionProductor) — no dispara ninguna llamada nueva al backend.
+
+function renderEconomiaStatsProductor(registros) {
+  const { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada } = calcularResumenEconomico(registros);
+  return `
+    <div class="economia-stats">
+      <div class="economia-stat"><span class="economia-stat-label">Total invertido</span><span class="economia-stat-valor">${formatearMoneda(totalInvertido)}</span></div>
+      <div class="economia-stat"><span class="economia-stat-label">Total cosechado</span><span class="economia-stat-valor">${cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—'}</span></div>
+      <div class="economia-stat"><span class="economia-stat-label">Ganancia acumulada</span><span class="economia-stat-valor ${gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—'}</span></div>
+    </div>`;
+}
+
+function renderTablaHistorialCosechas(registros) {
+  if (!registros.length) {
+    return '<p class="muted">Todavía no registraste ninguna siembra.</p>';
+  }
+  const filas = registros.map((r) => {
+    const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
+    const cosechado = r.cantidad_cosechada != null ? `${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}` : '—';
+    const ingreso = r.ingreso_estimado != null ? formatearMoneda(r.ingreso_estimado) : '—';
+    const ganancia = r.ganancia_estimada != null
+      ? `<span class="${r.ganancia_estimada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${formatearMoneda(r.ganancia_estimada)}</span>`
+      : '—';
+    return `
+      <tr>
+        <td>${escapeAttr(r.cultivo)}</td>
+        <td>${formatearMoneda(r.costo_total)}</td>
+        <td>${cosechado}</td>
+        <td>${ingreso}</td>
+        <td>${ganancia}</td>
+        <td><span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span></td>
+      </tr>`;
+  }).join('');
+  return `
+    <table class="tabla-simple">
+      <thead><tr><th>Cultivo</th><th>Costo total</th><th>Cosechado</th><th>Ingreso est.</th><th>Ganancia</th><th>Estado</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>`;
+}
+
+// Ganancia acumulada por cultivo (solo registros con ganancia_estimada calculada) — varias
+// siembras del mismo cultivo se suman en una sola barra.
+function agruparGananciaPorCultivo(registros) {
+  const mapa = new Map();
+  registros.filter((r) => r.ganancia_estimada != null).forEach((r) => {
+    mapa.set(r.cultivo, (mapa.get(r.cultivo) || 0) + Number(r.ganancia_estimada));
+  });
+  return { labels: [...mapa.keys()], valores: [...mapa.values()] };
+}
+
+// Suma de los 4 componentes de costo across todos los registros (independiente del estado).
+function calcularDistribucionCostos(registros) {
+  const totales = { semillas: 0, insumos: 0, manoObra: 0, envio: 0 };
+  registros.forEach((r) => {
+    totales.semillas += Number(r.costo_semillas) || 0;
+    totales.insumos += Number(r.costo_insumos) || 0;
+    totales.manoObra += Number(r.costo_mano_obra) || 0;
+    totales.envio += Number(r.costo_envio) || 0;
+  });
+  return totales;
+}
+
+let chartCosechasMes = null;
+let chartGananciaCultivo = null;
+let chartCostos = null;
+
+// Cuenta registros por mes de fecha_siembra, últimos 6 meses (incluye el actual). Los canvases
+// viven fijos en index.html (no se recrean por innerHTML), así que hay que destruir la instancia
+// anterior antes de dibujar de nuevo cada vez que se revisita el panel — si no, Chart.js lanza
+// "Canvas is already in use".
+function dibujarGraficoCosechasPorMes(registros) {
+  const canvas = document.getElementById('grafico-cosechas-mes');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const meses = [];
+  const conteos = [];
+  const ahora = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const fecha = new Date(ahora.getFullYear(), ahora.getMonth() - i, 1);
+    meses.push(fecha);
+    conteos.push(0);
+  }
+  registros.forEach((r) => {
+    if (!r.fecha_siembra) return;
+    const f = new Date(r.fecha_siembra);
+    const idx = meses.findIndex((m) => m.getFullYear() === f.getFullYear() && m.getMonth() === f.getMonth());
+    if (idx !== -1) conteos[idx]++;
+  });
+  const etiquetas = meses.map((m) => m.toLocaleDateString('es-PE', { month: 'short' }));
+
+  chartCosechasMes?.destroy();
+  chartCosechasMes = new Chart(canvas, {
+    type: 'line',
+    data: { labels: etiquetas, datasets: [{ label: 'Siembras registradas', data: conteos, borderColor: '#2D3B2A', backgroundColor: 'rgba(45,59,42,0.12)', tension: 0.35, fill: true, pointRadius: 4 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+  });
+}
+
+function dibujarGraficosEconomiaProductor(registros) {
+  const canvasGanancia = document.getElementById('grafico-ganancia-cultivo');
+  const canvasCostos = document.getElementById('grafico-costos');
+  if (!canvasGanancia || !canvasCostos || typeof Chart === 'undefined') return;
+
+  const { labels, valores } = agruparGananciaPorCultivo(registros);
+  chartGananciaCultivo?.destroy();
+  chartGananciaCultivo = new Chart(canvasGanancia, {
+    type: 'bar',
+    data: { labels: labels.length ? labels : ['Sin datos'], datasets: [{ label: 'Ganancia (S/)', data: valores.length ? valores : [0], backgroundColor: '#2D3B2A', borderRadius: 6 }] },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+  });
+
+  const costos = calcularDistribucionCostos(registros);
+  chartCostos?.destroy();
+  chartCostos = new Chart(canvasCostos, {
+    type: 'doughnut',
+    data: {
+      labels: ['Semillas', 'Insumos', 'Mano de obra', 'Envío'],
+      datasets: [{ data: [costos.semillas, costos.insumos, costos.manoObra, costos.envio], backgroundColor: ['#2D3B2A', '#82907A', '#E8E1D3', '#8A6D1A'] }],
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
+  });
+}
+
+function renderTablaUltimasSiembras(registros) {
+  if (!registros.length) {
+    return '<p class="muted">Todavía no registraste ninguna siembra.</p>';
+  }
+  const chacras = Estado.chacras || [];
+  const ultimas = [...registros]
+    .filter((r) => r.fecha_siembra)
+    .sort((a, b) => new Date(b.fecha_siembra) - new Date(a.fecha_siembra))
+    .slice(0, 5);
+  if (!ultimas.length) return '<p class="muted">Todavía no registraste ninguna siembra.</p>';
+  const filas = ultimas.map((r) => {
+    const chacra = chacras.find((c) => c.id === r.chacra_id);
+    const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
+    return `
+      <tr>
+        <td>${formatearFecha(r.fecha_siembra)}</td>
+        <td>${escapeAttr(r.cultivo)}</td>
+        <td>${chacra ? escapeAttr(chacra.codigo) : '—'}</td>
+        <td><span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span></td>
+      </tr>`;
+  }).join('');
+  return `
+    <table class="tabla-simple">
+      <thead><tr><th>Fecha</th><th>Cultivo</th><th>Chacra</th><th>Estado</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>`;
+}
+
+// Activa una de las 5 secciones dedicadas del Panel Productor (Inicio / Mis Chacras / Borradores
+// / Mis Productos / Gestión Económica). Los gráficos de "economia" se dibujan recién la primera
+// vez que se abre esa pestaña (si se dibujaran de entrada, mientras el panel está con
+// display:none, Chart.js los mediría con 0x0 y quedarían rotos).
+let graficosEconomiaProductorListos = false;
+function activarTabProductor(nombreTab) {
+  document.querySelectorAll('.productor-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === nombreTab));
+  document.querySelectorAll('.productor-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.tabPanel === nombreTab));
+  if (nombreTab === 'economia') {
+    if (!graficosEconomiaProductorListos) {
+      dibujarGraficosEconomiaProductor(Estado.registrosProduccion || []);
+      graficosEconomiaProductorListos = true;
+    } else {
+      chartGananciaCultivo?.resize();
+      chartCostos?.resize();
+    }
+  }
 }
 
 function renderFormRegistroProduccion() {
@@ -4671,15 +4897,16 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     </div>`;
 }
 
-function renderGestionEconomica(registros) {
+function renderProduccionSeccion(registros) {
   const lista = registros.length
     ? registros.map(renderTarjetaRegistroProduccion).join('')
     : '<p class="muted" style="text-align:center;padding:16px 0;">Aún no registraste ninguna siembra.</p>';
 
   return `
-    ${renderResumenEconomico(registros)}
-    ${renderFormRegistroProduccion()}
-    <div id="produccion-lista">${lista}</div>`;
+    <div class="produccion-layout">
+      ${renderFormRegistroProduccion()}
+      <div id="produccion-lista" class="produccion-lista">${lista}</div>
+    </div>`;
 }
 
 function renderPerfilRepartidor(extra) {
@@ -5116,16 +5343,26 @@ function inicializarEventos() {
   document.getElementById('btn-ubicacion-chacra').addEventListener('click', usarMiUbicacionChacra);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
 
+  // Nav de secciones dedicadas del Panel Productor — delegado sobre .productor-tabs (markup
+  // estático en index.html, nunca se reemplaza por innerHTML, así que un solo listener alcanza
+  // para toda la vida de la página).
+  document.querySelector('.productor-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.productor-tab-btn');
+    if (btn) activarTabProductor(btn.dataset.tab);
+  });
+
   // Accesos rápidos del resumen de "Panel del Productor" — delegados sobre #productor-resumen
   // (su contenido se reemplaza por completo en cada iniciarPanelProductor(), así que un
   // addEventListener directo sobre los botones no sobreviviría al primer refresco).
   document.getElementById('productor-resumen').addEventListener('click', (e) => {
     if (e.target.closest('#btn-resumen-publicar')) {
-      document.getElementById('productor-borradores-lista')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      activarTabProductor('borradores');
+      document.querySelector('.productor-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     if (e.target.closest('#btn-resumen-chacra')) {
-      document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      activarTabProductor('chacras');
+      document.querySelector('.productor-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
     if (e.target.closest('#btn-resumen-siembra')) {

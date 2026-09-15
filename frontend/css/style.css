@@ -1618,8 +1618,12 @@ input, select { font-family: inherit; }
   padding: 24px;
   box-shadow: var(--sombra);
   border: 1px solid var(--borde);
-  max-width: 640px;
 }
+/* Sin max-width por defecto: antes 640px acá adentro dejaba cada .card-panel pegado a la
+   izquierda con un vacío enorme al costado en pantallas anchas (#app-main ya tiene su propio
+   tope de 1280px — no hace falta un segundo tope más angosto encima). Las vistas que sí quieren
+   tarjetas angostas a propósito ya tienen su propio override más específico (ver
+   #view-panel-verificador/#view-panel-admin .card-panel más abajo), así que siguen intactas. */
 .card-panel h3 { margin-bottom: 6px; }
 .muted { color: var(--texto-suave); font-size: 0.9rem; margin-bottom: 16px; }
 
@@ -1862,6 +1866,24 @@ input, select { font-family: inherit; }
 }
 
 .produccion-lista { display: flex; flex-direction: column; gap: 16px; }
+
+/* "Datos de productor" + "Gestión Económica": antes iban uno debajo del otro, cada uno topado a
+   640px — en pantallas anchas se veían pegados a la izquierda con medio monitor vacío al lado.
+   Ahora van lado a lado, mismo alto aproximado. */
+.perfil-resumen-layout { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 800px) {
+  .perfil-resumen-layout { flex-direction: row; align-items: stretch; }
+  .perfil-resumen-layout > * { flex: 1; }
+}
+
+/* "Registrar nueva siembra": el formulario queda fijo al costado y el historial (la parte más
+   larga de la vista) ocupa el resto del ancho disponible. */
+.produccion-layout { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 900px) {
+  .produccion-layout { flex-direction: row; align-items: flex-start; }
+  .produccion-layout > .card-panel { flex: 0 0 360px; position: sticky; top: 16px; }
+  .produccion-layout > .produccion-lista { flex: 1; margin: 0; }
+}
 
 .form-grid {
   display: flex;
@@ -2733,4 +2755,119 @@ input, select { font-family: inherit; }
   .checkout-step-line { width: 24px; }
   .metodo-pago-grid { grid-template-columns: 1fr; }
   .checkout-actions { flex-direction: column; }
+}
+
+/* ============================================================================
+   PANEL DEL PRODUCTOR — rediseño con secciones dedicadas (Inicio / Mis Chacras /
+   Borradores / Mis Productos / Gestión Económica). Tipografía de marca (Rubik +
+   Nunito Sans) escopeada solo a este panel — el resto del sitio sigue en
+   Poppins/Inter hasta que se migre. La paleta --color-* ya es la global.
+   ============================================================================ */
+#view-panel-productor {
+  --font-titulo: 'Rubik', sans-serif;
+  --font-texto: 'Nunito Sans', sans-serif;
+}
+
+.productor-shell { display: flex; flex-direction: column; gap: 22px; }
+
+.productor-tabs {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+  border-bottom: 2px solid var(--color-borde);
+  scrollbar-width: none;
+}
+.productor-tabs::-webkit-scrollbar { display: none; }
+.productor-tab-btn {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 12px 18px; font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
+  color: var(--color-secundario); border-radius: 12px 12px 0 0;
+  position: relative; transition: color .15s ease, background .15s ease;
+}
+.productor-tab-btn i { font-size: 1.1rem; }
+.productor-tab-btn:hover { color: var(--color-primario); background: color-mix(in srgb, var(--color-borde) 12%, transparent); }
+.productor-tab-btn.active { color: var(--color-primario); }
+.productor-tab-btn.active::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
+  background: var(--color-primario); border-radius: 3px 3px 0 0;
+}
+
+.productor-tab-panel { display: none; }
+.productor-tab-panel.active { display: flex; flex-direction: column; gap: 24px; animation: productorFadeUp .35s ease both; }
+@keyframes productorFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ---------- Inicio: gráfico + tabla junto al resumen ---------- */
+.inicio-graficos { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 960px) { .inicio-graficos { grid-template-columns: 1.3fr 1fr; } }
+.grafico-card canvas { max-height: 240px; }
+.tabla-wrap { overflow-x: auto; }
+table.tabla-simple { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+table.tabla-simple th { text-align: left; font-size: 0.7rem; text-transform: uppercase; letter-spacing: .04em; color: var(--color-secundario); padding: 8px 10px; border-bottom: 2px solid var(--color-borde); }
+table.tabla-simple td { padding: 10px 10px; border-bottom: 1px solid color-mix(in srgb, var(--color-borde) 40%, transparent); font-weight: 600; }
+table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-borde) 8%, transparent); }
+
+/* ---------- Mis Chacras: vista dedicada y amplificada ---------- */
+.chacras-layout { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 900px) {
+  .chacras-layout { flex-direction: row; align-items: flex-start; }
+  .chacras-layout > .card-panel { flex: 0 0 360px; position: sticky; top: 16px; }
+}
+.grid-chacras { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 640px) { .grid-chacras { grid-template-columns: repeat(2, 1fr); } }
+.chacra-card {
+  background: var(--blanco); border-radius: var(--radio); overflow: hidden;
+  border: 1px solid var(--color-borde); box-shadow: var(--sombra);
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+.chacra-card:hover { transform: translateY(-5px); box-shadow: var(--sombra-hover); }
+.chacra-card-banner {
+  height: 110px; position: relative;
+  background:
+    radial-gradient(circle at 20% 30%, color-mix(in srgb, var(--color-primario) 35%, transparent), transparent 60%),
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-primario) 12%, var(--color-superficie)) 0 18px, color-mix(in srgb, var(--color-borde) 20%, var(--color-superficie)) 18px 36px);
+}
+.chacra-card-banner .chacra-codigo-badge {
+  position: absolute; top: 12px; left: 12px;
+  font-family: var(--font-titulo); font-weight: 800; font-size: 0.8rem;
+  background: var(--color-primario); color: white; padding: 5px 12px; border-radius: 8px;
+  box-shadow: var(--sombra);
+}
+.chacra-card-body { padding: 18px 18px 20px; }
+.chacra-card-body h4 { font-size: 1.05rem; margin: 0 0 8px; color: var(--color-primario); font-family: var(--font-titulo); }
+.chacra-card-ubicacion { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--color-secundario); margin-bottom: 14px; }
+.chacra-card-ubicacion i { color: var(--color-primario); }
+.chacra-card-mapa-mini { height: 140px; border-radius: 12px; overflow: hidden; border: 1px solid var(--color-borde); background: var(--color-superficie); }
+
+/* ---------- Borradores: header con progreso + micro-efectos en preview ---------- */
+.borradores-lista { display: flex; flex-direction: column; gap: 22px; }
+.borrador-card { padding: 0; overflow: hidden; }
+.borrador-card-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px; background: var(--color-fondo-secundario); margin: 0;
+}
+.borrador-card-header h4 { display: flex; align-items: center; gap: 10px; font-size: 1.1rem; margin: 0; }
+.borrador-progreso-wrap { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; font-weight: 700; color: var(--color-secundario); }
+.borrador-progreso-barra { width: 84px; height: 6px; border-radius: 100px; background: color-mix(in srgb, var(--color-borde) 35%, transparent); overflow: hidden; }
+.borrador-progreso-fill { height: 100%; background: var(--color-primario); border-radius: 100px; transition: width .4s ease; }
+.borrador-card-body { padding: 20px; }
+.borrador-preview-card .product-card:hover { transform: scale(1.03); }
+
+/* ---------- Mis Productos: barra de stock + zoom de imagen en hover ---------- */
+.stock-barra { height: 5px; border-radius: 100px; background: color-mix(in srgb, var(--color-borde) 30%, transparent); overflow: hidden; margin-top: 4px; }
+.stock-barra-fill { height: 100%; background: var(--color-primario); border-radius: 100px; }
+.stock-barra-fill.low { background: var(--tierra); }
+.product-card-media { overflow: hidden; }
+.product-banner img { transition: transform .4s ease; }
+.product-card:hover .product-banner img { transform: scale(1.08); }
+
+/* ---------- Gestión Económica: vista dedicada con stats + gráficos + tabla ---------- */
+.economia-stats { display: grid; grid-template-columns: 1fr; gap: 14px; }
+@media (min-width: 700px) { .economia-stats { grid-template-columns: repeat(3, 1fr); } }
+.economia-stat { background: var(--blanco); border: 1px solid var(--color-borde); border-radius: var(--radio); padding: 20px; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 6px; }
+.economia-stat-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--color-secundario); font-weight: 700; }
+.economia-stat-valor { font-family: var(--font-titulo); font-weight: 800; font-size: 1.9rem; color: var(--color-primario); }
+.economia-graficos { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 960px) { .economia-graficos { grid-template-columns: 1.4fr 1fr; } }
+.grafico-card h4 { font-size: 1rem; display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+
+@media (max-width: 560px) {
+  .productor-tab-btn { padding: 10px 14px; font-size: 0.85rem; }
 }

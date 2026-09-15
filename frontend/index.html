@@ -6,7 +6,7 @@
 <title>Chakra Shop — Mercado Digital Agrícola</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&family=Rubik:wght@500;600;700;800&family=Nunito+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><path d=%22M22 40 L78 40 L70 82 Q50 90 30 82 Z%22 fill=%22%232d6a4f%22/><path d=%22M28 56 L72 56%22 stroke=%22%231b4332%22 stroke-width=%223%22 stroke-linecap=%22round%22 opacity=%220.45%22/><path d=%22M30 70 L70 70%22 stroke=%22%231b4332%22 stroke-width=%223%22 stroke-linecap=%22round%22 opacity=%220.45%22/><path d=%22M50 40 Q50 28 50 18%22 stroke=%22%2340916c%22 stroke-width=%226%22 stroke-linecap=%22round%22 fill=%22none%22/><path d=%22M50 22 Q40 14 44 6 Q56 10 50 22 Z%22 fill=%22%2374c69d%22/><path d=%22M50 18 Q60 10 56 2 Q46 6 50 18 Z%22 fill=%22%2395d5b2%22/></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <!-- Nota: la ruta correcta es .../dist/tabler-icons.min.css — sin "/dist/" jsdelivr resuelve a la
@@ -331,72 +331,129 @@
       </form>
     </div>
 
-    <div id="productor-panel" class="hidden">
-      <div id="productor-resumen"></div>
+    <div id="productor-panel" class="hidden productor-shell">
 
-      <!-- Sección discreta a propósito: solo se muestra (JS quita "hidden") si hay al menos un
-           envío pendiente de entrega directa — caso poco frecuente por diseño (ver
-           cargarEntregasDirectasPendientes en app.js), no algo que amerite un empty-state grande
-           como las secciones de abajo. -->
-      <div id="entregas-directas-section" class="hidden">
-        <div class="section-header inner">
-          <h3><i class="ti ti-truck-delivery"></i> Entregas directas pendientes</h3>
-        </div>
-        <p class="muted">Estos pedidos no encontraron un repartidor con capacidad suficiente — te toca entregarlos directamente.</p>
-        <div id="entregas-directas-lista" class="pedidos-list"></div>
-      </div>
+      <!-- Nav de secciones dedicadas — nuevo, exclusivo de este panel (ver activarTabProductor
+           en app.js). Cada botón/panel usa data-tab / data-tab-panel a juego, nunca ids nuevos,
+           para no interferir con los ids que ya consulta el resto de la lógica de abajo. -->
+      <nav class="productor-tabs" role="tablist">
+        <button type="button" class="productor-tab-btn active" data-tab="inicio"><i class="ti ti-home"></i> Inicio</button>
+        <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> Mis Chacras</button>
+        <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> Borradores</button>
+        <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos</button>
+        <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> Gestión Económica</button>
+      </nav>
 
-      <div class="section-header inner">
-        <h3><i class="ti ti-pencil"></i> Borradores pendientes de completar</h3>
-      </div>
-      <div id="productor-borradores-lista" class="pedidos-list"></div>
-      <div id="productor-borradores-empty" class="empty-state hidden">
-        <span class="empty-state-icon"><i class="ti ti-pencil"></i></span>
-        <p><strong>No tienes borradores pendientes</strong></p>
-        <p class="muted">Cuando el Verificador apruebe una de tus cosechas, el producto nace acá como borrador — completa categoría, precio y fotos para publicarlo.</p>
-      </div>
+      <div class="productor-tab-panel active" data-tab-panel="inicio">
+        <div id="productor-resumen"></div>
 
-      <div class="section-header inner">
-        <h3>Mis productos publicados</h3>
-        <button class="btn btn-outline" id="btn-refrescar-mis-productos">↻ Refrescar</button>
-      </div>
-      <div id="mis-productos-grid" class="grid"></div>
-      <div id="mis-productos-empty" class="empty-state hidden">
-        <span class="empty-state-icon"><i class="ti ti-seedling"></i></span>
-        <p><strong>Aún no tienes productos publicados</strong></p>
-        <p class="muted">Completa un borrador de arriba y publícalo para que aparezca en el catálogo.</p>
-      </div>
-
-      <div class="section-header inner">
-        <h3><i class="ti ti-map-pin"></i> Mis chacras</h3>
-      </div>
-      <div class="card-panel">
-        <h4>Registrar nueva chacra</h4>
-        <p class="muted">Cada siembra que registres en "Mi Perfil" se asocia a una de tus chacras.</p>
-        <form id="form-chacra" class="form-grid">
-          <label>Código
-            <input type="text" id="chacra-codigo" required maxlength="30" placeholder="Ej. CH-01">
-          </label>
-          <label>Nombre (opcional)
-            <input type="text" id="chacra-nombre" maxlength="80" placeholder="Ej. Parcela norte">
-          </label>
-          <div class="mapa-selector-bloque">
-            <div class="mapa-selector-label">
-              <span><i class="ti ti-map-pin"></i> Ubicación de la chacra</span>
-              <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-chacra">Usar mi ubicación</button>
-            </div>
-            <div id="mapa-ubicacion-chacra" class="mapa-seleccionable"></div>
-            <p class="mapa-ayuda" id="mapa-chacra-ayuda">Toca el mapa para marcar dónde está la chacra.</p>
+        <!-- Sección discreta a propósito: solo se muestra (JS quita "hidden") si hay al menos un
+             envío pendiente de entrega directa — caso poco frecuente por diseño (ver
+             cargarEntregasDirectasPendientes en app.js), no algo que amerite un empty-state grande
+             como las secciones de abajo. -->
+        <div id="entregas-directas-section" class="hidden">
+          <div class="section-header inner">
+            <h3><i class="ti ti-truck-delivery"></i> Entregas directas pendientes</h3>
           </div>
-          <button type="submit" class="btn btn-primary">Registrar chacra</button>
-        </form>
+          <p class="muted">Estos pedidos no encontraron un repartidor con capacidad suficiente — te toca entregarlos directamente.</p>
+          <div id="entregas-directas-lista" class="pedidos-list"></div>
+        </div>
+
+        <div class="inicio-graficos">
+          <div class="card-panel grafico-card">
+            <h4><i class="ti ti-chart-line"></i> Cosechas registradas (últimos 6 meses)</h4>
+            <canvas id="grafico-cosechas-mes"></canvas>
+          </div>
+          <div class="card-panel">
+            <h4 style="margin-bottom:12px;"><i class="ti ti-list"></i> Últimas siembras</h4>
+            <div id="productor-ultimas-siembras" class="tabla-wrap"></div>
+          </div>
+        </div>
       </div>
-      <div id="chacras-lista" class="pedidos-list"></div>
-      <div id="chacras-empty" class="empty-state hidden">
-        <span class="empty-state-icon"><i class="ti ti-map-pin"></i></span>
-        <p><strong>Aún no registraste ninguna chacra</strong></p>
-        <p class="muted">Registra tu primera chacra para poder asociarle siembras y cosechas desde "Mi Perfil".</p>
+
+      <div class="productor-tab-panel" data-tab-panel="chacras">
+        <div class="section-header inner">
+          <h3><i class="ti ti-map-pin"></i> Mis chacras</h3>
+        </div>
+        <div class="chacras-layout">
+          <div class="card-panel">
+            <h4>Registrar nueva chacra</h4>
+            <p class="muted">Cada siembra que registres en "Mi Perfil" se asocia a una de tus chacras.</p>
+            <form id="form-chacra" class="form-grid">
+              <label>Código
+                <input type="text" id="chacra-codigo" required maxlength="30" placeholder="Ej. CH-01">
+              </label>
+              <label>Nombre (opcional)
+                <input type="text" id="chacra-nombre" maxlength="80" placeholder="Ej. Parcela norte">
+              </label>
+              <div class="mapa-selector-bloque">
+                <div class="mapa-selector-label">
+                  <span><i class="ti ti-map-pin"></i> Ubicación de la chacra</span>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-chacra">Usar mi ubicación</button>
+                </div>
+                <div id="mapa-ubicacion-chacra" class="mapa-seleccionable"></div>
+                <p class="mapa-ayuda" id="mapa-chacra-ayuda">Toca el mapa para marcar dónde está la chacra.</p>
+              </div>
+              <button type="submit" class="btn btn-primary">Registrar chacra</button>
+            </form>
+          </div>
+          <div style="flex:1; display:flex; flex-direction:column; gap:18px;">
+            <div id="chacras-lista" class="grid-chacras"></div>
+            <div id="chacras-empty" class="empty-state hidden">
+              <span class="empty-state-icon"><i class="ti ti-map-pin"></i></span>
+              <p><strong>Aún no registraste ninguna chacra</strong></p>
+              <p class="muted">Registra tu primera chacra para poder asociarle siembras y cosechas desde "Mi Perfil".</p>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div class="productor-tab-panel" data-tab-panel="borradores">
+        <div class="section-header inner">
+          <h3><i class="ti ti-pencil"></i> Borradores pendientes de completar</h3>
+        </div>
+        <div id="productor-borradores-lista" class="borradores-lista"></div>
+        <div id="productor-borradores-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-pencil"></i></span>
+          <p><strong>No tienes borradores pendientes</strong></p>
+          <p class="muted">Cuando el Verificador apruebe una de tus cosechas, el producto nace acá como borrador — completa categoría, precio y fotos para publicarlo.</p>
+        </div>
+      </div>
+
+      <div class="productor-tab-panel" data-tab-panel="productos">
+        <div class="section-header inner">
+          <h3>Mis productos publicados</h3>
+          <button class="btn btn-outline" id="btn-refrescar-mis-productos">↻ Refrescar</button>
+        </div>
+        <div id="mis-productos-grid" class="grid"></div>
+        <div id="mis-productos-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-seedling"></i></span>
+          <p><strong>Aún no tienes productos publicados</strong></p>
+          <p class="muted">Completa un borrador de arriba y publícalo para que aparezca en el catálogo.</p>
+        </div>
+      </div>
+
+      <div class="productor-tab-panel" data-tab-panel="economia">
+        <div class="section-header inner">
+          <h3><i class="ti ti-chart-bar"></i> Gestión económica</h3>
+        </div>
+        <div id="productor-economia-stats"></div>
+        <div class="economia-graficos">
+          <div class="card-panel grafico-card">
+            <h4><i class="ti ti-chart-bar"></i> Ganancia por cultivo (S/)</h4>
+            <canvas id="grafico-ganancia-cultivo"></canvas>
+          </div>
+          <div class="card-panel grafico-card">
+            <h4><i class="ti ti-chart-pie"></i> Distribución de costos</h4>
+            <canvas id="grafico-costos"></canvas>
+          </div>
+        </div>
+        <div class="card-panel">
+          <h4 style="margin-bottom:12px;">Historial de cosechas</h4>
+          <div id="productor-economia-historial" class="tabla-wrap"></div>
+        </div>
+      </div>
+
     </div>
   </section>
 
@@ -747,6 +804,7 @@
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=c936f4e1"></script>
 <script src="js/app.js?v=a29d8c53"></script>
 </body>
