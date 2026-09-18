@@ -185,6 +185,14 @@ const Api = {
     // (mismo endpoint que ya usa el repartidor) en vez de duplicar la llamada HTTP.
     pendientesEntregaDirecta: () => request('transporte', '/envios/pendientes-entrega-directa', { auth: true }),
     marcarEntregado: (envioId) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado: 'entregado' }, auth: true }),
+    // Evidencia de entrega (repartidor): PIN que le dictó el comprador + foto del paquete. El
+    // backend copia el GPS del repartidor a ese instante — no hace falta mandarlo desde acá.
+    confirmarEntrega: (envioId, pin, archivoFoto) => {
+      const formData = new FormData();
+      formData.append('pin', pin);
+      formData.append('foto', archivoFoto);
+      return requestFormData('transporte', `/envios/${envioId}/entregar`, formData);
+    },
     // Rol admin: envíos "pendiente_asignacion" cuyo motivo es específicamente falta de
     // capacidad (no "nadie disponible en absoluto", que se resuelve solo) — ver
     // motivo_pendiente en transporte/models.py.

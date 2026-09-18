@@ -10,7 +10,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -19,6 +19,7 @@ from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
 import models
+from minio_client import subir_foto_entrega
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
@@ -280,6 +281,64 @@ def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secr
     db.commit()
     return {"mensaje": "Envío eliminado"}
 
+def _efectos_post_entrega(db: Session, envio: models.Envio):
+    """Cadena de efectos secundarios al confirmar una entrega — compartida entre el productor
+    (entrega directa, sin PIN/foto/GPS, vía PATCH /estado) y el repartidor (vía POST /entregar).
+    Extraída sin cambiar nada de su comportamiento — antes vivía inline dentro de
+    actualizar_estado()."""
+    # Solo si hubo repartidor (una entrega directa por el productor nunca tuvo uno asignado —
+    # envio.repartidor_id sigue en None de punta a punta): no hay a quién liberar ni a quién
+    # buscarle un huérfano nuevo, porque nadie quedó libre.
+    if envio.repartidor_id:
+        repartidor_envio = db.query(models.Repartidor).filter(
+            models.Repartidor.id == envio.repartidor_id
+        ).first()
+        if repartidor_envio:
+            repartidor_envio.estado_disponibilidad = "disponible"
+            db.commit()
+            # Disparador inmediato: este repartidor recién quedó libre, revisa si hay algún
+            # envío huérfano esperando (el más antiguo primero) e intenta resolverlo ahora
+            # mismo, sin esperar al job periódico de reintento_huerfanos.py.
+            intentar_resolver_envio_huerfano(db)
+
+    # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
+    # Un fallo acá no bloquea nada ni deshace la entrega ya confirmada — igual que con la
+    # liquidación de repartidor de abajo, queda un rastro reintentable:
+    # envio.certificacion_confirmada sigue en False y reintento_certificacion.py lo va a
+    # reintentar cada INTERVALO_SEGUNDOS hasta que Certificación responda. Se dispara igual sin
+    # importar quién marcó la entrega (repartidor o productor): la trazabilidad del producto no
+    # depende de quién lo entregó.
+    try:
+        notificar_entrega_a_certificacion(db, envio)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.error(
+            "No se pudo notificar a Certificación para el pedido %s (queda pendiente para el reintento)",
+            envio.pedido_id,
+            exc_info=True,
+        )
+
+    # Mismo guard que arriba: sin repartidor no hay nada que liquidarle por transporte (una
+    # entrega directa no tuvo costo de repartidor) — mandar "repartidor_id": "None" a Pagos
+    # crearía una liquidación basura para un repartidor que nunca existió.
+    if envio.repartidor_id:
+        # Mismo criterio no intrusivo que arriba: un fallo acá no bloquea nada ni deshace la
+        # entrega ya confirmada. envio.liquidacion_confirmada sigue en False y
+        # reintento_liquidacion_repartidor.py lo va a reintentar cada INTERVALO_SEGUNDOS hasta que
+        # Pagos responda.
+        try:
+            notificar_liquidacion_repartidor(db, envio)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.error(
+                "No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
+                envio.pedido_id,
+                exc_info=True,
+            )
+
+
 @app.patch("/envios/{envio_id}/estado")
 def actualizar_estado(
     envio_id: str,
@@ -293,10 +352,14 @@ def actualizar_estado(
         raise HTTPException(status_code=404, detail="Envío no encontrado")
 
     if usuario.get("rol") == "repartidor":
-        # Comportamiento actual, sin cambios: cualquier estado vale (asignado/en_camino/
-        # entregado, ver el <select> del panel de repartidor en el frontend), mientras el envío
-        # sea suyo. Una whitelist de transiciones acá rompería esas transiciones legítimas —
-        # queda para una sub-entrega aparte que enumere la máquina de estados completa.
+        # "asignado"/"en_camino" siguen igual acá. "entregado" ya NO — un repartidor tiene que
+        # confirmar la entrega con el PIN del comprador y una foto (ver POST
+        # /envios/{id}/entregar), no con un simple cambio de estado sin evidencia.
+        if datos.estado == "entregado":
+            raise HTTPException(
+                status_code=400,
+                detail="Para marcar un envío como entregado usa POST /envios/{id}/entregar con el código del comprador y una foto.",
+            )
         repartidor = db.query(models.Repartidor).filter(
             models.Repartidor.usuario_id == usuario.get("sub")
         ).first()
@@ -308,7 +371,8 @@ def actualizar_estado(
         # Productor: solo puede cerrar una entrega directa que ya asumió, y solo hacia
         # "entregado" — a diferencia del repartidor, acá SÍ hay una whitelist estricta, porque
         # no hay ninguna transición previa legítima que preservar (esta es la única que un
-        # productor puede hacer por este endpoint).
+        # productor puede hacer por este endpoint). Sin PIN/foto: una entrega directa no tiene
+        # repartidor de por medio, así que no aplica el mismo riesgo de "¿de verdad se entregó?".
         if datos.estado != "entregado":
             raise HTTPException(status_code=403, detail="Un productor solo puede marcar un envío como entregado")
         if envio.estado != "pendiente_entrega_directa":
@@ -328,57 +392,61 @@ def actualizar_estado(
     })
 
     if datos.estado == "entregado":
-        # Solo si hubo repartidor (una entrega directa por el productor nunca tuvo uno asignado
-        # — envio.repartidor_id sigue en None de punta a punta): no hay a quién liberar ni a
-        # quién buscarle un huérfano nuevo, porque nadie quedó libre.
-        if envio.repartidor_id:
-            repartidor_envio = db.query(models.Repartidor).filter(
-                models.Repartidor.id == envio.repartidor_id
-            ).first()
-            if repartidor_envio:
-                repartidor_envio.estado_disponibilidad = "disponible"
-                db.commit()
-                # Disparador inmediato: este repartidor recién quedó libre, revisa si hay algún
-                # envío huérfano esperando (el más antiguo primero) e intenta resolverlo ahora
-                # mismo, sin esperar al job periódico de reintento_huerfanos.py.
-                intentar_resolver_envio_huerfano(db)
+        _efectos_post_entrega(db, envio)
 
-        # TODO: "verificado_punto_venta" quedó a medias — falta geofencing y disparo automático real.
-        # Un fallo acá no bloquea nada ni deshace la entrega ya confirmada — igual que con la
-        # liquidación de repartidor de abajo, queda un rastro reintentable:
-        # envio.certificacion_confirmada sigue en False y reintento_certificacion.py lo va a
-        # reintentar cada INTERVALO_SEGUNDOS hasta que Certificación responda. Se dispara igual
-        # sin importar quién marcó la entrega (repartidor o productor): la trazabilidad del
-        # producto no depende de quién lo entregó.
-        try:
-            notificar_entrega_a_certificacion(db, envio)
-            db.commit()
-        except Exception:
-            db.rollback()
-            logger.error(
-                "No se pudo notificar a Certificación para el pedido %s (queda pendiente para el reintento)",
-                envio.pedido_id,
-                exc_info=True,
-            )
+    return envio
 
-        # Mismo guard que arriba: sin repartidor no hay nada que liquidarle por transporte (una
-        # entrega directa no tuvo costo de repartidor) — mandar "repartidor_id": "None" a Pagos
-        # crearía una liquidación basura para un repartidor que nunca existió.
-        if envio.repartidor_id:
-            # Mismo criterio no intrusivo que arriba: un fallo acá no bloquea nada ni deshace la
-            # entrega ya confirmada. envio.liquidacion_confirmada sigue en False y
-            # reintento_liquidacion_repartidor.py lo va a reintentar cada INTERVALO_SEGUNDOS hasta
-            # que Pagos responda.
-            try:
-                notificar_liquidacion_repartidor(db, envio)
-                db.commit()
-            except Exception:
-                db.rollback()
-                logger.error(
-                    "No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
-                    envio.pedido_id,
-                    exc_info=True,
-                )
+
+@app.post("/envios/{envio_id}/entregar")
+def confirmar_entrega(
+    envio_id: str,
+    pin: str = Form(...),
+    foto: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("repartidor")),
+):
+    """Evidencia de entrega para envíos con repartidor: PIN que el comprador le dicta en la
+    puerta (ver pin_entrega, generado al crear el envío), foto del paquete entregado, y la
+    última posición GPS que el repartidor ya venía enviando cada 15s (ver PATCH /ubicacion) —
+    copiada a entrega_latitud/longitud ANTES de que siga cambiando con el siguiente envío."""
+    if foto.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(status_code=422, detail="Solo se permiten imágenes JPEG, PNG o WEBP")
+
+    repartidor = db.query(models.Repartidor).filter(
+        models.Repartidor.usuario_id == usuario.get("sub")
+    ).first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
+
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+    if str(envio.repartidor_id) != str(repartidor.id):
+        raise HTTPException(status_code=403, detail="No puedes confirmar la entrega de un envío que no es tuyo")
+    if envio.estado not in ["asignado", "en_camino"]:
+        raise HTTPException(status_code=409, detail="Este envío no está en un estado que permita confirmar la entrega")
+    if not envio.pin_entrega or pin != envio.pin_entrega:
+        raise HTTPException(status_code=400, detail="El código no coincide con el que le dieron al comprador.")
+
+    try:
+        url_foto = subir_foto_entrega(foto.file, foto.content_type)
+    except Exception:
+        raise HTTPException(status_code=502, detail="No se pudo subir la foto al almacenamiento")
+
+    envio.estado = "entregado"
+    envio.foto_entrega_url = url_foto
+    envio.entrega_latitud = envio.repartidor_latitud
+    envio.entrega_longitud = envio.repartidor_longitud
+    db.commit()
+    db.refresh(envio)
+
+    publicar_evento({
+        "evento": "envio_actualizado",
+        "pedido_id": str(envio.pedido_id),
+        "estado": envio.estado,
+    })
+
+    _efectos_post_entrega(db, envio)
 
     return envio
 

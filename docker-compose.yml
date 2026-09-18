@@ -160,6 +160,10 @@ services:
       TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
       TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${DB_USER}
+      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_PUBLIC_URL: http://localhost:9000
     depends_on:
       - db-transporte
       - rabbitmq

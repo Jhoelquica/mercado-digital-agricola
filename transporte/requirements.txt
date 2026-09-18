@@ -6,5 +6,7 @@ python-dotenv
 pika
 python-jose[cryptography]
 httpx
+minio
+python-multipart
 prometheus-fastapi-instrumentator
 pytest

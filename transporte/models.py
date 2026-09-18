@@ -40,6 +40,17 @@ class Envio(Base):
     #   "sin_capacidad_suficiente": había candidatos disponibles, pero ninguno con capacidad
     #   suficiente para el peso del pedido.
     motivo_pendiente = Column(String, nullable=True)
+    # Evidencia de entrega — código de 4 dígitos generado al crear el envío (ver
+    # rabbitmq_consumer.py), que el comprador le dicta al repartidor en la puerta. Los otros 3
+    # solo se llenan al confirmar la entrega vía POST /envios/{id}/entregar: la foto sube a MinIO
+    # (mismo mecanismo que las fotos de producto), y la ubicación es una COPIA de
+    # repartidor_latitud/longitud en ese instante — repartidor_latitud/longitud siguen
+    # actualizándose después (el repartidor sigue moviéndose), así que sin esta copia se perdería
+    # la posición real del momento de la entrega.
+    pin_entrega = Column(String, nullable=True)
+    foto_entrega_url = Column(String, nullable=True)
+    entrega_latitud = Column(String, nullable=True)
+    entrega_longitud = Column(String, nullable=True)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"

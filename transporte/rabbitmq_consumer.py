@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import secrets
 
 from sqlalchemy.orm import Session
 
@@ -15,13 +16,23 @@ RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
+def _generar_pin_entrega():
+    """4 dígitos, con ceros a la izquierda (ej. "0042") — el comprador lo ve en su pedido y se
+    lo dicta al repartidor en la puerta, ver POST /envios/{id}/entregar."""
+    return f"{secrets.randbelow(10000):04d}"
+
+
 def _procesar_mensaje(ch, method, properties, body):
     datos = json.loads(body)
 
     if datos.get("evento") == "pedido_creado":
         db = SessionLocal()
         try:
-            nuevo_envio = models.Envio(pedido_id=datos["pedido_id"], estado="pendiente")
+            nuevo_envio = models.Envio(
+                pedido_id=datos["pedido_id"],
+                estado="pendiente",
+                pin_entrega=_generar_pin_entrega(),
+            )
             db.add(nuevo_envio)
             db.commit()
             proponer_envio_a_repartidor(nuevo_envio.id, db)

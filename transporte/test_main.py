@@ -154,7 +154,7 @@ def _crear_repartidor_directo(usuario_id=None) -> "main.models.Repartidor":
         db.close()
 
 
-def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, productor_id=None, motivo_pendiente=None) -> "main.models.Envio":
+def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, productor_id=None, motivo_pendiente=None, pin_entrega="1234") -> "main.models.Envio":
     db = main.SessionLocal()
     try:
         envio = main.models.Envio(
@@ -163,6 +163,7 @@ def _crear_envio_directo(repartidor_id, estado="asignado", pedido_id=None, produ
             estado=estado,
             productor_id=productor_id,
             motivo_pendiente=motivo_pendiente,
+            pin_entrega=pin_entrega,
         )
         db.add(envio)
         db.commit()
@@ -181,6 +182,17 @@ def _envio_recargado(envio_id):
         db.close()
 
 
+def _confirmar_entrega(envio_id, pin="1234"):
+    """POST /envios/{id}/entregar con una foto falsa — subir_foto_entrega se mockea en cada test
+    que llama a esto, así que el content_type/bytes reales no importan, solo pasar la validación
+    de content_type del endpoint."""
+    return client.post(
+        f"/envios/{envio_id}/entregar",
+        data={"pin": pin},
+        files={"foto": ("foto.jpg", b"contenido-falso", "image/jpeg")},
+    )
+
+
 def test_entregar_envio_con_pagos_ok_marca_liquidacion_confirmada(monkeypatch):
     usuario_id = str(uuid.uuid4())
     repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
@@ -188,9 +200,10 @@ def test_entregar_envio_con_pagos_ok_marca_liquidacion_confirmada(monkeypatch):
 
     _mockear_pagos_ok(monkeypatch, costo_envio=8.0)
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
-    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    resp = _confirmar_entrega(envio.id)
     assert resp.status_code == 200, resp.text
 
     assert _envio_recargado(envio.id).liquidacion_confirmada is True
@@ -203,9 +216,10 @@ def test_entregar_envio_con_pagos_fallando_no_bloquea_respuesta(monkeypatch):
 
     _mockear_pagos_roto(monkeypatch)
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
-    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    resp = _confirmar_entrega(envio.id)
     assert resp.status_code == 200, resp.text
 
     envio_recargado = _envio_recargado(envio.id)
@@ -238,9 +252,10 @@ def test_entregar_envio_con_certificacion_ok_marca_certificacion_confirmada(monk
 
     _mockear_certificacion_ok(monkeypatch)
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
-    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    resp = _confirmar_entrega(envio.id)
     assert resp.status_code == 200, resp.text
 
     assert _envio_recargado(envio.id).certificacion_confirmada is True
@@ -253,9 +268,10 @@ def test_entregar_envio_con_certificacion_fallando_no_bloquea_respuesta(monkeypa
 
     _mockear_certificacion_rota(monkeypatch)
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
-    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+    resp = _confirmar_entrega(envio.id)
     assert resp.status_code == 200, resp.text
 
     envio_recargado = _envio_recargado(envio.id)
@@ -279,6 +295,92 @@ def test_reintento_resuelve_envio_sin_certificar(monkeypatch):
         db.close()
 
     assert _envio_recargado(envio.id).certificacion_confirmada is True
+
+
+# ============ POST /envios/{id}/entregar (PIN + foto + GPS) ============
+
+def test_confirmar_entrega_con_pin_correcto_marca_entregado_y_copia_gps(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega="7391")
+
+    # repartidor_latitud/longitud ya vienen actualizándose por PATCH /ubicacion (cada 15s) antes
+    # de que el repartidor confirme la entrega — simulado acá escribiéndolos directo en la fila.
+    db = main.SessionLocal()
+    try:
+        envio_db = db.query(main.models.Envio).filter(main.models.Envio.id == envio.id).first()
+        envio_db.repartidor_latitud = "-12.0464"
+        envio_db.repartidor_longitud = "-77.0428"
+        db.commit()
+    finally:
+        db.close()
+
+    _mockear_pagos_ok(monkeypatch, costo_envio=6.0)
+    _mockear_certificacion_ok(monkeypatch)
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto-entrega.jpg")
+
+    _auth(usuario_id)
+    resp = _confirmar_entrega(envio.id, pin="7391")
+    assert resp.status_code == 200, resp.text
+
+    envio_recargado = _envio_recargado(envio.id)
+    assert envio_recargado.estado == "entregado"
+    assert envio_recargado.foto_entrega_url == "http://fake/foto-entrega.jpg"
+    # Copiado de repartidor_latitud/longitud EN ESE INSTANTE, no una referencia — si el
+    # repartidor sigue moviéndose después, esto no debe cambiar.
+    assert envio_recargado.entrega_latitud == "-12.0464"
+    assert envio_recargado.entrega_longitud == "-77.0428"
+
+
+def test_confirmar_entrega_con_pin_incorrecto_falla_400(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega="7391")
+
+    _auth(usuario_id)
+    resp = _confirmar_entrega(envio.id, pin="0000")
+
+    assert resp.status_code == 400, resp.text
+    assert _envio_recargado(envio.id).estado == "en_camino"  # no se movió el estado
+
+
+def test_confirmar_entrega_de_envio_de_otro_repartidor_falla_403(monkeypatch):
+    dueño = _crear_repartidor_directo(usuario_id=str(uuid.uuid4()))
+    envio = _crear_envio_directo(dueño.id, estado="en_camino", pin_entrega="7391")
+
+    otro_usuario_id = str(uuid.uuid4())
+    _crear_repartidor_directo(usuario_id=otro_usuario_id)
+
+    _auth(otro_usuario_id)
+    resp = _confirmar_entrega(envio.id, pin="7391")
+
+    assert resp.status_code == 403, resp.text
+
+
+def test_confirmar_entrega_en_estado_pendiente_falla_409(monkeypatch):
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="propuesto", pin_entrega="7391")
+
+    _auth(usuario_id)
+    resp = _confirmar_entrega(envio.id, pin="7391")
+
+    assert resp.status_code == 409, resp.text
+
+
+def test_actualizar_estado_repartidor_a_entregado_ya_no_funciona_falla_400(monkeypatch):
+    """Regresión intencional: desde este cambio, un repartidor NO puede marcar "entregado" por
+    el PATCH /estado de siempre — tiene que confirmar con PIN + foto vía POST /entregar."""
+    usuario_id = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino")
+
+    _auth(usuario_id)
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
+
+    assert resp.status_code == 400, resp.text
+    assert _envio_recargado(envio.id).estado == "en_camino"
 
 
 # ============ Matching por peso/capacidad (proponer_envio_a_repartidor) ============
