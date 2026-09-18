@@ -538,7 +538,7 @@
     </nav>
 
     <div class="verificador-seccion" data-vseccion="cosechas">
-      <div id="verificador-cosechas-lista" class="pedidos-list"></div>
+      <div id="verificador-cosechas-lista" class="grid-verificador"></div>
       <div id="verificador-cosechas-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-plant-2"></i></span>
         <p><strong>No hay cosechas pendientes</strong></p>
@@ -547,7 +547,7 @@
     </div>
 
     <div class="verificador-seccion hidden" data-vseccion="historial">
-      <div id="verificador-historial-lista" class="pedidos-list"></div>
+      <div id="verificador-historial-lista" class="grid-verificador"></div>
       <div id="verificador-historial-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-history"></i></span>
         <p><strong>Todavía no verificaste ninguna cosecha</strong></p>
@@ -570,60 +570,82 @@
   <section id="view-panel-admin" class="view">
     <div class="section-header">
       <h2><i class="ti ti-shield-lock"></i> Panel Admin</h2>
-      <button class="btn btn-outline" id="btn-refrescar-invitaciones">↻ Refrescar</button>
     </div>
 
-    <div id="admin-resumen"></div>
+    <div class="admin-shell">
+      <nav class="admin-tabs" role="tablist">
+        <button type="button" class="admin-tab-btn active" data-admintab="inicio"><i class="ti ti-home"></i> Inicio</button>
+        <button type="button" class="admin-tab-btn" data-admintab="invitaciones"><i class="ti ti-ticket"></i> Invitaciones</button>
+        <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
+        <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
+      </nav>
 
-    <div class="card-panel">
-      <h3>Generar código de invitación</h3>
-      <p class="muted">El código habilita a una persona a registrarse con el rol elegido. Es de un solo uso y expira a los 7 días.</p>
-      <form id="form-invitacion" class="form-grid">
-        <label>Rol a habilitar
-          <!-- Opciones pobladas por poblarSelectRolDestino() desde ROLES_INVITABLES en app.js —
-               agregar un rol restringido nuevo es sumarlo ahí, no tocar este HTML. -->
-          <select id="invitacion-rol-destino"></select>
-        </label>
-        <button type="submit" class="btn btn-primary">Generar código de invitación</button>
-      </form>
-      <div id="invitacion-resultado" class="invitacion-resultado hidden">
-        <span class="muted">Código generado — compártelo con la persona invitada:</span>
-        <div class="invitacion-codigo-caja">
-          <code id="invitacion-codigo-texto"></code>
-          <button type="button" class="btn btn-sm btn-outline" id="btn-copiar-codigo"><i class="ti ti-copy"></i> Copiar</button>
+      <div class="admin-tab-panel active" data-admin-panel="inicio">
+        <div class="admin-resumen-layout">
+          <div id="admin-resumen"></div>
+          <div class="card-panel grafico-card">
+            <h4><i class="ti ti-chart-pie"></i> Invitaciones por estado</h4>
+            <canvas id="grafico-invitaciones-estado"></canvas>
+          </div>
         </div>
-        <span class="muted" id="invitacion-expira-texto"></span>
       </div>
-    </div>
 
-    <div class="section-header inner">
-      <h3><i class="ti ti-ticket"></i> Invitaciones generadas</h3>
-    </div>
-    <div id="invitaciones-lista" class="pedidos-list"></div>
-    <div id="invitaciones-empty" class="empty-state hidden">
-      <span class="empty-state-icon"><i class="ti ti-mail-off"></i></span>
-      <p><strong>Todavía no generaste ninguna invitación</strong></p>
-    </div>
+      <div class="admin-tab-panel" data-admin-panel="invitaciones">
+        <div class="card-panel">
+          <h3>Generar código de invitación</h3>
+          <p class="muted">El código habilita a una persona a registrarse con el rol elegido. Es de un solo uso y expira a los 7 días.</p>
+          <form id="form-invitacion" class="form-grid">
+            <label>Rol a habilitar
+              <!-- Opciones pobladas por poblarSelectRolDestino() desde ROLES_INVITABLES en app.js —
+                   agregar un rol restringido nuevo es sumarlo ahí, no tocar este HTML. -->
+              <select id="invitacion-rol-destino"></select>
+            </label>
+            <button type="submit" class="btn btn-primary">Generar código de invitación</button>
+          </form>
+          <div id="invitacion-resultado" class="invitacion-resultado hidden">
+            <span class="muted">Código generado — compártelo con la persona invitada:</span>
+            <div class="invitacion-codigo-caja">
+              <code id="invitacion-codigo-texto"></code>
+              <button type="button" class="btn btn-sm btn-outline" id="btn-copiar-codigo"><i class="ti ti-copy"></i> Copiar</button>
+            </div>
+            <span class="muted" id="invitacion-expira-texto"></span>
+          </div>
+        </div>
 
-    <!-- Sección discreta a propósito, mismo criterio que "Entregas directas pendientes" en
-         panel-productor: solo se muestra (JS quita "hidden") si hay al menos un envío esperando
-         un vehículo con más capacidad — caso poco frecuente por diseño (ver
-         cargarEnviosPendientesPorCapacidad en app.js). -->
-    <div id="pendientes-capacidad-section" class="hidden">
-      <div class="section-header inner">
-        <h3><i class="ti ti-truck"></i> Pedidos esperando vehículo con más capacidad</h3>
+        <div class="section-header inner">
+          <h3><i class="ti ti-ticket"></i> Invitaciones generadas</h3>
+          <button class="btn btn-outline" id="btn-refrescar-invitaciones">↻ Refrescar</button>
+        </div>
+        <div id="invitaciones-lista" class="grid-admin"></div>
+        <div id="invitaciones-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-mail-off"></i></span>
+          <p><strong>Todavía no generaste ninguna invitación</strong></p>
+        </div>
       </div>
-      <div id="pendientes-capacidad-lista" class="pedidos-list"></div>
-    </div>
 
-    <div class="section-header inner">
-      <h3><i class="ti ti-building-warehouse"></i> Productos en tránsito</h3>
-      <button class="btn btn-outline" id="btn-refrescar-productos-transito">↻ Refrescar</button>
-    </div>
-    <div id="productos-transito-lista" class="pedidos-list"></div>
-    <div id="productos-transito-empty" class="empty-state hidden">
-      <span class="empty-state-icon"><i class="ti ti-package-off"></i></span>
-      <p><strong>No hay productos pendientes de confirmar</strong></p>
+      <div class="admin-tab-panel" data-admin-panel="capacidad">
+        <div class="section-header inner">
+          <h3><i class="ti ti-truck"></i> Pedidos esperando vehículo con más capacidad</h3>
+        </div>
+        <div id="pendientes-capacidad-lista" class="grid-admin"></div>
+        <div id="pendientes-capacidad-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-truck"></i></span>
+          <p><strong>No hay pedidos esperando vehículo</strong></p>
+          <p class="muted">Cuando ningún repartidor disponible tenga capacidad suficiente para un pedido, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="transito">
+        <div class="section-header inner">
+          <h3><i class="ti ti-building-warehouse"></i> Productos en tránsito</h3>
+          <button class="btn btn-outline" id="btn-refrescar-productos-transito">↻ Refrescar</button>
+        </div>
+        <div id="productos-transito-lista" class="grid-admin"></div>
+        <div id="productos-transito-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-package-off"></i></span>
+          <p><strong>No hay productos pendientes de confirmar</strong></p>
+        </div>
+      </div>
     </div>
   </section>
 

@@ -2545,6 +2545,14 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
         <button type="button" class="btn btn-outline btn-sm btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
       </div>` : ''}
 
+      ${activo && envio.pin_entrega ? `
+      <div class="pin-entrega-aviso">
+        <i class="ti ti-key"></i>
+        <div>
+          <strong>Código para el repartidor</strong>
+          <span>Dile este código cuando llegue a confirmar tu entrega: <span class="pin-entrega-codigo">${escapeAttr(envio.pin_entrega)}</span></span>
+        </div>
+      </div>` : ''}
       ${activo ? renderBloqueRuta(envio, ruta) : ''}
       ${entregado ? '<div class="resena-cta"></div>' : ''}
       ${entregado ? `
@@ -4015,7 +4023,15 @@ async function iniciarPanelAdmin() {
   document.getElementById('invitacion-resultado').classList.add('hidden');
   document.getElementById('form-invitacion').reset();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
+  activarTabAdmin('inicio');
   await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad()]);
+}
+
+// Secciones dedicadas del Panel Admin (Inicio / Invitaciones / Pendientes por Capacidad /
+// Productos en Tránsito) — mismo patrón que activarTabProductor.
+function activarTabAdmin(nombreTab) {
+  document.querySelectorAll('.admin-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.admintab === nombreTab));
+  document.querySelectorAll('.admin-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.adminPanel === nombreTab));
 }
 
 // El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
@@ -4067,9 +4083,32 @@ async function cargarInvitaciones() {
     vacio.classList.toggle('hidden', invitaciones.length > 0);
     cont.innerHTML = invitaciones.map(renderInvitacionCard).join('');
     refrescarResumenAdmin();
+    dibujarGraficoInvitacionesEstado(invitaciones);
   } catch (err) {
     manejarError(err, 'cargar las invitaciones');
   }
+}
+
+let chartInvitacionesEstado = null;
+
+// Mismo canvas fijo en index.html (nunca se recrea por innerHTML) que ya obligó a este patrón
+// en Panel Productor/Repartidor — destruir la instancia anterior antes de redibujar.
+function dibujarGraficoInvitacionesEstado(invitaciones) {
+  const canvas = document.getElementById('grafico-invitaciones-estado');
+  if (!canvas || typeof Chart === 'undefined') return;
+
+  const porEstado = { vigente: 0, usada: 0, expirada: 0 };
+  invitaciones.forEach((inv) => { porEstado[estadoInvitacion(inv).clave]++; });
+
+  chartInvitacionesEstado?.destroy();
+  chartInvitacionesEstado = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: ['Vigentes', 'Usadas', 'Expiradas'],
+      datasets: [{ data: [porEstado.vigente, porEstado.usada, porEstado.expirada], backgroundColor: ['#2D3B2A', '#82907A', '#A23B22'] }],
+    },
+    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
+  });
 }
 
 // ---- Resumen / dashboard de "Panel Admin" — reusa estadoInvitacion() (la misma función que ya
@@ -4201,24 +4240,20 @@ function renderTarjetaPendienteCapacidad(envio, indice = 0) {
 }
 
 async function cargarEnviosPendientesPorCapacidad() {
-  const seccion = document.getElementById('pendientes-capacidad-section');
+  const vacio = document.getElementById('pendientes-capacidad-empty');
   const cont = document.getElementById('pendientes-capacidad-lista');
   try {
     const envios = await Api.transporte.pendientesPorCapacidad();
     enviosPorCapacidadActualesAdmin = envios;
-    if (!envios.length) {
-      seccion.classList.add('hidden');
-      cont.innerHTML = '';
-    } else {
-      seccion.classList.remove('hidden');
-      cont.innerHTML = envios.map(renderTarjetaPendienteCapacidad).join('');
-    }
+    vacio.classList.toggle('hidden', envios.length > 0);
+    cont.innerHTML = envios.map(renderTarjetaPendienteCapacidad).join('');
   } catch (err) {
     // Silencioso a propósito, mismo criterio que cargarEntregasDirectasPendientes() en
     // panel-productor: es una sección discreta y poco frecuente — un error acá no debería
     // interrumpir el resto del panel (invitaciones, productos en tránsito siguen cargando igual).
     enviosPorCapacidadActualesAdmin = [];
-    seccion.classList.add('hidden');
+    cont.innerHTML = '';
+    vacio.classList.remove('hidden');
   }
   refrescarResumenAdmin();
 }
@@ -4360,7 +4395,22 @@ function renderTarjetaEnvio(envio, ruta, indice = 0) {
           <option value="entregado" ${envio.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
         </select>
         <button class="btn btn-primary btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
-      </div>` : ''}
+      </div>
+      <form class="form-confirmar-entrega hidden" data-envio-id="${envio.id}">
+        <p class="muted"><i class="ti ti-shield-check"></i> Pídele al comprador el código de 4 dígitos de su pedido.</p>
+        <div class="form-confirmar-entrega-campos">
+          <label>Código del comprador
+            <input type="text" name="pin" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required placeholder="0000">
+          </label>
+          <label>Foto de la entrega
+            <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required>
+          </label>
+        </div>
+        <div class="form-confirmar-entrega-acciones">
+          <button type="button" class="btn btn-ghost btn-sm btn-cancelar-entrega">Cancelar</button>
+          <button type="submit" class="btn btn-primary btn-sm">Confirmar entrega</button>
+        </div>
+      </form>` : ''}
     </div>
   `;
 }
@@ -4436,6 +4486,28 @@ async function actualizarEstadoEnvio(envioId, nuevoEstado) {
     if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
   } catch (err) {
     manejarError(err, 'actualizar el estado del envío');
+  }
+}
+
+// "Entregado" ya no se marca con el select genérico de arriba — necesita el PIN que el
+// comprador le dicta al repartidor en la puerta más una foto, ver POST /envios/{id}/entregar.
+async function confirmarEntregaConPin(form) {
+  const envioId = form.dataset.envioId;
+  const pin = form.pin.value.trim();
+  const archivoFoto = form.foto.files[0];
+  if (!archivoFoto) return;
+
+  const btnConfirmar = form.querySelector('button[type="submit"]');
+  form.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
+  btnConfirmar.textContent = 'Confirmando...';
+  try {
+    await Api.transporte.confirmarEntrega(envioId, pin, archivoFoto);
+    toast('Entrega confirmada ✅');
+    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
+  } catch (err) {
+    manejarError(err, 'confirmar la entrega');
+    form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+    btnConfirmar.textContent = 'Confirmar entrega';
   }
 }
 
@@ -5567,18 +5639,22 @@ function inicializarEventos() {
   });
   document.getElementById('form-rechazar-cosecha').addEventListener('submit', confirmarRechazoCosecha);
 
-  // ---- Panel Admin: generar invitación, copiar código, refrescar, revocar ----
+  // ---- Panel Admin: nav de secciones dedicadas + generar invitación, copiar código, refrescar, revocar ----
+  document.querySelector('.admin-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.admin-tab-btn');
+    if (btn) activarTabAdmin(btn.dataset.admintab);
+  });
   document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);
   document.getElementById('btn-copiar-codigo').addEventListener('click', copiarCodigoInvitacion);
   document.getElementById('btn-refrescar-invitaciones').addEventListener('click', cargarInvitaciones);
   document.getElementById('admin-resumen').addEventListener('click', (e) => {
     if (e.target.closest('#btn-resumen-generar-codigo')) {
-      document.getElementById('invitacion-rol-destino')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      activarTabAdmin('invitaciones');
       document.getElementById('invitacion-rol-destino')?.focus({ preventScroll: true });
       return;
     }
     if (e.target.closest('#btn-resumen-pendientes-capacidad')) {
-      document.getElementById('pendientes-capacidad-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      activarTabAdmin('capacidad');
     }
   });
   document.getElementById('invitaciones-lista').addEventListener('click', (e) => {
@@ -5591,11 +5667,26 @@ function inicializarEventos() {
     if (btn) confirmarLlegadaAlmacen(btn.dataset.productoId);
   });
   document.getElementById('envios-list').addEventListener('click', (e) => {
+    const btnCancelar = e.target.closest('.btn-cancelar-entrega');
+    if (btnCancelar) { btnCancelar.closest('.form-confirmar-entrega').classList.add('hidden'); return; }
+
     const btn = e.target.closest('.btn-actualizar-envio');
     if (!btn) return;
     const envioId = btn.dataset.envioId;
     const select = document.querySelector(`.select-estado-envio[data-envio-id="${envioId}"]`);
+    if (select.value === 'entregado') {
+      // "Entregado" ya no es un simple cambio de estado — muestra el formulario de PIN + foto
+      // en vez de llamar a actualizarEstadoEnvio (ver confirmarEntregaConPin).
+      document.querySelector(`.form-confirmar-entrega[data-envio-id="${envioId}"]`)?.classList.remove('hidden');
+      return;
+    }
     actualizarEstadoEnvio(envioId, select.value);
+  });
+  document.getElementById('envios-list').addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-confirmar-entrega');
+    if (!form) return;
+    e.preventDefault();
+    confirmarEntregaConPin(form);
   });
   document.getElementById('propuestas-list').addEventListener('click', (e) => {
     const aceptar = e.target.closest('.btn-aceptar-propuesta');

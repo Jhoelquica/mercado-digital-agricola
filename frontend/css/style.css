@@ -1404,6 +1404,20 @@ input, select { font-family: inherit; }
 .resena-cta { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 .resena-cta .btn { animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
 
+.pin-entrega-aviso {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--verde-fondo);
+  border: 1px solid var(--verde-claro);
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-top: 10px;
+  color: var(--verde-oscuro);
+}
+.pin-entrega-aviso i { font-size: 1.3rem; flex-shrink: 0; }
+.pin-entrega-aviso strong { display: block; font-size: 0.9rem; }
+.pin-entrega-aviso span { font-size: 0.85rem; }
+.pin-entrega-codigo { font-weight: 800; font-size: 1.1rem; letter-spacing: 0.1em; }
+
 .envio-actualizar {
   display: flex;
   gap: 10px;
@@ -1417,6 +1431,65 @@ input, select { font-family: inherit; }
   font-size: 0.88rem;
   background: white;
   color: var(--texto);
+}
+
+/* ---------- Confirmar entrega (PIN + foto) ---------- */
+.form-confirmar-entrega {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--borde);
+}
+.form-confirmar-entrega-campos { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+@media (min-width: 480px) { .form-confirmar-entrega-campos { flex-direction: row; } }
+.form-confirmar-entrega-campos label { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.form-confirmar-entrega-campos input[type="text"] {
+  padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--borde);
+  font-size: 1.1rem; font-weight: 700; letter-spacing: 0.15em; text-align: center;
+}
+.form-confirmar-entrega-campos input[type="file"] { font-size: 0.82rem; }
+.form-confirmar-entrega-acciones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+
+/* ---------- PANEL ADMIN — mismas secciones dedicadas + ancho completo que Productor/Repartidor ---------- */
+.admin-shell { display: flex; flex-direction: column; gap: 22px; }
+
+.admin-tabs {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+  border-bottom: 2px solid var(--color-borde);
+  scrollbar-width: none;
+}
+.admin-tabs::-webkit-scrollbar { display: none; }
+.admin-tab-btn {
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+  padding: 12px 18px; font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
+  color: var(--color-secundario); border-radius: 12px 12px 0 0;
+  position: relative; transition: color .15s ease, background .15s ease;
+}
+.admin-tab-btn i { font-size: 1.1rem; }
+.admin-tab-btn:hover { color: var(--color-primario); background: color-mix(in srgb, var(--color-borde) 12%, transparent); }
+.admin-tab-btn.active { color: var(--color-primario); }
+.admin-tab-btn.active::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
+  background: var(--color-primario); border-radius: 3px 3px 0 0;
+}
+
+.admin-tab-panel { display: none; }
+.admin-tab-panel.active { display: flex; flex-direction: column; gap: 24px; animation: productorFadeUp .35s ease both; }
+
+.admin-resumen-layout { display: flex; flex-direction: column; gap: 20px; }
+@media (min-width: 900px) {
+  .admin-resumen-layout { flex-direction: row; align-items: stretch; }
+  .admin-resumen-layout > #admin-resumen { flex: 1.3; }
+  .admin-resumen-layout > .grafico-card { flex: 1; display: flex; flex-direction: column; }
+}
+.admin-resumen-layout .grafico-card canvas { max-height: 220px; }
+.admin-resumen-layout .grafico-card h4 { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+
+.grid-admin { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 760px) { .grid-admin { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
+@media (min-width: 1150px) { .grid-admin { grid-template-columns: repeat(3, 1fr); } }
+
+@media (max-width: 560px) {
+  .admin-tab-btn { padding: 10px 14px; font-size: 0.85rem; }
 }
 
 /* ---------- MAPAS (LEAFLET) ---------- */
@@ -1710,38 +1783,41 @@ input, select { font-family: inherit; }
 }
 
 /* ---------- PANEL VERIFICADOR ---------- */
-/* Contenido nuevo — nace con la paleta de marca (--color-*), sin la escala --verde-* vieja.
-   Tabs tipo pill, mismo patrón que .pedidos-tabs pero con los tokens nuevos. */
+/* Mismo lenguaje visual de pestañas (underline) que Productor/Repartidor/Admin — antes eran
+   "pills" sueltas; unificado acá sin tocar el mecanismo de toggle (sigue siendo
+   seleccionarSeccionVerificador() alternando .active / .hidden, solo cambió el CSS). */
 .verificador-tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+  display: flex; gap: 6px; margin-bottom: 20px; overflow-x: auto;
+  border-bottom: 2px solid var(--color-borde);
+  scrollbar-width: none;
 }
+.verificador-tabs::-webkit-scrollbar { display: none; }
 .verificador-tab {
-  padding: 8px 18px;
-  border-radius: 999px;
-  background: white;
-  border: 1.5px solid var(--color-borde);
+  padding: 12px 18px; flex-shrink: 0;
+  font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
+  background: none; border: none; border-radius: 12px 12px 0 0;
   color: var(--color-secundario);
-  font-weight: 600;
-  font-size: 0.88rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  position: relative;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 .verificador-tab:hover {
-  background: color-mix(in srgb, var(--color-borde) 14%, transparent);
+  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
   color: var(--color-primario);
 }
-.verificador-tab.active {
-  background: var(--color-primario);
-  color: white;
-  border-color: var(--color-primario);
+.verificador-tab.active { color: var(--color-primario); }
+.verificador-tab.active::after {
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
+  background: var(--color-primario); border-radius: 3px 3px 0 0;
 }
 .verificador-seccion { animation: fadeIn 0.25s ease; }
 #view-panel-verificador .card-panel { border-color: var(--color-borde); max-width: 480px; }
 #verificador-cuenta-nombre { color: var(--color-primario); }
 #btn-verificador-logout { margin-top: 4px; }
+
+.grid-verificador { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 760px) { .grid-verificador { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
+@media (min-width: 1150px) { .grid-verificador { grid-template-columns: repeat(3, 1fr); } }
 
 .verificador-cosecha-acciones { display: flex; gap: 10px; margin-top: 14px; }
 .verificador-cosecha-acciones .btn-sm { margin-left: 0; flex: 1; } /* .btn-sm trae margin-left:auto pensado para un botón solo — acá van dos en fila, repartiendo el ancho */
@@ -2599,27 +2675,37 @@ input, select { font-family: inherit; }
 .hidden { display: none !important; }
 
 /* ---------- VERIFICAR (PÁGINA PÚBLICA DE CERTIFICACIÓN) ---------- */
-.verificar-page {
-  max-width: 480px;
-  margin: 0 auto;
-  padding: 28px 18px 56px;
-  min-height: 100vh;
+/* ---------- VERIFICAR.HTML — página pública del QR, paleta y tipografía de marca. A
+   diferencia de los paneles (Productor/Repartidor/Admin/Verificador), esto es una sola
+   columna de lectura centrada a propósito — no un dashboard: la mayoría la abre desde el
+   celular al escanear el QR, y un ancho completo no ayuda a leer un timeline lineal. ---------- */
+.verificar-topbar { background: var(--color-primario); padding: 16px 20px; }
+.verificar-topbar-inner {
+  max-width: 560px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  color: white; font-family: var(--font-titulo); font-weight: 700; font-size: 1.05rem;
 }
-.verificar-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--font-titulo);
-  font-weight: 700;
-  color: var(--color-primario);
-  font-size: 1.02rem;
-  margin-bottom: 24px;
+.verificar-topbar-inner .brand-icon { width: 26px; height: 26px; display: flex; }
+.verificar-topbar-inner strong { color: var(--color-fondo-secundario); }
+.verificar-topbar-tag {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-texto); font-weight: 700; font-size: 0.76rem;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  background: rgba(255,255,255,0.16); padding: 5px 12px; border-radius: 100px;
+}
+
+.verificar-page {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+  min-height: 100vh;
+  font-family: var(--font-texto);
 }
 
 .verificar-cargando {
   text-align: center;
   padding: 96px 16px;
-  color: var(--texto-suave);
+  color: var(--color-secundario);
 }
 .spinner {
   width: 36px; height: 36px;
@@ -2631,26 +2717,52 @@ input, select { font-family: inherit; }
 }
 @keyframes girar { to { transform: rotate(360deg); } }
 
-.verificar-producto-header { text-align: center; margin-bottom: 20px; }
-.verificar-producto-header h1 { font-size: 1.4rem; margin-bottom: 4px; }
+.verificar-producto-hero { text-align: center; margin-bottom: 24px; }
+.verificar-producto-foto {
+  width: 96px; height: 96px; margin: 0 auto 14px;
+  border-radius: 50%; overflow: hidden;
+  border: 3px solid var(--color-superficie-elevada, white);
+  box-shadow: 0 0 0 4px var(--color-superficie), var(--sombra);
+  background: var(--color-superficie);
+  display: flex; align-items: center; justify-content: center;
+}
+.verificar-producto-foto img { width: 100%; height: 100%; object-fit: cover; }
+.verificar-producto-foto-vacia { font-size: 2.2rem; color: var(--color-primario); }
+.verificar-producto-hero h1 { font-size: 1.5rem; margin-bottom: 6px; }
+.verificar-producto-productor {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--color-secundario); font-size: 0.92rem; font-weight: 600;
+}
 
-.verificar-banner {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  border-radius: 16px;
-  padding: 16px;
-  margin-bottom: 28px;
+/* El "sello" es el elemento con más peso visual de la página — responde a la única pregunta
+   que trae a alguien acá. Centrado, ícono grande en círculo, tipografía de marca. */
+.verificar-sello {
+  text-align: center;
+  border-radius: 20px;
+  padding: 28px 22px;
+  margin-bottom: 32px;
   box-shadow: var(--sombra);
 }
-.verificar-banner .banner-icon { font-size: 1.6rem; line-height: 1; }
-.verificar-banner strong { display: block; margin-bottom: 4px; font-size: 1rem; }
-.verificar-banner p { font-size: 0.88rem; margin: 0; line-height: 1.4; }
-.banner-ok { background: var(--verde-pastel); border: 1.5px solid var(--verde-claro); color: var(--verde-oscuro); }
-.banner-error { background: #fff0ee; border: 1.5px solid #f3aa9a; color: #8a2f1c; }
-.banner-neutro { background: #f1f3f5; border: 1.5px solid #d6dbe0; color: #495157; }
+.verificar-sello-icono {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px; border-radius: 50%;
+  font-size: 2rem; margin-bottom: 14px;
+}
+.verificar-sello strong { display: block; font-family: var(--font-titulo); font-size: 1.15rem; margin-bottom: 6px; }
+.verificar-sello p { font-size: 0.92rem; margin: 0; line-height: 1.45; }
+.verificar-sello-meta {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 16px; font-size: 0.78rem; font-weight: 700;
+  background: rgba(255,255,255,0.6); padding: 6px 14px; border-radius: 100px;
+}
+.sello-ok { background: var(--color-superficie); border: 1.5px solid color-mix(in srgb, var(--color-primario) 30%, transparent); color: var(--color-primario); }
+.sello-ok .verificar-sello-icono { background: var(--color-primario); color: white; }
+.sello-error { background: #f8e2dc; border: 1.5px solid #eab6a6; color: #a23b22; }
+.sello-error .verificar-sello-icono { background: #a23b22; color: white; }
+.sello-neutro { background: #f1f3f5; border: 1.5px solid #d6dbe0; color: #495157; }
+.sello-neutro .verificar-sello-icono { background: #8a939c; color: white; }
 
-.timeline-titulo { font-size: 1.05rem; margin-bottom: 14px; }
+.timeline-titulo { display: flex; align-items: center; gap: 8px; font-size: 1.05rem; margin-bottom: 14px; }
 .timeline { display: flex; flex-direction: column; margin-bottom: 28px; }
 .timeline-item {
   display: flex;
@@ -2668,33 +2780,34 @@ input, select { font-family: inherit; }
 .timeline-marker {
   width: 36px; height: 36px;
   border-radius: 50%;
-  background: white;
-  border: 2px solid var(--color-borde);
+  background: var(--color-primario);
+  color: white;
   display: flex; align-items: center; justify-content: center;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   flex-shrink: 0;
   z-index: 1;
+  box-shadow: 0 0 0 4px var(--color-fondo-pagina, white);
 }
 .timeline-content {
   flex: 1;
   min-width: 0;
-  background: white;
-  border: 1px solid var(--borde);
+  background: var(--color-superficie-elevada, white);
+  border: 1px solid var(--color-borde);
   border-radius: 14px;
   padding: 12px 14px;
   box-shadow: var(--sombra);
 }
 .timeline-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.timeline-header strong { font-size: 0.9rem; color: var(--color-primario); }
+.timeline-header strong { font-family: var(--font-titulo); font-size: 0.92rem; color: var(--color-primario); }
 .timeline-indice {
-  font-size: 0.7rem; color: var(--texto-suave); background: var(--color-superficie);
+  font-size: 0.7rem; color: var(--color-secundario); background: var(--color-superficie);
   padding: 2px 8px; border-radius: 999px; white-space: nowrap;
 }
-.timeline-fecha { font-size: 0.78rem; color: var(--texto-suave); margin-top: 2px; }
+.timeline-fecha { display: flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--color-secundario); margin-top: 2px; }
 .timeline-datos { font-size: 0.85rem; margin-top: 6px; color: var(--texto); }
-.timeline-hash { font-size: 0.74rem; color: var(--texto-suave); margin-top: 6px; }
+.timeline-hash { display: flex; align-items: center; gap: 5px; font-size: 0.74rem; color: var(--color-secundario); margin-top: 6px; }
 .timeline-hash code { background: var(--color-superficie); padding: 2px 6px; border-radius: 6px; font-family: monospace; word-break: break-all; }
-.timeline-verificador { font-size: 0.82rem; color: var(--texto-suave); margin: 4px 0 0; }
+.timeline-verificador { display: flex; align-items: center; gap: 5px; font-size: 0.82rem; color: var(--color-secundario); margin: 4px 0 0; }
 
 .pedido-certificado-cta { margin-top: 10px; }
 .certificado-pedido { display: flex; flex-direction: column; }
@@ -2711,19 +2824,23 @@ input, select { font-family: inherit; }
 .certificado-pedido-nota { margin-top: 8px; font-size: 0.78rem; }
 
 .verificar-nota {
+  display: flex; align-items: flex-start; gap: 10px;
   background: var(--color-superficie);
-  border: 1px solid var(--borde);
+  border: 1px solid var(--color-borde);
   border-radius: 14px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   margin-bottom: 24px;
   font-size: 0.85rem;
   color: var(--texto);
   line-height: 1.55;
 }
+.verificar-nota i { font-size: 1.2rem; color: var(--color-primario); flex-shrink: 0; margin-top: 1px; }
+.verificar-nota strong { color: var(--color-primario); }
 .verificar-footer {
   text-align: center;
-  color: var(--texto-suave);
+  color: var(--color-secundario);
   font-size: 0.8rem;
+  font-weight: 600;
   display: flex; align-items: center; justify-content: center; gap: 6px;
 }
 
@@ -2789,7 +2906,10 @@ input, select { font-family: inherit; }
    Nunito Sans) escopeada solo a este panel — el resto del sitio sigue en
    Poppins/Inter hasta que se migre. La paleta --color-* ya es la global.
    ============================================================================ */
-#view-panel-productor {
+#view-panel-productor,
+#view-gestion-envios,
+#view-panel-admin,
+#view-panel-verificador {
   --font-titulo: 'Rubik', sans-serif;
   --font-texto: 'Nunito Sans', sans-serif;
 }

@@ -21,13 +21,13 @@ function hashCorto(hash) {
 }
 
 const EVENTOS_LABEL = {
-  cosecha_registrada: { emoji: '🌾', texto: 'Cosecha registrada' },
-  certificado_productor: { emoji: '✅', texto: 'Certificado por el productor' },
-  verificado_punto_venta: { emoji: '🏪', texto: 'Verificado en punto de venta' },
+  cosecha_registrada: { icono: 'ti-seedling', texto: 'Cosecha registrada' },
+  certificado_productor: { icono: 'ti-certificate', texto: 'Certificado por el productor' },
+  verificado_punto_venta: { icono: 'ti-building-store', texto: 'Verificado en punto de venta' },
 };
 
 function labelEvento(evento) {
-  return EVENTOS_LABEL[evento] || { emoji: '📦', texto: evento };
+  return EVENTOS_LABEL[evento] || { icono: 'ti-package', texto: evento };
 }
 
 // Solo aplica al evento certificado_productor; el backend ya resuelve el nombre en /historial
@@ -35,7 +35,7 @@ function labelEvento(evento) {
 function renderVerificadorLinea(b) {
   if (b.evento !== 'certificado_productor' || !b.verificador_id) return '';
   const nombre = b.verificador_nombre || `verificador ${String(b.verificador_id).slice(0, 8)}`;
-  return `<p class="timeline-verificador">👤 Certificado por: ${escapeHtml(nombre)}</p>`;
+  return `<p class="timeline-verificador"><i class="ti ti-user-check"></i> Certificado por: ${escapeHtml(nombre)}</p>`;
 }
 
 function obtenerProductoIdDeUrl() {
@@ -54,43 +54,38 @@ function renderCargando() {
 
 function renderErrorGeneral(mensaje) {
   document.getElementById('contenido').innerHTML = `
-    <div class="verificar-banner banner-error">
-      <span class="banner-icon">⚠️</span>
-      <div>
-        <strong>No se pudo verificar el producto</strong>
-        <p>${escapeHtml(mensaje)}</p>
-      </div>
+    <div class="verificar-sello sello-error">
+      <span class="verificar-sello-icono"><i class="ti ti-alert-triangle"></i></span>
+      <strong>No se pudo verificar el producto</strong>
+      <p>${escapeHtml(mensaje)}</p>
     </div>`;
 }
 
-function renderBanner(verificacion) {
+// El "sello" es el elemento de mayor peso visual de toda la página a propósito — es la
+// respuesta a la única pregunta que trae a alguien acá: ¿este producto es de fiar?
+function renderSello(verificacion) {
   if (verificacion.total_bloques === 0) {
     return `
-      <div class="verificar-banner banner-neutro">
-        <span class="banner-icon">ℹ️</span>
-        <div>
-          <strong>Sin historial de certificación aún</strong>
-          <p>${escapeHtml(verificacion.mensaje)}</p>
-        </div>
+      <div class="verificar-sello sello-neutro">
+        <span class="verificar-sello-icono"><i class="ti ti-info-circle"></i></span>
+        <strong>Sin historial de certificación aún</strong>
+        <p>${escapeHtml(verificacion.mensaje)}</p>
       </div>`;
   }
   if (verificacion.valido) {
     return `
-      <div class="verificar-banner banner-ok">
-        <span class="banner-icon">✅</span>
-        <div>
-          <strong>Cadena verificada, sin alteraciones</strong>
-          <p>${escapeHtml(verificacion.mensaje)}</p>
-        </div>
+      <div class="verificar-sello sello-ok">
+        <span class="verificar-sello-icono"><i class="ti ti-rosette-discount-check"></i></span>
+        <strong>Cadena verificada, sin alteraciones</strong>
+        <p>${escapeHtml(verificacion.mensaje)}</p>
+        <span class="verificar-sello-meta"><i class="ti ti-link"></i> ${verificacion.total_bloques} evento${verificacion.total_bloques === 1 ? '' : 's'} enlazado${verificacion.total_bloques === 1 ? '' : 's'} criptográficamente</span>
       </div>`;
   }
   return `
-    <div class="verificar-banner banner-error">
-      <span class="banner-icon">🚨</span>
-      <div>
-        <strong>Alteración detectada</strong>
-        <p>${escapeHtml(verificacion.mensaje)}</p>
-      </div>
+    <div class="verificar-sello sello-error">
+      <span class="verificar-sello-icono"><i class="ti ti-shield-x"></i></span>
+      <strong>Alteración detectada</strong>
+      <p>${escapeHtml(verificacion.mensaje)}</p>
     </div>`;
 }
 
@@ -104,36 +99,44 @@ function renderLineaTiempo(historial) {
         const info = labelEvento(b.evento);
         return `
           <div class="timeline-item">
-            <div class="timeline-marker">${info.emoji}</div>
+            <div class="timeline-marker"><i class="ti ${info.icono}"></i></div>
             <div class="timeline-content">
               <div class="timeline-header">
                 <strong>${escapeHtml(info.texto)}</strong>
                 <span class="timeline-indice">Bloque #${b.indice}</span>
               </div>
-              <div class="timeline-fecha">${formatearFecha(b.fecha)}</div>
+              <div class="timeline-fecha"><i class="ti ti-calendar-event"></i> ${formatearFecha(b.fecha)}</div>
               ${renderVerificadorLinea(b)}
               ${b.datos ? `<p class="timeline-datos">${escapeHtml(b.datos)}</p>` : ''}
-              <div class="timeline-hash">Hash: <code>${escapeHtml(hashCorto(b.hash_actual))}</code></div>
+              <div class="timeline-hash"><i class="ti ti-fingerprint"></i> <code>${escapeHtml(hashCorto(b.hash_actual))}</code></div>
             </div>
           </div>`;
       }).join('')}
     </div>`;
 }
 
+function renderFotoProducto(producto) {
+  const url = producto.imagenes?.[0]?.url || producto.imagen_principal || producto.imagen_url;
+  if (url) return `<img src="${escapeHtml(url)}" alt="${escapeHtml(producto.nombre)}">`;
+  return `<span class="verificar-producto-foto-vacia"><i class="ti ti-photo"></i></span>`;
+}
+
 function renderPagina(producto, verificacion, historial) {
   document.getElementById('contenido').innerHTML = `
-    <div class="verificar-producto-header">
+    <div class="verificar-producto-hero">
+      <div class="verificar-producto-foto">${renderFotoProducto(producto)}</div>
       <h1>${escapeHtml(producto.nombre)}</h1>
-      <p class="muted">👨‍🌾 ${escapeHtml(producto.productor_nombre || 'Productor no especificado')}</p>
+      <p class="verificar-producto-productor"><i class="ti ti-tractor"></i> ${escapeHtml(producto.productor_nombre || 'Productor no especificado')}</p>
     </div>
-    ${renderBanner(verificacion)}
-    <h2 class="timeline-titulo">🔗 Historial de la cadena</h2>
+    ${renderSello(verificacion)}
+    <h2 class="timeline-titulo"><i class="ti ti-timeline-event"></i> Historial de la cadena</h2>
     ${renderLineaTiempo(historial)}
     <div class="verificar-nota">
-      🔒 <strong>¿Qué significa esto?</strong> Cada evento queda enlazado matemáticamente al anterior mediante un hash — si alguien intentara alterar un registro pasado, la cadena completa dejaría de coincidir y la alteración quedaría expuesta automáticamente.
+      <i class="ti ti-lock"></i>
+      <div><strong>¿Qué significa esto?</strong> Cada evento queda enlazado matemáticamente al anterior mediante un hash — si alguien intentara alterar un registro pasado, la cadena completa dejaría de coincidir y la alteración quedaría expuesta automáticamente.</div>
     </div>
     <div class="verificar-footer">
-      <span class="brand-icon"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M22 40 L78 40 L70 82 Q50 90 30 82 Z" fill="#2d6a4f"/><path d="M28 56 L72 56" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M30 70 L70 70" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M50 40 Q50 28 50 18" stroke="#40916c" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M50 22 Q40 14 44 6 Q56 10 50 22 Z" fill="#74c69d"/><path d="M50 18 Q60 10 56 2 Q46 6 50 18 Z" fill="#95d5b2"/></svg></span> Verificado por Chakra Shop
+      <i class="ti ti-shield-check"></i> Verificado por Chakra Shop
     </div>
   `;
 }
