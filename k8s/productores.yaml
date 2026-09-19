@@ -52,6 +52,15 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: PRODUCTORES_A_PRODUCTOS_SECRETO
+            # aprobar_cosecha registra los primeros eventos de la cadena en Certificación con este
+            # secreto (ver k8s/certificacion.yaml, que valida el mismo valor).
+            - name: CERTIFICACION_URL
+              value: http://certificacion:8008
+            - name: PRODUCTORES_A_CERTIFICACION_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTORES_A_CERTIFICACION_SECRETO
 ---
 apiVersion: v1
 kind: Service

@@ -47,6 +47,11 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: TRANSPORTE_A_CERTIFICACION_SECRETO
+            - name: PRODUCTORES_A_CERTIFICACION_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTORES_A_CERTIFICACION_SECRETO
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:

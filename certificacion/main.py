@@ -47,6 +47,7 @@ class EventoCrear(BaseModel):
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_verificador (DELETE de limpieza QA)
+PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")  # registrar_cosecha_aprobada (lo llama Productores)
 
 class EventoInterno(BaseModel):
     evento: str
@@ -54,6 +55,14 @@ class EventoInterno(BaseModel):
 
 class CertificadoPedidoCrear(BaseModel):
     productos_ids: list[str]
+
+class CosechaAprobadaInterno(BaseModel):
+    datos_cosecha: str | None = None
+    datos_certificado: str | None = None
+    # Usuario (no Verificador.id) que aprobó — Productores solo conoce el sub del token; acá se
+    # resuelve al perfil de Verificador para dejar su nombre visible en la cadena. Si ese usuario
+    # nunca completó su perfil de verificador, el bloque igual se crea, solo sin nombre.
+    verificador_usuario_id: str | None = None
 
 @app.post("/certificacion/pedido/{pedido_id}/certificado")
 def crear_certificado_pedido(
@@ -114,6 +123,42 @@ def registrar_evento_interno(
 
     bloque = crear_bloque(db, producto_id, datos.evento, datos.datos)
     return bloque
+
+@app.post("/certificacion/{producto_id}/cosecha-aprobada")
+def registrar_cosecha_aprobada(
+        producto_id: str,
+        datos: CosechaAprobadaInterno,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None)
+):
+    """Llamado por Productores al aprobar una cosecha (aprobar_cosecha): registra en un solo paso
+    los dos primeros eventos de la cadena del producto recién creado — cosecha_registrada y
+    certificado_productor. Hasta ahora ningún flujo de la app los creaba (solo existía
+    POST /eventos, que nadie invocaba), así que el QR de un producto salía con la cadena vacía.
+
+    Idempotente por evento: un reintento (o un aprobar que se repite tras un fallo parcial) solo
+    crea los que falten, nunca duplica. Falla cerrado: si el secreto no está configurado en este
+    servicio, rechaza todo (a diferencia de comparar None == None)."""
+    if not PRODUCTORES_A_CERTIFICACION_SECRETO or x_servicio_secreto != PRODUCTORES_A_CERTIFICACION_SECRETO:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    existentes = {
+        b.evento for b in db.query(models.Bloque).filter(models.Bloque.producto_id == producto_id).all()
+    }
+    creados = []
+    if "cosecha_registrada" not in existentes:
+        creados.append(crear_bloque(db, producto_id, "cosecha_registrada", datos.datos_cosecha))
+    if "certificado_productor" not in existentes:
+        verificador_id = None
+        if datos.verificador_usuario_id:
+            verificador = db.query(models.Verificador).filter(
+                models.Verificador.usuario_id == datos.verificador_usuario_id
+            ).first()
+            verificador_id = verificador.id if verificador else None
+        creados.append(crear_bloque(db, producto_id, "certificado_productor", datos.datos_certificado, verificador_id))
+
+    total = db.query(models.Bloque).filter(models.Bloque.producto_id == producto_id).count()
+    return {"creados": len(creados), "total_bloques": total}
 
 @app.get("/salud")
 def salud():

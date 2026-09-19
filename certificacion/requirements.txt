@@ -7,3 +7,4 @@ python-jose[cryptography]
 qrcode[pil]
 prometheus-fastapi-instrumentator
 httpx
+pytest

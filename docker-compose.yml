@@ -45,6 +45,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productores
       PRODUCTOS_URL: http://productos:8002
+      CERTIFICACION_URL: http://certificacion:8008
+      PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       - db-productores
@@ -296,6 +298,7 @@ services:
         FRONTEND_URL: http://localhost:63342/mercado_agricola/frontend
         PRODUCTORES_URL: http://productores:8001
         TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
+        PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
         QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       depends_on:
         - db-certificacion

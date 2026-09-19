@@ -36,13 +36,27 @@ el circuit breaker ni httpx) para no depender de una red real ni de sus timeouts
 """
 import uuid
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 import main
 from auth import verificar_token
 
 client = TestClient(main.app)
+
+# Referencia a la función real ANTES de que el fixture de abajo la reemplace en cada test — los
+# tests del propio helper la necesitan intacta.
+_registrar_certificacion_real = main._registrar_certificacion_cosecha
+
+
+@pytest.fixture(autouse=True)
+def _sin_certificacion_real(monkeypatch):
+    """aprobar_cosecha ahora avisa a Certificación (best-effort) — ningún test de acá levanta ese
+    servicio, así que por defecto se reemplaza por un stub que responde "registrado"."""
+    monkeypatch.setattr(main, "_registrar_certificacion_cosecha", MagicMock(return_value=True))
 
 
 def _auth(sub: str, rol: str = "productor"):
@@ -301,6 +315,92 @@ def test_aprobar_desde_pendiente_verificacion_ok(monkeypatch):
         assert fila.motivo is None
     finally:
         db.close()
+
+
+def test_aprobar_registra_los_eventos_de_certificacion_del_producto_creado(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-cert")
+    mock_cert = MagicMock(return_value=True)
+    monkeypatch.setattr(main, "_registrar_certificacion_cosecha", mock_cert)
+
+    sub_verificador = _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["certificacion_registrada"] is True
+    mock_cert.assert_called_once()
+    _registro, _productor, _chacra, verificador_usuario_id, producto_id = mock_cert.call_args.args
+    assert verificador_usuario_id == sub_verificador
+    assert producto_id == "producto-cert"
+
+
+def test_aprobar_no_falla_si_certificacion_no_responde(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-sin-cert")
+    monkeypatch.setattr(main, "_registrar_certificacion_cosecha", MagicMock(return_value=False))
+
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+
+    # La cosecha queda aprobada y el producto creado igual: el certificado es reintentable
+    # (endpoint idempotente), no motivo para deshacer la aprobación.
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "aprobado"
+    assert resp.json()["certificacion_registrada"] is False
+
+
+def test_aprobar_con_409_de_productos_no_intenta_certificar_sin_id(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch, status_code=409)
+    mock_cert = MagicMock(return_value=True)
+    monkeypatch.setattr(main, "_registrar_certificacion_cosecha", mock_cert)
+
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["certificacion_registrada"] is False
+    mock_cert.assert_not_called()
+
+
+def test_registrar_certificacion_cosecha_manda_secreto_y_descripcion(monkeypatch):
+    capturado = {}
+
+    def _post_falso(url, json=None, headers=None, timeout=None):
+        capturado.update(url=url, json=json, headers=headers)
+        return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr(main.httpx, "post", _post_falso)
+    monkeypatch.setattr(main, "PRODUCTORES_A_CERTIFICACION_SECRETO", "secreto-de-prueba")
+    registro = SimpleNamespace(
+        cantidad_cosechada=45.5, unidad_medida="kg", cultivo="Papa Nativa",
+        fecha_siembra=datetime(2026, 1, 1), fecha_cosecha_real=datetime(2026, 8, 20),
+    )
+    productor = SimpleNamespace(nombre="Sol Naciente")
+    chacra = SimpleNamespace(codigo="CH-01", nombre="Parcela norte")
+
+    ok = _registrar_certificacion_real(registro, productor, chacra, "usuario-verificador", "producto-1")
+
+    assert ok is True
+    assert capturado["url"].endswith("/certificacion/producto-1/cosecha-aprobada")
+    assert capturado["headers"]["X-Servicio-Secreto"] == "secreto-de-prueba"
+    assert capturado["json"]["verificador_usuario_id"] == "usuario-verificador"
+    assert "45.5 kg de Papa Nativa" in capturado["json"]["datos_cosecha"]
+    assert "CH-01 (Parcela norte)" in capturado["json"]["datos_cosecha"]
+    assert "Sol Naciente" in capturado["json"]["datos_cosecha"]
+
+
+def test_registrar_certificacion_cosecha_devuelve_false_si_la_red_falla(monkeypatch):
+    def _post_roto(*a, **kw):
+        raise main.httpx.RequestError("fallo simulado")
+
+    monkeypatch.setattr(main.httpx, "post", _post_roto)
+    registro = SimpleNamespace(
+        cantidad_cosechada=10, unidad_medida="kg", cultivo="Habas",
+        fecha_siembra=None, fecha_cosecha_real=None,
+    )
+
+    assert _registrar_certificacion_real(registro, SimpleNamespace(nombre="X"), None, "u", "p") is False
 
 
 def test_aprobar_envia_el_payload_correcto_a_productos(monkeypatch):

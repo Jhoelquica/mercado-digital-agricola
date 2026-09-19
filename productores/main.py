@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 import httpx
 from datetime import datetime
 
@@ -15,6 +16,8 @@ from database import Base, engine, SessionLocal
 import models
 
 Base.metadata.create_all(bind=engine)
+
+logger = logging.getLogger("productores.main")
 
 app = FastAPI()
 
@@ -98,6 +101,10 @@ QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
 # Sin fallback hardcodeado a propósito (mismo criterio). La envía aprobar_cosecha al crear el
 # producto en el catálogo — Productos valida este mismo valor en crear_producto_desde_cosecha.
 PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")
+CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://localhost:8008")
+# Sin fallback hardcodeado a propósito (mismo criterio). La envía aprobar_cosecha a Certificación
+# para dejar registrados cosecha_registrada + certificado_productor del producto recién creado.
+PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")
 
 # Solo unidades chicas/granulares como unidad_medida de una cosecha — una unidad de empaque
 # grande (saco, arroba) como base generaría, en cualquier unidad de venta alternativa que se
@@ -316,6 +323,41 @@ def _pedir_crear_producto_desde_cosecha(payload: dict):
         headers={"X-Servicio-Secreto": PRODUCTORES_A_PRODUCTOS_SECRETO},
         timeout=5,
     )
+
+
+def _registrar_certificacion_cosecha(registro, productor, chacra, verificador_usuario_id: str, producto_id: str) -> bool:
+    """Deja en la cadena de Certificación los dos primeros eventos del producto (cosecha_registrada
+    y certificado_productor) — ver POST /certificacion/{id}/cosecha-aprobada. Best-effort a
+    propósito: para este punto el producto ya existe y la cosecha ya quedó aprobada, y deshacer
+    eso porque Certificación no respondió sería peor que dejar el certificado pendiente (el
+    endpoint es idempotente, así que se puede reintentar sin duplicar). Devuelve si se registró."""
+    def _fecha(valor):
+        return valor.strftime("%d/%m/%Y") if valor else "—"
+
+    ubicacion = f"chacra {chacra.codigo}" + (f" ({chacra.nombre})" if chacra and chacra.nombre else "") if chacra else "chacra no especificada"
+    datos_cosecha = (
+        f"{float(registro.cantidad_cosechada):g} {registro.unidad_medida} de {registro.cultivo} cosechados en "
+        f"{ubicacion} por {productor.nombre} (sembrado el {_fecha(registro.fecha_siembra)}, "
+        f"cosechado el {_fecha(registro.fecha_cosecha_real)})."
+    )
+    try:
+        resp = httpx.post(
+            f"{CERTIFICACION_URL}/certificacion/{producto_id}/cosecha-aprobada",
+            json={
+                "datos_cosecha": datos_cosecha,
+                "datos_certificado": "Cosecha revisada y aprobada por un Verificador de Chakra Shop.",
+                "verificador_usuario_id": verificador_usuario_id,
+            },
+            headers={"X-Servicio-Secreto": PRODUCTORES_A_CERTIFICACION_SECRETO or ""},
+            timeout=5,
+        )
+    except httpx.RequestError:
+        logger.error("Certificación no respondió al registrar la cosecha aprobada del producto %s", producto_id, exc_info=True)
+        return False
+    if resp.status_code != 200:
+        logger.error("Certificación rechazó registrar la cosecha del producto %s (HTTP %s)", producto_id, resp.status_code)
+        return False
+    return True
 
 
 def _consultar_precio_referencia(cultivo: str):
@@ -722,6 +764,11 @@ def aprobar_cosecha(
 
     resultado = _serializar_registro(registro, {}, db)
     resultado["producto_id"] = producto_id_creado
+    # Solo si conocemos el producto: en el 409 idempotente (reintento) Productos no devuelve su id.
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first()
+    resultado["certificacion_registrada"] = bool(producto_id_creado) and _registrar_certificacion_cosecha(
+        registro, productor, chacra, str(usuario.get("sub")), producto_id_creado
+    )
     return resultado
 
 
