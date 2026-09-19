@@ -16,7 +16,16 @@ client = Minio(
 )
 
 
+def _asegurar_bucket():
+    # A diferencia de "productos-imagenes" (creado a mano en MinIO), este bucket es nuevo: se crea
+    # solo la primera vez para que la feature funcione sin un paso manual previo. Sin política
+    # pública a propósito — es evidencia de entrega, no una imagen de catálogo.
+    if not client.bucket_exists(MINIO_BUCKET):
+        client.make_bucket(MINIO_BUCKET)
+
+
 def subir_foto_entrega(archivo, content_type: str) -> str:
+    _asegurar_bucket()
     nombre_archivo = f"{uuid.uuid4()}.jpg"
     client.put_object(
         MINIO_BUCKET,
