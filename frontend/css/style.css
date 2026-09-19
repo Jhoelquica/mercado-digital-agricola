@@ -1737,33 +1737,135 @@ input, select { font-family: inherit; }
 .envios-grid { display: flex; flex-direction: column; gap: 14px; }
 @media (min-width: 760px) { .envios-grid { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
 
-/* ---------- NOTIFICACIONES ---------- */
-.notif-card {
-  background: white;
-  border-radius: 14px;
-  padding: 16px 18px;
-  border: 1px solid var(--borde);
-  box-shadow: var(--sombra);
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+/* ---------- NOTIFICACIONES — rediseño premium ---------- */
+/* Criterios del skill ui-ux-pro-max: los avisos se agrupan por día y se distinguen por tipo con ícono + título
+   (no solo color), el estado de lectura es texto ("Nueva") además del acento, los filtros son botones con
+   aria-pressed y la cantidad se anuncia con aria-live, objetivos táctiles >= 44px y reduced-motion. Mismo
+   lenguaje que Mis Pedidos (cabecera con foto, filtros con conteo). Sin acciones inventadas: cada aviso solo
+   ofrece lo que existe (ver los pedidos, abrir el producto reservado). */
+.notif-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: start; }
+.notif-principal { min-width: 0; }
+
+/* Filtros por tipo */
+.notif-filtros { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+.notif-filtro {
+  display: inline-flex; align-items: center; gap: 10px; min-height: 46px; padding: 10px 20px; border-radius: 999px;
+  border: 1.5px solid var(--borde); background: white; color: var(--texto); font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
 }
-@media (prefers-reduced-motion: reduce) {
-  .notif-card { animation: none; }
+.notif-filtro:hover { border-color: var(--color-borde); background: var(--color-superficie); }
+.notif-filtro.active { background: var(--color-primario); border-color: var(--color-primario); color: white; }
+.notif-filtro:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.notif-filtro-cuenta {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px;
+  background: var(--color-superficie); color: var(--color-primario); font-size: 0.8rem; font-weight: 700;
+}
+.notif-filtro.active .notif-filtro-cuenta { background: rgba(255, 255, 255, 0.22); color: white; }
+
+/* Lista agrupada por día */
+.notif-list { gap: 0; }
+.notif-grupo { display: flex; flex-direction: column; gap: 14px; }
+.notif-grupo + .notif-grupo { margin-top: 28px; }
+.notif-grupo-titulo {
+  display: flex; align-items: center; gap: 14px; margin: 0; font-family: var(--font-texto); font-size: 0.82rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--texto-suave);
+}
+.notif-grupo-titulo::after { content: ''; flex: 1; height: 1px; background: var(--borde); }
+
+.notif-card {
+  display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 18px; padding: 20px 22px;
+  background: white; border: 1px solid var(--borde); border-radius: 20px; box-shadow: var(--sombra);
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.notif-card:hover { transform: translateY(-2px); box-shadow: var(--sombra-hover); }
+.notif-card--nueva {
+  border-color: color-mix(in srgb, var(--acento-cosecha) 40%, white);
+  background: linear-gradient(90deg, var(--acento-cosecha-suave), white 42%);
 }
 .notif-icon {
-  width: 42px; height: 42px;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 1.2rem;
-  flex-shrink: 0;
-  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
+  display: grid; place-items: center; width: 56px; height: 56px; border-radius: 16px; font-size: 1.6rem;
+  background: var(--color-superficie); color: var(--color-primario);
 }
-.notif-icon.tipo-envio_actualizado { background: #cfe8ff; }
-.notif-icon.tipo-pedido_creado { background: #fde9d9; }
-.notif-msg { font-weight: 500; }
-.notif-meta { font-size: 0.78rem; color: var(--texto-suave); margin-top: 4px; }
+.notif-icon.tipo-pedido_creado { background: var(--acento-cosecha-suave); color: var(--acento-cosecha); }
+.notif-icon.tipo-envio_actualizado { background: #cfe8ff; color: #14538a; }
+.notif-icon.tipo-producto_disponible { background: var(--verde-pastel); color: var(--verde-principal); }
+.notif-cuerpo { min-width: 0; }
+.notif-cabecera { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.notif-titulo { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; font-family: var(--font-titulo); font-size: 1.1rem; color: var(--color-primario); }
+.notif-nueva {
+  padding: 3px 10px; border-radius: 999px; background: var(--acento-cosecha); color: white;
+  font-family: var(--font-texto); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em;
+}
+.notif-tiempo { flex-shrink: 0; font-size: 0.85rem; color: var(--texto-suave); white-space: nowrap; }
+.notif-msg { margin: 6px 0 0; font-size: 1rem; line-height: 1.5; color: var(--texto); }
+.notif-estado-envio { margin-top: 10px; }
+.notif-estado-envio .pill { font-size: 0.9rem; padding: 6px 14px; }
+.notif-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 14px; }
+.notif-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+  background: var(--color-superficie); color: var(--texto-suave); font-size: 0.85rem; font-weight: 600;
+}
+.notif-accion {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 4px; background: none;
+  color: var(--color-primario); font-size: 0.92rem; font-weight: 700; cursor: pointer;
+}
+.notif-accion i { transition: transform 0.2s ease; }
+.notif-accion:hover { text-decoration: underline; }
+.notif-accion:hover i { transform: translateX(3px); }
+.notif-accion:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; border-radius: 8px; }
+.notif-skel-icono { width: 56px; height: 56px; border-radius: 16px; }
+#btn-notif-cargar-mas { min-height: 52px; margin-top: 22px; border-radius: 16px; font-size: 1rem; }
+#view-notificaciones .empty-state { padding: 56px 20px; background: white; border: 1px solid var(--borde); border-radius: 22px; }
+
+/* Columna lateral */
+.notif-lateral { position: sticky; top: 100px; display: flex; flex-direction: column; gap: 20px; }
+.notif-resumen, .notif-cta { padding: 24px; background: white; border: 1px solid var(--borde); border-radius: 22px; box-shadow: var(--sombra); }
+.notif-resumen:empty { display: none; }
+.notif-resumen-cab { display: flex; align-items: center; gap: 16px; }
+.notif-resumen-icono {
+  display: grid; place-items: center; width: 60px; height: 60px; flex-shrink: 0; border-radius: 18px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha); font-size: 1.8rem;
+}
+.notif-resumen-cab strong { display: block; font-family: var(--font-titulo); font-size: 2.2rem; line-height: 1; color: var(--color-primario); }
+.notif-resumen-cab span:not(.notif-resumen-icono) { font-size: 0.9rem; color: var(--texto-suave); }
+.notif-resumen-lista { list-style: none; display: flex; flex-direction: column; gap: 4px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--borde); }
+.notif-resumen-lista li { display: flex; align-items: center; gap: 12px; padding: 8px 0; font-size: 0.95rem; color: var(--texto-suave); }
+.notif-resumen-lista li i { font-size: 1.25rem; color: var(--color-primario); }
+.notif-resumen-lista li span { flex: 1; }
+.notif-resumen-lista li strong { color: var(--texto); }
+.notif-resumen-nuevas {
+  display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px 14px; border-radius: 14px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.9rem; font-weight: 600;
+}
+.notif-cta { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.notif-cta-icono {
+  display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 8px; border-radius: 16px;
+  background: #cfe8ff; color: #14538a; font-size: 1.6rem;
+}
+.notif-cta h3 { margin: 0; font-size: 1.2rem; }
+.notif-cta p { margin: 0 0 12px; font-size: 0.95rem; color: var(--texto-suave); }
+.notif-cta .btn { min-height: 48px; border-radius: 14px; }
+
+@media (max-width: 980px) {
+  .notif-layout { grid-template-columns: minmax(0, 1fr); }
+  .notif-lateral { position: static; }
+  .notif-resumen { display: none; }
+}
+@media (max-width: 700px) {
+  /* Filtros en una fila desplazable, a sangre (mismo criterio que las categorías del buscador). */
+  .notif-filtros { flex-wrap: nowrap; overflow-x: auto; margin-inline: -16px; padding: 2px 16px 6px; scrollbar-width: none; }
+  .notif-filtros::-webkit-scrollbar { display: none; }
+  .notif-filtro { flex-shrink: 0; }
+  .notif-card { grid-template-columns: 44px minmax(0, 1fr); gap: 14px; padding: 16px; }
+  .notif-icon { width: 44px; height: 44px; border-radius: 13px; font-size: 1.3rem; }
+  .notif-cabecera { flex-direction: column; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notif-card { animation: none; transition: none; }
+  .notif-card:hover { transform: none; }
+  .notif-accion i { transition: none; }
+}
 
 /* ---------- PANEL PRODUCTOR ---------- */
 .card-panel {
@@ -3286,10 +3388,10 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 }
 
 /* ---- Cabecera con foto ---- */
-#view-mis-pedidos .pedidos-hero { padding: 34px 38px; margin-bottom: 26px; align-items: center; box-shadow: 0 18px 40px -22px rgba(27, 67, 50, 0.55); }
-#view-mis-pedidos .pedidos-hero h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); display: flex; align-items: center; gap: 12px; }
+#view-mis-pedidos .pedidos-hero, #view-notificaciones .notif-hero { padding: 34px 38px; margin-bottom: 26px; align-items: center; box-shadow: 0 18px 40px -22px rgba(27, 67, 50, 0.55); }
+#view-mis-pedidos .pedidos-hero h2, #view-notificaciones .notif-hero h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); display: flex; align-items: center; gap: 12px; }
 .pedidos-hero-sub { color: rgba(255, 255, 255, 0.88); margin-top: 6px; font-size: 1.02rem; }
-#view-mis-pedidos .pedidos-hero .btn { min-height: 46px; padding: 10px 22px; display: inline-flex; align-items: center; gap: 8px; }
+#view-mis-pedidos .pedidos-hero .btn, #view-notificaciones .notif-hero .btn { min-height: 46px; padding: 10px 22px; display: inline-flex; align-items: center; gap: 8px; }
 
 /* ---- Resumen (métricas) ---- */
 .pedidos-resumen { margin-bottom: 26px; }
@@ -3524,7 +3626,7 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 
 /* ---- Móvil: progreso vertical, cabecera apilada ---- */
 @media (max-width: 720px) {
-  #view-mis-pedidos .pedidos-hero { padding: 24px 22px; }
+  #view-mis-pedidos .pedidos-hero, #view-notificaciones .notif-hero { padding: 24px 22px; }
   #view-mis-pedidos .resumen-panel { padding: 22px 20px; }
   /* Apilada: fotos arriba y título + chips a todo el ancho (en dos columnas el chip de la fecha se cortaba). */
   .mp-cabecera { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 22px 20px 16px 26px; }

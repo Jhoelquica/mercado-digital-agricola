@@ -3553,13 +3553,67 @@ async function buscarPedidoPorId() {
 }
 
 // ============ NOTIFICACIONES ============
-const NOTIF_ICONOS = {
-  pedido_creado: 'package',
-  envio_actualizado: 'truck',
+// Cada tipo de aviso: a qué filtro pertenece, su ícono y su título. Un tipo desconocido igual se muestra
+// (con ícono de campana) y solo aparece en "Todas".
+const NOTIF_TIPOS = {
+  pedido_creado: { grupo: 'pedido', icono: 'package', titulo: 'Pedido registrado' },
+  envio_actualizado: { grupo: 'envio', icono: 'truck', titulo: 'Envío actualizado' },
+  producto_disponible: { grupo: 'producto', icono: 'basket', titulo: 'Producto disponible' },
+};
+const NOTIF_FILTROS = [
+  { clave: 'todas', etiqueta: 'Todas' },
+  { clave: 'pedido', etiqueta: 'Pedidos' },
+  { clave: 'envio', etiqueta: 'Envíos' },
+  { clave: 'producto', etiqueta: 'Productos' },
+];
+const ETIQUETAS_ESTADO_ENVIO = {
+  pendiente: 'Pendiente',
+  pendiente_asignacion: 'Buscando repartidor',
+  propuesto: 'Propuesto a un repartidor',
+  asignado: 'Repartidor asignado',
+  en_camino: 'En camino',
+  entregado: 'Entregado',
+  cancelado: 'Cancelado',
 };
 
-function iconoNotificacion(tipo) {
-  return `<i class="ti ti-${NOTIF_ICONOS[tipo] || 'bell'}"></i>`;
+function tipoNotificacion(tipo) {
+  return NOTIF_TIPOS[tipo] || { grupo: 'otro', icono: 'bell', titulo: 'Aviso' };
+}
+
+// El mensaje de un envío trae el estado en texto ("...cambió de estado a: en_camino."): se muestra
+// como etiqueta legible en vez de la clave cruda.
+function pillEstadoNotificacion(estado) {
+  const clave = estado.toLowerCase();
+  const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `pill-${clave}` : 'pill-default';
+  const icono = ICONOS_ESTADO[clave] ? `<i class="ti ti-${ICONOS_ESTADO[clave]}" aria-hidden="true"></i>` : '';
+  const etiqueta = ETIQUETAS_ESTADO_ENVIO[clave] || clave.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  return `<span class="pill pill-estado ${clase}">${icono} ${escapeAttr(etiqueta)}</span>`;
+}
+
+function tiempoRelativo(fechaStr) {
+  const d = parsearFechaServidor(fechaStr);
+  if (isNaN(d)) return '—';
+  const min = Math.floor(Math.max(0, Date.now() - d.getTime()) / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  const horas = Math.floor(min / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.floor(horas / 24);
+  if (dias === 1) return 'ayer';
+  if (dias < 7) return `hace ${dias} días`;
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// Grupo de día para los encabezados de la lista (por día calendario local, no por horas transcurridas).
+function grupoDeDia(fecha) {
+  if (isNaN(fecha)) return 'Anteriores';
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const dia = new Date(fecha); dia.setHours(0, 0, 0, 0);
+  const diferencia = Math.round((hoy - dia) / 86400000);
+  if (diferencia <= 0) return 'Hoy';
+  if (diferencia === 1) return 'Ayer';
+  if (diferencia < 7) return 'Esta semana';
+  return 'Anteriores';
 }
 
 function renderVacioNotificaciones(tipo) {
@@ -3567,11 +3621,17 @@ function renderVacioNotificaciones(tipo) {
   const plantillas = {
     'no-sesion': `
       <span class="empty-state-icon"><i class="ti ti-lock"></i></span>
-      <p><strong>Inicia sesión para ver tus notificaciones</strong></p>`,
+      <p><strong>Inicia sesión para ver tus notificaciones</strong></p>
+      <button type="button" class="btn btn-primary" data-notif-accion="login">Iniciar sesión</button>`,
     'sin-notificaciones': `
       <span class="empty-state-icon"><i class="ti ti-bell"></i></span>
       <p><strong>No tienes notificaciones todavía</strong></p>
-      <p class="muted">Aquí verás avisos sobre tus pedidos y envíos apenas ocurran.</p>`,
+      <p class="muted">Aquí verás avisos sobre tus pedidos y envíos apenas ocurran.</p>
+      <button type="button" class="btn btn-primary" data-notif-accion="explorar">Explorar el catálogo</button>`,
+    'sin-filtro': `
+      <span class="empty-state-icon"><i class="ti ti-filter-off"></i></span>
+      <p><strong>No hay avisos de este tipo</strong></p>
+      <button type="button" class="btn btn-outline" data-notif-accion="todas">Ver todas</button>`,
   };
   vacio.innerHTML = plantillas[tipo] || plantillas['sin-notificaciones'];
   vacio.classList.remove('hidden');
@@ -3580,23 +3640,132 @@ function renderVacioNotificaciones(tipo) {
 const TAMANO_PAGINA_NOTIF = 10;
 let notificacionesCargadas = [];
 let notifMostrar = TAMANO_PAGINA_NOTIF;
+let notifFiltro = 'todas';
+let notifNuevas = new Set(); // ids de los avisos posteriores a la última visita a esta pantalla
+
+function claveNotifVisto() {
+  return `agro_notif_visto_${Estado.usuarioId}`;
+}
+
+function notifFiltradas() {
+  return notifFiltro === 'todas'
+    ? notificacionesCargadas
+    : notificacionesCargadas.filter((n) => tipoNotificacion(n.tipo).grupo === notifFiltro);
+}
+
+function conteosNotificaciones() {
+  const conteos = { todas: notificacionesCargadas.length, pedido: 0, envio: 0, producto: 0 };
+  notificacionesCargadas.forEach((n) => {
+    const grupo = tipoNotificacion(n.tipo).grupo;
+    if (grupo in conteos) conteos[grupo] += 1;
+  });
+  return conteos;
+}
+
+function renderNotifFiltros() {
+  const cont = document.getElementById('notif-filtros');
+  if (!notificacionesCargadas.length) { cont.innerHTML = ''; return; } // sin avisos no hay nada que filtrar
+  const conteos = conteosNotificaciones();
+  cont.innerHTML = NOTIF_FILTROS.map((f) => `
+    <button type="button" class="notif-filtro${f.clave === notifFiltro ? ' active' : ''}" data-filtro="${f.clave}" aria-pressed="${f.clave === notifFiltro}">
+      ${f.etiqueta} <span class="notif-filtro-cuenta">${conteos[f.clave]}</span>
+    </button>`).join('');
+}
+
+function renderNotifResumen() {
+  const cont = document.getElementById('notif-resumen');
+  if (!notificacionesCargadas.length) { cont.innerHTML = ''; return; }
+  const c = conteosNotificaciones();
+  const fila = (icono, etiqueta, valor) => `<li><i class="ti ti-${icono}" aria-hidden="true"></i><span>${etiqueta}</span><strong>${valor}</strong></li>`;
+  cont.innerHTML = `
+    <div class="notif-resumen-cab">
+      <span class="notif-resumen-icono"><i class="ti ti-bell-ringing" aria-hidden="true"></i></span>
+      <div><strong>${c.todas}</strong><span>${c.todas === 1 ? 'aviso en total' : 'avisos en total'}</span></div>
+    </div>
+    <ul class="notif-resumen-lista">
+      ${fila('package', 'Pedidos registrados', c.pedido)}
+      ${fila('truck', 'Envíos actualizados', c.envio)}
+      ${fila('basket', 'Productos disponibles', c.producto)}
+    </ul>
+    ${notifNuevas.size ? `<div class="notif-resumen-nuevas"><i class="ti ti-sparkles" aria-hidden="true"></i> ${notifNuevas.size} ${notifNuevas.size === 1 ? 'nueva' : 'nuevas'} desde tu última visita</div>` : ''}`;
+}
+
+function renderNotifCard(n, i) {
+  const tipo = tipoNotificacion(n.tipo);
+  const fecha = parsearFechaServidor(n.fecha_envio);
+  const nueva = notifNuevas.has(n.id);
+  const estado = n.tipo === 'envio_actualizado' ? /estado a:\s*([a-z_]+)/i.exec(n.mensaje || '')?.[1] : null;
+  const mensaje = estado
+    ? `<p class="notif-msg">Tu envío cambió de estado.</p><div class="notif-estado-envio">${pillEstadoNotificacion(estado)}</div>`
+    : `<p class="notif-msg">${escapeAttr(n.mensaje)}</p>`;
+
+  const acciones = [];
+  if (n.pedido_id) {
+    acciones.push(`<span class="notif-chip"><i class="ti ti-receipt" aria-hidden="true"></i> Pedido #${String(n.pedido_id).slice(0, 8)}</span>`);
+    acciones.push('<button type="button" class="notif-accion" data-accion="ver-pedido">Ver mis pedidos <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
+  } else if (n.producto_id) {
+    acciones.push(`<button type="button" class="notif-accion" data-accion="ver-producto" data-id="${escapeAttr(n.producto_id)}">Ver producto <i class="ti ti-arrow-right" aria-hidden="true"></i></button>`);
+  }
+
+  return `
+    <article class="notif-card${nueva ? ' notif-card--nueva' : ''}" style="animation-delay:${Math.min(i, 10) * 35}ms">
+      <div class="notif-icon tipo-${escapeAttr(n.tipo)}"><i class="ti ti-${tipo.icono}" aria-hidden="true"></i></div>
+      <div class="notif-cuerpo">
+        <div class="notif-cabecera">
+          <h4 class="notif-titulo">${tipo.titulo}${nueva ? ' <span class="notif-nueva">Nueva</span>' : ''}</h4>
+          <time class="notif-tiempo"${isNaN(fecha) ? '' : ` datetime="${fecha.toISOString()}"`} title="${formatearFechaServidor(n.fecha_envio)}">${tiempoRelativo(n.fecha_envio)}</time>
+        </div>
+        ${mensaje}
+        ${acciones.length ? `<div class="notif-acciones">${acciones.join('')}</div>` : ''}
+      </div>
+    </article>`;
+}
 
 function renderNotificacionesPagina() {
   const cont = document.getElementById('notificaciones-list');
   const btnMas = document.getElementById('btn-notif-cargar-mas');
-  const visibles = notificacionesCargadas.slice(0, notifMostrar);
+  const vacio = document.getElementById('notificaciones-empty');
+  const filtradas = notifFiltradas();
+  const visibles = filtradas.slice(0, notifMostrar);
 
-  cont.innerHTML = visibles.map((n, i) => `
-    <div class="notif-card" style="animation-delay:${Math.min(i, 10) * 35}ms">
-      <div class="notif-icon tipo-${escapeAttr(n.tipo)}">${iconoNotificacion(n.tipo)}</div>
-      <div>
-        <div class="notif-msg">${escapeAttr(n.mensaje)}</div>
-        <div class="notif-meta">Pedido #${String(n.pedido_id).slice(0, 8)} · ${formatearFechaServidor(n.fecha_envio)}</div>
+  renderNotifFiltros();
+  renderNotifResumen();
+  cont.removeAttribute('aria-busy');
+  document.getElementById('notif-estado').textContent = `${filtradas.length} ${filtradas.length === 1 ? 'aviso' : 'avisos'}${notifNuevas.size ? `, ${notifNuevas.size} ${notifNuevas.size === 1 ? 'nuevo' : 'nuevos'}` : ''}`;
+
+  if (!filtradas.length) {
+    cont.innerHTML = '';
+    btnMas.classList.add('hidden');
+    renderVacioNotificaciones('sin-filtro');
+    return;
+  }
+  vacio.classList.add('hidden');
+
+  let html = '';
+  let grupoActual = null;
+  visibles.forEach((n, i) => {
+    const grupo = grupoDeDia(parsearFechaServidor(n.fecha_envio));
+    if (grupo !== grupoActual) {
+      if (grupoActual !== null) html += '</section>';
+      html += `<section class="notif-grupo"><h3 class="notif-grupo-titulo">${grupo}</h3>`;
+      grupoActual = grupo;
+    }
+    html += renderNotifCard(n, i);
+  });
+  cont.innerHTML = `${html}</section>`;
+  btnMas.classList.toggle('hidden', notifMostrar >= filtradas.length);
+}
+
+function renderSkeletonNotificaciones(n = 3) {
+  const tarjeta = `
+    <div class="notif-card" aria-hidden="true">
+      <div class="skeleton notif-skel-icono"></div>
+      <div class="notif-cuerpo">
+        <div class="skeleton skeleton-line tall w-40"></div>
+        <div class="skeleton skeleton-line w-70" style="margin-top:10px;"></div>
       </div>
-    </div>
-  `).join('');
-
-  btnMas.classList.toggle('hidden', notifMostrar >= notificacionesCargadas.length);
+    </div>`;
+  return tarjeta.repeat(n);
 }
 
 async function cargarNotificaciones() {
@@ -3606,26 +3775,49 @@ async function cargarNotificaciones() {
   vacio.classList.add('hidden');
   btnMas.classList.add('hidden');
   notifMostrar = TAMANO_PAGINA_NOTIF;
+  notifFiltro = 'todas';
+  notifNuevas = new Set();
+  notificacionesCargadas = [];
+  renderNotifFiltros();
+  renderNotifResumen();
 
   if (!Estado.token) {
     cont.innerHTML = '';
+    document.getElementById('notif-estado').textContent = '';
     renderVacioNotificaciones('no-sesion');
     return;
   }
 
-  cont.innerHTML = renderSkeletonFilas(3);
+  cont.setAttribute('aria-busy', 'true');
+  cont.innerHTML = renderSkeletonNotificaciones(3);
   try {
     const ids = new Set(obtenerPedidosTrackeados());
     const todas = await Api.notificaciones.listarTodas();
-    notificacionesCargadas = ids.size ? todas.filter((n) => ids.has(String(n.pedido_id))) : todas;
+    // Los avisos de producto no cuelgan de un pedido (pedido_id vacío): no se filtran por pedido.
+    notificacionesCargadas = ids.size ? todas.filter((n) => !n.pedido_id || ids.has(String(n.pedido_id))) : todas;
+
+    // "Nuevas" = posteriores a la última vez que se abrió esta pantalla (guardado solo en este navegador:
+    // el backend no lleva estado de lectura). La primera vez no se marca ninguna.
+    let visto = null;
+    try { visto = Number(localStorage.getItem(claveNotifVisto())) || null; } catch { /* sin almacenamiento: no hay marcas */ }
+    if (visto) {
+      notifNuevas = new Set(notificacionesCargadas
+        .filter((n) => parsearFechaServidor(n.fecha_envio).getTime() > visto)
+        .map((n) => n.id));
+    }
+    try { localStorage.setItem(claveNotifVisto(), String(Date.now())); } catch { /* idem */ }
 
     if (!notificacionesCargadas.length) {
+      cont.removeAttribute('aria-busy');
       cont.innerHTML = '';
+      renderNotifFiltros();
       renderVacioNotificaciones('sin-notificaciones');
       return;
     }
     renderNotificacionesPagina();
   } catch (err) {
+    cont.removeAttribute('aria-busy');
+    cont.innerHTML = '';
     manejarError(err, 'cargar notificaciones');
   }
 }
@@ -6600,6 +6792,32 @@ function inicializarEventos() {
   document.getElementById('btn-notif-cargar-mas').addEventListener('click', () => {
     notifMostrar += TAMANO_PAGINA_NOTIF;
     renderNotificacionesPagina();
+  });
+  document.getElementById('notif-filtros').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-filtro]');
+    if (!boton) return;
+    notifFiltro = boton.dataset.filtro;
+    notifMostrar = TAMANO_PAGINA_NOTIF;
+    renderNotificacionesPagina();
+    document.querySelector(`#notif-filtros [data-filtro="${notifFiltro}"]`)?.focus(); // el repintado reemplaza los botones
+  });
+  document.getElementById('notificaciones-list').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-accion]');
+    if (!boton) return;
+    if (boton.dataset.accion === 'ver-pedido') cambiarVista('mis-pedidos');
+    if (boton.dataset.accion === 'ver-producto') cambiarVista('detalle-producto', boton.dataset.id);
+  });
+  document.getElementById('notificaciones-empty').addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-notif-accion]');
+    if (!boton) return;
+    const accion = boton.dataset.notifAccion;
+    if (accion === 'login') abrirModal('modal-auth');
+    if (accion === 'explorar') abrirPanelBusqueda('', { explorar: true });
+    if (accion === 'todas') {
+      notifFiltro = 'todas';
+      notifMostrar = TAMANO_PAGINA_NOTIF;
+      renderNotificacionesPagina();
+    }
   });
 
   document.getElementById('form-productor').addEventListener('submit', crearPerfilProductor);

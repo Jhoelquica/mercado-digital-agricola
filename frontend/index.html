@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=30c4ce96">
+<link rel="stylesheet" href="css/style.css?v=4deca2ef">
 </head>
 <body>
 
@@ -395,13 +395,33 @@
 
   <!-- NOTIFICACIONES -->
   <section id="view-notificaciones" class="view">
-    <div class="section-header">
-      <h2><i class="ti ti-bell"></i> Notificaciones</h2>
-      <button class="btn btn-outline" id="btn-refrescar-notificaciones">↻ Refrescar</button>
+    <div class="section-header panel-header-hero notif-hero">
+      <div>
+        <h2><i class="ti ti-bell"></i> Notificaciones</h2>
+        <p class="pedidos-hero-sub">Avisos de tus pedidos, envíos y productos reservados, apenas ocurren.</p>
+      </div>
+      <button class="btn btn-outline" id="btn-refrescar-notificaciones"><i class="ti ti-refresh"></i> Refrescar</button>
     </div>
-    <div id="notificaciones-list" class="notif-list"></div>
-    <button type="button" class="btn btn-outline btn-block hidden" id="btn-notif-cargar-mas">Cargar más</button>
-    <div id="notificaciones-empty" class="empty-state hidden"></div>
+
+    <div class="notif-layout">
+      <div class="notif-principal">
+        <div class="notif-filtros" id="notif-filtros" role="group" aria-label="Filtrar avisos por tipo"></div>
+        <p class="mp-solo-lectores" id="notif-estado" role="status" aria-atomic="true"></p>
+        <div id="notificaciones-list" class="notif-list"></div>
+        <button type="button" class="btn btn-outline btn-block hidden" id="btn-notif-cargar-mas">Cargar más</button>
+        <div id="notificaciones-empty" class="empty-state hidden"></div>
+      </div>
+
+      <aside class="notif-lateral" aria-label="Resumen de avisos">
+        <div class="notif-resumen" id="notif-resumen"></div>
+        <div class="notif-cta">
+          <span class="notif-cta-icono"><i class="ti ti-truck-delivery"></i></span>
+          <h3>Sigue tus pedidos</h3>
+          <p>Mira el estado de tu pago y de tu entrega en un solo lugar.</p>
+          <button type="button" class="btn btn-primary" data-nav="mis-pedidos">Ir a Mis Pedidos</button>
+        </div>
+      </aside>
+    </div>
   </section>
 
   <!-- PANEL PRODUCTOR -->
@@ -1100,6 +1120,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=89d9b580"></script>
+<script src="js/app.js?v=75bddfcc"></script>
 </body>
 </html>
