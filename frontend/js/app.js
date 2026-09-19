@@ -979,6 +979,7 @@ function sincronizarTarjetasRol() {
 
 // ============ MODALES ============
 let focoPrevioModalAuth = null; // quién tenía el foco antes de abrir el modal de acceso: se lo devolvemos al cerrarlo
+let focoPrevioCheckout = null; // ídem para el checkout
 
 function abrirModal(id) {
   document.getElementById(id).classList.remove('hidden');
@@ -989,6 +990,10 @@ function abrirModal(id) {
       ajustarBotonesGoogle();
     });
   }
+  if (id === 'modal-pedido') {
+    focoPrevioCheckout = document.activeElement;
+    requestAnimationFrame(() => document.querySelector('#modal-pedido .modal-checkout').focus());
+  }
 }
 
 function cerrarModal(id) {
@@ -997,6 +1002,10 @@ function cerrarModal(id) {
     limpiarErroresAuth();
     if (focoPrevioModalAuth?.isConnected) focoPrevioModalAuth.focus?.();
     focoPrevioModalAuth = null;
+  }
+  if (id === 'modal-pedido') {
+    if (focoPrevioCheckout?.isConnected) focoPrevioCheckout.focus?.();
+    focoPrevioCheckout = null;
   }
 }
 
@@ -2511,6 +2520,12 @@ function quitarDelCarrito(productoId, unidad = null) {
   renderCarrito();
 }
 
+// Producto del catálogo cargado para pintar la miniatura de una línea (foto o, si no hay, el emoji de su
+// categoría); si el catálogo aún no está en memoria, solo el nombre alcanza para el emoji genérico.
+function productoDeLinea(item) {
+  return Estado.productos.find((p) => p.id === item.producto_id) || { nombre: item.nombre };
+}
+
 function renderCarrito() {
   const cantidadTotal = Estado.carrito.reduce((acc, i) => acc + i.cantidad, 0);
   const badge = document.getElementById('cart-count');
@@ -2526,8 +2541,12 @@ function renderCarrito() {
   const vacio = document.getElementById('carrito-vacio');
   const totalEl = document.getElementById('carrito-total');
   const btnConfirmar = document.getElementById('btn-checkout-paso1-siguiente');
+  const lineas = Estado.carrito.length;
+  document.getElementById('carrito-conteo').textContent = lineas ? `(${lineas})` : '';
+  document.getElementById('carrito-resumen-cantidad').textContent = lineas;
+  document.getElementById('checkout-bloque-datos').classList.toggle('hidden', !lineas); // sin productos no hay nada que entregar
 
-  if (!Estado.carrito.length) {
+  if (!lineas) {
     cont.innerHTML = '';
     vacio.classList.remove('hidden');
     totalEl.textContent = formatearMoneda(0);
@@ -2537,21 +2556,25 @@ function renderCarrito() {
   vacio.classList.add('hidden');
   btnConfirmar.disabled = false;
 
-  cont.innerHTML = Estado.carrito.map((i) => `
-    <div class="carrito-item">
+  cont.innerHTML = Estado.carrito.map((i) => {
+    const nombre = escapeAttr(i.nombre);
+    const datos = `data-id="${i.producto_id}" data-unidad="${i.unidad || ''}"`;
+    return `
+    <article class="carrito-item">
+      ${renderMediaProducto(productoDeLinea(i), 'carrito-item-media')}
       <div class="carrito-item-info">
-        <strong>${i.nombre}</strong>
+        <strong>${nombre}</strong>
         <span>${formatearMoneda(i.precio)} / ${unidadCorta(i.unidad_medida)}</span>
-        <span class="qty-label">Cantidad en ${unidadEtiqueta(i.unidad_medida)}</span>
       </div>
-      <div class="carrito-qty">
-        <button data-accion="menos" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}">−</button>
+      <div class="carrito-qty" role="group" aria-label="Cantidad de ${nombre}">
+        <button type="button" data-accion="menos" ${datos} aria-label="Quitar una unidad de ${nombre}">−</button>
         <span>${i.cantidad} ${unidadPlural(i.unidad_medida, i.cantidad)}</span>
-        <button data-accion="mas" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}">+</button>
+        <button type="button" data-accion="mas" ${datos} aria-label="Agregar una unidad de ${nombre}">+</button>
       </div>
-      <button class="carrito-remove" data-accion="quitar" data-id="${i.producto_id}" data-unidad="${i.unidad || ''}"><i class="ti ti-trash"></i></button>
-    </div>
-  `).join('');
+      <strong class="carrito-item-subtotal">${formatearMoneda(i.precio * i.cantidad)}</strong>
+      <button type="button" class="carrito-remove" data-accion="quitar" ${datos} aria-label="Quitar ${nombre} del pedido"><i class="ti ti-trash" aria-hidden="true"></i></button>
+    </article>`;
+  }).join('');
 
   const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
   totalEl.textContent = formatearMoneda(total);
@@ -2566,9 +2589,12 @@ function irPasoCheckout(paso) {
     const n = Number(stepEl.dataset.step);
     stepEl.classList.toggle('active', n === paso);
     stepEl.classList.toggle('completado', n < paso);
+    if (n === paso) stepEl.setAttribute('aria-current', 'step'); else stepEl.removeAttribute('aria-current');
     const circulo = stepEl.querySelector('.checkout-step-circle');
     circulo.innerHTML = n < paso ? '<i class="ti ti-check"></i>' : String(n);
   });
+  const cuerpo = document.querySelector('#modal-pedido .checkout-cuerpo');
+  if (cuerpo) cuerpo.scrollTop = 0; // cada paso arranca desde arriba
 }
 
 function resetCheckout() {
@@ -2589,6 +2615,12 @@ function reintentarPago(pedidoId, monto) {
   pedidoReintento = { id: pedidoId, monto };
   abrirModal('modal-pedido');
   document.getElementById('checkout-total-paso2').textContent = formatearMoneda(monto);
+  document.getElementById('checkout-bloque-entrega').classList.add('hidden'); // el pedido ya tiene su entrega
+  document.getElementById('checkout-recap').innerHTML = `
+    <li class="checkout-recap-reintento">
+      <i class="ti ti-receipt" aria-hidden="true"></i>
+      <span>Pago pendiente del pedido <strong>#${String(pedidoId).slice(0, 8)}</strong></span>
+    </li>`;
   irPasoCheckout(2);
 }
 
@@ -2684,11 +2716,37 @@ function telefonoContactoValido() {
   return valor;
 }
 
+// Resumen del paso de pago: lo que se va a pagar, línea por línea, para no tener que volver atrás a revisarlo.
+function renderRecapCheckout() {
+  document.getElementById('checkout-recap').innerHTML = Estado.carrito.map((i) => `
+    <li class="checkout-recap-item">
+      ${renderMediaProducto(productoDeLinea(i), 'checkout-recap-media')}
+      <span class="checkout-recap-texto">
+        <strong>${escapeAttr(i.nombre)}</strong>
+        <small>${i.cantidad} ${unidadPlural(i.unidad_medida, i.cantidad)} × ${formatearMoneda(i.precio)}</small>
+      </span>
+      <span class="checkout-recap-precio">${formatearMoneda(i.precio * i.cantidad)}</span>
+    </li>`).join('');
+}
+
 function irAPaso2() {
   if (!Estado.carrito.length) return;
-  if (!telefonoContactoValido()) return;
+  const telefono = telefonoContactoValido();
+  if (!telefono) return;
+  // El punto de entrega se marca en el paso 1: pedirlo aquí (donde el mapa se ve) y no recién al pagar,
+  // cuando el aviso salía pero el mapa quedaba en un paso que ya no se muestra.
+  if (!destinoSeleccionado) {
+    toast('Marca el punto de entrega en el mapa antes de continuar.', 'error');
+    resaltarMapaDestino();
+    return;
+  }
   const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
   document.getElementById('checkout-total-paso2').textContent = formatearMoneda(total);
+  document.getElementById('checkout-entrega-telefono').textContent = telefono;
+  document.getElementById('checkout-entrega-punto').innerHTML =
+    `<i class="ti ti-map-pin" aria-hidden="true"></i> Marcado en el mapa (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
+  document.getElementById('checkout-bloque-entrega').classList.remove('hidden');
+  renderRecapCheckout();
   irPasoCheckout(2);
 }
 
@@ -2818,17 +2876,22 @@ function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
 
   if (aprobado) {
     cont.innerHTML = `
-      <div class="icono-grande"><i class="ti ti-confetti"></i></div>
+      <span class="checkout-exito-icono"><i class="ti ti-check" aria-hidden="true"></i></span>
       <h3>¡Pago aprobado!</h3>
       <p>Tu pedido <strong>#${idCorto}</strong> está confirmado.</p>
-      <p>Total pagado: <strong>${formatearMoneda(monto)}</strong></p>`;
+      <div class="checkout-exito-total"><span>Total pagado</span><strong>${formatearMoneda(monto)}</strong></div>
+      <ol class="checkout-siguientes">
+        <li><i class="ti ti-receipt" aria-hidden="true"></i><div><strong>Recibimos tu pedido</strong><span>Ya está registrado y pagado.</span></div></li>
+        <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><div><strong>Un repartidor lo lleva a tu punto</strong><span>Te llamará al teléfono que indicaste para coordinar.</span></div></li>
+        <li><i class="ti ti-key" aria-hidden="true"></i><div><strong>Confirma la entrega con tu código</strong><span>Lo verás en Mis Pedidos cuando el pedido salga.</span></div></li>
+      </ol>`;
   } else {
     const pareceJson = errorMsg && (errorMsg.trim().startsWith('[') || errorMsg.trim().startsWith('{'));
     const motivo = (errorMsg && !pareceJson)
       ? errorMsg
       : `El pago quedó en estado "${resultado?.estado || 'pendiente'}".`;
     cont.innerHTML = `
-      <div class="icono-grande"><i class="ti ti-alert-triangle"></i></div>
+      <span class="checkout-exito-icono es-alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i></span>
       <h3>No se pudo confirmar el pago</h3>
       <p>${escapeAttr(motivo)}</p>
       <p>Tu pedido <strong>#${idCorto}</strong> quedó registrado — puedes reintentar el pago más tarde.</p>`;
@@ -6472,6 +6535,19 @@ function inicializarEventos() {
   });
 
   document.getElementById('btn-usar-mi-ubicacion').addEventListener('click', usarMiUbicacionDestino);
+  document.getElementById('btn-checkout-editar-entrega').addEventListener('click', () => irPasoCheckout(1));
+  document.getElementById('btn-carrito-explorar').addEventListener('click', () => {
+    cerrarModal('modal-pedido');
+    abrirPanelBusqueda('', { explorar: true });
+  });
+  document.getElementById('modal-pedido').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      cerrarModal('modal-pedido');
+      return;
+    }
+    atraparFoco(e, e.currentTarget);
+  });
   document.getElementById('btn-checkout-paso1-siguiente').addEventListener('click', irAPaso2);
   document.getElementById('btn-checkout-paso2-volver').addEventListener('click', () => irPasoCheckout(1));
   document.getElementById('btn-checkout-pagar').addEventListener('click', manejarClickPagar);

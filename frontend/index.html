@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=44a7bf0c">
+<link rel="stylesheet" href="css/style.css?v=30c4ce96">
 </head>
 <body>
 
@@ -941,82 +941,133 @@
 
 <!-- MODAL: CHECKOUT (RESUMEN → PAGO → CONFIRMACIÓN) -->
 <div class="modal-overlay hidden" id="modal-pedido">
-  <div class="modal modal-checkout">
-    <button class="modal-close" data-close="modal-pedido"><i class="ti ti-x"></i></button>
-
-    <div class="checkout-stepper">
-      <div class="checkout-step active" data-step="1">
-        <span class="checkout-step-circle">1</span>
-        <span class="checkout-step-label">Resumen</span>
-      </div>
-      <div class="checkout-step-line"></div>
-      <div class="checkout-step" data-step="2">
-        <span class="checkout-step-circle">2</span>
-        <span class="checkout-step-label">Pago</span>
-      </div>
-      <div class="checkout-step-line"></div>
-      <div class="checkout-step" data-step="3">
-        <span class="checkout-step-circle">3</span>
-        <span class="checkout-step-label">Confirmación</span>
-      </div>
-    </div>
-
-    <!-- PASO 1: RESUMEN -->
-    <div class="checkout-panel active" id="checkout-panel-1">
-      <h3><i class="ti ti-basket"></i> Resumen de tu pedido</h3>
-      <div id="carrito-items" class="carrito-items"></div>
-      <div id="carrito-vacio" class="empty-state hidden">
-        <p>Tu carrito está vacío. Agrega productos desde el catálogo.</p>
-      </div>
-      <div class="carrito-total">
-        <span>Total estimado</span>
-        <strong id="carrito-total">S/ 0.00</strong>
-      </div>
-      <label>Teléfono de contacto (obligatorio)
-        <input type="tel" id="pedido-telefono" inputmode="numeric" maxlength="9" pattern="9[0-9]{8}" placeholder="Ej. 987654321" autocomplete="tel-national" required>
-        <small class="muted" style="margin:0;">Lo usa el repartidor para coordinar la entrega contigo. 9 dígitos, empieza con 9.</small>
-      </label>
-      <div class="mapa-selector-bloque">
-        <div class="mapa-selector-label">
-          <span><i class="ti ti-map-pin"></i> Punto de entrega (obligatorio)</span>
-          <button type="button" class="btn btn-ghost btn-sm" id="btn-usar-mi-ubicacion">Usar mi ubicación</button>
+  <div class="modal modal-checkout" role="dialog" aria-modal="true" aria-labelledby="checkout-titulo" tabindex="-1">
+    <div class="checkout-cabecera">
+      <h2 class="mp-solo-lectores" id="checkout-titulo">Tu pedido</h2>
+      <div class="checkout-stepper">
+        <div class="checkout-step active" data-step="1" aria-current="step">
+          <span class="checkout-step-circle">1</span>
+          <span class="checkout-step-label">Resumen</span>
         </div>
-        <div id="mapa-destino-pedido" class="mapa-seleccionable"></div>
-        <p class="mapa-ayuda" id="mapa-destino-ayuda">Toca el mapa para marcar dónde quieres recibir tu pedido.</p>
+        <div class="checkout-step-line"></div>
+        <div class="checkout-step" data-step="2">
+          <span class="checkout-step-circle">2</span>
+          <span class="checkout-step-label">Pago</span>
+        </div>
+        <div class="checkout-step-line"></div>
+        <div class="checkout-step" data-step="3">
+          <span class="checkout-step-circle">3</span>
+          <span class="checkout-step-label">Confirmación</span>
+        </div>
       </div>
-      <button type="button" class="btn btn-primary btn-block" id="btn-checkout-paso1-siguiente">Continuar al pago →</button>
+      <button type="button" class="modal-close" data-close="modal-pedido" aria-label="Cerrar"><i class="ti ti-x"></i></button>
     </div>
 
-    <!-- PASO 2: MÉTODO DE PAGO -->
-    <div class="checkout-panel" id="checkout-panel-2">
-      <h3><i class="ti ti-credit-card"></i> Método de pago</h3>
-      <p class="muted">El cobro se procesa de forma segura con Culqi.</p>
-      <div class="metodo-pago-grid">
-        <label class="metodo-pago-card seleccionado">
-          <input type="radio" name="metodo-pago" value="tarjeta" checked>
-          <span class="metodo-pago-icon"><i class="ti ti-credit-card"></i></span>
-          <span class="metodo-pago-nombre">Tarjeta</span>
-        </label>
-        <label class="metodo-pago-card">
-          <input type="radio" name="metodo-pago" value="yape">
-          <span class="metodo-pago-icon"><i class="ti ti-device-mobile"></i></span>
-          <span class="metodo-pago-nombre">Yape</span>
-        </label>
-      </div>
-      <div class="carrito-total">
-        <span>Total a pagar</span>
-        <strong id="checkout-total-paso2">S/ 0.00</strong>
-      </div>
-      <div class="checkout-actions">
-        <button type="button" class="btn btn-outline" id="btn-checkout-paso2-volver">← Volver</button>
-        <button type="button" class="btn btn-primary" id="btn-checkout-pagar">Confirmar y pagar</button>
-      </div>
-    </div>
+    <div class="checkout-cuerpo">
+      <!-- PASO 1: RESUMEN -->
+      <div class="checkout-panel active" id="checkout-panel-1">
+        <div class="checkout-grid">
+          <div class="checkout-principal">
+            <section class="checkout-bloque">
+              <h3><i class="ti ti-basket"></i> Tu pedido <span class="checkout-conteo" id="carrito-conteo"></span></h3>
+              <div id="carrito-items" class="carrito-items"></div>
+              <div id="carrito-vacio" class="empty-state hidden">
+                <i class="ti ti-basket empty-state-icon" aria-hidden="true"></i>
+                <strong>Tu carrito está vacío</strong>
+                <p>Agrega productos desde el catálogo.</p>
+                <button type="button" class="btn btn-primary" id="btn-carrito-explorar">Explorar el catálogo</button>
+              </div>
+            </section>
 
-    <!-- PASO 3: CONFIRMACIÓN -->
-    <div class="checkout-panel" id="checkout-panel-3">
-      <div id="checkout-confirmacion" class="checkout-confirmacion"></div>
-      <button type="button" class="btn btn-primary btn-block" id="btn-checkout-finalizar">Ver mis pedidos</button>
+            <section class="checkout-bloque" id="checkout-bloque-datos">
+              <h3><i class="ti ti-truck-delivery"></i> Datos de entrega</h3>
+              <label class="checkout-campo">Teléfono de contacto (obligatorio)
+                <input type="tel" id="pedido-telefono" inputmode="numeric" maxlength="9" pattern="9[0-9]{8}" placeholder="Ej. 987654321" autocomplete="tel-national" required>
+                <small class="muted">Lo usa el repartidor para coordinar la entrega contigo. 9 dígitos, empieza con 9.</small>
+              </label>
+              <div class="mapa-selector-bloque">
+                <div class="mapa-selector-label">
+                  <span><i class="ti ti-map-pin"></i> Punto de entrega (obligatorio)</span>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btn-usar-mi-ubicacion">Usar mi ubicación</button>
+                </div>
+                <div id="mapa-destino-pedido" class="mapa-seleccionable"></div>
+                <p class="mapa-ayuda" id="mapa-destino-ayuda">Toca el mapa para marcar dónde quieres recibir tu pedido.</p>
+              </div>
+            </section>
+          </div>
+
+          <aside class="checkout-resumen" aria-label="Resumen del pedido">
+            <h3>Resumen</h3>
+            <div class="checkout-resumen-fila"><span>Productos</span><span id="carrito-resumen-cantidad">0</span></div>
+            <div class="carrito-total">
+              <span>Total estimado</span>
+              <strong id="carrito-total">S/ 0.00</strong>
+            </div>
+            <button type="button" class="btn btn-primary btn-block" id="btn-checkout-paso1-siguiente">Continuar al pago →</button>
+            <ul class="checkout-garantias">
+              <li><i class="ti ti-lock" aria-hidden="true"></i><span>Pago seguro con Culqi</span></li>
+              <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><span>Un repartidor lleva tu pedido</span></li>
+              <li><i class="ti ti-shield-check" aria-hidden="true"></i><span>Origen verificado de cada producto</span></li>
+            </ul>
+          </aside>
+        </div>
+      </div>
+
+      <!-- PASO 2: MÉTODO DE PAGO -->
+      <div class="checkout-panel" id="checkout-panel-2">
+        <div class="checkout-grid">
+          <div class="checkout-principal">
+            <section class="checkout-bloque">
+              <h3><i class="ti ti-credit-card"></i> Método de pago</h3>
+              <p class="muted">El cobro se procesa de forma segura con Culqi.</p>
+              <div class="metodo-pago-grid" role="radiogroup" aria-label="Método de pago">
+                <label class="metodo-pago-card seleccionado">
+                  <input type="radio" name="metodo-pago" value="tarjeta" checked>
+                  <span class="metodo-pago-icon"><i class="ti ti-credit-card"></i></span>
+                  <span class="metodo-pago-texto"><span class="metodo-pago-nombre">Tarjeta</span><small>Crédito o débito</small></span>
+                  <span class="metodo-pago-check" aria-hidden="true"><i class="ti ti-check"></i></span>
+                </label>
+                <label class="metodo-pago-card">
+                  <input type="radio" name="metodo-pago" value="yape">
+                  <span class="metodo-pago-icon"><i class="ti ti-device-mobile"></i></span>
+                  <span class="metodo-pago-texto"><span class="metodo-pago-nombre">Yape</span><small>Paga desde tu celular</small></span>
+                  <span class="metodo-pago-check" aria-hidden="true"><i class="ti ti-check"></i></span>
+                </label>
+              </div>
+            </section>
+
+            <section class="checkout-bloque hidden" id="checkout-bloque-entrega">
+              <h3><i class="ti ti-truck-delivery"></i> Entrega</h3>
+              <dl class="checkout-entrega-resumen">
+                <div><dt>Teléfono de contacto</dt><dd id="checkout-entrega-telefono">—</dd></div>
+                <div><dt>Punto de entrega</dt><dd id="checkout-entrega-punto">—</dd></div>
+              </dl>
+              <button type="button" class="btn btn-outline" id="btn-checkout-editar-entrega">Cambiar datos de entrega</button>
+            </section>
+          </div>
+
+          <aside class="checkout-resumen" aria-label="Resumen del pedido">
+            <h3>Tu pedido</h3>
+            <ul class="checkout-recap" id="checkout-recap"></ul>
+            <div class="carrito-total">
+              <span>Total a pagar</span>
+              <strong id="checkout-total-paso2">S/ 0.00</strong>
+            </div>
+            <div class="checkout-actions">
+              <button type="button" class="btn btn-primary" id="btn-checkout-pagar">Confirmar y pagar</button>
+              <button type="button" class="btn btn-outline" id="btn-checkout-paso2-volver">← Volver</button>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- PASO 3: CONFIRMACIÓN -->
+      <div class="checkout-panel" id="checkout-panel-3">
+        <div class="checkout-final">
+          <div id="checkout-confirmacion" class="checkout-confirmacion" role="status" aria-live="polite"></div>
+          <button type="button" class="btn btn-primary btn-block" id="btn-checkout-finalizar">Ver mis pedidos</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -1049,6 +1100,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=758b9950"></script>
+<script src="js/app.js?v=89d9b580"></script>
 </body>
 </html>
