@@ -1,12 +1,13 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import re
 import math
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
@@ -158,7 +159,19 @@ class ItemPedido(BaseModel):
 
 class PedidoCrear(BaseModel):
     comprador_nombre: str
-    comprador_telefono: str | None = None
+    # Obligatorio: es el único canal para que el repartidor coordine la entrega con el
+    # comprador (ver el bloque de contacto en Gestionar Envíos). Celular peruano: 9 dígitos
+    # que empiezan con 9 — se normaliza (sin espacios) antes de guardarse.
+    comprador_telefono: str
+
+    @field_validator("comprador_telefono")
+    @classmethod
+    def _telefono_valido(cls, valor: str) -> str:
+        limpio = re.sub(r"\s+", "", valor or "")
+        if not re.fullmatch(r"9\d{8}", limpio):
+            raise ValueError("El teléfono de contacto debe tener 9 dígitos y empezar con 9 (ej. 987654321)")
+        return limpio
+
     destino_latitud: float
     destino_longitud: float
     items: list[ItemPedido]

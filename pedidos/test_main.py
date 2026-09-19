@@ -69,6 +69,7 @@ def _payload(destino, precio_item, cantidad=1, unidad=None):
         item["unidad"] = unidad
     return {
         "comprador_nombre": "Cliente de prueba",
+        "comprador_telefono": "987654321",
         "destino_latitud": destino["destino_latitud"],
         "destino_longitud": destino["destino_longitud"],
         "items": [item],
@@ -87,6 +88,42 @@ def test_pedido_valido_dentro_de_ayacucho_y_sobre_el_minimo():
     assert cuerpo["comprador_nombre"] == "Cliente de prueba"
     assert len(cuerpo["items"]) == 1
     mock_publicar.assert_called_once()
+
+
+def test_pedido_sin_telefono_falla_con_422():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    del payload["comprador_telefono"]
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
+         patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 422, resp.text
+    mock_publicar.assert_not_called()
+
+
+def test_pedido_con_telefono_invalido_falla_con_422():
+    for telefono in ["12345", "887654321", "98765432a", ""]:
+        payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+        payload["comprador_telefono"] = telefono
+
+        with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
+             patch("main.publicar_evento"):
+            resp = client.post("/pedidos", json=payload)
+
+        assert resp.status_code == 422, f"{telefono!r}: {resp.text}"
+
+
+def test_pedido_normaliza_el_telefono_sin_espacios():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    payload["comprador_telefono"] = "987 654 321"
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
+         patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["comprador_telefono"] == "987654321"
 
 
 def test_pedido_fuera_de_ayacucho_falla_con_400():
