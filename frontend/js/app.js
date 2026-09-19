@@ -2726,6 +2726,7 @@ function estadoGeneralPedido(d) {
   if (pagoRechazadoPedido(d)) return { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
   if (envio?.estado === 'en_camino') return { clave: 'en_curso', etiqueta: 'En camino', icono: 'truck', pill: 'en_camino' };
   if (envio?.estado === 'asignado') return { clave: 'en_curso', etiqueta: 'Repartidor asignado', icono: 'user-check', pill: 'asignado' };
+  if (envio?.estado === 'propuesto') return { clave: 'en_curso', etiqueta: 'Esperando repartidor', icono: 'hourglass', pill: 'propuesto' };
   if (pagoConfirmadoPedido(d)) return { clave: 'en_curso', etiqueta: 'Preparando tu pedido', icono: 'package', pill: 'confirmado' };
   return { clave: 'pendiente', etiqueta: 'Pago pendiente', icono: 'hourglass', pill: 'pendiente' };
 }
@@ -2750,7 +2751,9 @@ function pasosPedido(d) {
       icono: 'truck', titulo: 'En camino', hecho: enCamino,
       detalle: enCamino ? (entregado ? 'Completado' : 'En ruta hacia ti')
         : !pagoOk ? 'Por asignar'
-        : envio?.estado === 'asignado' ? 'Repartidor asignado' : 'Buscando repartidor',
+        : envio?.estado === 'asignado' ? 'Repartidor asignado'
+        : envio?.estado === 'propuesto' ? 'Esperando al repartidor'  // ya se le ofreció el envío; falta que acepte
+        : envio ? 'Buscando repartidor' : 'Preparando el envío',
     },
     { icono: 'circle-check', titulo: 'Entregado', hecho: entregado, detalle: entregado ? 'Recibido' : 'Pendiente' },
   ];
