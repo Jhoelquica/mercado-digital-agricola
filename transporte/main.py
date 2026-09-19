@@ -19,6 +19,7 @@ from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
 import models
+from migraciones import agregar_columnas_faltantes
 from minio_client import subir_foto_entrega
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
@@ -33,6 +34,9 @@ import math
 logger = logging.getLogger("transporte.main")
 
 Base.metadata.create_all(bind=engine)
+# create_all() no agrega columnas nuevas a tablas que ya existen: sin esto, una base creada antes de
+# una columna nueva en models.py falla en cada consulta (ver migraciones.py).
+agregar_columnas_faltantes(engine, Base)
 
 app = FastAPI()
 
