@@ -5753,9 +5753,19 @@ function detenerSeguimientoRepartidor() {
 
 // ============ MI PERFIL ============
 const ROL_INFO_PERFIL = {
-  comprador: { icono: '<i class="ti ti-shopping-cart"></i>', texto: 'Comprador' },
-  productor: { icono: '<i class="ti ti-tractor"></i>', texto: 'Productor' },
-  repartidor: { icono: '<i class="ti ti-truck"></i>', texto: 'Repartidor' },
+  comprador: { icono: '<i class="ti ti-shopping-cart"></i>', texto: 'Comprador', descripcion: 'Explora el catálogo y haz seguimiento de tus compras.' },
+  productor: { icono: '<i class="ti ti-tractor"></i>', texto: 'Productor', descripcion: 'Publica tus productos sin intermediarios y lleva tu gestión económica.' },
+  repartidor: { icono: '<i class="ti ti-truck"></i>', texto: 'Repartidor', descripcion: 'Recibe propuestas de envío y entrega los pedidos.' },
+  verificador: { icono: '<i class="ti ti-shield-check"></i>', texto: 'Verificador', descripcion: 'Revisa y certifica las cosechas de los productores.' },
+  admin: { icono: '<i class="ti ti-settings"></i>', texto: 'Administrador', descripcion: 'Administra la plataforma.' },
+};
+
+// Acceso al panel propio de cada rol (la vista es la misma a la que aterriza al iniciar sesión).
+const ACCESO_PANEL_POR_ROL = {
+  productor: { icono: 'tractor', etiqueta: 'Panel de productor' },
+  repartidor: { icono: 'truck', etiqueta: 'Gestionar envíos' },
+  verificador: { icono: 'shield-check', etiqueta: 'Panel de verificación' },
+  admin: { icono: 'settings', etiqueta: 'Panel de administración' },
 };
 
 function ocultarDni(dni) {
@@ -5767,29 +5777,65 @@ function ocultarDni(dni) {
 
 function renderSkeletonPerfil() {
   return `
-    <div class="perfil-header card-panel">
-      <div class="skeleton" style="width:64px;height:64px;border-radius:50%;flex-shrink:0;"></div>
+    <div class="perfil-hero panel-header-hero" aria-hidden="true">
+      <div class="skeleton" style="width:104px;height:104px;border-radius:50%;flex-shrink:0;"></div>
       <div style="flex:1">
-        <div class="skeleton skeleton-line w-40" style="margin-bottom:10px;"></div>
-        <div class="skeleton skeleton-line w-60"></div>
+        <div class="skeleton skeleton-line w-40" style="margin-bottom:12px;"></div>
+        <div class="skeleton skeleton-line tall w-60"></div>
       </div>
     </div>
-    <div class="card-panel">
-      <div class="skeleton skeleton-line w-40" style="margin-bottom:14px;"></div>
-      <div class="skeleton skeleton-line tall w-70" style="margin-bottom:10px;"></div>
-      <div class="skeleton skeleton-line w-60"></div>
+    <div class="perfil-layout" aria-hidden="true">
+      <div class="card-panel">
+        <div class="skeleton skeleton-line w-40" style="margin-bottom:14px;"></div>
+        <div class="skeleton skeleton-line tall w-70" style="margin-bottom:10px;"></div>
+        <div class="skeleton skeleton-line w-60"></div>
+      </div>
+      <div class="card-panel">
+        <div class="skeleton skeleton-line w-40" style="margin-bottom:14px;"></div>
+        <div class="skeleton skeleton-line tall w-70"></div>
+      </div>
     </div>`;
 }
 
-function renderPerfilComprador() {
+// Cuenta de quien no tiene datos propios de rol (comprador, verificador, administrador): lo que sabemos de
+// ella y qué hace ese rol. Productor y repartidor muestran en su lugar sus datos de rol.
+function renderPerfilCuenta(usuario, rolInfo) {
   return `
-    <div class="card-panel">
-      <h3><i class="ti ti-shopping-cart"></i> Comprador</h3>
-      <p class="muted">Explora el catálogo y haz seguimiento de tus compras.</p>
-      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-pedidos">Ir a Mis Pedidos →</button>
-    </div>`;
+    <section class="card-panel perfil-tarjeta">
+      <h3><i class="ti ti-id-badge-2"></i> Tu cuenta</h3>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Nombre</span><span class="perfil-dato-valor">${escapeAttr(usuario.nombre)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Correo</span><span class="perfil-dato-valor">${escapeAttr(usuario.email)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Tipo de cuenta</span><span class="perfil-dato-valor">${rolInfo.texto}</span></div>
+      </div>
+      <p class="perfil-cuenta-descripcion">${rolInfo.descripcion || ''}</p>
+    </section>`;
 }
 
+// Accesos a lo que más se usa; el panel propio del rol va primero. Se resuelven por delegación en
+// #perfil-contenido (data-perfil-ir): "catalogo" abre el buscador, cualquier otro valor es una vista.
+function renderPerfilAccesos(rol) {
+  const panel = ACCESO_PANEL_POR_ROL[rol];
+  const accesos = [
+    ...(panel ? [{ icono: panel.icono, etiqueta: panel.etiqueta, ir: VISTA_INICIAL_POR_ROL[rol] }] : []),
+    { icono: 'package', etiqueta: 'Mis pedidos', ir: 'mis-pedidos' },
+    { icono: 'bell', etiqueta: 'Notificaciones', ir: 'notificaciones' },
+    { icono: 'search', etiqueta: 'Explorar el catálogo', ir: 'catalogo' },
+  ];
+  return `
+    <nav class="card-panel perfil-accesos" aria-label="Accesos rápidos">
+      <h3>Accesos rápidos</h3>
+      ${accesos.map((a) => `
+        <button type="button" class="perfil-acceso" data-perfil-ir="${a.ir}">
+          <span class="perfil-acceso-icono"><i class="ti ti-${a.icono}" aria-hidden="true"></i></span>
+          <span>${a.etiqueta}</span>
+          <i class="ti ti-chevron-right" aria-hidden="true"></i>
+        </button>`).join('')}
+    </nav>`;
+}
+
+// Datos de productor (columna principal de Mi Perfil): las cifras de gestión económica arriba y, debajo, sus
+// datos con el mapa de la chakra. "Mis siembras" va aparte, a todo el ancho (ver renderPerfil).
 function renderPerfilProductor(extra, registrosProduccion) {
   if (!extra) {
     return `
@@ -5800,29 +5846,28 @@ function renderPerfilProductor(extra, registrosProduccion) {
         <button type="button" class="btn btn-primary" id="btn-perfil-ir-panel">Completar perfil de productor</button>
       </div>`;
   }
+  const dato = (etiqueta, valor) => `<div class="perfil-dato"><span class="perfil-dato-label">${etiqueta}</span><span class="perfil-dato-valor">${valor}</span></div>`;
   return `
-    <div class="perfil-resumen-layout">
-      <div class="card-panel">
-        <h3><i class="ti ti-tractor"></i> Datos de productor</h3>
-        <div class="perfil-datos-grid">
-          <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(extra.comunidad || '—')}</span></div>
-          <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${escapeAttr(extra.contacto || '—')}</span></div>
-        </div>
-        ${hayCoordenadas(extra.latitud, extra.longitud) ? `
-        <div class="mapa-bloque">
-          <h4 class="mapa-titulo"><i class="ti ti-map-pin"></i> Ubicación de tu chakra</h4>
-          <div id="mapa-perfil-productor" class="mapa-mini"></div>
-        </div>` : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> No has marcado la ubicación de tu chakra todavía.</div>`}
-        <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-panel" style="margin-top:16px;">Ir a Mis Productos →</button>
+    ${renderEstadisticasProductor(registrosProduccion || [])}
+    <section class="card-panel perfil-tarjeta">
+      <h3><i class="ti ti-tractor"></i> Datos de productor</h3>
+      <div class="perfil-datos-grid">
+        ${extra.nombre ? dato('Nombre', escapeAttr(extra.nombre)) : ''}
+        ${dato('Comunidad / Región', escapeAttr(extra.comunidad || '—'))}
+        ${dato('Contacto', escapeAttr(extra.contacto || '—'))}
+        ${extra.fecha_registro ? dato('Registrado', formatearFechaServidor(extra.fecha_registro)) : ''}
       </div>
-      ${renderResumenEconomico(registrosProduccion || [])}
-    </div>
-    ${renderProduccionSeccion(registrosProduccion || [])}`;
+      ${hayCoordenadas(extra.latitud, extra.longitud) ? `
+      <div class="mapa-bloque">
+        <h4 class="mapa-titulo"><i class="ti ti-map-pin"></i> Ubicación de tu chakra</h4>
+        <div id="mapa-perfil-productor" class="mapa-mini"></div>
+      </div>` : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> No has marcado la ubicación de tu chakra todavía.</div>`}
+    </section>`;
 }
 
 // ============ GESTIÓN ECONÓMICA (Módulo 1) ============
 
-// Cálculo puro reusado por renderResumenEconomico (Mi Perfil) y renderEconomiaStatsProductor
+// Cálculo puro reusado por renderEstadisticasProductor (Mi Perfil) y renderEconomiaStatsProductor
 // (pestaña "Gestión Económica" del Panel Productor) — mismos números, dos presentaciones.
 function calcularResumenEconomico(registros) {
   const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
@@ -5847,19 +5892,23 @@ function calcularResumenEconomico(registros) {
   return { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular };
 }
 
-function renderResumenEconomico(registros) {
+function renderEstadisticasProductor(registros) {
   const { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular } = calcularResumenEconomico(registros);
+  const tarjeta = (icono, etiqueta, valor, clase = '') => `
+    <div class="perfil-stat">
+      <span class="perfil-stat-icono"><i class="ti ti-${icono}" aria-hidden="true"></i></span>
+      <div><span class="perfil-stat-valor ${clase}">${valor}</span><span class="perfil-stat-etiqueta">${etiqueta}</span></div>
+    </div>`;
 
   return `
-    <div class="card-panel gestion-economica-resumen">
-      <h3><i class="ti ti-chart-bar"></i> Gestión Económica</h3>
-      <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Total invertido</span><span class="perfil-dato-valor">${formatearMoneda(totalInvertido)}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Total cosechado</span><span class="perfil-dato-valor">${cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—'}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Ganancia acumulada</span><span class="perfil-dato-valor ${gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—'}</span></div>
+    <section class="perfil-economia" aria-label="Gestión económica">
+      <div class="perfil-stats">
+        ${tarjeta('coin', 'Total invertido', formatearMoneda(totalInvertido))}
+        ${tarjeta('scale', 'Total cosechado', cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—')}
+        ${tarjeta('trending-up', 'Ganancia acumulada', conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—', gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa')}
       </div>
       ${sinCalcular > 0 ? `<p class="muted produccion-nota-resumen"><i class="ti ti-info-circle"></i> ${sinCalcular} registro${sinCalcular > 1 ? 's' : ''} cosechado${sinCalcular > 1 ? 's' : ''} sin datos suficientes para calcular ganancia — no se incluye${sinCalcular > 1 ? 'n' : ''} en el total.</p>` : ''}
-    </div>`;
+    </section>`;
 }
 
 // ============ GESTIÓN ECONÓMICA DENTRO DE PANEL PRODUCTOR (pestaña dedicada) ============
@@ -6189,39 +6238,56 @@ function renderPerfilRepartidor(extra) {
       </div>`;
   }
   return `
-    <div class="card-panel">
+    <section class="card-panel perfil-tarjeta">
       <h3><i class="ti ti-truck"></i> Datos de repartidor</h3>
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">DNI</span><span class="perfil-dato-valor perfil-dato-mono">${escapeAttr(ocultarDni(extra.dni))}</span></div>
       </div>
       ${renderBannerDisponibilidad(extra.estado_disponibilidad)}
-      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-ir-envios" style="margin-top:16px;">Ir a Gestionar Envíos →</button>
-    </div>`;
+    </section>`;
 }
 
 function renderPerfil(usuario, extra, registrosProduccion) {
-  const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '<i class="ti ti-user"></i>', texto: usuario.rol || 'Usuario' };
+  const rolInfo = ROL_INFO_PERFIL[usuario.rol] || { icono: '<i class="ti ti-user"></i>', texto: usuario.rol || 'Usuario', descripcion: '' };
 
-  const headerHtml = `
-    <div class="perfil-header card-panel">
-      <div class="perfil-avatar">${escapeAttr((usuario.nombre || '?').charAt(0).toUpperCase())}</div>
-      <div class="perfil-header-info">
-        <h3>${escapeAttr(usuario.nombre)}</h3>
-        <span class="perfil-email">${escapeAttr(usuario.email)}</span>
-        <span class="perfil-rol-badge">${rolInfo.icono} ${rolInfo.texto}</span>
+  const cabecera = `
+    <header class="perfil-hero panel-header-hero">
+      <div class="perfil-avatar" aria-hidden="true">${escapeAttr((usuario.nombre || '?').charAt(0).toUpperCase())}</div>
+      <div class="perfil-hero-info">
+        <span class="perfil-hero-etiqueta">Mi perfil</span>
+        <h2>${escapeAttr(usuario.nombre)}</h2>
+        <div class="perfil-hero-meta">
+          <span class="perfil-email"><i class="ti ti-mail" aria-hidden="true"></i> ${escapeAttr(usuario.email)}</span>
+          <span class="perfil-rol-badge">${rolInfo.icono} ${rolInfo.texto}</span>
+        </div>
       </div>
-    </div>`;
+      <button type="button" class="btn btn-outline" id="btn-perfil-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
+    </header>`;
 
-  let seccionRol = renderPerfilComprador();
-  if (usuario.rol === 'productor') seccionRol = renderPerfilProductor(extra, registrosProduccion);
-  else if (usuario.rol === 'repartidor') seccionRol = renderPerfilRepartidor(extra);
+  let principal;
+  let siembras = '';
+  if (usuario.rol === 'productor') {
+    principal = renderPerfilProductor(extra, registrosProduccion);
+    if (extra) {
+      siembras = `
+        <section class="perfil-siembras">
+          <h3 class="perfil-titulo-seccion"><i class="ti ti-plant-2" aria-hidden="true"></i> Mis siembras</h3>
+          ${renderProduccionSeccion(registrosProduccion || [])}
+        </section>`;
+    }
+  } else if (usuario.rol === 'repartidor') {
+    principal = renderPerfilRepartidor(extra);
+  } else {
+    principal = renderPerfilCuenta(usuario, rolInfo);
+  }
 
   return `
-    ${headerHtml}
-    ${seccionRol}
-    <div class="card-panel">
-      <button type="button" class="btn btn-outline btn-block" id="btn-perfil-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
-    </div>`;
+    ${cabecera}
+    <div class="perfil-layout">
+      <div class="perfil-principal">${principal}</div>
+      <aside class="perfil-lateral">${renderPerfilAccesos(usuario.rol)}</aside>
+    </div>
+    ${siembras}`;
 }
 
 async function cargarPerfil() {
@@ -7077,7 +7143,12 @@ function inicializarEventos() {
     if (e.target.closest('#btn-perfil-logout')) { cerrarSesion(); return; }
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
     if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
-    if (e.target.closest('#btn-perfil-ir-pedidos')) { cambiarVista('mis-pedidos'); return; }
+    const acceso = e.target.closest('[data-perfil-ir]');
+    if (acceso) {
+      if (acceso.dataset.perfilIr === 'catalogo') abrirPanelBusqueda('', { explorar: true });
+      else cambiarVista(acceso.dataset.perfilIr);
+      return;
+    }
     if (e.target.closest('#btn-ir-a-chacras')) {
       cambiarVista('panel-productor');
       document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
