@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: certificacion
-          image: mercado_agricola-certificacion:latest
+          image: localhost:5000/certificacion:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8008

@@ -18,6 +18,13 @@ del admin). Se piden por consola (o SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD) y nu
 Sin ellas, el script hace igual los pasos 1-3 y avisa como continuar: es idempotente, se puede
 volver a correr y retoma donde quedo.
 
+Si la consola no deja escribir la contrasena (getpass falla en algunas terminales embebidas de
+Windows), en PowerShell se le pasa por variable de entorno, sin que quede en el historial:
+    $env:SEED_ADMIN_EMAIL = "admin@chakrashop.pe"
+    $env:SEED_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host 'Contrasena del admin' -AsSecureString)).Password
+    python seed_datos_demo.py
+    Remove-Item Env:SEED_ADMIN_PASSWORD
+
 Uso (desde la carpeta del proyecto, con los servicios corriendo):
     python seed_datos_demo.py                     # completo
     python seed_datos_demo.py --dry-run           # solo muestra el plan y revisa las imagenes
@@ -414,11 +421,21 @@ def main():
         log("\nSin credenciales de admin: se omiten verificacion, publicacion y llegada al almacen.")
         log("Vuelve a correr el script con SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (o interactivo) para completarlo.")
         sys.exit(1 if fallos else 0)
-    password_admin = os.getenv("SEED_ADMIN_PASSWORD") or getpass.getpass("Contrasena del admin (no se guarda): ")
-    try:
-        token_admin = login(api, email_admin, password_admin)
-    except Exception as e:
-        sys.exit(f"No se pudo iniciar sesion como admin: {e}")
+    token_admin = None
+    for intento in range(1, 4):
+        password_admin = os.getenv("SEED_ADMIN_PASSWORD") or getpass.getpass("Contrasena del admin (no se guarda): ")
+        # getpass no muestra nada al escribir: el largo permite notar un pegado que no llego (0 caracteres).
+        log(f"   ({len(password_admin)} caracteres recibidos)")
+        try:
+            token_admin = login(api, email_admin, password_admin)
+            break
+        except Exception as e:
+            log(f"   ! {e}")
+            if os.getenv("SEED_ADMIN_PASSWORD") or not sys.stdin.isatty() or intento == 3:
+                break
+            log("   Reintenta (en la consola de Windows, Ctrl+V puede no pegar: usa clic derecho).")
+    if token_admin is None:
+        sys.exit("No se pudo iniciar sesion como admin.")
     if not certificacion_actualizada(api):
         sys.exit("\nSe detiene ANTES de aprobar: el servicio de certificacion desplegado es anterior al registro\n"
                  "automatico del certificado, y los productos quedarian sin certificado (sin 'ver certificado').\n"
