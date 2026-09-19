@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=75db8836">
+<link rel="stylesheet" href="css/style.css?v=5eadfcee">
 </head>
 <body>
 
@@ -460,8 +460,8 @@
       <!-- Nav de secciones dedicadas — nuevo, exclusivo de este panel (ver activarTabProductor
            en app.js). Cada botón/panel usa data-tab / data-tab-panel a juego, nunca ids nuevos,
            para no interferir con los ids que ya consulta el resto de la lógica de abajo. -->
-      <nav class="productor-tabs" role="tablist">
-        <button type="button" class="productor-tab-btn active" data-tab="inicio"><i class="ti ti-home"></i> Inicio</button>
+      <nav class="productor-tabs" aria-label="Secciones del panel">
+        <button type="button" class="productor-tab-btn active" data-tab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> Mis Chacras</button>
         <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> Borradores</button>
         <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos</button>
@@ -656,7 +656,7 @@
     </div>
 
     <nav class="verificador-tabs" id="verificador-tabs" aria-label="Secciones del panel">
-      <button type="button" class="verificador-tab active" data-vseccion="cosechas">Cosechas pendientes</button>
+      <button type="button" class="verificador-tab active" data-vseccion="cosechas" aria-current="true">Cosechas pendientes</button>
       <button type="button" class="verificador-tab" data-vseccion="historial">Historial</button>
       <button type="button" class="verificador-tab" data-vseccion="cuenta">Mi cuenta</button>
     </nav>
@@ -697,8 +697,8 @@
     </div>
 
     <div class="admin-shell">
-      <nav class="admin-tabs" role="tablist">
-        <button type="button" class="admin-tab-btn active" data-admintab="inicio"><i class="ti ti-home"></i> Inicio</button>
+      <nav class="admin-tabs" aria-label="Secciones del panel">
+        <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
         <button type="button" class="admin-tab-btn" data-admintab="invitaciones"><i class="ti ti-ticket"></i> Invitaciones</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
@@ -722,7 +722,7 @@
         </div>
         <div class="admin-buscador">
           <i class="ti ti-search"></i>
-          <input type="search" id="admin-productores-buscar" placeholder="Buscar por nombre, comunidad o contacto…" autocomplete="off">
+          <input type="search" id="admin-productores-buscar" placeholder="Buscar por nombre, comunidad o contacto…" aria-label="Buscar productores" autocomplete="off">
         </div>
         <div id="admin-productores-lista" class="grid-admin"></div>
         <div id="admin-productores-empty" class="empty-state hidden">
@@ -1117,6 +1117,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=c73148ff"></script>
+<script src="js/app.js?v=cf48e185"></script>
 </body>
 </html>

@@ -79,7 +79,7 @@ function renderSello(verificacion) {
     return `
       <div class="verificar-sello sello-ok">
         <span class="verificar-sello-icono"><i class="ti ti-rosette-discount-check"></i></span>
-        <strong>Cadena verificada, sin alteraciones</strong>
+        <strong>Origen verificado</strong>
         <p>${escapeHtml(verificacion.mensaje)}</p>
         <span class="verificar-sello-meta"><i class="ti ti-link"></i> ${verificacion.total_bloques} evento${verificacion.total_bloques === 1 ? '' : 's'} enlazado${verificacion.total_bloques === 1 ? '' : 's'} criptográficamente</span>
       </div>`;

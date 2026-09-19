@@ -4913,9 +4913,16 @@ async function iniciarPanelVerificador() {
   }
 }
 
+// Botón de sección (pestañas de los paneles) activo o no: la clase pinta el estado y aria-current se lo
+// dice a los lectores de pantalla.
+function marcarBotonActivo(boton, activo) {
+  boton.classList.toggle('active', activo);
+  if (activo) boton.setAttribute('aria-current', 'true'); else boton.removeAttribute('aria-current');
+}
+
 function seleccionarSeccionVerificador(seccion) {
   document.querySelectorAll('#view-panel-verificador .verificador-tab').forEach((t) => {
-    t.classList.toggle('active', t.dataset.vseccion === seccion);
+    marcarBotonActivo(t, t.dataset.vseccion === seccion);
   });
   document.querySelectorAll('#view-panel-verificador .verificador-seccion').forEach((s) => {
     s.classList.toggle('hidden', s.dataset.vseccion !== seccion);
@@ -5174,7 +5181,7 @@ async function cargarProductoresAdmin() {
 // Secciones dedicadas del Panel Admin (Inicio / Invitaciones / Pendientes por Capacidad /
 // Productos en Tránsito) — mismo patrón que activarTabProductor.
 function activarTabAdmin(nombreTab) {
-  document.querySelectorAll('.admin-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.admintab === nombreTab));
+  document.querySelectorAll('.admin-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.admintab === nombreTab));
   document.querySelectorAll('.admin-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.adminPanel === nombreTab));
 }
 
@@ -6070,7 +6077,7 @@ function renderTablaUltimasSiembras(registros) {
 // display:none, Chart.js los mediría con 0x0 y quedarían rotos).
 let graficosEconomiaProductorListos = false;
 function activarTabProductor(nombreTab) {
-  document.querySelectorAll('.productor-tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === nombreTab));
+  document.querySelectorAll('.productor-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.tab === nombreTab));
   document.querySelectorAll('.productor-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.tabPanel === nombreTab));
   if (nombreTab === 'economia') {
     if (!graficosEconomiaProductorListos) {

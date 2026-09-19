@@ -987,6 +987,8 @@ input, select { font-family: inherit; }
 }
 
 .btn-sm { padding: 6px 12px; font-size: 0.8rem; margin-left: auto; }
+/* En pantallas táctiles los botones chicos de los paneles llegan a los 44px mínimos para el dedo. */
+@media (pointer: coarse) { .btn-sm { min-height: 44px; } }
 
 /* ---------- GRID / CARDS ---------- */
 .grid {
