@@ -1637,6 +1637,37 @@ function pausarYReiniciarVideoGaleria(seccion) {
 // entry.isIntersecting, sin unobserve(), a propósito (así lo pidió el usuario: el efecto debe
 // repetirse siempre que se pasa por el banner, no solo la primera vez). Se llama UNA sola vez desde
 // inicializarEventos(): el HTML de la landing es estático, no hace falta reconectar el observer.
+// Control del video de fondo del hero: un video que arranca solo tiene que poder detenerse
+// (WCAG 2.2.2). Además se pausa cuando el hero sale de pantalla (no decodifica video que nadie ve) y
+// no arranca si el usuario pidió menos movimiento: en ese caso queda el poster.
+function inicializarControlVideoLanding() {
+  const video = document.querySelector('.landing-hero video');
+  const boton = document.getElementById('landing-video-control');
+  if (!video || !boton) return;
+
+  let pausadoPorUsuario = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const pintar = () => {
+    const detenido = video.paused;
+    boton.setAttribute('aria-pressed', String(detenido));
+    boton.setAttribute('aria-label', detenido ? 'Reproducir video de fondo' : 'Pausar video de fondo');
+    boton.innerHTML = `<i class="ti ti-player-${detenido ? 'play' : 'pause'}"></i>`;
+  };
+  if (pausadoPorUsuario) video.pause();
+
+  boton.addEventListener('click', () => {
+    pausadoPorUsuario = !video.paused; // si se estaba reproduciendo, lo detiene el usuario
+    if (video.paused) video.play().catch(() => {}); else video.pause();
+  });
+  video.addEventListener('play', pintar);
+  video.addEventListener('pause', pintar);
+
+  new IntersectionObserver(([entrada]) => {
+    if (!entrada.isIntersecting) video.pause();
+    else if (!pausadoPorUsuario) video.play().catch(() => {});
+  }, { threshold: 0.15 }).observe(video);
+  pintar();
+}
+
 function inicializarBannerCinematico() {
   const contenidos = document.querySelectorAll('.landing-banner-cine .landing-banner-content');
   if (!contenidos.length) return;
@@ -5800,6 +5831,7 @@ function inicializarEventos() {
     });
   });
   inicializarBannerCinematico();
+  inicializarControlVideoLanding();
   document.querySelectorAll('[data-landing-registro]').forEach((btn) => {
     btn.addEventListener('click', () => abrirRegistroConRol(btn.dataset.landingRegistro));
   });

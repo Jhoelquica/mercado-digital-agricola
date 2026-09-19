@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=e655eed6">
+<link rel="stylesheet" href="css/style.css?v=359f37ad">
 </head>
 <body>
 
@@ -90,7 +90,8 @@
     <div class="landing-hero">
       <div class="detalle-video-wrap">
         <!-- Hero de landing: <video> nativo autoplay + loop, INDEPENDIENTE del sistema de galería de
-             producto (app.js no lo toca — sin configurarVideoGaleria, sin observer, sin botón replay).
+             producto (no usa configurarVideoGaleria ni el botón replay de las galerías; app.js solo le
+             agrega el control de pausa, ver inicializarControlVideoLanding).
              src directo (no data-src diferido) para que se vea desde el primer frame; poster como
              fallback mientras carga. Las clases .detalle-video / .detalle-video-wrap se conservan solo
              por el layout compartido (object-fit:cover + degradado + texto), no aportan comportamiento. -->
@@ -102,13 +103,22 @@
           src="assets/videos/hero-valle-bg.mp4"
           aria-label="Valle andino con terrazas de cultivo agrícola, video ambiental"></video>
         <div class="detalle-video-degradado"></div>
+        <!-- Pausa/reproducir el video de fondo (video automático: se debe poder detener). Reusa el
+             círculo de .detalle-video-replay; ver inicializarControlVideoLanding() en app.js. -->
+        <button type="button" class="detalle-video-replay landing-video-control" id="landing-video-control" aria-label="Pausar video de fondo" aria-pressed="false"><i class="ti ti-player-pause"></i></button>
         <div class="landing-hero-content detalle-video-texto">
           <span class="landing-kicker"><i class="ti ti-map-pin"></i> Hecho en Ayacucho, Perú</span>
           <h1>Del productor a tu mesa, sin intermediarios</h1>
           <p>Frutas, verduras y más, directo del productor a tu mesa. Con trazabilidad verificada.</p>
           <div class="landing-hero-actions">
             <button class="btn btn-primary btn-lg" data-landing-cta="registro">Crear cuenta gratis</button>
-            <button class="btn btn-outline btn-lg" data-landing-cta="explorar">Buscar productos →</button>
+            <!-- La búsqueda es la acción principal de un marketplace: mismo destino que antes (abre el
+                 panel de búsqueda vía data-landing-cta="explorar"), ahora con forma de campo de búsqueda. -->
+            <button type="button" class="landing-buscador" data-landing-cta="explorar" aria-label="Buscar productos">
+              <i class="ti ti-search" aria-hidden="true"></i>
+              <span class="landing-buscador-texto">Busca papa, quinua, queso…</span>
+              <span class="landing-buscador-accion">Buscar</span>
+            </button>
           </div>
           <div class="landing-hero-stats">
             <div><strong id="landing-stat-productos">—</strong><span>productos frescos</span></div>
@@ -221,27 +231,96 @@
         </div>
       </div>
 
+      <!-- CÓMO FUNCIONA: 4 pasos numerados con línea conectora (patrón "how it works" de 21st.dev,
+           adaptado a CSS propio). Todo lo que dice existe hoy en la plataforma: pago con tarjeta o
+           Yape (Culqi), seguimiento en mapa, código de entrega y QR de trazabilidad. -->
+      <section class="landing-pasos" aria-labelledby="landing-pasos-titulo">
+        <span class="landing-eyebrow">Cómo funciona</span>
+        <h2 id="landing-pasos-titulo">Del chakra a tu mesa en 4 pasos</h2>
+        <ol class="landing-pasos-lista">
+          <li class="landing-paso">
+            <span class="landing-paso-nodo" aria-hidden="true"><i class="ti ti-search"></i><b>1</b></span>
+            <div class="landing-paso-texto">
+              <h3>Elige</h3>
+              <p>Explora productos frescos de productores locales, con foto real y precio directo.</p>
+            </div>
+          </li>
+          <li class="landing-paso">
+            <span class="landing-paso-nodo" aria-hidden="true"><i class="ti ti-credit-card"></i><b>2</b></span>
+            <div class="landing-paso-texto">
+              <h3>Paga seguro</h3>
+              <p>Con tarjeta o Yape. Tu pago se procesa de forma segura con Culqi.</p>
+            </div>
+          </li>
+          <li class="landing-paso">
+            <span class="landing-paso-nodo" aria-hidden="true"><i class="ti ti-truck-delivery"></i><b>3</b></span>
+            <div class="landing-paso-texto">
+              <h3>Sigue tu envío</h3>
+              <p>Mira el recorrido en el mapa y recibe tu pedido con un código de entrega.</p>
+            </div>
+          </li>
+          <li class="landing-paso">
+            <span class="landing-paso-nodo" aria-hidden="true"><i class="ti ti-qrcode"></i><b>4</b></span>
+            <div class="landing-paso-texto">
+              <h3>Verifica el origen</h3>
+              <p>Escanea el QR y revisa la cadena de trazabilidad de cada producto.</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
       <div class="landing-roles">
+        <span class="landing-eyebrow">Únete</span>
         <h2>Una plataforma, tres roles</h2>
         <div class="landing-roles-grid">
-          <div class="landing-role-card">
-            <span class="landing-role-icon"><i class="ti ti-shopping-cart"></i></span>
-            <h3>Comprador</h3>
-            <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
-            <button class="btn btn-outline btn-sm" data-landing-registro="comprador">Registrarme como comprador</button>
-          </div>
-          <div class="landing-role-card">
-            <span class="landing-role-icon"><i class="ti ti-tractor"></i></span>
-            <h3>Productor</h3>
-            <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
-            <button class="btn btn-outline btn-sm" data-landing-registro="productor">Registrarme como productor</button>
-          </div>
-          <div class="landing-role-card">
-            <span class="landing-role-icon"><i class="ti ti-truck"></i></span>
-            <h3>Repartidor</h3>
-            <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
-            <button class="btn btn-outline btn-sm" data-landing-registro="repartidor">Registrarme como repartidor</button>
-          </div>
+          <article class="landing-role-card landing-role-card--comprador">
+            <header class="landing-role-cabecera">
+              <span class="landing-role-icon"><i class="ti ti-shopping-cart"></i></span>
+              <span class="landing-role-tag">Para tu mesa</span>
+            </header>
+            <div class="landing-role-cuerpo">
+              <h3>Comprador</h3>
+              <p>Explora el catálogo, arma tu pedido y sigue el envío en vivo hasta tu puerta.</p>
+              <ul class="landing-role-lista">
+                <li><i class="ti ti-check" aria-hidden="true"></i> Origen verificado con blockchain</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Pago con tarjeta o Yape</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Seguimiento en vivo de tu envío</li>
+              </ul>
+              <button class="btn btn-primary landing-role-cta" data-landing-registro="comprador">Registrarme como comprador</button>
+            </div>
+          </article>
+          <article class="landing-role-card landing-role-card--productor">
+            <header class="landing-role-cabecera">
+              <span class="landing-role-icon"><i class="ti ti-tractor"></i></span>
+              <span class="landing-role-tag">Vende sin intermediarios</span>
+            </header>
+            <div class="landing-role-cuerpo">
+              <h3>Productor</h3>
+              <p>Publica tus productos con fotos reales y certificación de trazabilidad, sin intermediarios.</p>
+              <ul class="landing-role-lista">
+                <li><i class="ti ti-check" aria-hidden="true"></i> Publica con fotos reales de tu chakra</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Certificado de trazabilidad por cosecha</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Vende directo, sin intermediarios</li>
+              </ul>
+              <button class="btn btn-primary landing-role-cta" data-landing-registro="productor">Registrarme como productor</button>
+            </div>
+          </article>
+          <article class="landing-role-card landing-role-card--repartidor">
+            <header class="landing-role-cabecera">
+              <span class="landing-role-icon"><i class="ti ti-truck"></i></span>
+              <span class="landing-role-tag">Reparte cerca de ti</span>
+            </header>
+            <div class="landing-role-cuerpo">
+              <h3>Repartidor</h3>
+              <p>Acepta envíos cercanos y comparte tu ubicación en vivo con el comprador.</p>
+              <ul class="landing-role-lista">
+                <li><i class="ti ti-check" aria-hidden="true"></i> Propuestas según tu capacidad de carga</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Entrega confirmada con código, foto y GPS</li>
+                <li><i class="ti ti-check" aria-hidden="true"></i> Liquidación por cada envío entregado</li>
+              </ul>
+              <button class="btn btn-primary landing-role-cta" data-landing-registro="repartidor">Registrarme como repartidor</button>
+            </div>
+          </article>
         </div>
       </div>
 
@@ -688,10 +767,11 @@
 <footer class="footer">
   <div class="footer-ctas" id="footer-ctas">
     <p class="footer-ctas-title">¿Listo para empezar?</p>
+    <p class="footer-ctas-sub">Únete gratis y sé parte de la cadena que lleva el campo de Ayacucho hasta tu mesa.</p>
     <div class="footer-ctas-buttons">
-      <button class="btn btn-primary btn-sm" data-landing-registro="comprador"><i class="ti ti-shopping-cart"></i> Soy comprador</button>
-      <button class="btn btn-primary btn-sm" data-landing-registro="productor"><i class="ti ti-tractor"></i> Soy productor</button>
-      <button class="btn btn-primary btn-sm" data-landing-registro="repartidor"><i class="ti ti-truck"></i> Soy repartidor</button>
+      <button class="btn btn-primary btn-lg" data-landing-registro="comprador"><i class="ti ti-shopping-cart"></i> Soy comprador</button>
+      <button class="btn btn-primary btn-lg" data-landing-registro="productor"><i class="ti ti-tractor"></i> Soy productor</button>
+      <button class="btn btn-primary btn-lg" data-landing-registro="repartidor"><i class="ti ti-truck"></i> Soy repartidor</button>
     </div>
   </div>
   <p>🌾 Chakra Shop — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
@@ -864,6 +944,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=f9a14cef"></script>
+<script src="js/app.js?v=2672dbf7"></script>
 </body>
 </html>
