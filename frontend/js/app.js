@@ -585,11 +585,16 @@ function renderSkeletonProductos(n = 8) {
 
 function renderSkeletonDetalle() {
   return `
-    <div class="skeleton" style="height:220px;border-radius:20px;margin-bottom:16px;"></div>
-    <div class="skeleton skeleton-line w-40" style="margin-bottom:10px;"></div>
-    <div class="skeleton skeleton-line tall w-70" style="margin-bottom:10px;"></div>
-    <div class="skeleton skeleton-line w-60" style="margin-bottom:16px;"></div>
-    <div class="skeleton skeleton-btn"></div>`;
+    <div class="detalle-skeleton" aria-hidden="true">
+      <div class="skeleton detalle-skeleton-visor"></div>
+      <div class="detalle-skeleton-info">
+        <div class="skeleton skeleton-line w-40"></div>
+        <div class="skeleton skeleton-line tall w-70"></div>
+        <div class="skeleton skeleton-line w-60"></div>
+        <div class="skeleton skeleton-line tall w-40"></div>
+        <div class="skeleton skeleton-btn"></div>
+      </div>
+    </div>`;
 }
 
 function renderSkeletonFilas(n = 3) {
@@ -1533,14 +1538,14 @@ function renderBloqueProductor(p, productor) {
   return `
     <div class="detalle-productor-card">
       <div class="detalle-productor-header">
-        <span class="detalle-productor-icono"><i class="ti ti-plant-2"></i></span>
+        <span class="detalle-productor-icono"><i class="ti ti-plant-2" aria-hidden="true"></i></span>
         <div class="detalle-productor-info">
           <span class="detalle-productor-label">Cultivado por</span>
-          <h3 class="detalle-productor-nombre">${escapeAttr(nombre)}</h3>
-          ${ubicacionTexto ? `<span class="detalle-productor-ubicacion"><i class="ti ti-map-pin"></i> ${escapeAttr(ubicacionTexto)}</span>` : ''}
+          <h4 class="detalle-productor-nombre">${escapeAttr(nombre)}</h4>
+          ${ubicacionTexto ? `<span class="detalle-productor-ubicacion"><i class="ti ti-map-pin" aria-hidden="true"></i> ${escapeAttr(ubicacionTexto)}</span>` : ''}
         </div>
       </div>
-      ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini"></div>` : ''}
+      ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini" role="img" aria-label="Ubicación de ${escapeAttr(nombre)} en el mapa"></div>` : ''}
     </div>`;
 }
 
@@ -1556,35 +1561,69 @@ function renderResumenCalificacion(p) {
     </p>`;
 }
 
-function renderSeccionResenas(resenas) {
-  const listaHtml = resenas.length
+// Reseñas de la página de detalle: a la izquierda el resumen (promedio, barras por estrellas — calculadas
+// con las reseñas reales) y el formulario; a la derecha las opiniones. El título de la sección lo pone
+// renderPaginaDetalleProducto, igual que en las demás secciones.
+function renderSeccionResenas(resenas, p) {
+  const total = resenas.length;
+  const promedio = total ? (p?.calificacion_promedio ?? resenas.reduce((suma, r) => suma + r.calificacion, 0) / total) : null;
+
+  const resumenHtml = total ? `
+    <div class="resenas-resumen">
+      <div class="resenas-promedio">
+        <strong>${Number(promedio).toFixed(1)}</strong>
+        <span class="mp-solo-lectores">de 5 estrellas</span>
+        <span class="rating-stars" aria-hidden="true">${renderEstrellas(promedio)}</span>
+        <span class="rating-count">${total} reseña${total === 1 ? '' : 's'}</span>
+      </div>
+      <ul class="resenas-barras" aria-label="Reseñas según su cantidad de estrellas">
+        ${[5, 4, 3, 2, 1].map((n) => {
+          const cantidad = resenas.filter((r) => Math.round(r.calificacion) === n).length;
+          return `<li><span>${n}</span><i class="ti ti-star" aria-hidden="true"></i><span class="resenas-barra"><span style="width:${(cantidad / total) * 100}%"></span></span><span class="resenas-barra-n">${cantidad}</span></li>`;
+        }).join('')}
+      </ul>
+    </div>` : '';
+
+  const listaHtml = total
     ? resenas.map((r) => `
-        <div class="resena-card">
-          <div class="resena-header">
-            <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
-            <span class="rating-stars">${renderEstrellas(r.calificacion)}</span>
-          </div>
-          <div class="resena-fecha">${formatearFechaServidor(r.fecha_creacion)}</div>
+        <article class="resena-card">
+          <header class="resena-header">
+            <span class="resena-avatar" aria-hidden="true">${escapeAttr((r.usuario_nombre || '?').trim().charAt(0).toUpperCase())}</span>
+            <div class="resena-quien">
+              <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
+              <span class="resena-fecha">${formatearFechaServidor(r.fecha_creacion)}</span>
+            </div>
+            <span class="rating-stars" role="img" aria-label="${r.calificacion} de 5 estrellas">${renderEstrellas(r.calificacion)}</span>
+          </header>
           ${r.comentario ? `<p class="resena-comentario">${escapeAttr(r.comentario)}</p>` : ''}
-        </div>`).join('')
-    : '<p class="muted">Aún no hay reseñas para este producto.</p>';
+        </article>`).join('')
+    : `
+        <div class="resenas-vacio">
+          <i class="ti ti-message-circle" aria-hidden="true"></i>
+          <strong>Todavía no hay reseñas</strong>
+          <p>Cuando alguien pruebe este producto, su opinión aparecerá aquí.</p>
+        </div>`;
 
   const formularioHtml = Estado.token ? `
     <form id="form-resena" class="resena-form">
       <h4>Deja tu reseña</h4>
-      <div class="estrellas-selector">
-        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}"><i class="ti ti-star"></i></button>`).join('')}
+      <div class="estrellas-selector" role="group" aria-label="Tu calificación">
+        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}" aria-label="${v} estrella${v === 1 ? '' : 's'}" aria-pressed="false"><i class="ti ti-star" aria-hidden="true"></i></button>`).join('')}
       </div>
-      <textarea placeholder="Cuéntanos qué te pareció (opcional)"></textarea>
+      <textarea placeholder="Cuéntanos qué te pareció (opcional)" aria-label="Tu comentario"></textarea>
       <button type="submit" class="btn btn-primary">Publicar reseña</button>
     </form>`
-    : '<p class="muted"><i class="ti ti-lock"></i> Inicia sesión para dejar tu propia reseña.</p>';
+    : `
+    <div class="resena-login">
+      <i class="ti ti-lock" aria-hidden="true"></i>
+      <p>Inicia sesión para dejar tu propia reseña.</p>
+      <button type="button" class="btn btn-outline" id="btn-resena-login">Iniciar sesión</button>
+    </div>`;
 
   return `
-    <div class="resenas-section">
-      <h3><i class="ti ti-star"></i> Reseñas ${resenas.length ? `(${resenas.length})` : ''}</h3>
-      <div class="resenas-lista">${listaHtml}</div>
-      ${formularioHtml}
+    <div class="detalle-resenas-grid">
+      <div class="detalle-resenas-lateral">${resumenHtml}${formularioHtml}</div>
+      <div class="detalle-resenas-lista">${listaHtml}</div>
     </div>`;
 }
 
@@ -1671,47 +1710,65 @@ function textosVideoGaleria(p) {
   ];
 }
 
-function renderHeroYGaleriaDetalle(p) {
-  const imagenes = Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden) : [];
-  const emoji = emojiParaProducto(p);
-  const heroUrl = imagenes[0]?.url || p.imagen_url || null;
-  const galeriaExtra = imagenes.slice(1);
+// Fotos del producto en su orden (la primera es la principal). Sin fotos: lista vacía y el visor
+// muestra el emoji de su categoría.
+function fotosProducto(p) {
+  const urls = (Array.isArray(p.imagenes) ? [...p.imagenes].sort((a, b) => a.orden - b.orden).map((img) => img.url) : []).filter(Boolean);
+  if (!urls.length && p.imagen_url) urls.push(p.imagen_url);
+  return urls;
+}
+
+// Galería: foto principal grande + tira de miniaturas (patrón de las fichas de producto de
+// marketplace). Con una sola foto no hay flechas ni miniaturas. El comportamiento (cambiar de foto,
+// teclado, deslizar) lo pone inicializarGaleriaDetalle.
+function renderGaleriaDetalle(p, fotos, insignia) {
+  const varias = fotos.length > 1;
+  return `
+    <div class="detalle-galeria" id="detalle-galeria">
+      <div class="detalle-visor"${varias ? ` tabindex="0" role="group" aria-roledescription="carrusel" aria-label="Fotos de ${escapeAttr(p.nombre)}"` : ''}>
+        ${fotos.length
+          ? `<img class="detalle-visor-img" src="${escapeAttr(fotos[0])}" alt="${escapeAttr(p.nombre || '')}" fetchpriority="high">`
+          : `<span class="detalle-visor-emoji" aria-hidden="true">${emojiParaProducto(p)}</span>`}
+        ${insignia ? `<span class="nmp-insignia nmp-insignia--${insignia.clase}">${insignia.texto}</span>` : ''}
+        ${varias ? `
+        <button type="button" class="detalle-visor-nav detalle-visor-prev" aria-label="Foto anterior"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>
+        <button type="button" class="detalle-visor-nav detalle-visor-next" aria-label="Foto siguiente"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>
+        <span class="detalle-contador" role="status" aria-live="polite">1 / ${fotos.length}</span>` : ''}
+      </div>
+      ${varias ? `
+      <div class="detalle-miniaturas">
+        ${fotos.map((url, i) => `
+          <button type="button" class="detalle-miniatura${i === 0 ? ' active' : ''}" data-src="${escapeAttr(url)}" aria-label="Ver foto ${i + 1} de ${fotos.length}" aria-current="${i === 0}">
+            <img src="${escapeAttr(url)}" alt="" loading="lazy">
+          </button>`).join('')}
+      </div>` : ''}
+    </div>`;
+}
+
+// Secciones con video (a sangre completa, debajo de la ficha de compra). Un video solo reemplaza una
+// posición que YA tiene una foto real (esa foto pasa a ser el poster): si el producto tiene menos fotos
+// que videos definidos, esa posición no existe. Ver PRODUCTOS_CON_VIDEO/textosVideoGaleria.
+function renderVideosDetalle(p, fotos) {
   const slug = slugProducto(p.nombre);
-  const conVideo = PRODUCTOS_CON_VIDEO.includes(slug);
-  const textos = conVideo ? textosVideoGaleria(p) : [];
+  if (!PRODUCTOS_CON_VIDEO.includes(slug)) return '';
+  const textos = textosVideoGaleria(p);
 
-  // Posiciones en el mismo orden que hoy: 0 = hero, 1+ = fotos extra de la galería. Un video solo
-  // reemplaza una posición que YA tiene una foto real ahí (esa foto pasa a ser el poster) — si el
-  // producto tiene menos fotos que videos definidos, esa posición sigue sin existir.
-  const posiciones = [{ url: heroUrl, esHero: true }, ...galeriaExtra.map((img) => ({ url: img.url, esHero: false }))];
-
-  return posiciones.map((pos, i) => {
-    const idAttr = pos.esHero ? ' id="detalle-seccion-descripcion"' : '';
-    const claseBase = pos.esHero ? 'detalle-hero' : 'detalle-galeria-item';
-
-    if (conVideo && pos.url && textos[i]) {
-      const videoUrl = `assets/videos/${slug}-video-${i + 1}.mp4`;
-      const t = textos[i];
-      return `
-        <div class="${claseBase} detalle-scroll-seccion detalle-video-seccion detalle-video-seccion--${t.tema}"${idAttr} style="background:${t.fondo}">
-          <div class="detalle-video-wrap">
-            <video class="detalle-video" muted playsinline preload="metadata" poster="${escapeAttr(pos.url)}" data-src="${escapeAttr(videoUrl)}"></video>
-            <button type="button" class="detalle-video-replay hidden" aria-label="Reproducir de nuevo"><i class="ti ti-player-play"></i></button>
-            <div class="detalle-video-degradado"></div>
-            <div class="detalle-video-texto">
-              <span class="detalle-video-etiqueta">${escapeAttr(t.etiqueta)}</span>
-              <h3>${escapeAttr(t.titulo)}</h3>
-              <p>${escapeAttr(t.parrafo)}</p>
-            </div>
-          </div>
-        </div>`;
-    }
-
+  return fotos.map((url, i) => {
+    const t = textos[i];
+    if (!url || !t) return '';
+    const videoUrl = `assets/videos/${slug}-video-${i + 1}.mp4`;
     return `
-      <div class="${claseBase} detalle-scroll-seccion"${idAttr}>
-        ${pos.url
-          ? `<img src="${escapeAttr(pos.url)}" alt="${escapeAttr(p.nombre || '')}" ${pos.esHero ? '' : 'loading="lazy"'} onerror="this.parentElement.textContent='${emoji}'">`
-          : emoji}
+      <div class="${i === 0 ? 'detalle-hero' : 'detalle-galeria-item'} detalle-scroll-seccion detalle-video-seccion detalle-video-seccion--${t.tema}" style="background:${t.fondo}">
+        <div class="detalle-video-wrap">
+          <video class="detalle-video" muted playsinline preload="metadata" poster="${escapeAttr(url)}" data-src="${escapeAttr(videoUrl)}"></video>
+          <button type="button" class="detalle-video-replay hidden" aria-label="Reproducir de nuevo"><i class="ti ti-player-play"></i></button>
+          <div class="detalle-video-degradado"></div>
+          <div class="detalle-video-texto">
+            <span class="detalle-video-etiqueta">${escapeAttr(t.etiqueta)}</span>
+            <h3>${escapeAttr(t.titulo)}</h3>
+            <p>${escapeAttr(t.parrafo)}</p>
+          </div>
+        </div>
       </div>`;
   }).join('');
 }
@@ -1856,37 +1913,14 @@ function opcionesUnidadCompraHtml(p) {
   return base + alternativas;
 }
 
-function renderPaginaDetalleProducto(p, resenas, productor) {
-  const contenido = document.getElementById('detalle-producto-content');
-  const favorito = esFavorito(p.id);
-  const stockBajo = p.stock > 0 && p.stock <= 5;
-  const sinStock = p.stock <= 0;
-  const tieneAlternativas = (p.unidades_alternativas || []).length > 0;
-  const precioHtml = `${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span>`;
-
-  contenido.innerHTML = `
-    <div class="detalle-sticky-header" id="detalle-sticky-header">
-      <button type="button" class="detalle-volver" id="btn-volver-detalle"><i class="ti ti-arrow-left"></i> Volver</button>
-      <div class="detalle-sticky-info">
-        <span class="detalle-sticky-nombre">${escapeAttr(p.nombre)}</span>
-        <span class="detalle-sticky-precio" id="detalle-sticky-precio">${precioHtml}</span>
-        ${p.calificacion_promedio ? `<span class="detalle-sticky-rating"><span class="rating-stars">${renderEstrellas(p.calificacion_promedio)}</span> ${Number(p.calificacion_promedio).toFixed(1)}</span>` : ''}
-      </div>
-      <button type="button" class="btn btn-primary" id="btn-agregar-sticky" ${sinStock ? 'disabled' : ''}>
-        ${sinStock ? 'Agotado' : '+ Agregar al carrito'}
-      </button>
-    </div>
-
-    <nav class="detalle-tabs" id="detalle-tabs">
-      <button type="button" class="detalle-tab active" data-target="detalle-seccion-descripcion">Descripción</button>
-      <button type="button" class="detalle-tab" data-target="detalle-seccion-productor">Productor</button>
-      <button type="button" class="detalle-tab" data-target="detalle-seccion-certificacion">Certificación</button>
-      <button type="button" class="detalle-tab" data-target="detalle-seccion-resenas">Reseñas</button>
-    </nav>
-
-    ${renderHeroYGaleriaDetalle(p)}
-
-    <div class="detalle-info-columna">
+// Tarjeta de compra (columna derecha de la ficha): todo lo necesario para decidir y comprar sin ir a
+// buscarlo más abajo. Los ids se conservan: renderPaginaDetalleProducto
+// los cablea (precio, stock, unidad, cantidad, botones).
+function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml }) {
+  const nombreProductor = productor?.nombre || p.productor_nombre || 'Productor local';
+  const ubicacion = productor?.comunidad || productor?.ubicacion || '';
+  return `
+    <aside class="detalle-compra" id="detalle-compra" aria-label="Comprar ${escapeAttr(p.nombre)}">
       <div class="detalle-encabezado">
         <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
         <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
@@ -1897,10 +1931,11 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
       <div class="detalle-cabecera">
         <h2>${escapeAttr(p.nombre)}</h2>
         ${renderResumenCalificacion(p)}
-        <div class="detalle-precio-row">
-          <span class="product-price" id="detalle-precio-principal">${precioHtml}</span>
-          <span class="product-stock ${stockBajo ? 'low' : ''}" id="detalle-stock-texto">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
-        </div>
+      </div>
+
+      <div class="detalle-precio-row">
+        <span class="product-price" id="detalle-precio-principal">${precioHtml}</span>
+        <span class="product-stock detalle-stock ${sinStock ? 'agotado' : stockBajo ? 'low' : ''}" id="detalle-stock-texto">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
       </div>
 
       ${!sinStock && tieneAlternativas ? `
@@ -1910,40 +1945,113 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
 
       <div class="detalle-accion-principal">
         ${!sinStock ? `
-        <div class="carrito-qty detalle-cantidad-selector">
-          <button type="button" id="btn-cantidad-menos" aria-label="Disminuir cantidad">−</button>
-          <span id="detalle-cantidad-valor">1</span>
-          <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
+        <div class="detalle-cantidad-fila">
+          <div class="carrito-qty detalle-cantidad-selector" role="group" aria-label="Cantidad">
+            <button type="button" id="btn-cantidad-menos" aria-label="Disminuir cantidad">−</button>
+            <span id="detalle-cantidad-valor" role="status" aria-live="polite">1</span>
+            <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
+          </div>
+          <div class="detalle-total" aria-live="polite">
+            <span>Total estimado</span>
+            <strong id="detalle-total-valor">${formatearMoneda(p.precio)}</strong>
+          </div>
         </div>` : ''}
         <button class="btn btn-primary btn-lg btn-block" data-id="${p.id}" id="btn-agregar-detalle" ${sinStock ? 'disabled' : ''}>
           ${sinStock ? 'Agotado' : '+ Agregar al pedido'}
         </button>
       </div>
 
-      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-productor">
-        <h3 class="detalle-seccion-titulo"><i class="ti ti-plant-2"></i> De la chacra a tu mesa</h3>
+      <ul class="detalle-confianza">
+        <li><i class="ti ti-shield-check" aria-hidden="true"></i><span>Origen verificado</span></li>
+        <li><i class="ti ti-plant-2" aria-hidden="true"></i><span>Directo del productor</span></li>
+        <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><span>Entrega con repartidor</span></li>
+      </ul>
+
+      <button type="button" class="detalle-productor-mini" data-ir="detalle-seccion-productor">
+        <span class="detalle-productor-mini-icono"><i class="ti ti-plant-2" aria-hidden="true"></i></span>
+        <span class="detalle-productor-mini-texto">
+          <small>Cultivado por</small>
+          <strong>${escapeAttr(nombreProductor)}</strong>
+          ${ubicacion ? `<small><i class="ti ti-map-pin" aria-hidden="true"></i> ${escapeAttr(ubicacion)}</small>` : ''}
+        </span>
+        <i class="ti ti-arrow-right" aria-hidden="true"></i>
+      </button>
+    </aside>`;
+}
+
+function renderPaginaDetalleProducto(p, resenas, productor) {
+  const contenido = document.getElementById('detalle-producto-content');
+  const favorito = esFavorito(p.id);
+  const stockBajo = p.stock > 0 && p.stock <= 5;
+  const sinStock = p.stock <= 0;
+  const tieneAlternativas = (p.unidades_alternativas || []).length > 0;
+  const precioHtml = `${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span>`;
+  const fotos = fotosProducto(p);
+  // El detalle no trae "estado"; si el producto está en el catálogo cargado se usa el de allí (igual que las tarjetas).
+  const enCatalogo = Estado.productos.find((x) => x.id === p.id);
+  const insignia = insigniaProducto({ ...p, estado: p.estado ?? enCatalogo?.estado });
+
+  contenido.innerHTML = `
+    <header class="detalle-barra" id="detalle-barra">
+      <button type="button" class="detalle-volver" id="btn-volver-detalle" aria-label="Volver"><i class="ti ti-arrow-left" aria-hidden="true"></i><span class="detalle-volver-texto">Volver</span></button>
+      <nav class="detalle-tabs" id="detalle-tabs" aria-label="Secciones del producto">
+        <button type="button" class="detalle-tab active" data-target="detalle-seccion-descripcion" aria-current="true">Producto</button>
+        <button type="button" class="detalle-tab" data-target="detalle-seccion-productor">Productor</button>
+        <button type="button" class="detalle-tab" data-target="detalle-seccion-certificacion">Certificación</button>
+        <button type="button" class="detalle-tab" data-target="detalle-seccion-resenas">Reseñas</button>
+      </nav>
+      <div class="detalle-barra-compra" id="detalle-barra-compra">
+        <span class="detalle-sticky-nombre">${escapeAttr(p.nombre)}</span>
+        <span class="detalle-sticky-precio" id="detalle-sticky-precio">${precioHtml}</span>
+        <button type="button" class="btn btn-primary" id="btn-agregar-sticky" ${sinStock ? 'disabled' : ''}>
+          ${sinStock ? 'Agotado' : '+ Agregar al carrito'}
+        </button>
+      </div>
+    </header>
+
+    <section class="detalle-principal" id="detalle-seccion-descripcion">
+      ${renderGaleriaDetalle(p, fotos, insignia)}
+      ${renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml })}
+    </section>
+
+    ${renderVideosDetalle(p, fotos)}
+
+    <div class="detalle-secciones">
+      <section class="detalle-bloque detalle-bloque--productor detalle-scroll-seccion" id="detalle-seccion-productor">
+        <h3 class="detalle-seccion-titulo"><i class="ti ti-plant-2" aria-hidden="true"></i> De la chacra a tu mesa</h3>
         ${renderBloqueProductor(p, productor)}
       </section>
 
-      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-certificacion">
-        <h3 class="detalle-seccion-titulo"><i class="ti ti-link"></i> Certificación de trazabilidad</h3>
+      <section class="detalle-bloque detalle-bloque--certificacion detalle-scroll-seccion" id="detalle-seccion-certificacion">
+        <h3 class="detalle-seccion-titulo"><i class="ti ti-link" aria-hidden="true"></i> Certificación de trazabilidad</h3>
         <div id="detalle-certificacion-contenido"><div class="verificar-cargando"><div class="spinner"></div><p>Cargando certificación...</p></div></div>
       </section>
 
-      <section class="detalle-seccion-bloque detalle-scroll-seccion" id="detalle-seccion-resenas">
-        ${renderSeccionResenas(resenas)}
+      <section class="detalle-bloque detalle-bloque--resenas detalle-scroll-seccion" id="detalle-seccion-resenas">
+        <h3 class="detalle-seccion-titulo"><i class="ti ti-star" aria-hidden="true"></i> Reseñas${resenas.length ? ` (${resenas.length})` : ''}</h3>
+        ${renderSeccionResenas(resenas, p)}
       </section>
     </div>
+
+    <section class="detalle-relacionados" id="detalle-relacionados" hidden>
+      <h3 class="detalle-seccion-titulo"><i class="ti ti-basket" aria-hidden="true"></i> También te puede gustar</h3>
+      <div class="detalle-relacionados-grid" id="detalle-relacionados-grid"></div>
+    </section>
   `;
 
   let cantidadSeleccionada = 1;
   let unidadSeleccionada = null; // null = unidad base del producto (comportamiento de siempre)
   const cantidadValorEl = document.getElementById('detalle-cantidad-valor');
+  const totalEl = document.getElementById('detalle-total-valor');
 
   const stockMaximoActual = () => stockEnUnidad(p, unidadSeleccionada);
 
+  const actualizarTotalDetalle = () => {
+    if (totalEl) totalEl.textContent = formatearMoneda(precioEnUnidad(p, unidadSeleccionada) * cantidadSeleccionada);
+  };
+
   // Se llama solo al cambiar la unidad elegida (el render inicial ya muestra los valores de la
-  // unidad base correctos) — actualiza precio (header fijo + fila principal), el texto de stock
+  // unidad base correctos) — actualiza precio (barra fija + fila principal), el texto de stock
   // convertido a esa unidad, y recorta la cantidad si ya no entra en el nuevo tope.
   function refrescarPrecioYStockDetalle() {
     const unidadParaMostrar = unidadSeleccionada || p.unidad_medida;
@@ -1958,10 +2066,11 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
       ? 'Sin stock disponible en esta unidad'
       : `${maximo} ${unidadPlural(unidadParaMostrar, maximo)} disponibles`;
     stockTextoEl.classList.toggle('low', !sinStockEnEstaUnidad && maximo <= 5);
+    stockTextoEl.classList.toggle('agotado', sinStockEnEstaUnidad);
 
     // Caso borde: el factor de conversión deja la unidad elegida sin stock entero disponible
     // (ej. 5 kg en stock, 1 saco = 10 kg) — no tiene sentido dejar seleccionada esa unidad.
-    document.querySelector('.detalle-cantidad-selector')?.classList.toggle('hidden', sinStockEnEstaUnidad);
+    document.querySelector('.detalle-cantidad-fila')?.classList.toggle('hidden', sinStockEnEstaUnidad);
     [
       { el: document.getElementById('btn-agregar-detalle'), textoActivo: '+ Agregar al pedido' },
       { el: document.getElementById('btn-agregar-sticky'), textoActivo: '+ Agregar al carrito' },
@@ -1975,6 +2084,7 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
       cantidadSeleccionada = Math.max(1, maximo);
     }
     if (cantidadValorEl) cantidadValorEl.textContent = cantidadSeleccionada;
+    actualizarTotalDetalle();
   }
 
   document.getElementById('detalle-unidad-selector')?.addEventListener('change', (e) => {
@@ -1986,18 +2096,20 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
     if (cantidadSeleccionada > 1) {
       cantidadSeleccionada--;
       cantidadValorEl.textContent = cantidadSeleccionada;
+      actualizarTotalDetalle();
     }
   });
   document.getElementById('btn-cantidad-mas')?.addEventListener('click', () => {
     if (cantidadSeleccionada < stockMaximoActual()) {
       cantidadSeleccionada++;
       cantidadValorEl.textContent = cantidadSeleccionada;
+      actualizarTotalDetalle();
     } else {
       toast('Alcanzaste el stock disponible.', 'error');
     }
   });
 
-  // Botón grande (bajo el precio) y botón compacto del header fijo comparten la misma cantidad Y
+  // Botón grande (tarjeta de compra) y botón compacto de la barra fija comparten la misma cantidad Y
   // unidad seleccionadas — a diferencia del modal viejo, agregar al carrito ya NO navega fuera de
   // la página (no hay "cerrar" en una página propia; el usuario sigue viendo el producto).
   const agregarConFeedback = (btn) => {
@@ -2012,15 +2124,22 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   });
 
   document.getElementById('btn-volver-detalle')?.addEventListener('click', () => cambiarVista(vistaAntesDeDetalle));
+  contenido.querySelector('.detalle-productor-mini')?.addEventListener('click', (e) => {
+    contenido.querySelector(`.detalle-tab[data-target="${e.currentTarget.dataset.ir}"]`)?.click();
+  });
 
   if (hayCoordenadas(productor?.latitud, productor?.longitud)) {
     crearMapaSoloLectura('mapa-productor-detalle', productor.latitud, productor.longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(productor.nombre || 'Productor'));
   }
 
+  inicializarGaleriaDetalle(p);
   inicializarPestanasDetalle();
+  inicializarBarraDetalle();
   inicializarScrollRevealDetalle();
   cargarCertificacionDetalle(p.id);
+  cargarRelacionadosDetalle(p);
 
+  document.getElementById('btn-resena-login')?.addEventListener('click', () => abrirModal('modal-auth'));
   const formResena = document.getElementById('form-resena');
   if (formResena) {
     let calificacionSeleccionada = 0;
@@ -2028,7 +2147,11 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
     botones.forEach((btn) => {
       btn.addEventListener('click', () => {
         calificacionSeleccionada = Number(btn.dataset.valor);
-        botones.forEach((b) => b.classList.toggle('activa', Number(b.dataset.valor) <= calificacionSeleccionada));
+        botones.forEach((b) => {
+          const activa = Number(b.dataset.valor) <= calificacionSeleccionada;
+          b.classList.toggle('activa', activa);
+          b.setAttribute('aria-pressed', String(Number(b.dataset.valor) === calificacionSeleccionada));
+        });
       });
     });
     formResena.addEventListener('submit', (e) => {
@@ -2042,25 +2165,181 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   }
 }
 
-// Pestañas: scroll suave al ancla real, con offset por el header+tabs (ambos sticky) via
-// scroll-margin-top — así el destino no queda tapado detrás de las barras fijas.
+let limpiarPestanasDetalle = null;
+let observadorBarraDetalle = null;
+
+// Pestañas: scroll suave a la sección, descontando la barra fija (scroll-margin-top), y la pestaña
+// activa sigue a la sección que se está viendo. Productor y Certificación comparten fila (van una al
+// lado de la otra), así que llegan al borde a la vez: si la pestaña activa ya es una de las dos, se
+// respeta en vez de saltar a la última.
 function inicializarPestanasDetalle() {
-  const headerEl = document.getElementById('detalle-sticky-header');
+  const barra = document.getElementById('detalle-barra');
   const tabsEl = document.getElementById('detalle-tabs');
-  if (!headerEl || !tabsEl) return;
+  if (!barra || !tabsEl) return;
 
-  tabsEl.style.top = `${headerEl.offsetHeight}px`;
-  const offset = headerEl.offsetHeight + tabsEl.offsetHeight + 16;
-  document.querySelectorAll('#detalle-producto-content [id^="detalle-seccion-"]').forEach((sec) => {
-    sec.style.scrollMarginTop = `${offset}px`;
-  });
+  if (limpiarPestanasDetalle) limpiarPestanasDetalle();
+  const tabs = [...tabsEl.querySelectorAll('.detalle-tab')];
+  const secciones = tabs.map((t) => document.getElementById(t.dataset.target));
 
-  tabsEl.querySelectorAll('.detalle-tab').forEach((tab) => {
+  // El alto de la barra (una o dos filas según el ancho) lo descuentan las secciones para no quedar tapadas.
+  const aplicarAltoBarra = () => {
+    const alto = barra.offsetHeight;
+    secciones.forEach((s) => { if (s) s.style.scrollMarginTop = `${alto + 16}px`; });
+  };
+  aplicarAltoBarra();
+
+  let tabActiva = tabs[0];
+  let ignorarHasta = 0; // mientras dura el scroll suave de un clic, el "seguimiento" no pisa la pestaña elegida
+  const marcar = (tab) => {
+    tabActiva = tab;
+    tabs.forEach((t) => {
+      const activa = t === tab;
+      t.classList.toggle('active', activa);
+      if (activa) t.setAttribute('aria-current', 'true'); else t.removeAttribute('aria-current');
+    });
+    // Deja visible la pestaña activa en la fila desplazable (móvil) sin mover la página.
+    if (tabsEl.scrollWidth > tabsEl.clientWidth) {
+      const izquierda = tab.getBoundingClientRect().left - tabsEl.getBoundingClientRect().left + tabsEl.scrollLeft;
+      tabsEl.scrollLeft = izquierda - (tabsEl.clientWidth - tab.offsetWidth) / 2;
+    }
+  };
+
+  tabs.forEach((tab) => {
     tab.addEventListener('click', () => {
-      tabsEl.querySelectorAll('.detalle-tab').forEach((t) => t.classList.remove('active'));
-      tab.classList.add('active');
+      marcar(tab);
+      ignorarHasta = Date.now() + 900;
       document.getElementById(tab.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+  });
+
+  let pendiente = false;
+  const seguirScroll = () => {
+    pendiente = false;
+    if (Date.now() < ignorarHasta) return;
+    if (!document.getElementById('view-detalle-producto')?.classList.contains('active')) return;
+
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
+      marcar(tabs[tabs.length - 1]);
+      return;
+    }
+    const limite = barra.offsetHeight + window.innerHeight * 0.3; // una sección cuenta como "actual" al pasar el 30% de la pantalla
+    const tops = secciones.map((s) => (s ? s.getBoundingClientRect().top : Infinity));
+    const alcanzadas = tabs.filter((_, i) => tops[i] <= limite);
+    if (!alcanzadas.length) { marcar(tabs[0]); return; }
+    const topUltima = tops[tabs.indexOf(alcanzadas[alcanzadas.length - 1])];
+    const fila = alcanzadas.filter((t) => Math.abs(tops[tabs.indexOf(t)] - topUltima) < 8);
+    if (!fila.includes(tabActiva)) marcar(fila[0]);
+  };
+  const alScroll = () => {
+    if (pendiente) return;
+    pendiente = true;
+    requestAnimationFrame(seguirScroll);
+  };
+  const alRedimensionar = () => aplicarAltoBarra();
+  window.addEventListener('scroll', alScroll, { passive: true });
+  window.addEventListener('resize', alRedimensionar);
+  limpiarPestanasDetalle = () => {
+    window.removeEventListener('scroll', alScroll);
+    window.removeEventListener('resize', alRedimensionar);
+  };
+}
+
+// La barra fija solo muestra nombre, precio y botón de compra cuando la tarjeta de compra ya salió de
+// pantalla: mientras se ve, repetirlos arriba solo estorba.
+function inicializarBarraDetalle() {
+  const barra = document.getElementById('detalle-barra');
+  const tarjeta = document.getElementById('detalle-compra');
+  if (observadorBarraDetalle) observadorBarraDetalle.disconnect();
+  if (!barra || !tarjeta) return;
+
+  if (!('IntersectionObserver' in window)) {
+    barra.classList.add('con-compra');
+    return;
+  }
+  observadorBarraDetalle = new IntersectionObserver(([entrada]) => {
+    barra.classList.toggle('con-compra', !entrada.isIntersecting);
+  }, { rootMargin: `-${barra.offsetHeight}px 0px 0px 0px` });
+  observadorBarraDetalle.observe(tarjeta);
+}
+
+// Foto principal + miniaturas: clic, flechas, teclado (← →) y deslizar en pantallas táctiles.
+function inicializarGaleriaDetalle(p) {
+  const galeria = document.getElementById('detalle-galeria');
+  const visor = galeria?.querySelector('.detalle-visor');
+  if (!visor) return;
+  const img = visor.querySelector('.detalle-visor-img');
+
+  // Si la foto no carga, el visor cae al emoji de la categoría (igual que las tarjetas del catálogo).
+  img?.addEventListener('error', () => {
+    img.remove();
+    visor.insertAdjacentHTML('afterbegin', `<span class="detalle-visor-emoji" aria-hidden="true">${emojiParaProducto(p)}</span>`);
+  });
+
+  const miniaturas = [...galeria.querySelectorAll('.detalle-miniatura')];
+  if (!img || miniaturas.length < 2) return;
+  const tira = galeria.querySelector('.detalle-miniaturas');
+  const contador = galeria.querySelector('.detalle-contador');
+  const total = miniaturas.length;
+  let actual = 0;
+
+  const mostrar = (indice) => {
+    actual = (indice + total) % total;
+    const mini = miniaturas[actual];
+    img.src = mini.dataset.src;
+    img.classList.remove('cambio');
+    void img.offsetWidth; // reinicia la animación de entrada
+    img.classList.add('cambio');
+    miniaturas.forEach((m, i) => {
+      m.classList.toggle('active', i === actual);
+      m.setAttribute('aria-current', String(i === actual));
+    });
+    contador.textContent = `${actual + 1} / ${total}`;
+    tira.scrollLeft = mini.offsetLeft - (tira.clientWidth - mini.offsetWidth) / 2; // solo la tira, no la página
+  };
+
+  miniaturas.forEach((mini, i) => mini.addEventListener('click', () => mostrar(i)));
+  visor.querySelector('.detalle-visor-prev').addEventListener('click', () => mostrar(actual - 1));
+  visor.querySelector('.detalle-visor-next').addEventListener('click', () => mostrar(actual + 1));
+  visor.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    mostrar(actual + (e.key === 'ArrowRight' ? 1 : -1));
+  });
+
+  let inicioX = null;
+  visor.addEventListener('touchstart', (e) => { inicioX = e.touches[0].clientX; }, { passive: true });
+  visor.addEventListener('touchend', (e) => {
+    if (inicioX == null) return;
+    const dx = e.changedTouches[0].clientX - inicioX;
+    inicioX = null;
+    if (Math.abs(dx) > 40) mostrar(actual + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+}
+
+// "También te puede gustar": primero lo de su misma categoría, luego lo del mismo productor y después
+// el resto, con los mejor calificados por delante (mismo criterio que el landing). Usa las mismas
+// tarjetas compactas del menú de categorías y del buscador.
+async function cargarRelacionadosDetalle(p) {
+  const seccion = document.getElementById('detalle-relacionados');
+  const grid = document.getElementById('detalle-relacionados-grid');
+  if (!seccion || !grid) return;
+
+  await asegurarProductosCargados();
+  if (!seccion.isConnected) return; // el usuario ya cambió de producto mientras cargaba
+
+  const otros = Estado.productos.filter((x) => x.id !== p.id);
+  const categoria = normalizarCategoria(p.categoria);
+  const mismaCategoria = otros.filter((x) => normalizarCategoria(x.categoria) === categoria);
+  const delProductor = otros.filter((x) => x.productor_nombre === p.productor_nombre && !mismaCategoria.includes(x));
+  const resto = otros.filter((x) => !mismaCategoria.includes(x) && !delProductor.includes(x));
+  const lista = [...ordenarPorDestacado(mismaCategoria), ...ordenarPorDestacado(delProductor), ...ordenarPorDestacado(resto)].slice(0, 4);
+  if (!lista.length) return;
+
+  grid.innerHTML = lista.map(renderProductoMega).join('');
+  seccion.hidden = false;
+  grid.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.nav-mega-producto');
+    if (tarjeta) cambiarVista('detalle-producto', tarjeta.dataset.id);
   });
 }
 
@@ -2121,9 +2400,14 @@ async function cargarCertificacionDetalle(productoId) {
   try {
     const historial = await Api.certificacion.historial(productoId);
     cont.innerHTML = `
-      <div class="certificacion-qr-bloque">
-        <img src="${escapeAttr(Api.certificacion.qrUrl(productoId))}" alt="Código QR de certificación" class="certificacion-qr" id="certificacion-qr-img-detalle">
-        <p class="muted certificacion-qr-nota">Comparte este QR con tus compradores para que verifiquen el origen del producto.</p>
+      <div class="detalle-cert-cabecera">
+        <div class="certificacion-qr-bloque">
+          <img src="${escapeAttr(Api.certificacion.qrUrl(productoId))}" alt="Código QR de certificación" class="certificacion-qr" id="certificacion-qr-img-detalle">
+        </div>
+        <div class="detalle-cert-texto">
+          <strong><i class="ti ti-shield-check" aria-hidden="true"></i> Origen verificable</strong>
+          <p class="muted">Escanea el código para comprobar en cualquier momento de dónde viene este producto. También puedes compartirlo.</p>
+        </div>
       </div>
       <h4 class="timeline-titulo">Historial de la cadena</h4>
       ${renderLineaTiempoCertificacion(historial)}

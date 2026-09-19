@@ -2472,63 +2472,51 @@ input, select { font-family: inherit; }
 .checkout-confirmacion p { color: var(--texto-suave); margin-bottom: 4px; }
 .checkout-confirmacion strong { color: var(--color-primario); }
 
-/* ---------- DETALLE DE PRODUCTO (página propia, estilo Samsung) ---------- */
-/* Header + pestañas van pegados al borde de #app-main (margin negativo cancela su padding:24px)
-   para que se sientan de ancho completo aunque el resto de la página respete el layout normal. */
-.detalle-sticky-header {
+/* ---------- DETALLE DE PRODUCTO (página propia) ---------- */
+/* Barra fija única: "Volver", pestañas de sección y —solo cuando la tarjeta de compra ya no se ve—
+   nombre, precio y botón de compra. El fondo llega a los bordes de la pantalla (width:100vw + margen
+   calc(50% - 50vw), la misma técnica de sangrado completo de las secciones de video) y el contenido
+   sigue alineado con la página. */
+.detalle-barra {
   position: sticky; top: 0; z-index: 90;
-  background: white;
-  display: flex; align-items: center; gap: 16px;
-  flex-wrap: wrap;
-  padding: 14px 24px;
-  margin: -24px -24px 24px;
-  box-shadow: var(--sombra);
+  width: 100vw; margin: -24px calc(50% - 50vw) 32px;
+  padding: 10px max(24px, calc((100vw - 1232px) / 2));
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px 20px;
+  background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--borde); box-shadow: var(--sombra);
 }
 .detalle-volver {
-  display: flex; align-items: center; gap: 6px;
-  background: transparent;
-  color: var(--texto-suave);
-  font-weight: 600;
-  flex-shrink: 0;
-}
-.detalle-volver:hover { color: var(--color-primario); }
-.detalle-sticky-info {
-  display: flex; align-items: center; gap: 16px;
-  flex: 1; min-width: 0;
-  flex-wrap: wrap;
-}
-.detalle-sticky-nombre {
-  font-family: var(--font-titulo);
-  font-weight: 700;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px;
-}
-.detalle-sticky-precio { font-weight: 700; color: var(--color-primario); white-space: nowrap; }
-.detalle-sticky-rating { font-size: 0.85rem; color: var(--texto-suave); white-space: nowrap; display: flex; align-items: center; gap: 4px; }
-.detalle-sticky-rating .rating-stars { color: #f0a500; }
-
-.detalle-tabs {
-  position: sticky; z-index: 89;
-  background: white;
-  display: flex; gap: 4px;
-  padding: 10px 24px;
-  margin: 0 -24px 28px;
-  border-bottom: 1px solid var(--borde);
-  overflow-x: auto;
-}
-.detalle-tab {
-  background: transparent;
-  padding: 8px 16px;
-  border-radius: 999px;
-  font-weight: 600;
-  font-size: 0.88rem;
-  color: var(--texto-suave);
-  white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px 0 12px; border-radius: 999px;
+  background: transparent; color: var(--texto); font-weight: 600; font-size: 0.95rem;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.detalle-tab:hover, .detalle-tab.active { background: var(--color-superficie); color: var(--color-primario); }
+.detalle-volver:hover { background: var(--color-superficie); color: var(--color-primario); }
 
-/* Hero + galería van a ancho completo (fuera de la columna angosta de texto); cada foto adicional
-   ocupa su propia sección de scroll, una tras otra. */
+.detalle-tabs { display: flex; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.detalle-tabs::-webkit-scrollbar { display: none; }
+.detalle-tab {
+  flex-shrink: 0; min-height: 44px; padding: 0 20px; border-radius: 999px; background: transparent;
+  font-size: 0.95rem; font-weight: 600; color: var(--texto-suave); white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.detalle-tab:hover { background: var(--color-superficie); color: var(--color-primario); }
+.detalle-tab.active { background: var(--color-primario); color: white; }
+
+.detalle-barra-compra {
+  display: flex; align-items: center; justify-content: flex-end; gap: 14px; min-width: 0;
+  opacity: 0; visibility: hidden; transform: translateY(-6px);
+  transition: opacity 0.25s ease, transform 0.25s ease, visibility 0s linear 0.25s;
+}
+.detalle-barra.con-compra .detalle-barra-compra { opacity: 1; visibility: visible; transform: none; transition-delay: 0s; }
+.detalle-sticky-nombre {
+  font-family: var(--font-titulo); font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px;
+}
+.detalle-sticky-precio { font-weight: 700; color: var(--color-primario); white-space: nowrap; }
+.detalle-barra-compra .btn { min-height: 44px; padding: 0 20px; white-space: nowrap; }
+
+/* Base de las secciones de video del detalle (solo productos con video); las fotos viven en la galería
+   (.detalle-visor / .detalle-miniaturas, más abajo). */
 .detalle-hero, .detalle-galeria-item {
   /* height fija (no min-height): con solo min-height, "img { height:100% }" no tiene contra qué
      resolverse y la imagen cae a su alto intrínseco — una foto en vertical estira el contenedor
@@ -2620,10 +2608,6 @@ input, select { font-family: inherit; }
 .detalle-video-texto h3 { color: inherit; font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 800; margin-bottom: 10px; }
 .detalle-video-texto p { color: inherit; opacity: 0.88; }
 
-/* Texto/acciones/secciones en una columna legible, centrada bajo las imágenes de ancho completo. */
-.detalle-info-columna { max-width: 760px; margin: 0 auto; }
-
-.detalle-seccion-bloque { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--borde); }
 .detalle-seccion-titulo { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 
 /* Scroll-reveal: IntersectionObserver agrega .visible al entrar en el viewport — a diferencia del
@@ -2640,9 +2624,6 @@ input, select { font-family: inherit; }
 }
 
 @media (max-width: 560px) {
-  .detalle-sticky-header { padding: 12px 16px; margin: -16px -16px 20px; gap: 10px; }
-  .detalle-sticky-nombre { max-width: 140px; }
-  .detalle-tabs { padding: 8px 16px; margin: 0 -16px 24px; }
   .detalle-hero, .detalle-galeria-item { height: 40vh; font-size: 4rem; }
   /* El sangrado completo (width:100vw + margin calc(50% - 50vw)) ya no depende del ancho de
      pantalla — funciona igual en cualquiera, así que acá solo queda el alto (más bajo en móvil) y
@@ -3081,12 +3062,7 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
    ============================================================================ */
 
 /* ---------- Detalle de producto ---------- */
-.detalle-info-columna { max-width: 980px; font-size: 1.05rem; }
 .detalle-hero, .detalle-galeria-item { height: 62vh; min-height: 340px; }
-.detalle-sticky-header { padding: 18px 28px; }
-.detalle-sticky-nombre { font-size: 1.15rem; max-width: 380px; }
-.detalle-sticky-precio { font-size: 1.15rem; }
-.detalle-tab { padding: 11px 22px; font-size: 1rem; }
 
 .detalle-encabezado .pill { font-size: 0.95rem; padding: 8px 16px; }
 .btn-favorito-detalle { padding: 10px 20px; font-size: 0.95rem; }
@@ -3111,7 +3087,6 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 .detalle-productor-ubicacion { font-size: 0.98rem; }
 .detalle-productor-card .mapa-mini { height: 260px; }
 .detalle-seccion-titulo { font-size: 1.45rem; }
-.detalle-seccion-bloque { margin-top: 44px; padding-top: 32px; }
 
 /* ---------- Checkout: resumen → pago → confirmación ---------- */
 .modal-checkout { max-width: 780px; padding: 40px 44px; }
@@ -3155,9 +3130,6 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 
 @media (max-width: 560px) {
   .detalle-hero, .detalle-galeria-item { height: 44vh; min-height: 260px; }
-  .detalle-sticky-header { padding: 14px 16px; }
-  .detalle-sticky-nombre { max-width: 150px; font-size: 1rem; }
-  .detalle-info-columna { font-size: 1rem; }
   .detalle-accion-principal .btn { padding: 16px 20px; font-size: 1.05rem; }
   .modal-checkout { padding: 28px 20px; }
   .checkout-step-line { width: 36px; }
@@ -3951,4 +3923,266 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 @media (prefers-reduced-motion: reduce) {
   .nav-mega-producto, .nav-mega-producto-img img, .search-chip, .nav-cat-vertodo, .nav-cat-vertodo i { transition: none; }
   .nav-mega-producto:hover, .nav-mega-producto:hover .nav-mega-producto-img img, .nav-cat-vertodo:hover i { transform: none; }
+}
+
+/* =====================================================================================
+   DETALLE DE PRODUCTO — rediseño premium.
+   Criterios del skill ui-ux-pro-max: lo necesario para decidir la compra (foto, precio, stock, cantidad,
+   botón) va junto y a la vista, sin bajar; los medios reservan su proporción (aspect-ratio) para que nada
+   salte al cargar; miniaturas y flechas son botones y las insignias texto estático; la barra fija no tapa
+   el contenido (scroll-margin-top); objetivos táctiles >= 44px, foco visible y reduced-motion.
+   Referencia de 21st.dev ("Product Detail Page"): rejilla de dos columnas con galería a la izquierda y ficha
+   de compra a la derecha, etiquetas de confianza y fila del vendedor, adaptadas a CSS propio (sin React
+   ni Tailwind).
+   ===================================================================================== */
+
+.detalle-volver:focus-visible, .detalle-tab:focus-visible, .detalle-productor-mini:focus-visible,
+.detalle-miniatura:focus-visible, .detalle-visor:focus-visible, .detalle-visor-nav:focus-visible,
+.resena-login .btn:focus-visible, .estrellas-selector button:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+
+/* ---- Ficha: galería + tarjeta de compra ---- */
+.detalle-principal {
+  display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: clamp(24px, 4vw, 56px); align-items: start; margin-bottom: 72px;
+}
+.detalle-galeria { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.detalle-visor {
+  position: relative; display: grid; place-items: center; aspect-ratio: 5 / 4; overflow: hidden;
+  border-radius: 28px; background: var(--verde-pastel); box-shadow: var(--sombra);
+}
+.detalle-visor-img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.7s cubic-bezier(0.22, 1, 0.36, 1); }
+.detalle-visor:hover .detalle-visor-img { transform: scale(1.04); }
+.detalle-visor-img.cambio { animation: detalleFoto 0.35s ease; }
+@keyframes detalleFoto { from { opacity: 0.35; transform: scale(1.03); } to { opacity: 1; transform: none; } }
+.detalle-visor-emoji { font-size: clamp(5rem, 12vw, 9rem); line-height: 1; }
+.detalle-visor .nmp-insignia { top: 18px; left: 18px; padding: 7px 16px; font-size: 0.82rem; }
+
+.detalle-visor-nav {
+  position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 48px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(255, 255, 255, 0.94); color: var(--color-primario);
+  font-size: 1.3rem; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2); opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease;
+}
+.detalle-visor-prev { left: 16px; }
+.detalle-visor-next { right: 16px; }
+.detalle-visor:hover .detalle-visor-nav, .detalle-visor:focus-within .detalle-visor-nav { opacity: 1; }
+.detalle-visor-nav:hover { background: white; transform: translateY(-50%) scale(1.06); }
+@media (hover: none) { .detalle-visor-nav { opacity: 1; } } /* sin cursor no hay "pasar por encima": las flechas se ven siempre */
+.detalle-contador {
+  position: absolute; right: 16px; bottom: 16px; padding: 5px 12px; border-radius: 999px;
+  background: rgba(28, 43, 36, 0.72); color: white; font-size: 0.8rem; font-weight: 600; backdrop-filter: blur(4px);
+}
+
+.detalle-miniaturas { position: relative; display: flex; gap: 12px; overflow-x: auto; padding: 4px; scrollbar-width: thin; }
+.detalle-miniatura {
+  flex: 0 0 auto; width: 100px; aspect-ratio: 4 / 3; padding: 0; overflow: hidden; border-radius: 16px;
+  background: var(--verde-pastel); border: 2.5px solid transparent; opacity: 0.72;
+  transition: opacity 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+.detalle-miniatura img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.detalle-miniatura:hover { opacity: 1; transform: translateY(-2px); }
+.detalle-miniatura.active { opacity: 1; border-color: var(--color-primario); }
+
+/* Tarjeta de compra. */
+.detalle-compra {
+  display: flex; flex-direction: column; gap: 20px; min-width: 0;
+  padding: clamp(22px, 2.4vw, 34px); background: white; border: 1px solid var(--borde);
+  border-radius: 28px; box-shadow: var(--sombra); font-size: 1rem;
+}
+.detalle-compra .btn-favorito-detalle { min-height: 44px; }
+.detalle-compra .detalle-cabecera { margin: 0; gap: 10px; }
+.detalle-compra .detalle-cabecera h2 { font-size: clamp(1.9rem, 2.6vw, 2.5rem); line-height: 1.12; }
+.detalle-compra .detalle-precio-row { justify-content: space-between; align-items: center; gap: 10px 16px; margin: 0; }
+.detalle-compra .detalle-precio-row .product-price { font-size: clamp(2.2rem, 3.2vw, 3rem); line-height: 1.05; }
+.detalle-compra .price-unit { font-size: 0.95rem; }
+
+/* El stock como estado (punto + texto), no solo color. */
+.detalle-stock {
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px;
+  background: var(--verde-pastel); color: var(--verde-oscuro); font-size: 0.9rem; font-weight: 600;
+}
+.detalle-compra .detalle-stock { font-size: 0.9rem; }
+.detalle-stock::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--verde-medio); flex-shrink: 0; }
+.detalle-compra .detalle-stock.low { background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); }
+.detalle-stock.low::before { background: var(--acento-cosecha); }
+.detalle-stock.agotado { background: #eceeed; color: #555; }
+.detalle-stock.agotado::before { background: #888; }
+
+.detalle-compra .detalle-unidad-label { margin: 0; }
+.detalle-compra .detalle-unidad-label select { min-height: 52px; }
+.detalle-compra .detalle-accion-principal { flex-direction: column; align-items: stretch; gap: 16px; margin: 0; }
+.detalle-cantidad-fila { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.detalle-total { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; color: var(--texto-suave); font-size: 0.85rem; text-align: right; }
+.detalle-total strong { font-family: var(--font-titulo); font-size: 1.7rem; line-height: 1.1; color: var(--color-primario); }
+.detalle-compra .detalle-cantidad-selector { min-height: 62px; align-items: center; }
+.detalle-compra .detalle-accion-principal .btn-block { flex: 0 0 auto; width: 100%; min-height: 62px; padding: 0 24px; border-radius: 18px; }
+
+.detalle-confianza { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding-top: 2px; }
+.detalle-confianza li {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center;
+  font-size: 0.8rem; font-weight: 600; color: var(--texto-suave); line-height: 1.25;
+}
+.detalle-confianza i {
+  display: grid; place-items: center; width: 46px; height: 46px; border-radius: 14px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha); font-size: 1.4rem;
+}
+
+.detalle-productor-mini {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; border-radius: 18px;
+  background: var(--color-superficie); color: var(--texto); text-align: left;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.detalle-productor-mini:hover { background: color-mix(in srgb, var(--color-borde) 24%, var(--color-superficie)); transform: translateY(-1px); }
+.detalle-productor-mini > .ti-arrow-right { flex-shrink: 0; color: var(--color-primario); font-size: 1.2rem; transition: transform 0.2s ease; }
+.detalle-productor-mini:hover > .ti-arrow-right { transform: translateX(3px); }
+.detalle-productor-mini-icono {
+  display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; flex-shrink: 0;
+  background: white; color: var(--verde-principal); font-size: 1.4rem;
+}
+.detalle-productor-mini-texto { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
+.detalle-productor-mini-texto small { font-size: 0.78rem; color: var(--texto-suave); }
+.detalle-productor-mini-texto strong { font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Secciones: productor + certificación en columnas, reseñas a todo el ancho ---- */
+.detalle-secciones { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 28px; align-items: start; }
+.detalle-bloque {
+  padding: clamp(22px, 2.6vw, 36px); background: white; border: 1px solid var(--borde);
+  border-radius: 28px; box-shadow: var(--sombra); min-width: 0;
+}
+.detalle-bloque--productor { grid-column: span 5; }
+.detalle-bloque--certificacion { grid-column: span 7; }
+.detalle-bloque--resenas { grid-column: 1 / -1; }
+.detalle-bloque .detalle-seccion-titulo { margin-bottom: 22px; }
+/* Las tarjetas solo aparecen con fundido: el desplazamiento de 28px del efecto general movía su posición
+   y las pestañas terminaban dejando el título medio tapado por la barra fija. */
+.detalle-bloque.detalle-scroll-seccion, .detalle-bloque.detalle-scroll-seccion.visible { transform: none; }
+
+.detalle-bloque .detalle-productor-card { padding: 0; margin: 0; background: transparent; border: 0; }
+.detalle-bloque .detalle-productor-header { gap: 16px; }
+.detalle-bloque .detalle-productor-icono { background: var(--acento-cosecha-suave); color: var(--acento-cosecha); }
+.detalle-bloque .detalle-productor-card .mapa-mini { height: 320px; margin-top: 22px; border-radius: 20px; }
+
+.detalle-cert-cabecera {
+  display: flex; align-items: center; gap: 22px; padding: 18px; margin-bottom: 26px;
+  border-radius: 20px; background: var(--color-superficie);
+}
+.detalle-cert-cabecera .certificacion-qr-bloque { flex-shrink: 0; margin: 0; padding: 0; background: none; }
+.detalle-cert-cabecera .certificacion-qr { width: 132px; height: 132px; }
+.detalle-cert-texto { min-width: 0; }
+.detalle-cert-texto strong { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-family: var(--font-titulo); color: var(--color-primario); }
+.detalle-cert-texto .muted { margin: 0; }
+.detalle-bloque .timeline { margin-bottom: 0; }
+
+/* ---- Reseñas ---- */
+.detalle-resenas-grid { display: grid; grid-template-columns: minmax(280px, 380px) minmax(0, 1fr); gap: 32px; align-items: start; }
+.detalle-resenas-lateral { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.resenas-resumen {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 20px; align-items: center;
+  padding: 20px; border-radius: 20px; background: var(--color-superficie);
+}
+.resenas-promedio { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.resenas-promedio strong { font-family: var(--font-titulo); font-size: 3.2rem; line-height: 1; color: var(--color-primario); }
+.resenas-promedio .rating-stars { font-size: 0.95rem; white-space: nowrap; }
+.resenas-barras { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.resenas-barras li { display: grid; grid-template-columns: 10px 14px minmax(0, 1fr) 22px; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--texto-suave); }
+.resenas-barras i { color: #f0a500; font-size: 0.85rem; }
+.resenas-barra { height: 8px; border-radius: 999px; background: white; overflow: hidden; }
+.resenas-barra > span { display: block; height: 100%; border-radius: 999px; background: #f0a500; }
+.resenas-barra-n { text-align: right; }
+
+.detalle-resenas-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.detalle-resenas-lista .resena-card { padding: 18px 20px; border-radius: 18px; }
+.detalle-resenas-lista .resena-header { flex-wrap: nowrap; justify-content: flex-start; gap: 12px; }
+.resena-avatar {
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  background: var(--color-primario); color: white; font-family: var(--font-titulo); font-weight: 700;
+}
+.resena-quien { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.resena-quien .resena-usuario { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.detalle-resenas-lista .resena-comentario { margin-top: 12px; font-size: 0.95rem; line-height: 1.55; }
+.resenas-vacio {
+  grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center;
+  padding: 48px 20px; border-radius: 20px; background: var(--color-superficie); color: var(--texto-suave);
+}
+.resenas-vacio i { font-size: 2.4rem; color: var(--color-primario); }
+.resenas-vacio strong { font-family: var(--font-titulo); font-size: 1.15rem; color: var(--color-primario); }
+.resenas-vacio p { margin: 0; }
+
+.detalle-resenas-lateral .resena-form { padding: 20px; border: 0; border-radius: 20px; background: var(--color-superficie); }
+.detalle-resenas-lateral .resena-form textarea { background: white; min-height: 96px; margin-bottom: 12px; }
+.estrellas-selector button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; font-size: 1.9rem; color: var(--color-borde); }
+.estrellas-selector { gap: 2px; margin-left: -6px; }
+.resena-login {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px; border-radius: 20px;
+  background: var(--color-superficie); color: var(--texto-suave);
+}
+.resena-login > i { font-size: 1.5rem; color: var(--color-primario); }
+.resena-login p { margin: 0; }
+.resena-login .btn { min-height: 44px; }
+
+/* ---- También te puede gustar ---- */
+.detalle-relacionados { margin-top: 72px; }
+.detalle-relacionados[hidden] { display: none; }
+.detalle-relacionados .detalle-seccion-titulo { margin-bottom: 20px; }
+.detalle-relacionados-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+.detalle-relacionados-grid .nmp-productor { display: flex; }
+.detalle-relacionados-grid .nav-mega-producto { padding: 12px; background: white; border-color: var(--borde); box-shadow: var(--sombra); }
+.detalle-relacionados-grid .nav-mega-producto:hover { box-shadow: var(--sombra-hover); }
+
+/* ---- Carga ---- */
+.detalle-skeleton { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr); gap: clamp(24px, 4vw, 56px); }
+.detalle-skeleton-visor { aspect-ratio: 5 / 4; border-radius: 28px; }
+.detalle-skeleton-info { display: flex; flex-direction: column; gap: 16px; padding: 34px; border-radius: 28px; background: white; border: 1px solid var(--borde); }
+
+/* ---- Pantallas medianas y chicas ---- */
+@media (max-width: 1100px) {
+  .detalle-barra { grid-template-columns: auto minmax(0, 1fr); }
+  .detalle-tabs { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 1020px) {
+  .detalle-principal, .detalle-skeleton { grid-template-columns: minmax(0, 1fr); }
+  .detalle-principal { margin-bottom: 48px; }
+  .detalle-secciones { grid-template-columns: minmax(0, 1fr); }
+  .detalle-bloque--productor, .detalle-bloque--certificacion, .detalle-bloque--resenas { grid-column: 1 / -1; }
+  .detalle-relacionados-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detalle-relacionados { margin-top: 48px; }
+}
+@media (max-width: 760px) {
+  .detalle-resenas-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  /* Una sola fila: volver (solo ícono) + pestañas. El botón de compra rápido pasa a una barra inferior,
+     donde el pulgar llega sin esfuerzo. Sin backdrop-filter: haría de la barra el bloque contenedor de
+     su hijo fijo y lo sacaría de la parte inferior de la pantalla. */
+  .detalle-barra { grid-template-columns: auto minmax(0, 1fr); margin: -16px calc(50% - 50vw) 20px; padding: 6px 16px; gap: 0 6px; background: white; backdrop-filter: none; }
+  .detalle-volver { width: 44px; padding: 0; justify-content: center; }
+  .detalle-volver-texto { display: none; }
+  .detalle-tabs { grid-column: 2; grid-row: 1; }
+  .detalle-barra-compra {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 95; justify-content: space-between; gap: 12px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: white; box-shadow: 0 -8px 24px rgba(27, 67, 50, 0.16);
+    opacity: 1; transform: translateY(100%); transition: transform 0.25s ease, visibility 0s linear 0.25s;
+  }
+  .detalle-barra.con-compra .detalle-barra-compra { transform: none; }
+  .detalle-barra-compra .btn { flex: 1; max-width: 220px; }
+  .detalle-sticky-nombre { display: none; }
+  .detalle-sticky-precio { font-size: 1.1rem; }
+  #detalle-producto-content { padding-bottom: 76px; }
+  .detalle-seccion-titulo { font-size: 1.25rem; }
+  .detalle-visor { aspect-ratio: 4 / 3; border-radius: 22px; }
+  .detalle-visor .nmp-insignia { top: 12px; left: 12px; }
+  .detalle-miniatura { width: 78px; border-radius: 12px; }
+  .detalle-compra, .detalle-bloque { padding: 20px; border-radius: 24px; }
+  .detalle-confianza { gap: 6px; }
+  .detalle-cert-cabecera { flex-direction: column; text-align: center; }
+  .detalle-bloque .detalle-productor-card .mapa-mini { height: 240px; }
+  .resenas-resumen { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .resenas-barras { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .detalle-visor-img, .detalle-miniatura, .detalle-visor-nav, .detalle-productor-mini, .detalle-barra-compra,
+  .detalle-productor-mini > .ti-arrow-right { transition: none; }
+  .detalle-visor:hover .detalle-visor-img { transform: none; }
+  .detalle-visor-img.cambio { animation: none; }
 }
