@@ -14,8 +14,9 @@
   --sombra: 0 8px 24px rgba(27, 67, 50, 0.10);
   --sombra-hover: 0 14px 32px rgba(27, 67, 50, 0.18);
   --radio: 16px;
-  --font-titulo: 'Poppins', sans-serif;
-  --font-texto: 'Inter', sans-serif;
+  /* Tipografía de marca: Rubik para títulos y cifras, Nunito Sans para el texto. */
+  --font-titulo: 'Rubik', sans-serif;
+  --font-texto: 'Nunito Sans', sans-serif;
 
   /* Paleta de marca oficial — en adopcion gradual, reemplazando la escala --verde-* de arriba.
      Ya migrado: hero (h1 no, botones si) y footer. Pendiente: nav, catalogo, producto, checkout,
@@ -3238,17 +3239,9 @@ input, select { font-family: inherit; }
 
 /* ============================================================================
    PANEL DEL PRODUCTOR — rediseño con secciones dedicadas (Inicio / Mis Chacras /
-   Borradores / Mis Productos / Gestión Económica). Tipografía de marca (Rubik +
-   Nunito Sans) escopeada solo a este panel — el resto del sitio sigue en
-   Poppins/Inter hasta que se migre. La paleta --color-* ya es la global.
+   Borradores / Mis Productos / Gestión Económica). La tipografía (Rubik + Nunito
+   Sans) y la paleta --color-* son las globales del sitio.
    ============================================================================ */
-#view-panel-productor,
-#view-gestion-envios,
-#view-panel-admin,
-#view-panel-verificador {
-  --font-titulo: 'Rubik', sans-serif;
-  --font-texto: 'Nunito Sans', sans-serif;
-}
 
 .productor-shell { display: flex; flex-direction: column; gap: 22px; }
 
@@ -4266,7 +4259,7 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .detalle-compra .detalle-accion-principal { flex-direction: column; align-items: stretch; gap: 16px; margin: 0; }
 .detalle-cantidad-fila { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .detalle-total { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; color: var(--texto-suave); font-size: 0.85rem; text-align: right; }
-.detalle-total strong { font-family: var(--font-titulo); font-size: 1.7rem; line-height: 1.1; color: var(--color-primario); }
+.detalle-total strong { font-family: var(--font-titulo); font-size: 1.7rem; line-height: 1.1; color: var(--color-primario); white-space: nowrap; }
 .detalle-compra .detalle-cantidad-selector { min-height: 62px; align-items: center; }
 .detalle-compra .detalle-accion-principal .btn-block { flex: 0 0 auto; width: 100%; min-height: 62px; padding: 0 24px; border-radius: 18px; }
 
@@ -4427,6 +4420,7 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
   .detalle-miniatura { width: 78px; border-radius: 12px; }
   .detalle-compra, .detalle-bloque { padding: 20px; border-radius: 24px; }
   .detalle-confianza { gap: 6px; }
+  .detalle-total strong { font-size: 1.5rem; }
   .detalle-cert-cabecera { flex-direction: column; text-align: center; }
   .detalle-bloque .detalle-productor-card .mapa-mini { height: 240px; }
   .resenas-resumen { grid-template-columns: minmax(0, 1fr); justify-items: center; }
