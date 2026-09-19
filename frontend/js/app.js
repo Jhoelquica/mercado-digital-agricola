@@ -2391,6 +2391,127 @@ function esPedidoEntregado(d) {
   return d.envio ? d.envio.estado === 'entregado' : d.pedido?.estado === 'entregado';
 }
 
+// Lo que el comprador pagó por el pedido: suma de las líneas (es el mismo monto que se cobra al
+// pagar y al reintentar el pago).
+function totalPedido(pedido) {
+  return (pedido.items || []).reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
+}
+
+function conteosPedidos() {
+  const entregados = pedidosCargados.filter(esPedidoEntregado).length;
+  return { todos: pedidosCargados.length, en_curso: pedidosCargados.length - entregados, entregados };
+}
+
+function actualizarConteosPedidos() {
+  const conteos = conteosPedidos();
+  document.querySelectorAll('#pedidos-tabs [data-conteo]').forEach((el) => {
+    el.textContent = conteos[el.dataset.conteo] ?? 0;
+  });
+}
+
+// Métricas de arriba de Mis Pedidos (mismo lenguaje que los dashboards de Productor/Repartidor/
+// Admin). Si hay un envío en camino, un aviso clicable lleva a esa tarjeta.
+function renderResumenPedidos() {
+  const cont = document.getElementById('pedidos-resumen');
+  if (!pedidosCargados.length) { cont.innerHTML = ''; return; }
+
+  const { todos, en_curso: enCurso, entregados } = conteosPedidos();
+  const gastado = pedidosCargados.reduce((acc, d) => acc + totalPedido(d.pedido), 0);
+  const enCamino = pedidosCargados.filter((d) => d.envio?.estado === 'en_camino' && !esPedidoEntregado(d));
+
+  const aviso = enCamino.length ? `
+    <div class="resumen-destacado resumen-destacado-clicable resumen-destacado-camino" role="button" tabindex="0" data-pedido-id="${enCamino[0].pedido.id}">
+      <i class="ti ti-truck"></i>
+      <span>${enCamino.length === 1
+        ? `Tu pedido <strong>#${String(enCamino[0].pedido.id).slice(0, 8)}</strong> va en camino — ten a mano tu código de entrega.`
+        : `Tienes <strong>${enCamino.length} pedidos</strong> en camino.`}</span>
+      <i class="ti ti-chevron-right mp-aviso-flecha"></i>
+    </div>` : '';
+
+  cont.innerHTML = `
+    <div class="card-panel resumen-panel mp-resumen">
+      <div class="resumen-stats">
+        <div class="resumen-stat resumen-stat-destacado"><span class="resumen-stat-icono"><i class="ti ti-truck-delivery"></i></span><div><span class="resumen-stat-valor">${enCurso}</span><span class="resumen-stat-label">En curso</span></div></div>
+        <div class="resumen-stat"><span class="resumen-stat-icono"><i class="ti ti-shopping-bag"></i></span><div><span class="resumen-stat-valor">${todos}</span><span class="resumen-stat-label">Pedidos totales</span></div></div>
+        <div class="resumen-stat"><span class="resumen-stat-icono"><i class="ti ti-circle-check"></i></span><div><span class="resumen-stat-valor">${entregados}</span><span class="resumen-stat-label">Entregados</span></div></div>
+        <div class="resumen-stat"><span class="resumen-stat-icono"><i class="ti ti-wallet"></i></span><div><span class="resumen-stat-valor">${formatearMoneda(gastado)}</span><span class="resumen-stat-label">Total comprado</span></div></div>
+      </div>
+      ${aviso}
+    </div>`;
+  animarContadoresResumen(cont);
+}
+
+// Skeleton con la misma forma que la tarjeta final (cabecera + progreso + cuerpo) para que no haya
+// salto de layout al cargar.
+function renderSkeletonPedidos(n = 2) {
+  const tarjeta = `
+    <div class="mp-card mp-skel" aria-hidden="true">
+      <div class="mp-cabecera">
+        <div class="skeleton mp-skel-thumb"></div>
+        <div class="mp-skel-lineas">
+          <div class="skeleton skeleton-line tall w-70"></div>
+          <div class="skeleton skeleton-line w-40"></div>
+        </div>
+        <div class="skeleton mp-skel-total"></div>
+      </div>
+      <div class="mp-skel-progreso">${'<div class="skeleton"></div>'.repeat(4)}</div>
+      <div class="mp-skel-cuerpo">
+        <div class="skeleton skeleton-line w-70"></div>
+        <div class="skeleton skeleton-line w-60"></div>
+      </div>
+    </div>`;
+  return tarjeta.repeat(n);
+}
+
+// Lleva al comprador a la tarjeta de un pedido: scroll suave (salvo reduced-motion), resalte breve y
+// foco para quien navega con teclado.
+function resaltarPedido(pedidoId) {
+  if (filtroPedidoActual === 'entregados') {
+    filtroPedidoActual = 'todos';
+    filtrarYRenderizarPedidos();
+  }
+  const card = document.querySelector(`.pedido-card[data-pedido-id="${CSS.escape(String(pedidoId))}"]`);
+  if (!card) return;
+  const reducido = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({ behavior: reducido ? 'auto' : 'smooth', block: 'center' });
+  card.setAttribute('tabindex', '-1');
+  card.focus({ preventScroll: true });
+  card.classList.remove('mp-resaltado');
+  void card.offsetWidth; // reinicia la animación si ya estaba resaltada
+  card.classList.add('mp-resaltado');
+  setTimeout(() => card.classList.remove('mp-resaltado'), 2200);
+}
+
+// API moderna del portapapeles y, si el navegador la rechaza o no existe (contexto no seguro,
+// permiso denegado), el método clásico con un <textarea> temporal.
+async function copiarTexto(texto) {
+  try {
+    await navigator.clipboard.writeText(texto);
+    return true;
+  } catch { /* seguimos con el plan B */ }
+  const area = document.createElement('textarea');
+  area.value = texto;
+  area.setAttribute('readonly', '');
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  area.remove();
+  return ok;
+}
+
+async function copiarPinEntrega(btn) {
+  if (!(await copiarTexto(btn.dataset.pin))) {
+    toast('No se pudo copiar el código. Anótalo manualmente.', 'error');
+    return;
+  }
+  const original = btn.innerHTML;
+  btn.innerHTML = '<i class="ti ti-check"></i> Copiado';
+  btn.disabled = true;
+  setTimeout(() => { btn.innerHTML = original; btn.disabled = false; }, 1800);
+}
+
 function renderEmptyPedidos(tipo) {
   const vacio = document.getElementById('pedidos-empty');
   const plantillas = {
@@ -2426,10 +2547,14 @@ async function cargarMisPedidos() {
   detenerPollingRutas();
   const cont = document.getElementById('pedidos-list');
   const vacio = document.getElementById('pedidos-empty');
+  const resumen = document.getElementById('pedidos-resumen');
   vacio.classList.add('hidden');
 
   if (!Estado.token) {
     cont.innerHTML = '';
+    resumen.innerHTML = '';
+    pedidosCargados = [];
+    actualizarConteosPedidos();
     renderEmptyPedidos('no-sesion');
     return;
   }
@@ -2437,10 +2562,15 @@ async function cargarMisPedidos() {
   const ids = obtenerPedidosTrackeados();
   if (!ids.length) {
     cont.innerHTML = '';
+    resumen.innerHTML = '';
+    pedidosCargados = [];
+    actualizarConteosPedidos();
     renderEmptyPedidos('sin-pedidos');
     return;
   }
-  cont.innerHTML = renderSkeletonFilas(Math.min(ids.length, 3));
+  cont.setAttribute('aria-busy', 'true');
+  cont.innerHTML = renderSkeletonPedidos(Math.min(ids.length, 2));
+  resumen.innerHTML = renderSkeletonResumen(4);
 
   if (!Estado.productos.length) {
     try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin fotos si falla */ }
@@ -2448,12 +2578,16 @@ async function cargarMisPedidos() {
 
   const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
   pedidosCargados = datos.filter(Boolean);
+  cont.removeAttribute('aria-busy');
 
   if (!pedidosCargados.length) {
     cont.innerHTML = '<p class="muted">No se pudieron cargar los pedidos.</p>';
+    resumen.innerHTML = '';
+    actualizarConteosPedidos();
     return;
   }
 
+  renderResumenPedidos();
   filtrarYRenderizarPedidos();
 }
 
@@ -2461,8 +2595,11 @@ function filtrarYRenderizarPedidos() {
   const cont = document.getElementById('pedidos-list');
 
   document.querySelectorAll('.pedidos-tab').forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.filtro === filtroPedidoActual);
+    const activa = tab.dataset.filtro === filtroPedidoActual;
+    tab.classList.toggle('active', activa);
+    tab.setAttribute('aria-selected', activa ? 'true' : 'false');
   });
+  actualizarConteosPedidos();
 
   let filtrados = pedidosCargados;
   if (filtroPedidoActual === 'en_curso') filtrados = pedidosCargados.filter((d) => !esPedidoEntregado(d));
@@ -2480,6 +2617,11 @@ function filtrarYRenderizarPedidos() {
   }
   document.getElementById('pedidos-empty').classList.add('hidden');
   cont.innerHTML = filtrados.map((d, i) => renderTarjetaPedido(d.pedido, d.envio, d.pago, d.ruta, i)).join('');
+
+  // Aviso para lectores de pantalla (el contador de las pestañas cambia sin mover el foco).
+  const n = filtrados.length;
+  const sufijo = filtroPedidoActual === 'en_curso' ? ' en curso' : filtroPedidoActual === 'entregados' ? (n === 1 ? ' entregado' : ' entregados') : '';
+  document.getElementById('pedidos-status').textContent = `Mostrando ${n} pedido${n === 1 ? '' : 's'}${sufijo}.`;
 
   filtrados.forEach((d) => {
     if (d.envio && ['asignado', 'en_camino'].includes(d.envio.estado) && d.ruta?.disponible) {
@@ -2559,62 +2701,200 @@ function renderBloqueRuta(envio, ruta) {
     </div>`;
 }
 
+// ---- Tarjeta de pedido (Mis Pedidos) ----
+function formatearTelefono(tel) {
+  const digitos = String(tel || '').replace(/\D/g, '');
+  return digitos.length === 9 ? `${digitos.slice(0, 3)} ${digitos.slice(3, 6)} ${digitos.slice(6)}` : String(tel || '');
+}
+
+// El pago cuenta como confirmado si Pagos lo aprobó o si el pedido ya avanzó por eso (confirmado /
+// entregado): Pagos y Pedidos se sincronizan por eventos, así que uno puede ir un instante detrás.
+function pagoConfirmadoPedido(d) {
+  return d.pago?.estado === 'aprobado' || ['confirmado', 'entregado'].includes(d.pedido.estado) || esPedidoEntregado(d);
+}
+
+function pagoRechazadoPedido(d) {
+  return d.pago?.estado === 'rechazado' && !pagoConfirmadoPedido(d);
+}
+
+// Estado global del pedido (chip + color de acento de la tarjeta). Sale de los tres estados reales
+// — pedido, pago y envío —, no se inventa ninguno.
+function estadoGeneralPedido(d) {
+  const { pedido, envio } = d;
+  if (esPedidoEntregado(d)) return { clave: 'entregado', etiqueta: 'Entregado', icono: 'circle-check', pill: 'entregado' };
+  if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
+  if (pagoRechazadoPedido(d)) return { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
+  if (envio?.estado === 'en_camino') return { clave: 'en_curso', etiqueta: 'En camino', icono: 'truck', pill: 'en_camino' };
+  if (envio?.estado === 'asignado') return { clave: 'en_curso', etiqueta: 'Repartidor asignado', icono: 'user-check', pill: 'asignado' };
+  if (pagoConfirmadoPedido(d)) return { clave: 'en_curso', etiqueta: 'Preparando tu pedido', icono: 'package', pill: 'confirmado' };
+  return { clave: 'pendiente', etiqueta: 'Pago pendiente', icono: 'hourglass', pill: 'pendiente' };
+}
+
+// Cuatro hitos: Pedido → Pago → En camino → Entregado. Un hito está "hecho" cuando se alcanzó; el
+// primero sin alcanzar es el "actual" (o "error" si el pago falló) y los siguientes quedan
+// "pendientes" — mismo patrón de nodos que las líneas de tiempo de seguimiento de pedidos.
+function pasosPedido(d) {
+  const { pedido, envio } = d;
+  const entregado = esPedidoEntregado(d);
+  const pagoOk = pagoConfirmadoPedido(d);
+  const pagoMal = !pagoOk && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado');
+  const enCamino = envio?.estado === 'en_camino' || entregado;
+
+  const pasos = [
+    { icono: 'receipt', titulo: 'Pedido', hecho: true, detalle: 'Realizado' },
+    {
+      icono: 'credit-card', titulo: 'Pago', hecho: pagoOk, error: pagoMal,
+      detalle: pagoOk ? 'Confirmado' : pagoMal ? (pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
+    },
+    {
+      icono: 'truck', titulo: 'En camino', hecho: enCamino,
+      detalle: enCamino ? (entregado ? 'Completado' : 'En ruta hacia ti')
+        : !pagoOk ? 'Por asignar'
+        : envio?.estado === 'asignado' ? 'Repartidor asignado' : 'Buscando repartidor',
+    },
+    { icono: 'circle-check', titulo: 'Entregado', hecho: entregado, detalle: entregado ? 'Recibido' : 'Pendiente' },
+  ];
+  const primeroSinCumplir = pasos.findIndex((p) => !p.hecho);
+  return pasos.map((p, i) => ({
+    ...p,
+    estado: p.hecho ? 'hecho' : i === primeroSinCumplir ? (p.error ? 'error' : 'actual') : 'pendiente',
+  }));
+}
+
+// El estado no puede depender solo del color: cada hito lleva un prefijo solo para lectores de pantalla.
+const PREFIJO_PASO = { hecho: 'Completado: ', actual: 'Paso actual: ', error: 'Con problema: ', pendiente: 'Pendiente: ' };
+
+function renderProgresoPedido(pasos) {
+  return `
+    <ol class="mp-progreso" aria-label="Progreso del pedido">
+      ${pasos.map((p) => `
+        <li class="mp-paso mp-paso-${p.estado}"${p.estado === 'actual' || p.estado === 'error' ? ' aria-current="step"' : ''}>
+          <span class="mp-paso-nodo" aria-hidden="true"><i class="ti ti-${p.estado === 'hecho' ? 'check' : p.estado === 'error' ? 'alert-triangle' : p.icono}"></i></span>
+          <span class="mp-paso-texto">
+            <strong><span class="mp-solo-lectores">${PREFIJO_PASO[p.estado]}</span>${p.titulo}</strong>
+            <small>${p.detalle}</small>
+          </span>
+        </li>`).join('')}
+    </ol>`;
+}
+
+function tituloPedido(items) {
+  const nombres = items.map((i) => i.producto?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`);
+  if (!nombres.length) return 'Pedido sin productos';
+  if (nombres.length <= 2) return nombres.join(' y ');
+  return `${nombres[0]}, ${nombres[1]} y ${nombres.length - 2} más`;
+}
+
+function renderPinEntrega(pin) {
+  const digitos = String(pin).split('');
+  return `
+    <div class="mp-pin">
+      <div class="mp-pin-cabecera">
+        <i class="ti ti-key"></i>
+        <div><strong>Código para el repartidor</strong><span>Dáselo cuando llegue: confirma que recibiste tu pedido.</span></div>
+      </div>
+      <div class="mp-pin-fila">
+        <div class="mp-pin-digitos" role="group" aria-label="Código de entrega: ${escapeAttr(digitos.join(' '))}">
+          ${digitos.map((c) => `<span class="mp-pin-digito" aria-hidden="true">${escapeAttr(c)}</span>`).join('')}
+        </div>
+        <button type="button" class="btn btn-outline btn-copiar-pin" data-pin="${escapeAttr(pin)}"><i class="ti ti-copy"></i> Copiar</button>
+      </div>
+    </div>`;
+}
+
 function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
-  const retraso = Math.min(indice, 12) * 35;
+  const retraso = Math.min(indice, 8) * 60;
+  const d = { pedido, envio, pago };
   const items = (pedido.items || []).map((i) => ({ ...i, producto: Estado.productos.find((p) => p.id === i.producto_id) }));
-  const total = items.reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
-
-  const itemsHtml = items.map((i) => `
-    <li class="pedido-item-linea">
-      <div class="pedido-item-media">${renderMediaProducto(i.producto || { categoria: null, nombre: '' }, 'pedido-item-thumb')}</div>
-      <span class="pedido-item-nombre">${i.cantidad} × ${escapeAttr(i.producto?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`)}</span>
-      <span class="pedido-item-precio">${formatearMoneda(i.precio_unitario * i.cantidad)}</span>
-    </li>`).join('');
-
+  const total = totalPedido(pedido);
+  const general = estadoGeneralPedido(d);
   const activo = envio && ['asignado', 'en_camino'].includes(envio.estado);
-  const entregado = esPedidoEntregado({ pedido, envio });
-  const pagoRechazado = pago?.estado === 'rechazado';
+  const entregado = esPedidoEntregado(d);
+  const idCorto = String(pedido.id).slice(0, 8);
+
+  const miniaturas = items.slice(0, 3)
+    .map((i) => renderMediaProducto(i.producto || { categoria: null, nombre: '' }, 'mp-thumb')).join('');
+  const masMiniaturas = items.length > 3 ? `<div class="mp-thumb mp-thumb-mas">+${items.length - 3}</div>` : '';
+
+  const itemsHtml = items.map((i) => {
+    const unidad = i.unidad || i.producto?.unidad_medida;
+    const cantidadTxt = unidad ? `${i.cantidad} ${unidadPlural(unidad, i.cantidad)}` : `${i.cantidad} ×`;
+    const precioTxt = unidad ? `${formatearMoneda(i.precio_unitario)} / ${unidadCorta(unidad)}` : formatearMoneda(i.precio_unitario);
+    return `
+      <li class="mp-item">
+        <div class="mp-item-media">${renderMediaProducto(i.producto || { categoria: null, nombre: '' }, 'mp-item-thumb')}</div>
+        <div class="mp-item-info">
+          <strong>${escapeAttr(i.producto?.nombre || `Producto ${String(i.producto_id).slice(0, 8)}`)}</strong>
+          <small>${cantidadTxt} · ${precioTxt}</small>
+        </div>
+        <span class="mp-item-total">${formatearMoneda(i.precio_unitario * i.cantidad)}</span>
+      </li>`;
+  }).join('');
+
+  const contacto = `
+    <dl class="mp-kv">
+      ${pedido.comprador_nombre ? `<div><dt><i class="ti ti-user"></i> Recibe</dt><dd>${escapeAttr(pedido.comprador_nombre)}</dd></div>` : ''}
+      ${pedido.comprador_telefono ? `<div><dt><i class="ti ti-phone"></i> Teléfono</dt><dd>${escapeAttr(formatearTelefono(pedido.comprador_telefono))}</dd></div>` : ''}
+      <div><dt><i class="ti ti-credit-card"></i> Pago</dt><dd class="mp-kv-capital">${escapeAttr(pago?.estado || '—')}</dd></div>
+    </dl>`;
+
+  const alertaPago = pagoRechazadoPedido(d) ? `
+    <div class="mp-alerta" role="alert">
+      <i class="ti ti-alert-triangle"></i>
+      <div><strong>Tu pago fue rechazado</strong><span>Puedes volver a intentarlo sin perder tu pedido.</span></div>
+      <button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
+    </div>` : '';
+
+  const pin = activo && envio.pin_entrega ? renderPinEntrega(envio.pin_entrega) : '';
+
+  const seguimiento = activo ? `
+    <section class="mp-bloque">
+      <h4 class="mp-bloque-titulo"><span class="mp-en-vivo" aria-hidden="true"></span> Seguimiento en vivo</h4>
+      ${renderBloqueRuta(envio, ruta)}
+    </section>` : '';
+
+  const postEntrega = entregado ? `
+    <section class="mp-bloque">
+      <h4 class="mp-bloque-titulo"><i class="ti ti-shield-check"></i> Tu compra verificada</h4>
+      <div class="resena-cta"></div>
+      <div class="pedido-certificado-cta">
+        <button type="button" class="btn btn-outline btn-ver-certificado-pedido" data-pedido-id="${pedido.id}"><i class="ti ti-certificate"></i> Ver certificado de compra</button>
+        <div class="panel-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
+      </div>
+    </section>` : '';
+
+  const lateral = [alertaPago, pin, seguimiento, postEntrega].filter(Boolean).join('');
 
   return `
-    <div class="pedido-card" style="animation-delay:${retraso}ms" data-pedido-id="${pedido.id}">
-      <div class="pedido-card-header">
-        <div>
-          <div class="pedido-id">Pedido #${String(pedido.id).slice(0, 8)}</div>
-          <div class="pedido-fecha">${formatearFechaServidor(pedido.fecha_creacion)}</div>
+    <article class="pedido-card mp-card" style="animation-delay:${retraso}ms" data-pedido-id="${pedido.id}" data-estado="${general.clave}">
+      <header class="mp-cabecera">
+        <div class="mp-thumbs" aria-hidden="true">${miniaturas}${masMiniaturas}</div>
+        <div class="mp-cabecera-info">
+          <h3 class="mp-titulo">${escapeAttr(tituloPedido(items))}</h3>
+          <div class="mp-meta">
+            <span class="mp-chip mp-chip-id" title="Número de pedido">#${idCorto}</span>
+            <span class="mp-chip"><i class="ti ti-calendar-event"></i> ${formatearFechaServidor(pedido.fecha_creacion)}</span>
+            <span class="mp-chip"><i class="ti ti-shopping-bag"></i> ${items.length} producto${items.length === 1 ? '' : 's'}</span>
+          </div>
         </div>
-        <div class="pedido-total-header">${formatearMoneda(total)}</div>
-      </div>
-
-      <div class="estado-badges-row">
-        <div class="estado-badge-item"><span class="estado-badge-label">Pedido</span>${badgeEstadoEnvio(pedido.estado)}</div>
-        <div class="estado-badge-item"><span class="estado-badge-label">Pago</span>${pago ? badgeEstadoEnvio(pago.estado) : '<span class="pill pill-estado pill-default">—</span>'}</div>
-        <div class="estado-badge-item"><span class="estado-badge-label">Envío</span>${envio ? badgeEstadoEnvio(envio.estado) : '<span class="pill pill-estado pill-default">—</span>'}</div>
-      </div>
-
-      <ul class="pedido-items">${itemsHtml}</ul>
-
-      ${pagoRechazado ? `
-      <div class="pago-rechazado-aviso">
-        <span><i class="ti ti-alert-triangle"></i> Tu pago fue rechazado.</span>
-        <button type="button" class="btn btn-outline btn-sm btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
-      </div>` : ''}
-
-      ${activo && envio.pin_entrega ? `
-      <div class="pin-entrega-aviso">
-        <i class="ti ti-key"></i>
-        <div>
-          <strong>Código para el repartidor</strong>
-          <span>Dile este código cuando llegue a confirmar tu entrega: <span class="pin-entrega-codigo">${escapeAttr(envio.pin_entrega)}</span></span>
+        <div class="mp-total">
+          <span class="mp-total-label">Total</span>
+          <strong>${formatearMoneda(total)}</strong>
+          <span class="pill pill-estado pill-${general.pill}"><i class="ti ti-${general.icono}"></i> ${general.etiqueta}</span>
         </div>
-      </div>` : ''}
-      ${activo ? renderBloqueRuta(envio, ruta) : ''}
-      ${entregado ? '<div class="resena-cta"></div>' : ''}
-      ${entregado ? `
-      <div class="pedido-certificado-cta">
-        <button type="button" class="btn btn-outline btn-sm btn-ver-certificado-pedido" data-pedido-id="${pedido.id}"><i class="ti ti-link"></i> Ver certificado de compra</button>
-        <div class="panel-expandible hidden" data-panel="certificado-pedido" data-pedido-id="${pedido.id}"></div>
-      </div>` : ''}
-    </div>
+      </header>
+
+      ${renderProgresoPedido(pasosPedido(d))}
+
+      <div class="mp-cuerpo${lateral ? ' mp-cuerpo-lateral' : ''}">
+        <section class="mp-col-items">
+          <h4 class="mp-bloque-titulo"><i class="ti ti-basket"></i> Productos</h4>
+          <ul class="mp-items">${itemsHtml}</ul>
+          ${contacto}
+        </section>
+        ${lateral ? `<aside class="mp-col-lateral">${lateral}</aside>` : ''}
+      </div>
+    </article>
   `;
 }
 
@@ -2709,10 +2989,12 @@ async function buscarPedidoPorId() {
   detenerPollingRutas();
   const cont = document.getElementById('pedidos-list');
   document.getElementById('pedidos-empty').classList.add('hidden');
-  cont.innerHTML = '<p class="muted">Buscando pedido...</p>';
+  cont.setAttribute('aria-busy', 'true');
+  cont.innerHTML = renderSkeletonPedidos(1);
 
   try {
     const d = await cargarDatosPedido(id);
+    cont.removeAttribute('aria-busy');
     if (!d) throw new Error('No se encontró un pedido con ese ID.');
     if (!Estado.productos.length) {
       try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin fotos si falla */ }
@@ -2724,6 +3006,7 @@ async function buscarPedidoPorId() {
     }
     cargarEstadosResenaPedidos([d]);
   } catch (err) {
+    cont.removeAttribute('aria-busy');
     manejarError(err, 'buscar el pedido');
     cargarMisPedidos();
   }
@@ -5583,6 +5866,19 @@ function inicializarEventos() {
     if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto)); return; }
     const certPedido = e.target.closest('.btn-ver-certificado-pedido');
     if (certPedido) { alternarCertificadoPedido(certPedido.dataset.pedidoId); return; }
+    const copiarPin = e.target.closest('.btn-copiar-pin');
+    if (copiarPin) { copiarPinEntrega(copiarPin); return; }
+  });
+  // Aviso "va en camino" del resumen: lleva a la tarjeta (clic o Enter/Espacio, es un role="button").
+  const resumenPedidos = document.getElementById('pedidos-resumen');
+  resumenPedidos.addEventListener('click', (e) => {
+    const aviso = e.target.closest('.resumen-destacado-clicable');
+    if (aviso) resaltarPedido(aviso.dataset.pedidoId);
+  });
+  resumenPedidos.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const aviso = e.target.closest('.resumen-destacado-clicable');
+    if (aviso) { e.preventDefault(); resaltarPedido(aviso.dataset.pedidoId); }
   });
 
   document.getElementById('btn-refrescar-notificaciones').addEventListener('click', cargarNotificaciones);

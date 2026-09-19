@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=1342aec9">
+<link rel="stylesheet" href="css/style.css?v=e655eed6">
 </head>
 <body>
 
@@ -269,21 +269,29 @@
 
   <!-- MIS PEDIDOS -->
   <section id="view-mis-pedidos" class="view">
-    <div class="section-header">
-      <h2><i class="ti ti-package"></i> Mis Pedidos</h2>
-      <button class="btn btn-outline" id="btn-refrescar-pedidos">↻ Refrescar</button>
+    <div class="section-header panel-header-hero pedidos-hero">
+      <div>
+        <h2><i class="ti ti-package"></i> Mis Pedidos</h2>
+        <p class="pedidos-hero-sub">Sigue tu compra, tu pago y tu entrega en un solo lugar.</p>
+      </div>
+      <button class="btn btn-outline" id="btn-refrescar-pedidos"><i class="ti ti-refresh"></i> Refrescar</button>
     </div>
 
-    <div class="lookup-box">
-      <input type="text" id="input-buscar-pedido" placeholder="Buscar pedido por ID...">
-      <button class="btn btn-primary" id="btn-buscar-pedido">Buscar</button>
-    </div>
+    <div id="pedidos-resumen" class="pedidos-resumen"></div>
 
-    <div class="pedidos-tabs" id="pedidos-tabs">
-      <button type="button" class="pedidos-tab active" data-filtro="todos">Todos</button>
-      <button type="button" class="pedidos-tab" data-filtro="en_curso">En curso</button>
-      <button type="button" class="pedidos-tab" data-filtro="entregados">Entregados</button>
+    <div class="pedidos-toolbar">
+      <div class="pedidos-tabs" id="pedidos-tabs" role="tablist" aria-label="Filtrar pedidos por estado">
+        <button type="button" class="pedidos-tab active" data-filtro="todos" role="tab" aria-selected="true">Todos <span class="pedidos-tab-count" data-conteo="todos">0</span></button>
+        <button type="button" class="pedidos-tab" data-filtro="en_curso" role="tab" aria-selected="false">En curso <span class="pedidos-tab-count" data-conteo="en_curso">0</span></button>
+        <button type="button" class="pedidos-tab" data-filtro="entregados" role="tab" aria-selected="false">Entregados <span class="pedidos-tab-count" data-conteo="entregados">0</span></button>
+      </div>
+      <div class="lookup-box pedidos-buscador">
+        <i class="ti ti-search" aria-hidden="true"></i>
+        <input type="text" id="input-buscar-pedido" placeholder="Buscar pedido por ID..." aria-label="Buscar pedido por ID" autocomplete="off">
+        <button class="btn btn-primary" id="btn-buscar-pedido">Buscar</button>
+      </div>
     </div>
+    <p class="mp-solo-lectores" id="pedidos-status" role="status" aria-atomic="true"></p>
 
     <div id="pedidos-list" class="pedidos-list"></div>
     <div id="pedidos-empty" class="empty-state hidden"></div>
@@ -855,7 +863,7 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=fdc65ebf"></script>
-<script src="js/app.js?v=c7737aee"></script>
+<script src="js/api.js?v=bcfdafa9"></script>
+<script src="js/app.js?v=0a8fd093"></script>
 </body>
 </html>

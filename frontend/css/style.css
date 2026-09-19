@@ -3191,3 +3191,303 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 .productor-admin-tel:hover { text-decoration: underline; }
 #admin-productores-lista .pedido-card { transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1); }
 #admin-productores-lista .pedido-card:hover { transform: translateY(-4px); box-shadow: var(--sombra-hover); }
+
+/* =====================================================================================
+   MIS PEDIDOS — rediseño premium: ancho completo, progreso por hitos, PIN, mapa en vivo.
+   Todo va scopeado a #view-mis-pedidos / #pedidos-list: .pedido-card, .btn-sm, .pill y
+   .empty-state se comparten con otros paneles y NO deben cambiar de aspecto allá.
+   Criterios de diseño (skill ui-ux-pro-max): estilo Organic Biophilic (radios 16-24px, sombras
+   naturales), acento "dorado cosecha" de su paleta Agriculture, objetivos táctiles >= 44px,
+   estados que no dependen solo del color y reduced-motion respetado. El patrón de nodos de la
+   línea de tiempo (hecho sólido / actual con halo pulsante / pendiente tenue) sigue el componente
+   "Order History" de 21st.dev, adaptado a CSS propio (el frontend no usa React ni Tailwind).
+   ===================================================================================== */
+#view-mis-pedidos {
+  --mp-acento: #A16207;        /* dorado cosecha — 4.9:1 sobre blanco */
+  --mp-acento-texto: #7c4a03;  /* texto sobre fondos dorados suaves — 6:1 */
+  --mp-acento-suave: #fbf3e2;
+  --mp-rojo: #b3401f;
+  --mp-linea: #d6dfd0;
+  --mp-radio: 22px;
+}
+
+.mp-solo-lectores {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ---- Cabecera con foto ---- */
+#view-mis-pedidos .pedidos-hero { padding: 34px 38px; margin-bottom: 26px; align-items: center; box-shadow: 0 18px 40px -22px rgba(27, 67, 50, 0.55); }
+#view-mis-pedidos .pedidos-hero h2 { font-size: clamp(1.7rem, 3vw, 2.3rem); display: flex; align-items: center; gap: 12px; }
+.pedidos-hero-sub { color: rgba(255, 255, 255, 0.88); margin-top: 6px; font-size: 1.02rem; }
+#view-mis-pedidos .pedidos-hero .btn { min-height: 46px; padding: 10px 22px; display: inline-flex; align-items: center; gap: 8px; }
+
+/* ---- Resumen (métricas) ---- */
+.pedidos-resumen { margin-bottom: 26px; }
+.pedidos-resumen:empty { display: none; }
+#view-mis-pedidos .resumen-panel { padding: 28px 32px; border-radius: var(--mp-radio); margin-bottom: 0; }
+#view-mis-pedidos .resumen-stat-icono { width: 54px; height: 54px; font-size: 1.5rem; }
+#view-mis-pedidos .resumen-stat-valor { font-size: clamp(1.5rem, 2.2vw, 2rem); white-space: nowrap; }
+#view-mis-pedidos .resumen-stat-destacado .resumen-stat-icono { width: 66px; height: 66px; font-size: 1.8rem; }
+#view-mis-pedidos .resumen-stat-destacado .resumen-stat-valor { font-size: clamp(2rem, 3.2vw, 2.8rem); }
+
+#view-mis-pedidos .resumen-destacado-camino {
+  background: var(--mp-acento-suave);
+  border: 1.5px solid color-mix(in srgb, var(--mp-acento) 35%, white);
+  color: var(--mp-acento-texto);
+  padding: 14px 18px; min-height: 48px; font-size: 0.96rem; border-radius: 14px;
+}
+.resumen-destacado-camino > i:first-child { font-size: 1.4rem; flex-shrink: 0; }
+.mp-aviso-flecha { margin-left: auto; transition: transform 0.2s ease; }
+.resumen-destacado-camino:hover .mp-aviso-flecha { transform: translateX(4px); }
+.resumen-destacado-camino:focus-visible { outline: 3px solid var(--mp-acento); outline-offset: 2px; }
+
+/* ---- Filtros + buscador ---- */
+.pedidos-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px 24px; margin-bottom: 24px; }
+#view-mis-pedidos .pedidos-tabs { margin: 0; gap: 10px; }
+#view-mis-pedidos .pedidos-tab { min-height: 46px; padding: 10px 20px; font-size: 0.95rem; display: inline-flex; align-items: center; gap: 10px; cursor: pointer; }
+#view-mis-pedidos .pedidos-tab:focus-visible { outline: 3px solid color-mix(in srgb, var(--color-primario) 55%, white); outline-offset: 2px; }
+.pedidos-tab-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; height: 26px; padding: 0 8px; border-radius: 999px;
+  background: var(--color-superficie); color: var(--color-primario);
+  font-size: 0.8rem; font-weight: 700; transition: background 0.2s ease, color 0.2s ease;
+}
+.pedidos-tab.active .pedidos-tab-count { background: rgba(255, 255, 255, 0.22); color: white; }
+
+#view-mis-pedidos .pedidos-buscador {
+  flex: 1 1 340px; max-width: 520px; min-width: 0; margin: 0;
+  display: flex; align-items: center; gap: 8px;
+  background: white; border: 1.5px solid var(--borde); border-radius: 999px; padding: 4px 4px 4px 18px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+#view-mis-pedidos .pedidos-buscador:focus-within { border-color: var(--color-primario); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primario) 16%, transparent); }
+.pedidos-buscador > i { color: var(--color-secundario); font-size: 1.2rem; }
+#view-mis-pedidos .pedidos-buscador input { flex: 1; width: 100%; min-width: 0; border: none; outline: none; background: transparent; padding: 12px 4px; font-size: 1rem; border-radius: 0; }
+#view-mis-pedidos .pedidos-buscador .btn { min-height: 44px; padding: 10px 24px; border-radius: 999px; }
+
+/* ---- Tarjeta de pedido ---- */
+#pedidos-list { gap: 26px; }
+#pedidos-list .mp-card {
+  position: relative; padding: 0; overflow: hidden;
+  border-radius: var(--mp-radio); border: 1px solid var(--borde); background: white; box-shadow: var(--sombra);
+  transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#pedidos-list .mp-card::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 6px; background: var(--mp-estado, var(--color-borde)); z-index: 2; }
+.mp-card[data-estado="entregado"] { --mp-estado: var(--verde-principal); }
+.mp-card[data-estado="en_curso"] { --mp-estado: var(--mp-acento); }
+.mp-card[data-estado="pago_rechazado"] { --mp-estado: var(--mp-rojo); }
+.mp-card[data-estado="pendiente"] { --mp-estado: #9aa79f; }
+@media (hover: hover) {
+  #pedidos-list .mp-card:hover { transform: translateY(-3px); box-shadow: var(--sombra-hover); }
+  #pedidos-list .mp-card:hover .mp-thumb { transform: translateY(-2px); }
+}
+#pedidos-list .mp-card:focus { outline: none; }
+#pedidos-list .mp-card:focus-visible { outline: 3px solid var(--mp-acento); outline-offset: 3px; }
+#pedidos-list .mp-card.mp-resaltado { animation: mpResalte 2s ease; }
+@keyframes mpResalte {
+  0%, 100% { box-shadow: var(--sombra); }
+  25% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--mp-acento) 45%, transparent), var(--sombra-hover); }
+}
+
+.mp-cabecera { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 24px; padding: 28px 32px 22px 38px; }
+.mp-thumbs { display: flex; align-items: center; }
+.mp-thumb {
+  width: 84px; height: 84px; margin-left: -26px; flex-shrink: 0;
+  border-radius: 20px; overflow: hidden; border: 3px solid white; background: var(--color-superficie);
+  box-shadow: 0 6px 16px rgba(27, 67, 50, 0.18);
+  display: flex; align-items: center; justify-content: center; font-size: 2.4rem;
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.mp-thumbs .mp-thumb:first-child { margin-left: 0; }
+.mp-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mp-thumb-mas { background: var(--color-primario); color: white; font-family: var(--font-titulo); font-weight: 700; font-size: 1.2rem; }
+
+.mp-titulo {
+  font-family: var(--font-titulo); font-size: clamp(1.15rem, 1.7vw, 1.5rem); line-height: 1.25;
+  color: var(--color-primario); margin: 0 0 12px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mp-meta { display: flex; flex-wrap: wrap; gap: 8px 10px; }
+.mp-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px;
+  background: var(--color-superficie); color: var(--texto-suave); font-size: 0.84rem; font-weight: 600; white-space: nowrap;
+}
+.mp-chip-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--color-primario); letter-spacing: 0.02em; }
+
+.mp-total { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; text-align: right; }
+.mp-total-label { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--texto-suave); font-weight: 700; }
+.mp-total strong { font-family: var(--font-titulo); font-size: clamp(1.6rem, 2.6vw, 2.2rem); line-height: 1; color: var(--color-primario); }
+.mp-total .pill { margin-top: 4px; white-space: nowrap; }
+
+/* ---- Progreso por hitos: Pedido → Pago → En camino → Entregado ---- */
+.mp-progreso { list-style: none; margin: 0; padding: 6px 32px 28px 38px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mp-paso { position: relative; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.mp-paso::before { content: ''; position: absolute; top: 21px; right: 50%; width: 100%; height: 4px; border-radius: 4px; background: var(--mp-linea); }
+.mp-paso:first-child::before { display: none; }
+.mp-paso-hecho::before, .mp-paso-actual::before, .mp-paso-error::before { background: linear-gradient(90deg, var(--color-primario), var(--verde-medio)); }
+.mp-paso-nodo {
+  position: relative; z-index: 1; width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 1.3rem;
+  background: var(--color-superficie); color: #728178; box-shadow: 0 0 0 6px white;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+.mp-paso-hecho .mp-paso-nodo { background: var(--color-primario); color: white; }
+.mp-paso-actual .mp-paso-nodo {
+  background: var(--mp-acento-suave); color: var(--mp-acento);
+  box-shadow: 0 0 0 6px white, 0 0 0 9px rgba(161, 98, 7, 0.22);
+  animation: mpPulso 2s ease-out infinite;
+}
+.mp-paso-error .mp-paso-nodo { background: #fde8e4; color: var(--mp-rojo); box-shadow: 0 0 0 6px white, 0 0 0 9px rgba(179, 64, 31, 0.16); }
+@keyframes mpPulso {
+  0% { box-shadow: 0 0 0 6px white, 0 0 0 6px rgba(161, 98, 7, 0.5); }
+  100% { box-shadow: 0 0 0 6px white, 0 0 0 20px rgba(161, 98, 7, 0); }
+}
+.mp-paso-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mp-paso-texto strong { font-family: var(--font-titulo); font-size: 0.98rem; color: var(--color-primario); }
+.mp-paso-texto small { font-size: 0.84rem; color: var(--texto-suave); }
+.mp-paso-pendiente .mp-paso-texto strong { color: #6f7f75; }
+.mp-paso-hecho .mp-paso-texto small { color: var(--verde-principal); font-weight: 600; }
+.mp-paso-actual .mp-paso-texto small { color: var(--mp-acento-texto); font-weight: 700; }
+.mp-paso-error .mp-paso-texto small { color: var(--mp-rojo); font-weight: 700; }
+
+/* ---- Cuerpo: productos a la izquierda, acciones/seguimiento a la derecha ---- */
+.mp-cuerpo { display: grid; grid-template-columns: minmax(0, 1fr); border-top: 1px solid var(--borde); }
+.mp-col-items, .mp-col-lateral { padding: 26px 32px 30px 38px; min-width: 0; }
+.mp-col-lateral { display: flex; flex-direction: column; gap: 22px; background: color-mix(in srgb, var(--color-superficie) 45%, white); border-top: 1px solid var(--borde); }
+@media (min-width: 1000px) {
+  .mp-cuerpo-lateral { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }
+  .mp-col-lateral { border-top: none; border-left: 1px solid var(--borde); padding: 26px 36px 30px 32px; }
+}
+@media (min-width: 900px) {
+  .mp-cuerpo:not(.mp-cuerpo-lateral) .mp-items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 32px; }
+}
+.mp-bloque { display: flex; flex-direction: column; }
+.mp-bloque-titulo {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 14px;
+  font-family: var(--font-texto); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--texto-suave);
+}
+.mp-bloque-titulo i { font-size: 1.1rem; color: var(--color-primario); }
+
+.mp-items { list-style: none; margin: 0; padding: 0; }
+.mp-item { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px dashed var(--borde); }
+.mp-items .mp-item:last-child { border-bottom: none; }
+.mp-item-thumb {
+  width: 64px; height: 64px; flex-shrink: 0; border-radius: 16px; overflow: hidden; background: var(--color-superficie);
+  display: flex; align-items: center; justify-content: center; font-size: 1.8rem;
+}
+.mp-item-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mp-item-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.mp-item-info strong { font-size: 1.05rem; color: var(--texto); }
+.mp-item-info small { font-size: 0.88rem; color: var(--texto-suave); }
+.mp-item-total { font-family: var(--font-titulo); font-weight: 700; font-size: 1.05rem; white-space: nowrap; color: var(--color-primario); }
+
+.mp-kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px 24px; margin: 20px 0 0; padding: 18px 20px; background: var(--color-superficie); border-radius: 16px; }
+.mp-kv dt { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; color: var(--texto-suave); }
+.mp-kv dd { font-weight: 700; color: var(--texto); font-size: 1rem; word-break: break-word; }
+.mp-kv-capital { text-transform: capitalize; }
+
+/* ---- Pago rechazado ---- */
+.mp-alerta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: #fff0ee; border: 1.5px solid #f3aa9a; border-radius: 18px; padding: 16px 18px; color: #8a2f1c; }
+.mp-alerta > i { font-size: 1.6rem; flex-shrink: 0; }
+.mp-alerta > div { flex: 1 1 200px; display: flex; flex-direction: column; gap: 2px; }
+.mp-alerta span { font-size: 0.9rem; }
+.mp-alerta .btn { min-height: 46px; padding: 10px 22px; margin-left: 0; }
+
+/* ---- Código de entrega (PIN) ---- */
+.mp-pin {
+  display: flex; flex-direction: column; gap: 16px; padding: 20px 22px; border-radius: 20px;
+  background: linear-gradient(135deg, var(--mp-acento-suave), #fffaf0);
+  border: 1.5px solid color-mix(in srgb, var(--mp-acento) 30%, white);
+}
+.mp-pin-cabecera { display: flex; align-items: flex-start; gap: 12px; color: var(--mp-acento-texto); }
+.mp-pin-cabecera > i { font-size: 1.6rem; flex-shrink: 0; }
+.mp-pin-cabecera strong { display: block; font-family: var(--font-titulo); }
+.mp-pin-cabecera span { font-size: 0.9rem; }
+.mp-pin-fila { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.mp-pin-digitos { display: flex; gap: 10px; }
+.mp-pin-digito {
+  width: 54px; height: 68px; display: grid; place-items: center; border-radius: 14px; background: white;
+  border: 2px solid color-mix(in srgb, var(--mp-acento) 35%, white);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 2rem; font-weight: 800; color: var(--color-primario);
+  box-shadow: 0 6px 14px -6px rgba(161, 98, 7, 0.35);
+}
+.mp-pin .btn-copiar-pin { min-height: 46px; padding: 10px 20px; margin-left: 0; }
+
+/* ---- Seguimiento en vivo (mapa) ---- */
+.mp-en-vivo { width: 10px; height: 10px; border-radius: 50%; background: #2fa564; animation: mpVivo 1.8s ease-out infinite; }
+@keyframes mpVivo {
+  0% { box-shadow: 0 0 0 0 rgba(47, 165, 100, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(47, 165, 100, 0); }
+}
+#pedidos-list .mapa-bloque, #pedidos-list .mapa-bloque-neutro { margin-top: 0; }
+#pedidos-list .mapa-mini { height: 280px; border-radius: 18px; }
+#pedidos-list .ruta-stats { margin-top: 12px; gap: 12px; }
+#pedidos-list .ruta-stat { padding: 14px 16px; border-radius: 16px; }
+#pedidos-list .ruta-stat strong { font-size: 1.2rem; }
+
+/* ---- Después de la entrega: reseñas y certificado ---- */
+#pedidos-list .resena-cta { margin: 0 0 12px; }
+#pedidos-list .resena-cta:empty { display: none; }
+#pedidos-list .resena-cta .btn,
+#pedidos-list .pedido-certificado-cta .btn { min-height: 46px; padding: 10px 20px; margin-left: 0; font-size: 0.95rem; }
+#pedidos-list .resena-cta .btn { border-color: var(--mp-acento); color: var(--mp-acento-texto); background: var(--mp-acento-suave); }
+#pedidos-list .pedido-certificado-cta { margin-top: 0; }
+#pedidos-list .panel-expandible { margin-top: 14px; padding: 18px 20px; background: var(--color-superficie); border-radius: 16px; }
+
+/* ---- Estados vacíos ---- */
+#pedidos-empty { padding: 72px 24px; background: white; border: 1.5px dashed var(--color-borde); border-radius: var(--mp-radio); font-size: 1.05rem; }
+#pedidos-empty .empty-state-icon {
+  width: 104px; height: 104px; margin: 0 auto 18px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--color-superficie); color: var(--color-primario); font-size: 2.8rem;
+}
+#pedidos-empty strong { font-family: var(--font-titulo); font-size: 1.35rem; }
+#pedidos-empty .btn { min-height: 48px; padding: 12px 28px; }
+
+/* ---- Skeleton con la forma de la tarjeta ---- */
+.mp-skel { pointer-events: none; }
+.mp-skel-thumb { width: 84px; height: 84px; border-radius: 20px; }
+.mp-skel-lineas { display: flex; flex-direction: column; gap: 12px; }
+.mp-skel-total { width: 120px; height: 44px; border-radius: 12px; }
+.mp-skel-progreso { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; padding: 6px 38px 26px; }
+.mp-skel-progreso .skeleton { width: 46px; height: 46px; border-radius: 50%; margin: 0 auto; }
+.mp-skel-cuerpo { display: flex; flex-direction: column; gap: 14px; padding: 22px 38px 30px; border-top: 1px solid var(--borde); }
+
+/* ---- Móvil: progreso vertical, cabecera apilada ---- */
+@media (max-width: 720px) {
+  #view-mis-pedidos .pedidos-hero { padding: 24px 22px; }
+  #view-mis-pedidos .resumen-panel { padding: 22px 20px; }
+  /* Apilada: fotos arriba y título + chips a todo el ancho (en dos columnas el chip de la fecha se cortaba). */
+  .mp-cabecera { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 22px 20px 16px 26px; }
+  .mp-chip { white-space: normal; }
+  .mp-thumb { width: 60px; height: 60px; border-radius: 16px; margin-left: -18px; font-size: 1.7rem; }
+  .mp-total { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; text-align: left; padding-top: 14px; border-top: 1px dashed var(--borde); }
+  .mp-col-items, .mp-col-lateral { padding: 22px 20px 24px 26px; }
+  .mp-pin-digito { width: 46px; height: 60px; font-size: 1.7rem; }
+  #pedidos-list .mapa-mini { height: 220px; }
+  #view-mis-pedidos .pedidos-buscador { max-width: none; flex-basis: 100%; }
+  .mp-skel-progreso, .mp-skel-cuerpo { padding-left: 26px; padding-right: 20px; }
+}
+@media (max-width: 640px) {
+  .mp-progreso { grid-template-columns: minmax(0, 1fr); padding: 4px 20px 22px 26px; }
+  .mp-paso { flex-direction: row; align-items: flex-start; gap: 16px; text-align: left; padding-bottom: 22px; }
+  .mp-paso:last-child { padding-bottom: 0; }
+  .mp-paso::before { top: calc(23px - 100%); left: 21px; right: auto; width: 4px; height: 100%; }
+  .mp-paso-texto { padding-top: 2px; }
+}
+@media (max-width: 560px) {
+  /* Métricas en cuadrícula de 2 columnas ("En curso" ocupa el ancho completo) y filtros en 3 columnas iguales. */
+  #view-mis-pedidos .resumen-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
+  #view-mis-pedidos .resumen-stat { flex: none; min-width: 0; gap: 10px; }
+  #view-mis-pedidos .resumen-stat-destacado { grid-column: 1 / -1; }
+  #view-mis-pedidos .resumen-stat-icono { width: 44px; height: 44px; font-size: 1.25rem; }
+  #view-mis-pedidos .resumen-stat-destacado .resumen-stat-icono { width: 60px; height: 60px; font-size: 1.6rem; }
+  #view-mis-pedidos .pedidos-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+  #view-mis-pedidos .pedidos-tab { padding: 10px 6px; font-size: 0.86rem; gap: 6px; justify-content: center; white-space: nowrap; }
+  .pedidos-tab-count { min-width: 22px; height: 22px; padding: 0 6px; font-size: 0.75rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pedidos-list .mp-card, .mp-thumb, .mp-paso-nodo { transition: none; }
+  .mp-paso-actual .mp-paso-nodo, .mp-en-vivo, #pedidos-list .mp-card.mp-resaltado { animation: none; }
+}
