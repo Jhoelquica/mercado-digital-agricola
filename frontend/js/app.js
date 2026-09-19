@@ -77,6 +77,21 @@ function formatearFecha(fechaStr) {
   return d.toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Para timestamps generados por el servidor (datetime.utcnow, que el JSON entrega sin zona): sin la Z
+// el navegador los lee como hora local y los muestra corridos (en Perú, +5 h — a veces el día
+// siguiente). NO usar con fechas que escribe el usuario (siembra, cosecha): esas son fechas de
+// calendario, no instantes en UTC.
+function parsearFechaServidor(fechaStr) {
+  if (!fechaStr) return new Date(NaN);
+  return new Date(/(Z|[+-]\d{2}:?\d{2})$/i.test(fechaStr) ? fechaStr : `${fechaStr}Z`);
+}
+
+function formatearFechaServidor(fechaStr) {
+  if (!fechaStr) return '—';
+  const d = parsearFechaServidor(fechaStr);
+  return isNaN(d) ? fechaStr : formatearFecha(d.toISOString());
+}
+
 function formatearMoneda(valor) {
   const n = Number(valor) || 0;
   return `S/ ${n.toFixed(2)}`;
@@ -113,7 +128,7 @@ function renderLineaTiempoCertificacion(historial) {
                 <strong>${escapeAttr(info.texto)}</strong>
                 <span class="timeline-indice">Bloque #${b.indice}</span>
               </div>
-              <div class="timeline-fecha">${formatearFecha(b.fecha)}</div>
+              <div class="timeline-fecha">${formatearFechaServidor(b.fecha)}</div>
               ${renderVerificadorLinea(b)}
               ${b.datos ? `<p class="timeline-datos">${escapeAttr(b.datos)}</p>` : ''}
               <div class="timeline-hash">Hash: <code>${escapeAttr(hashCorto(b.hash_actual))}</code></div>
@@ -1390,7 +1405,7 @@ function renderSeccionResenas(resenas) {
             <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
             <span class="rating-stars">${renderEstrellas(r.calificacion)}</span>
           </div>
-          <div class="resena-fecha">${formatearFecha(r.fecha_creacion)}</div>
+          <div class="resena-fecha">${formatearFechaServidor(r.fecha_creacion)}</div>
           ${r.comentario ? `<p class="resena-comentario">${escapeAttr(r.comentario)}</p>` : ''}
         </div>`).join('')
     : '<p class="muted">Aún no hay reseñas para este producto.</p>';
@@ -1426,7 +1441,7 @@ function renderResenasSoloLectura(resenas) {
             <span class="resena-usuario">${escapeAttr(r.usuario_nombre)}</span>
             <span class="rating-stars">${renderEstrellas(r.calificacion)}</span>
           </div>
-          <div class="resena-fecha">${formatearFecha(r.fecha_creacion)}</div>
+          <div class="resena-fecha">${formatearFechaServidor(r.fecha_creacion)}</div>
           ${r.comentario ? `<p class="resena-comentario">${escapeAttr(r.comentario)}</p>` : ''}
         </div>`).join('')}
     </div>`;
@@ -2565,7 +2580,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Pedido #${String(pedido.id).slice(0, 8)}</div>
-          <div class="pedido-fecha">${formatearFecha(pedido.fecha_creacion)}</div>
+          <div class="pedido-fecha">${formatearFechaServidor(pedido.fecha_creacion)}</div>
         </div>
         <div class="pedido-total-header">${formatearMoneda(total)}</div>
       </div>
@@ -2753,7 +2768,7 @@ function renderNotificacionesPagina() {
       <div class="notif-icon tipo-${escapeAttr(n.tipo)}">${iconoNotificacion(n.tipo)}</div>
       <div>
         <div class="notif-msg">${escapeAttr(n.mensaje)}</div>
-        <div class="notif-meta">Pedido #${String(n.pedido_id).slice(0, 8)} · ${formatearFecha(n.fecha_envio)}</div>
+        <div class="notif-meta">Pedido #${String(n.pedido_id).slice(0, 8)} · ${formatearFechaServidor(n.fecha_envio)}</div>
       </div>
     </div>
   `).join('');
@@ -3672,7 +3687,7 @@ function renderTarjetaEntregaDirecta(envio, indice = 0) {
         <h4>Pedido #${escapeAttr(String(envio.pedido_id).slice(0, 8))}</h4>
       </div>
       <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFecha(envio.fecha_creacion)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFechaServidor(envio.fecha_creacion)}</span></div>
       </div>
       <p class="muted">No se encontró un repartidor con capacidad suficiente para este pedido — te toca entregarlo directamente.</p>
       <div class="verificador-cosecha-acciones">
@@ -4016,7 +4031,7 @@ function renderTarjetaHistorialVerificacion(h, indice = 0) {
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(h.productor_nombre || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(h.chacra_codigo || '—')}${h.chacra_nombre ? ' — ' + escapeAttr(h.chacra_nombre) : ''}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Fecha</span><span class="perfil-dato-valor">${formatearFecha(h.fecha)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Fecha</span><span class="perfil-dato-valor">${formatearFechaServidor(h.fecha)}</span></div>
       </div>
       ${!aprobado && h.motivo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(h.motivo)}</p>` : ''}
     </div>`;
@@ -4094,7 +4109,7 @@ function renderTarjetaProductorAdmin(p, totalProductos, indice = 0) {
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(p.comunidad || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${tel ? `<a class="productor-admin-tel" href="tel:${tel}">${escapeAttr(p.contacto)}</a>` : '—'}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Registrado</span><span class="perfil-dato-valor">${formatearFecha(p.fecha_registro)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Registrado</span><span class="perfil-dato-valor">${formatearFechaServidor(p.fecha_registro)}</span></div>
       </div>
       ${hayCoordenadas(p.latitud, p.longitud)
         ? `<div id="mapa-productor-admin-${escapeAttr(p.id)}" class="chacra-card-mapa-mini"></div>`
@@ -4153,7 +4168,7 @@ function activarTabAdmin(nombreTab) {
 // calcula), así que se deriva acá comparando contra la hora actual del navegador.
 function estadoInvitacion(inv) {
   if (inv.usado) return { clave: 'usada', etiqueta: 'Usada' };
-  if (new Date(inv.fecha_expiracion) < new Date()) return { clave: 'expirada', etiqueta: 'Expirada' };
+  if (parsearFechaServidor(inv.fecha_expiracion) < new Date()) return { clave: 'expirada', etiqueta: 'Expirada' };
   return { clave: 'vigente', etiqueta: 'Vigente' };
 }
 
@@ -4166,7 +4181,7 @@ function renderInvitacionCard(inv) {
         <span class="pill pill-estado pill-${estado.clave}">${estado.etiqueta}</span>
       </div>
       <p><strong>Rol:</strong> ${escapeAttr(inv.rol_destino)}</p>
-      <p class="pedido-fecha">Creada: ${formatearFecha(inv.fecha_creacion)} · Vence: ${formatearFecha(inv.fecha_expiracion)}</p>
+      <p class="pedido-fecha">Creada: ${formatearFechaServidor(inv.fecha_creacion)} · Vence: ${formatearFechaServidor(inv.fecha_expiracion)}</p>
       ${estado.clave === 'vigente'
         ? `<button type="button" class="btn btn-outline btn-sm btn-revocar-invitacion" data-invitacion-id="${escapeAttr(inv.id)}">Revocar</button>`
         : ''}
@@ -4234,14 +4249,14 @@ function renderResumenAdmin(invitaciones, totalProductosTransito = 0, totalPendi
   invitaciones.forEach((inv) => {
     const estado = estadoInvitacion(inv);
     porEstado[estado.clave]++;
-    if (estado.clave === 'vigente' && (!masProximaAVencer || new Date(inv.fecha_expiracion) < new Date(masProximaAVencer.fecha_expiracion))) {
+    if (estado.clave === 'vigente' && (!masProximaAVencer || parsearFechaServidor(inv.fecha_expiracion) < parsearFechaServidor(masProximaAVencer.fecha_expiracion))) {
       masProximaAVencer = inv;
     }
   });
 
   let avisoVencimiento = '';
   if (masProximaAVencer) {
-    const diasRestantes = Math.max(0, Math.ceil((new Date(masProximaAVencer.fecha_expiracion) - new Date()) / 86400000));
+    const diasRestantes = Math.max(0, Math.ceil((parsearFechaServidor(masProximaAVencer.fecha_expiracion) - new Date()) / 86400000));
     const texto = diasRestantes === 0 ? 'vence hoy' : `vence en ${diasRestantes} día${diasRestantes === 1 ? '' : 's'}`;
     avisoVencimiento = `<i class="ti ti-alert-triangle"></i> El código <code>${escapeAttr(masProximaAVencer.codigo)}</code> ${texto}`;
   }
@@ -4292,7 +4307,7 @@ function renderResumenAdmin(invitaciones, totalProductosTransito = 0, totalPendi
 
 function mostrarInvitacionGenerada(inv) {
   document.getElementById('invitacion-codigo-texto').textContent = inv.codigo;
-  document.getElementById('invitacion-expira-texto').textContent = `Vence: ${formatearFecha(inv.fecha_expiracion)}`;
+  document.getElementById('invitacion-expira-texto').textContent = `Vence: ${formatearFechaServidor(inv.fecha_expiracion)}`;
   document.getElementById('invitacion-resultado').classList.remove('hidden');
 }
 
@@ -4348,7 +4363,7 @@ function renderTarjetaPendienteCapacidad(envio, indice = 0) {
         <h4>Pedido #${escapeAttr(String(envio.pedido_id).slice(0, 8))}</h4>
       </div>
       <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFecha(envio.fecha_creacion)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFechaServidor(envio.fecha_creacion)}</span></div>
       </div>
       <p class="muted">Este pedido necesita un vehículo con más capacidad — ningún repartidor disponible alcanzaba. Contrata o coordina uno, y pide a quien lo va a manejar que se registre como Repartidor desde su propia cuenta (pantalla de inicio → "Soy repartidor" → completar perfil con capacidad y tipo de vehículo).</p>
     </div>`;
@@ -4477,7 +4492,7 @@ function renderTarjetaPropuesta(envio, indice = 0) {
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
-          <div class="pedido-fecha">${formatearFecha(envio.fecha_creacion)}</div>
+          <div class="pedido-fecha">${formatearFechaServidor(envio.fecha_creacion)}</div>
         </div>
         ${badgeEstadoEnvio(envio.estado || 'propuesto')}
       </div>
@@ -4510,7 +4525,7 @@ function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
       <div class="pedido-card-header">
         <div>
           <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
-          <div class="pedido-fecha">${formatearFecha(envio.fecha_creacion)}</div>
+          <div class="pedido-fecha">${formatearFechaServidor(envio.fecha_creacion)}</div>
         </div>
         ${badgeEstadoEnvio(envio.estado)}
       </div>

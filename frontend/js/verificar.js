@@ -10,7 +10,10 @@ function escapeHtml(valor) {
 
 function formatearFecha(fechaStr) {
   if (!fechaStr) return '—';
-  const d = new Date(fechaStr);
+  // La API entrega timestamps UTC sin zona ("2026-09-19T02:42:04.85"): sin la Z el navegador los
+  // lee como hora local y muestra la fecha corrida (en Perú, +5 h — a veces el día siguiente).
+  const conZona = /(Z|[+-]\d{2}:?\d{2})$/i.test(fechaStr) ? fechaStr : `${fechaStr}Z`;
+  const d = new Date(conZona);
   if (isNaN(d)) return fechaStr;
   return d.toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
