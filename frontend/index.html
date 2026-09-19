@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=359f37ad">
+<link rel="stylesheet" href="css/style.css?v=6c20bc91">
 </head>
 <body>
 
@@ -777,60 +777,148 @@
   <p>🌾 Chakra Shop — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
 </footer>
 
-<!-- MODAL: AUTH -->
+<!-- MODAL: AUTH — dos paneles: la marca a la izquierda y los formularios a la derecha (en móvil, una
+     franja de marca arriba). La lógica sigue colgando de los mismos IDs de siempre (login-email,
+     registro-rol, registro-codigo-invitacion-wrap, google-btn-*…): ver cambiarTabAuth, manejarLogin,
+     manejarRegistro y actualizarCampoCodigoInvitacion en app.js. El <select id="registro-rol"> se
+     conserva oculto como fuente de verdad; las tarjetas de rol son radios que lo mantienen sincronizado. -->
 <div class="modal-overlay hidden" id="modal-auth">
-  <div class="modal modal-auth">
-    <button class="modal-close" data-close="modal-auth"><i class="ti ti-x"></i></button>
-    <div class="auth-tabs">
-      <button class="auth-tab active" data-tab="login">Iniciar sesión</button>
-      <button class="auth-tab" data-tab="registro">Registrarse</button>
-    </div>
+  <div class="modal modal-auth" role="dialog" aria-modal="true" aria-label="Acceso a Chakra Shop" data-tab="login">
+    <button type="button" class="modal-close" data-close="modal-auth" aria-label="Cerrar"><i class="ti ti-x"></i></button>
 
-    <form id="form-login" class="auth-form">
-      <h3>Bienvenido de nuevo</h3>
-      <label>Correo electrónico
-        <input type="email" id="login-email" required placeholder="tucorreo@ejemplo.com">
-      </label>
-      <label>Contraseña
-        <input type="password" id="login-password" required placeholder="••••••••">
-      </label>
-      <button type="submit" class="btn btn-primary btn-block">Ingresar</button>
-      <div class="auth-divider"><span>o continúa con</span></div>
-      <div id="google-btn-login" class="auth-google-btn"></div>
-    </form>
+    <aside class="auth-lado">
+      <div class="auth-lado-marca">
+        <span class="auth-lado-logo"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M22 40 L78 40 L70 82 Q50 90 30 82 Z" fill="#74c69d"/><path d="M28 56 L72 56" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M30 70 L70 70" stroke="#1b4332" stroke-width="3" stroke-linecap="round" opacity="0.45"/><path d="M50 40 Q50 28 50 18" stroke="#95d5b2" stroke-width="6" stroke-linecap="round" fill="none"/><path d="M50 22 Q40 14 44 6 Q56 10 50 22 Z" fill="#d8f3dc"/><path d="M50 18 Q60 10 56 2 Q46 6 50 18 Z" fill="#b7e4c7"/></svg></span>
+        <span class="auth-lado-nombre">Chakra<strong>Shop</strong></span>
+      </div>
+      <div class="auth-lado-cuerpo">
+        <div class="auth-lado-texto auth-lado-login">
+          <h2>Qué bueno verte de nuevo</h2>
+          <p>Sigue tus pedidos, tu pago y tu entrega en un solo lugar.</p>
+        </div>
+        <div class="auth-lado-texto auth-lado-registro">
+          <h2>Del productor a tu mesa, sin intermediarios</h2>
+          <p>Crea tu cuenta gratis y forma parte de la cadena que lleva el campo de Ayacucho hasta tu mesa.</p>
+        </div>
+        <ul class="auth-lado-lista">
+          <li><i class="ti ti-shield-check" aria-hidden="true"></i><span>Origen verificado con blockchain</span></li>
+          <li><i class="ti ti-credit-card" aria-hidden="true"></i><span>Pago seguro con tarjeta o Yape</span></li>
+          <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><span>Seguimiento en vivo de tu envío</span></li>
+        </ul>
+      </div>
+    </aside>
 
-    <form id="form-registro" class="auth-form hidden">
-      <h3>Crea tu cuenta</h3>
-      <label>Nombre completo
-        <input type="text" id="registro-nombre" required placeholder="Ej. María Quispe">
-      </label>
-      <label>Correo electrónico
-        <input type="email" id="registro-email" required placeholder="tucorreo@ejemplo.com">
-      </label>
-      <label>Contraseña
-        <input type="password" id="registro-password" required minlength="4" placeholder="Mínimo 4 caracteres">
-      </label>
-      <label>Quiero registrarme como
-        <select id="registro-rol">
+    <div class="auth-panel">
+      <div class="auth-tabs" role="tablist" aria-label="Acceso a tu cuenta">
+        <button type="button" class="auth-tab active" data-tab="login" role="tab" aria-selected="true">Iniciar sesión</button>
+        <button type="button" class="auth-tab" data-tab="registro" role="tab" aria-selected="false">Registrarse</button>
+      </div>
+
+      <form id="form-login" class="auth-form">
+        <div class="auth-encabezado">
+          <h3>Bienvenido de nuevo</h3>
+          <p>Ingresa a tu cuenta para continuar.</p>
+        </div>
+        <div class="auth-alerta hidden" id="login-alerta" role="alert"></div>
+        <div class="auth-grupo">
+          <label for="login-email">Correo electrónico</label>
+          <div class="auth-campo">
+            <i class="ti ti-mail" aria-hidden="true"></i>
+            <input type="email" id="login-email" required placeholder="tucorreo@ejemplo.com" autocomplete="email" inputmode="email">
+          </div>
+        </div>
+        <div class="auth-grupo">
+          <label for="login-password">Contraseña</label>
+          <div class="auth-campo">
+            <i class="ti ti-lock" aria-hidden="true"></i>
+            <input type="password" id="login-password" required placeholder="••••••••" autocomplete="current-password">
+            <button type="button" class="auth-ojo" data-ojo="login-password" aria-label="Mostrar contraseña" aria-pressed="false"><i class="ti ti-eye"></i></button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block auth-enviar"><span class="auth-enviar-texto">Ingresar</span></button>
+        <div class="auth-divider"><span>o continúa con</span></div>
+        <div id="google-btn-login" class="auth-google-btn"></div>
+        <p class="auth-cambio">¿Aún no tienes cuenta? <button type="button" class="auth-cambio-btn" data-cambiar-tab="registro">Regístrate gratis</button></p>
+      </form>
+
+      <form id="form-registro" class="auth-form hidden">
+        <div class="auth-encabezado">
+          <h3>Crea tu cuenta</h3>
+          <p>Es gratis y toma menos de un minuto.</p>
+        </div>
+        <div class="auth-alerta hidden" id="registro-alerta" role="alert"></div>
+        <div class="auth-grupo">
+          <label for="registro-nombre">Nombre completo</label>
+          <div class="auth-campo">
+            <i class="ti ti-user" aria-hidden="true"></i>
+            <input type="text" id="registro-nombre" required placeholder="Ej. María Quispe" autocomplete="name">
+          </div>
+        </div>
+        <div class="auth-grupo">
+          <label for="registro-email">Correo electrónico</label>
+          <div class="auth-campo">
+            <i class="ti ti-mail" aria-hidden="true"></i>
+            <input type="email" id="registro-email" required placeholder="tucorreo@ejemplo.com" autocomplete="email" inputmode="email">
+          </div>
+        </div>
+        <div class="auth-grupo">
+          <label for="registro-password">Contraseña</label>
+          <div class="auth-campo">
+            <i class="ti ti-lock" aria-hidden="true"></i>
+            <input type="password" id="registro-password" required minlength="4" placeholder="Mínimo 4 caracteres" autocomplete="new-password">
+            <button type="button" class="auth-ojo" data-ojo="registro-password" aria-label="Mostrar contraseña" aria-pressed="false"><i class="ti ti-eye"></i></button>
+          </div>
+        </div>
+
+        <fieldset class="auth-roles">
+          <legend>Quiero registrarme como</legend>
+          <div class="auth-roles-grid">
+            <label class="auth-rol">
+              <input type="radio" name="registro-rol-opcion" value="comprador" checked>
+              <span class="auth-rol-caja"><i class="ti ti-shopping-cart" aria-hidden="true"></i><strong>Comprador</strong><small>Restaurante, mercado o persona</small></span>
+            </label>
+            <label class="auth-rol">
+              <input type="radio" name="registro-rol-opcion" value="productor">
+              <span class="auth-rol-caja"><i class="ti ti-tractor" aria-hidden="true"></i><strong>Productor</strong><small>Agricultor que vende su cosecha</small></span>
+            </label>
+            <label class="auth-rol">
+              <input type="radio" name="registro-rol-opcion" value="repartidor">
+              <span class="auth-rol-caja"><i class="ti ti-truck" aria-hidden="true"></i><strong>Repartidor</strong><small>Entrega pedidos cerca de ti</small></span>
+            </label>
+            <label class="auth-rol">
+              <input type="radio" name="registro-rol-opcion" value="verificador">
+              <span class="auth-rol-caja"><i class="ti ti-certificate" aria-hidden="true"></i><strong>Verificador</strong><small>Certifica cosechas · requiere invitación</small></span>
+            </label>
+          </div>
+        </fieldset>
+        <select id="registro-rol" hidden>
           <option value="comprador">Comprador (restaurante, mercado, persona)</option>
           <option value="productor">Productor (agricultor)</option>
           <option value="repartidor">Repartidor</option>
           <option value="verificador">Verificador (certifica el origen de las cosechas)</option>
         </select>
-      </label>
-      <!-- Oculto por defecto: solo se muestra para roles restringidos (ver ROLES_INVITABLES /
-           actualizarCampoCodigoInvitacion en app.js — mismo array que ya usa el panel admin como
-           fuente de verdad de qué roles necesitan invitación, sin repetir "verificador" acá). -->
-      <label id="registro-codigo-invitacion-wrap" class="hidden">Código de invitación
-        <input type="text" id="registro-codigo-invitacion" placeholder="Pega el código que te compartieron">
-      </label>
-      <button type="submit" class="btn btn-primary btn-block">Crear cuenta</button>
-      <div class="auth-divider"><span>o continúa con</span></div>
-      <!-- Lee el rol y (si aplica) el código de invitación del formulario de arriba al hacer
-           clic — mismo <select>/campo que ya usa manejarRegistro(), ver manejarRegistroGoogle
-           en app.js. -->
-      <div id="google-btn-registro" class="auth-google-btn"></div>
-    </form>
+
+        <!-- Oculto por defecto: solo se muestra para roles restringidos (ver ROLES_INVITABLES /
+             actualizarCampoCodigoInvitacion en app.js — mismo array que ya usa el panel admin como
+             fuente de verdad de qué roles necesitan invitación, sin repetir "verificador" acá). -->
+        <div class="auth-grupo hidden" id="registro-codigo-invitacion-wrap">
+          <label for="registro-codigo-invitacion">Código de invitación</label>
+          <div class="auth-campo">
+            <i class="ti ti-ticket" aria-hidden="true"></i>
+            <input type="text" id="registro-codigo-invitacion" placeholder="Pega el código que te compartieron" autocomplete="off">
+          </div>
+          <small class="auth-ayuda"><i class="ti ti-info-circle" aria-hidden="true"></i> Este rol requiere una invitación; te la comparte un administrador.</small>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block auth-enviar"><span class="auth-enviar-texto">Crear cuenta</span></button>
+        <div class="auth-divider"><span>o continúa con</span></div>
+        <!-- Lee el rol y (si aplica) el código de invitación del formulario de arriba al hacer
+             clic — mismo <select>/campo que ya usa manejarRegistro(), ver manejarRegistroGoogle
+             en app.js. -->
+        <div id="google-btn-registro" class="auth-google-btn"></div>
+        <p class="auth-cambio">¿Ya tienes cuenta? <button type="button" class="auth-cambio-btn" data-cambiar-tab="login">Inicia sesión</button></p>
+      </form>
+    </div>
   </div>
 </div>
 
@@ -944,6 +1032,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=2672dbf7"></script>
+<script src="js/app.js?v=e3dd8876"></script>
 </body>
 </html>

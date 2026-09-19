@@ -961,11 +961,39 @@ function actualizarCampoCodigoInvitacion() {
   wrap.classList.toggle('hidden', !requiere);
   input.required = requiere;
   if (!requiere) input.value = ''; // no arrastrar un código viejo si el usuario cambia de rol
+  sincronizarTarjetasRol();
+}
+
+// Las tarjetas de rol del modal de acceso son radios; el <select id="registro-rol"> (oculto) sigue
+// siendo la fuente de verdad que leen manejarRegistro y manejarRegistroGoogle. Esto las alinea cuando
+// el select cambia por código (abrirRegistroConRol, form.reset()).
+function sincronizarTarjetasRol() {
+  const rol = document.getElementById('registro-rol').value;
+  document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => { radio.checked = radio.value === rol; });
 }
 
 // ============ MODALES ============
-function abrirModal(id) { document.getElementById(id).classList.remove('hidden'); }
-function cerrarModal(id) { document.getElementById(id).classList.add('hidden'); }
+let focoPrevioModalAuth = null; // quién tenía el foco antes de abrir el modal de acceso: se lo devolvemos al cerrarlo
+
+function abrirModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+  if (id === 'modal-auth') {
+    focoPrevioModalAuth = document.activeElement;
+    requestAnimationFrame(() => {
+      enfocarPrimerCampoAuth();
+      ajustarBotonesGoogle();
+    });
+  }
+}
+
+function cerrarModal(id) {
+  document.getElementById(id).classList.add('hidden');
+  if (id === 'modal-auth') {
+    limpiarErroresAuth();
+    if (focoPrevioModalAuth?.isConnected) focoPrevioModalAuth.focus?.();
+    focoPrevioModalAuth = null;
+  }
+}
 
 // ============ LANDING (INVITADOS) ============
 // Compartida con los banners de categoría del hero (cargarBannersCategoriaFijos) — un solo criterio
@@ -5563,10 +5591,72 @@ async function cargarPerfil() {
 }
 
 // ============ AUTENTICACIÓN ============
+// ---- Modal de acceso: errores dentro del formulario, estado de carga, foco y teclado ----
+function mostrarErrorAuth(idAlerta, mensaje) {
+  const alerta = document.getElementById(idAlerta);
+  if (!alerta) return;
+  alerta.innerHTML = `<i class="ti ti-alert-circle" aria-hidden="true"></i><span>${escapeAttr(mensaje)}</span>`;
+  alerta.classList.remove('hidden'); // role="alert": los lectores de pantalla lo anuncian al aparecer
+}
+
+function limpiarErroresAuth() {
+  document.querySelectorAll('.auth-alerta').forEach((alerta) => {
+    alerta.classList.add('hidden');
+    alerta.textContent = '';
+  });
+}
+
+// El mensaje de la API va tal cual si es legible; un JSON crudo (validación de FastAPI) se cambia por
+// un texto genérico.
+function mensajeErrorAuth(err, respaldo) {
+  const mensaje = String(err?.message || '').trim();
+  return mensaje && !/^[[{]/.test(mensaje) ? mensaje : respaldo;
+}
+
+function marcarEnviandoAuth(btn, enviando, textoOcupado) {
+  const texto = btn.querySelector('.auth-enviar-texto');
+  if (enviando) {
+    btn.dataset.texto = texto.textContent;
+    texto.textContent = textoOcupado;
+  } else if (btn.dataset.texto) {
+    texto.textContent = btn.dataset.texto;
+  }
+  btn.disabled = enviando;
+  btn.classList.toggle('cargando', enviando);
+  btn.setAttribute('aria-busy', String(enviando));
+}
+
+function enfocarPrimerCampoAuth() {
+  document.querySelector('#modal-auth .auth-form:not(.hidden) input:not([type="radio"]):not([hidden])')?.focus();
+}
+
+// Escape cierra el modal y Tab no se escapa de él (el foco queda dentro mientras esté abierto).
+function manejarTecladoModalAuth(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cerrarModal('modal-auth');
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const enfocables = [...document.querySelectorAll('#modal-auth button, #modal-auth input, #modal-auth select, #modal-auth textarea, #modal-auth [href]')]
+    .filter((el) => !el.disabled && !el.hidden && el.offsetParent !== null && !(el.type === 'radio' && !el.checked));
+  if (!enfocables.length) return;
+  const primero = enfocables[0];
+  const ultimo = enfocables[enfocables.length - 1];
+  if (e.shiftKey && document.activeElement === primero) {
+    e.preventDefault();
+    ultimo.focus();
+  } else if (!e.shiftKey && document.activeElement === ultimo) {
+    e.preventDefault();
+    primero.focus();
+  }
+}
+
 async function manejarLogin(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
+  limpiarErroresAuth();
+  marcarEnviandoAuth(btn, true, 'Ingresando…');
   try {
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
@@ -5577,16 +5667,18 @@ async function manejarLogin(e) {
     cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Bienvenido de nuevo, ${Estado.nombre}! 🌱`);
   } catch (err) {
-    manejarError(err, 'iniciar sesión');
+    console.error('iniciar sesión', err);
+    mostrarErrorAuth('login-alerta', mensajeErrorAuth(err, 'No se pudo iniciar sesión. Inténtalo de nuevo.'));
   } finally {
-    btn.disabled = false;
+    marcarEnviandoAuth(btn, false);
   }
 }
 
 async function manejarRegistro(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
+  limpiarErroresAuth();
+  marcarEnviandoAuth(btn, true, 'Creando cuenta…');
   try {
     const nombre = document.getElementById('registro-nombre').value.trim();
     const email = document.getElementById('registro-email').value.trim();
@@ -5609,9 +5701,10 @@ async function manejarRegistro(e) {
     cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
-    manejarError(err, 'crear la cuenta');
+    console.error('crear la cuenta', err);
+    mostrarErrorAuth('registro-alerta', mensajeErrorAuth(err, 'No se pudo crear la cuenta. Revisa los datos e inténtalo de nuevo.'));
   } finally {
-    btn.disabled = false;
+    marcarEnviandoAuth(btn, false);
   }
 }
 
@@ -5633,6 +5726,24 @@ function inicializarGoogleSignIn() {
     if (!contenedor) return;
     google.accounts.id.renderButton(contenedor, {
       theme: 'outline', size: 'large', shape: 'rectangular', text: 'continue_with', width: 380,
+    });
+  });
+}
+
+// El botón de Google se dibujó una sola vez al arrancar, con el modal oculto y un ancho fijo de 380px
+// (que en un móvil angosto se sale del formulario). Al abrir el modal o cambiar de pestaña se vuelve
+// a dibujar con el ancho real disponible (Google admite entre 200 y 400px), solo si ese ancho cambió.
+function ajustarBotonesGoogle() {
+  if (!window.google?.accounts?.id) return;
+  ['google-btn-login', 'google-btn-registro'].forEach((id) => {
+    const contenedor = document.getElementById(id);
+    if (!contenedor || !contenedor.offsetWidth) return; // pestaña oculta: se ajusta cuando se muestre
+    const ancho = Math.max(200, Math.min(400, Math.floor(contenedor.clientWidth)));
+    if (contenedor.dataset.ancho === String(ancho)) return;
+    contenedor.dataset.ancho = String(ancho);
+    contenedor.innerHTML = '';
+    google.accounts.id.renderButton(contenedor, {
+      theme: 'outline', size: 'large', shape: 'rectangular', text: 'continue_with', width: ancho,
     });
   });
 }
@@ -5779,7 +5890,7 @@ function inicializarEventos() {
   });
   document.querySelectorAll('.modal-overlay').forEach((overlay) => {
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.classList.add('hidden');
+      if (e.target === overlay) cerrarModal(overlay.id);
     });
   });
 
@@ -5790,6 +5901,34 @@ function inicializarEventos() {
   document.getElementById('form-login').addEventListener('submit', manejarLogin);
   document.getElementById('form-registro').addEventListener('submit', manejarRegistro);
   document.getElementById('registro-rol').addEventListener('change', actualizarCampoCodigoInvitacion);
+
+  // Modal de acceso: mostrar/ocultar contraseña, enlaces entre pestañas, tarjetas de rol y teclado.
+  const modalAuth = document.getElementById('modal-auth');
+  modalAuth.addEventListener('click', (e) => {
+    const ojo = e.target.closest('.auth-ojo');
+    if (ojo) {
+      const campo = document.getElementById(ojo.dataset.ojo);
+      const mostrar = campo.type === 'password';
+      campo.type = mostrar ? 'text' : 'password';
+      ojo.setAttribute('aria-pressed', String(mostrar));
+      ojo.setAttribute('aria-label', mostrar ? 'Ocultar contraseña' : 'Mostrar contraseña');
+      ojo.innerHTML = `<i class="ti ti-eye${mostrar ? '-off' : ''}"></i>`;
+      return;
+    }
+    const cambio = e.target.closest('[data-cambiar-tab]');
+    if (cambio) {
+      cambiarTabAuth(cambio.dataset.cambiarTab);
+      enfocarPrimerCampoAuth();
+    }
+  });
+  document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      document.getElementById('registro-rol').value = radio.value;
+      actualizarCampoCodigoInvitacion();
+    });
+  });
+  modalAuth.addEventListener('input', limpiarErroresAuth);
+  modalAuth.addEventListener('keydown', manejarTecladoModalAuth);
 
   document.getElementById('btn-abrir-busqueda').addEventListener('click', abrirPanelBusqueda);
   document.getElementById('panel-busqueda').addEventListener('click', (e) => {
@@ -6206,9 +6345,17 @@ function inicializarEventos() {
 }
 
 function cambiarTabAuth(tab) {
-  document.querySelectorAll('.auth-tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.auth-tab').forEach((t) => {
+    const activa = t.dataset.tab === tab;
+    t.classList.toggle('active', activa);
+    t.setAttribute('aria-selected', String(activa));
+  });
   document.getElementById('form-login').classList.toggle('hidden', tab !== 'login');
   document.getElementById('form-registro').classList.toggle('hidden', tab !== 'registro');
+  document.querySelector('.modal-auth')?.setAttribute('data-tab', tab); // el panel de marca cambia de mensaje según la pestaña
+  limpiarErroresAuth();
+  // Con el modal ya abierto, el botón de Google del formulario recién mostrado se vuelve a medir.
+  if (!document.getElementById('modal-auth').classList.contains('hidden')) requestAnimationFrame(ajustarBotonesGoogle);
 }
 
 // ============ INICIO ============
