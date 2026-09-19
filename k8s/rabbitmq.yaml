@@ -1,9 +1,28 @@
+# Los mensajes persistentes (delivery_mode=2, ver los rabbitmq_publisher.py) solo sobreviven a un
+# reinicio de RabbitMQ si este guarda sus datos en disco: sin este volumen, /var/lib/rabbitmq vive en
+# el filesystem del contenedor y se pierde en cada reinicio (Docker Desktop, kubelet, un crash),
+# junto con todos los eventos aún sin consumir.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: rabbitmq
 spec:
   replicas: 1
+  # Recreate: RabbitMQ no tolera dos instancias sobre el mismo directorio de datos, y el
+  # RollingUpdate por defecto arrancaría el pod nuevo ANTES de parar el viejo.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: rabbitmq
@@ -23,6 +42,19 @@ spec:
               value: admin
             - name: RABBITMQ_DEFAULT_PASS
               value: admin123
+            # Por defecto el nodo se llama rabbit@<hostname del pod>, y RabbitMQ guarda sus datos en
+            # un directorio con ese nombre: como el hostname cambia cada vez que el Deployment
+            # recrea el pod, el pod nuevo ignoraría las colas y mensajes guardados. Con nombre fijo
+            # (un solo nodo) los encuentra siempre.
+            - name: RABBITMQ_NODENAME
+              value: rabbit@localhost
+          volumeMounts:
+            - name: datos
+              mountPath: /var/lib/rabbitmq
+      volumes:
+        - name: datos
+          persistentVolumeClaim:
+            claimName: rabbitmq-pvc
 ---
 apiVersion: v1
 kind: Service

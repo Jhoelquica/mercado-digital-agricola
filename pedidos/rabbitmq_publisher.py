@@ -16,6 +16,11 @@ def publicar_evento(datos: dict):
     channel.exchange_declare(exchange="eventos_pedidos", exchange_type="fanout", durable=True)
 
     mensaje = json.dumps(datos, default=str)
-    channel.basic_publish(exchange="eventos_pedidos", routing_key="", body=mensaje)
+    # delivery_mode=2 (persistente): sin esto el mensaje solo vive en memoria y se pierde si RabbitMQ
+    # se reinicia con el evento todavía sin consumir, aunque el exchange y las colas sean durables.
+    channel.basic_publish(
+        exchange="eventos_pedidos", routing_key="", body=mensaje,
+        properties=pika.BasicProperties(delivery_mode=2),
+    )
 
     connection.close()
