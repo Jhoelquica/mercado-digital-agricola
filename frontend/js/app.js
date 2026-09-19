@@ -1152,6 +1152,14 @@ function renderNavCategorias() {
       <div class="nav-cat-panel">
         <div class="nav-cat-panel-inner">
           <div class="nav-cat-panel-productos">
+            <div class="nav-cat-cabecera">
+              <span class="nav-cat-cabecera-icono" aria-hidden="true">${ICONOS_CATEGORIA[c]}</span>
+              <div class="nav-cat-cabecera-texto">
+                <strong>${NOMBRE_CATEGORIA[c]}</strong>
+                <span class="nav-cat-conteo" id="nav-cat-conteo-${c}"></span>
+              </div>
+              <button type="button" class="nav-cat-vertodo" data-categoria="${c}">Ver todos <i class="ti ti-arrow-right" aria-hidden="true"></i></button>
+            </div>
             <div class="nav-mega-productos" id="nav-cat-productos-${c}"></div>
           </div>
           <div class="nav-cat-panel-descubre">
@@ -1174,12 +1182,31 @@ function renderSkeletonMega(n = 4) {
   return item.repeat(n);
 }
 
+// Estado del producto para la insignia de su tarjeta: en camino al almacén, agotado o pocas unidades.
+function insigniaProducto(p) {
+  if (p.estado === 'en_transito') return { clase: 'transito', texto: 'En tránsito' };
+  if (p.stock <= 0) return { clase: 'agotado', texto: 'Agotado' };
+  if (p.stock <= 5) return { clase: 'pocas', texto: 'Últimas unidades' };
+  return null;
+}
+
+// Tarjeta compacta de producto: la comparten el menú de categorías (donde el CSS oculta la línea del
+// productor) y el panel de búsqueda (donde se ve completa).
 function renderProductoMega(p) {
+  const insignia = insigniaProducto(p);
+  const tieneCalificacion = p.calificacion_promedio != null && p.total_resenas > 0;
   return `
-    <button type="button" class="nav-mega-producto" data-id="${p.id}">
-      ${renderMediaProducto(p, 'nav-mega-producto-img')}
+    <button type="button" class="nav-mega-producto${insignia?.clase === 'agotado' ? ' es-agotado' : ''}" data-id="${p.id}">
+      <span class="nmp-media">
+        ${renderMediaProducto(p, 'nav-mega-producto-img')}
+        ${insignia ? `<span class="nmp-insignia nmp-insignia--${insignia.clase}">${insignia.texto}</span>` : ''}
+      </span>
       <span class="nav-mega-producto-nombre">${escapeAttr(p.nombre)}</span>
-      <span class="nav-mega-producto-precio">${formatearMoneda(p.precio)}</span>
+      <span class="nmp-productor"><i class="ti ti-plant-2" aria-hidden="true"></i><span>${escapeAttr(p.productor_nombre || 'Productor local')}</span></span>
+      <span class="nmp-fila">
+        <span class="nav-mega-producto-precio">${formatearMoneda(p.precio)} <small>/ ${unidadCorta(p.unidad_medida)}</small></span>
+        ${tieneCalificacion ? `<span class="nmp-rating" aria-label="Calificación ${Number(p.calificacion_promedio).toFixed(1)} de 5"><i class="ti ti-star" aria-hidden="true"></i>${Number(p.calificacion_promedio).toFixed(1)}</span>` : ''}
+      </span>
     </button>`;
 }
 
@@ -1203,9 +1230,14 @@ async function cargarProductosNavCat(categoria) {
   if (!Estado.productos.length) {
     try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin preview si falla */ }
   }
-  const delCategoria = Estado.productos.filter((p) => normalizarCategoria(p.categoria) === categoria).slice(0, 4);
-  navCatCache[categoria] = delCategoria;
-  pintarProductosNavCat(categoria, delCategoria);
+  const todos = Estado.productos.filter((p) => normalizarCategoria(p.categoria) === categoria);
+  // Los mejor calificados primero (mismo criterio de "destacados" del landing), no el orden del catálogo.
+  const destacados = ordenarPorDestacado(todos).slice(0, 4);
+  navCatCache[categoria] = destacados;
+
+  const conteo = document.getElementById(`nav-cat-conteo-${categoria}`);
+  if (conteo) conteo.textContent = `${todos.length} producto${todos.length === 1 ? '' : 's'}`;
+  pintarProductosNavCat(categoria, destacados);
 }
 
 function cerrarTodosLosNavCat(excepto = null) {
@@ -1253,22 +1285,108 @@ function cerrarNavCatConDelay(categoria) {
 
 // ============ PANEL DE BÚSQUEDA (NAVBAR, overlay estilo Samsung) ============
 // Reemplaza a la antigua vista "Catálogo": la categoría ya la resuelve el mega-dropdown de arriba,
-// así que esto solo cubre la búsqueda de texto libre. Reutiliza renderProductoMega (misma tarjeta
-// del mega-dropdown) y el criterio de "destacados" ya usado en el landing.
-async function renderRecomendacionesBusqueda() {
-  if (!Estado.productos.length) {
-    try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos con lo que haya */ }
-  }
-  const destacados = ordenarPorDestacado(Estado.productos).slice(0, 4);
-  pintarResultadosBusqueda(destacados, 'Recomendaciones', 'sparkles');
+// pero acá también se puede filtrar por categoría (chips), ordenar y ver cuántos productos hay.
+// Reutiliza renderProductoMega (misma tarjeta del mega-dropdown) y el criterio de "destacados" ya
+// usado en el landing.
+let busquedaCategoria = '';       // '' = todas las categorías
+let busquedaExplorando = false;   // true = mostrar el catálogo completo en vez de solo las recomendaciones
+let busquedaOrden = 'relevancia';
+let focoPrevioBusqueda = null;    // quién tenía el foco antes de abrir el panel, para devolvérselo al cerrarlo
+
+async function asegurarProductosCargados() {
+  if (Estado.productos.length) return;
+  try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos con lo que haya */ }
 }
 
-function pintarResultadosBusqueda(productos, titulo, icono) {
-  document.getElementById('search-panel-heading').innerHTML = `<i class="ti ti-${icono}"></i> ${titulo}`;
+// Un chip por categoría (las mismas de la barra) más "Todo". Se dibujan una vez; después solo se
+// actualiza cuál está activo, sin reemplazar los botones (así el foco del teclado no se pierde).
+function renderChipsBusqueda() {
+  const chip = (valor, etiqueta, emoji) => `
+    <button type="button" class="search-chip" data-categoria="${valor}" aria-pressed="false">
+      ${emoji ? `<span aria-hidden="true">${emoji}</span> ` : ''}${etiqueta}
+    </button>`;
+  document.getElementById('search-panel-chips').innerHTML =
+    chip('', 'Todo', '') + CATEGORIAS_PRODUCTO.map((c) => chip(c, NOMBRE_CATEGORIA[c], ICONOS_CATEGORIA[c])).join('');
+}
+
+function marcarChipsBusqueda() {
+  const cont = document.getElementById('search-panel-chips');
+  cont.querySelectorAll('.search-chip').forEach((chip) => {
+    const activo = chip.dataset.categoria === busquedaCategoria;
+    chip.classList.toggle('active', activo);
+    chip.setAttribute('aria-pressed', String(activo));
+  });
+  // En móvil las categorías van en una fila desplazable: centra la activa. Se mueve solo esa fila
+  // (scrollIntoView podría desplazar también el panel entero).
+  const activo = cont.querySelector('.search-chip.active');
+  if (activo && cont.scrollWidth > cont.clientWidth) {
+    const izquierda = activo.getBoundingClientRect().left - cont.getBoundingClientRect().left + cont.scrollLeft;
+    cont.scrollLeft = izquierda - (cont.clientWidth - activo.offsetWidth) / 2;
+  }
+}
+
+// Menor = más relevante: primero los que empiezan con lo escrito, luego los que lo contienen en el
+// nombre y al final los que solo coinciden por categoría o productor.
+function puntuarCoincidencia(p, texto) {
+  const nombre = String(p.nombre || '').toLowerCase();
+  if (nombre.startsWith(texto)) return 0;
+  if (nombre.includes(texto)) return 1;
+  return 2;
+}
+
+const ORDENES_BUSQUEDA = {
+  'precio-asc': (a, b) => Number(a.precio) - Number(b.precio),
+  'precio-desc': (a, b) => Number(b.precio) - Number(a.precio),
+  calificacion: (a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0),
+};
+
+function actualizarResultadosBusqueda() {
+  const textoOriginal = document.getElementById('input-busqueda-panel').value.trim();
+  const texto = textoOriginal.toLowerCase();
+
+  let productos = Estado.productos;
+  if (busquedaCategoria) productos = productos.filter((p) => normalizarCategoria(p.categoria) === busquedaCategoria);
+  if (texto) productos = productos.filter((p) => `${p.nombre} ${p.categoria || ''} ${p.productor_nombre || ''}`.toLowerCase().includes(texto));
+
+  let titulo;
+  let icono;
+  if (texto) {
+    titulo = `Resultados para "${textoOriginal}"`;
+    icono = 'search';
+    productos = [...productos].sort((a, b) => puntuarCoincidencia(a, texto) - puntuarCoincidencia(b, texto));
+  } else if (busquedaCategoria) {
+    titulo = `Categoría: ${NOMBRE_CATEGORIA[busquedaCategoria]}`;
+    icono = 'category';
+    productos = ordenarPorDestacado(productos);
+  } else if (busquedaExplorando) {
+    titulo = 'Todo el catálogo';
+    icono = 'building-store';
+    productos = ordenarPorDestacado(productos);
+  } else {
+    titulo = 'Recomendaciones';
+    icono = 'sparkles';
+    productos = ordenarPorDestacado(productos).slice(0, 8);
+  }
+
+  const orden = ORDENES_BUSQUEDA[busquedaOrden];
+  if (orden) productos = [...productos].sort(orden);
+  pintarResultadosBusqueda(productos, titulo, icono, textoOriginal);
+}
+
+function pintarResultadosBusqueda(productos, titulo, icono, termino = '') {
+  document.getElementById('search-panel-heading').innerHTML = `<i class="ti ti-${icono}"></i> ${escapeAttr(titulo)}`;
   const grid = document.getElementById('search-panel-grid');
   const vacio = document.getElementById('search-panel-empty');
+  document.getElementById('search-panel-conteo').textContent = productos.length
+    ? `${productos.length} producto${productos.length === 1 ? '' : 's'}` : '';
+
   if (!productos.length) {
     grid.innerHTML = '';
+    vacio.innerHTML = `
+      <span class="search-vacio-icono"><i class="ti ti-search-off" aria-hidden="true"></i></span>
+      <strong>${termino ? `No encontramos productos para "${escapeAttr(termino)}"` : 'No hay productos en esta categoría por ahora'}</strong>
+      <p>Revisa la ortografía o prueba con otra categoría.</p>
+      <button type="button" class="btn btn-outline" id="btn-ver-todo-catalogo">Ver todo el catálogo</button>`;
     vacio.classList.remove('hidden');
     return;
   }
@@ -1309,33 +1427,46 @@ function registrarBusquedaConDebounce(termino) {
 }
 
 function buscarEnPanel() {
-  const textoOriginal = document.getElementById('input-busqueda-panel').value.trim();
-  const texto = textoOriginal.toLowerCase();
-  if (!texto) {
-    clearTimeout(debounceRegistrarBusqueda);
-    renderRecomendacionesBusqueda();
-    return;
-  }
-  registrarBusquedaConDebounce(texto);
-  const resultados = Estado.productos.filter((p) =>
-    `${p.nombre} ${p.categoria || ''} ${p.productor_nombre || ''}`.toLowerCase().includes(texto));
-  pintarResultadosBusqueda(resultados, `Resultados para "${textoOriginal}"`, 'search');
+  const input = document.getElementById('input-busqueda-panel');
+  document.getElementById('btn-limpiar-busqueda').classList.toggle('hidden', !input.value);
+  if (input.value.trim()) registrarBusquedaConDebounce(input.value.trim().toLowerCase());
+  else clearTimeout(debounceRegistrarBusqueda);
+  actualizarResultadosBusqueda();
 }
 
-function abrirPanelBusqueda() {
+// categoria: abre ya filtrado (los botones "Ver todos" del menú de categorías); explorar: abre con el
+// catálogo completo ("Ver todo el catálogo"). Sin argumentos: recomendaciones, como siempre.
+// OJO: también se usa directo como listener de un click, así que el primer argumento puede ser un
+// evento — solo vale si es un string.
+async function abrirPanelBusqueda(categoria = '', { explorar = false } = {}) {
   cerrarTodosLosNavCat();
   cerrarNavAccount();
   document.getElementById('nav-links').classList.remove('open');
+  focoPrevioBusqueda = document.activeElement;
+
+  busquedaCategoria = typeof categoria === 'string' ? categoria : '';
+  busquedaExplorando = explorar === true || Boolean(busquedaCategoria);
+  busquedaOrden = 'relevancia';
+  document.getElementById('search-panel-orden').value = 'relevancia';
+
   const input = document.getElementById('input-busqueda-panel');
   input.value = '';
-  document.getElementById('panel-busqueda').classList.remove('hidden');
-  renderRecomendacionesBusqueda();
-  cargarBusquedasPopulares();
+  document.getElementById('btn-limpiar-busqueda').classList.add('hidden');
+  const overlay = document.getElementById('panel-busqueda');
+  overlay.classList.remove('hidden');
+  overlay.scrollTop = 0;
+  if (!document.querySelector('#search-panel-chips .search-chip')) renderChipsBusqueda();
+  marcarChipsBusqueda();
   input.focus();
+  cargarBusquedasPopulares();
+  await asegurarProductosCargados();
+  actualizarResultadosBusqueda();
 }
 
 function cerrarPanelBusqueda() {
   document.getElementById('panel-busqueda').classList.add('hidden');
+  if (focoPrevioBusqueda?.isConnected) focoPrevioBusqueda.focus?.();
+  focoPrevioBusqueda = null;
 }
 
 // ============ ÍCONO DE CUENTA (NAVBAR) ============
@@ -5630,15 +5761,11 @@ function enfocarPrimerCampoAuth() {
   document.querySelector('#modal-auth .auth-form:not(.hidden) input:not([type="radio"]):not([hidden])')?.focus();
 }
 
-// Escape cierra el modal y Tab no se escapa de él (el foco queda dentro mientras esté abierto).
-function manejarTecladoModalAuth(e) {
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    cerrarModal('modal-auth');
-    return;
-  }
+// Tab no se escapa de un diálogo abierto: en el último elemento enfocable vuelve al primero, y con
+// Mayús+Tab en el primero salta al último. Lo comparten el modal de acceso y el panel de búsqueda.
+function atraparFoco(e, raiz) {
   if (e.key !== 'Tab') return;
-  const enfocables = [...document.querySelectorAll('#modal-auth button, #modal-auth input, #modal-auth select, #modal-auth textarea, #modal-auth [href]')]
+  const enfocables = [...raiz.querySelectorAll('button, input, select, textarea, [href]')]
     .filter((el) => !el.disabled && !el.hidden && el.offsetParent !== null && !(el.type === 'radio' && !el.checked));
   if (!enfocables.length) return;
   const primero = enfocables[0];
@@ -5650,6 +5777,16 @@ function manejarTecladoModalAuth(e) {
     e.preventDefault();
     primero.focus();
   }
+}
+
+// Escape cierra el modal de acceso y Tab no se escapa de él.
+function manejarTecladoModalAuth(e) {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cerrarModal('modal-auth');
+    return;
+  }
+  atraparFoco(e, document.getElementById('modal-auth'));
 }
 
 async function manejarLogin(e) {
@@ -5839,13 +5976,22 @@ function inicializarEventos() {
       return;
     }
 
+    // "Ver todos" de la cabecera de una categoría: abre el panel de búsqueda ya filtrado a ella.
+    const btnVerTodos = e.target.closest('.nav-cat-vertodo');
+    if (btnVerTodos) {
+      cerrarTodosLosNavCat();
+      document.getElementById('nav-links').classList.remove('open');
+      abrirPanelBusqueda(btnVerTodos.dataset.categoria);
+      return;
+    }
+
     const btnDescubre = e.target.closest('.nav-cat-descubre-link');
     if (btnDescubre) {
       cerrarTodosLosNavCat();
       document.getElementById('nav-links').classList.remove('open');
       const accion = btnDescubre.dataset.accion;
       if (accion === 'buscar') {
-        abrirPanelBusqueda();
+        abrirPanelBusqueda('', { explorar: true });
       } else if (accion === 'blockchain') {
         // No existe una vista dedicada a "cómo funciona" — se ancla a la tarjeta real ya existente
         // en el landing (confirmado con el usuario en vez de inventar un destino).
@@ -5930,7 +6076,7 @@ function inicializarEventos() {
   modalAuth.addEventListener('input', limpiarErroresAuth);
   modalAuth.addEventListener('keydown', manejarTecladoModalAuth);
 
-  document.getElementById('btn-abrir-busqueda').addEventListener('click', abrirPanelBusqueda);
+  document.getElementById('btn-abrir-busqueda').addEventListener('click', () => abrirPanelBusqueda());
   document.getElementById('panel-busqueda').addEventListener('click', (e) => {
     if (e.target.id === 'panel-busqueda') cerrarPanelBusqueda();
   });
@@ -5940,6 +6086,41 @@ function inicializarEventos() {
     }
   });
   document.getElementById('input-busqueda-panel').addEventListener('input', buscarEnPanel);
+  // Teclado del panel de búsqueda: Enter abre el primer resultado, la flecha hacia abajo baja a los
+  // resultados y Tab no se escapa del panel mientras está abierto.
+  document.getElementById('input-busqueda-panel').addEventListener('keydown', (e) => {
+    const primero = document.querySelector('#search-panel-grid .nav-mega-producto');
+    if (e.key === 'Enter' && primero) { e.preventDefault(); primero.click(); }
+    if (e.key === 'ArrowDown' && primero) { e.preventDefault(); primero.focus(); }
+  });
+  document.getElementById('panel-busqueda').addEventListener('keydown', (e) => atraparFoco(e, e.currentTarget));
+  document.getElementById('btn-limpiar-busqueda').addEventListener('click', () => {
+    const input = document.getElementById('input-busqueda-panel');
+    input.value = '';
+    input.focus();
+    buscarEnPanel();
+  });
+  document.getElementById('search-panel-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.search-chip');
+    if (!chip) return;
+    busquedaCategoria = chip.dataset.categoria;
+    busquedaExplorando = true; // elegir una categoría (o "Todo") es explorar el catálogo, no ver recomendaciones
+    marcarChipsBusqueda();
+    actualizarResultadosBusqueda();
+  });
+  document.getElementById('search-panel-orden').addEventListener('change', (e) => {
+    busquedaOrden = e.target.value;
+    actualizarResultadosBusqueda();
+  });
+  document.getElementById('search-panel-empty').addEventListener('click', (e) => {
+    if (!e.target.closest('#btn-ver-todo-catalogo')) return;
+    document.getElementById('input-busqueda-panel').value = '';
+    document.getElementById('btn-limpiar-busqueda').classList.add('hidden');
+    busquedaCategoria = '';
+    busquedaExplorando = true;
+    marcarChipsBusqueda();
+    actualizarResultadosBusqueda();
+  });
   document.getElementById('search-panel-grid').addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.nav-mega-producto');
     if (tarjeta) {

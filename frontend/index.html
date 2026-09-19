@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=6c20bc91">
+<link rel="stylesheet" href="css/style.css?v=5cd0bed2">
 </head>
 <body>
 
@@ -63,21 +63,38 @@
 </header>
 
 <div class="search-overlay hidden" id="panel-busqueda">
-  <div class="search-panel">
-    <button class="modal-close" data-close="panel-busqueda" aria-label="Cerrar búsqueda"><i class="ti ti-x"></i></button>
+  <div class="search-panel" role="dialog" aria-modal="true" aria-label="Buscar productos">
+    <button type="button" class="modal-close" data-close="panel-busqueda" aria-label="Cerrar búsqueda"><i class="ti ti-x"></i></button>
     <div class="search-panel-input-wrap">
-      <i class="ti ti-search search-panel-icon"></i>
-      <input type="text" id="input-busqueda-panel" class="search-panel-input" placeholder="Buscar por producto, categoría o productor..." autocomplete="off">
+      <i class="ti ti-search search-panel-icon" aria-hidden="true"></i>
+      <input type="text" id="input-busqueda-panel" class="search-panel-input" placeholder="Busca papa, quinua, queso o un productor…" aria-label="Buscar por producto, categoría o productor" autocomplete="off" enterkeyhint="search">
+      <button type="button" class="search-panel-limpiar hidden" id="btn-limpiar-busqueda" aria-label="Borrar búsqueda"><i class="ti ti-x"></i></button>
     </div>
+    <!-- Chips de categoría: los dibuja renderChipsBusqueda() (app.js) con las mismas categorías de la barra. -->
+    <div class="search-panel-chips" id="search-panel-chips" role="group" aria-label="Filtrar por categoría"></div>
     <div class="search-panel-body">
       <div class="search-panel-populares hidden" id="search-panel-populares">
         <span class="search-panel-populares-titulo">Búsquedas populares</span>
         <div id="search-panel-populares-lista"></div>
       </div>
       <div class="search-panel-resultados">
-        <h3 class="search-panel-heading" id="search-panel-heading"><i class="ti ti-sparkles"></i> Recomendaciones</h3>
+        <div class="search-panel-barra">
+          <h3 class="search-panel-heading" id="search-panel-heading"><i class="ti ti-sparkles"></i> Recomendaciones</h3>
+          <div class="search-panel-controles">
+            <span class="search-panel-conteo" id="search-panel-conteo" role="status" aria-live="polite"></span>
+            <label class="search-panel-orden">
+              <span class="mp-solo-lectores">Ordenar por</span>
+              <select id="search-panel-orden">
+                <option value="relevancia">Más relevantes</option>
+                <option value="precio-asc">Precio: menor a mayor</option>
+                <option value="precio-desc">Precio: mayor a menor</option>
+                <option value="calificacion">Mejor calificados</option>
+              </select>
+            </label>
+          </div>
+        </div>
         <div class="search-panel-grid" id="search-panel-grid"></div>
-        <p class="empty-state hidden" id="search-panel-empty"><i class="ti ti-search-off"></i> No se encontraron productos.</p>
+        <div class="search-panel-vacio hidden" id="search-panel-empty"></div>
       </div>
     </div>
   </div>
@@ -1032,6 +1049,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=e3dd8876"></script>
+<script src="js/app.js?v=fd5de554"></script>
 </body>
 </html>
