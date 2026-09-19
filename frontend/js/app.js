@@ -603,6 +603,27 @@ function renderSkeletonResumen(n = 3) {
     </div>`;
 }
 
+// Animación de conteo para .resumen-stat-valor (Productor/Repartidor/Admin) — puramente
+// decorativa, respeta prefers-reduced-motion. Solo anima valores enteros simples (los únicos
+// que usan esa clase); si el texto no es un número, se deja tal cual sin romper nada.
+function animarContadoresResumen(contenedor) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  contenedor.querySelectorAll('.resumen-stat-valor').forEach((el) => {
+    const destino = parseInt(el.textContent, 10);
+    if (!Number.isFinite(destino)) return;
+    const duracion = 600;
+    const inicio = performance.now();
+    function paso(ahora) {
+      const avance = Math.min(1, (ahora - inicio) / duracion);
+      const facilitado = 1 - Math.pow(1 - avance, 3); // ease-out cubic
+      el.textContent = Math.round(destino * facilitado);
+      if (avance < 1) requestAnimationFrame(paso);
+      else el.textContent = destino;
+    }
+    requestAnimationFrame(paso);
+  });
+}
+
 // ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
 const MAPA_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
@@ -2161,8 +2182,22 @@ async function usarMiUbicacionDestino() {
   }
 }
 
+// Mismo criterio que valida el backend (pedidos/main.py, PedidoCrear): celular peruano de 9
+// dígitos que empieza con 9. Devuelve el número normalizado o null si no es válido.
+function telefonoContactoValido() {
+  const input = document.getElementById('pedido-telefono');
+  const valor = input.value.replace(/\s+/g, '');
+  if (!/^9\d{8}$/.test(valor)) {
+    toast('Ingresa un teléfono de contacto válido: 9 dígitos, empieza con 9 (ej. 987654321).', 'error');
+    input.focus();
+    return null;
+  }
+  return valor;
+}
+
 function irAPaso2() {
   if (!Estado.carrito.length) return;
+  if (!telefonoContactoValido()) return;
   const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
   document.getElementById('checkout-total-paso2').textContent = formatearMoneda(total);
   irPasoCheckout(2);
@@ -2175,6 +2210,10 @@ function resetearBotonPago() {
 }
 
 async function confirmarYPagar() {
+  if (!telefonoContactoValido()) {
+    irPasoCheckout(1);
+    return;
+  }
   if (!destinoSeleccionado) {
     toast('Selecciona el punto de entrega en el mapa antes de confirmar tu pedido.', 'error');
     resaltarMapaDestino();
@@ -2190,7 +2229,7 @@ async function confirmarYPagar() {
     const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
     const datos = {
       comprador_nombre: Estado.nombre || 'Cliente Chakra Shop',
-      comprador_telefono: document.getElementById('pedido-telefono').value.trim() || null,
+      comprador_telefono: document.getElementById('pedido-telefono').value.replace(/\s+/g, ''),
       destino_latitud: destinoSeleccionado ? String(destinoSeleccionado.lat) : null,
       destino_longitud: destinoSeleccionado ? String(destinoSeleccionado.lng) : null,
       // Sin precio acá — nunca lo tuvo, el backend siempre lo resuelve solo contra Productos
@@ -2793,6 +2832,7 @@ async function iniciarPanelProductor() {
       cargarEntregasDirectasPendientes(),
     ]);
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
+    animarContadoresResumen(document.getElementById('productor-resumen'));
 
     // Secciones dedicadas nuevas (ver activarTabProductor) — reusan Estado.registrosProduccion
     // que las 4 cargas de arriba ya dejaron listo, sin pedir nada nuevo al backend. Se vuelve a
@@ -3744,6 +3784,7 @@ async function cargarGestionEnvios() {
 
   await cargarListaEnvios(miRepartidor.id);
   document.getElementById('repartidor-resumen').innerHTML = renderResumenRepartidor();
+  animarContadoresResumen(document.getElementById('repartidor-resumen'));
   dibujarGraficoEnviosRepartidor();
   iniciarSeguimientoRepartidor();
 }
@@ -3909,8 +3950,15 @@ async function aprobarCosecha(registroId) {
   const card = document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`);
   card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   try {
-    await Api.productores.produccion.verificacion.aprobar(registroId);
-    toast('Cosecha aprobada — el producto ya está en el catálogo del productor, en borrador 🌱');
+    const aprobada = await Api.productores.produccion.verificacion.aprobar(registroId);
+    // certificacion_registrada: el backend deja en la cadena del producto los eventos
+    // cosecha_registrada + certificado_productor (lo que ve quien escanea el QR). Si esa llamada
+    // falló, la aprobación igual se completó — se avisa para que no pase desapercibido.
+    if (aprobada?.certificacion_registrada === false) {
+      toast('Cosecha aprobada, pero el certificado de trazabilidad no se pudo registrar todavía. Avisa a un administrador.', 'error');
+    } else {
+      toast('Cosecha aprobada y certificada — el producto ya está en el catálogo del productor, en borrador 🌱');
+    }
     quitarTarjetaCosechaPendiente(registroId);
   } catch (err) {
     // Acá cae, entre otros, el 502 del circuit breaker si Productos no pudo crear el producto
@@ -4024,7 +4072,73 @@ async function iniciarPanelAdmin() {
   document.getElementById('form-invitacion').reset();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
-  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad()]);
+  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin()]);
+}
+
+// ---- Productores (vista de solo lectura para el Admin) ----
+// Fuente: GET /productores (público) + GET /productos (catálogo público) — este último solo para
+// contar cuántos productos publicados tiene cada uno (el catálogo trae productor_id por producto).
+// No hay endpoint de "productos por productor" para el Admin, y para una demo alcanza con agrupar
+// acá (mismo criterio que cargarProductosEnTransito con las reservas).
+let productoresAdmin = [];
+
+function renderTarjetaProductorAdmin(p, totalProductos, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  const tel = String(p.contacto || '').replace(/\D/g, '');
+  return `
+    <div class="pedido-card productor-admin-card" style="animation-delay:${retraso}ms" data-productor-id="${escapeAttr(p.id)}">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(p.nombre)}</h4>
+        <span class="pill pill-estado ${totalProductos ? 'pill-vigente' : 'pill-default'}"><i class="ti ti-shopping-bag"></i> ${totalProductos} producto${totalProductos === 1 ? '' : 's'}</span>
+      </div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(p.comunidad || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${tel ? `<a class="productor-admin-tel" href="tel:${tel}">${escapeAttr(p.contacto)}</a>` : '—'}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Registrado</span><span class="perfil-dato-valor">${formatearFecha(p.fecha_registro)}</span></div>
+      </div>
+      ${hayCoordenadas(p.latitud, p.longitud)
+        ? `<div id="mapa-productor-admin-${escapeAttr(p.id)}" class="chacra-card-mapa-mini"></div>`
+        : `<div class="mapa-bloque-neutro"><span class="icon"><i class="ti ti-map-pin"></i></span> Sin ubicación registrada.</div>`}
+    </div>`;
+}
+
+function pintarProductoresAdmin() {
+  const termino = (document.getElementById('admin-productores-buscar')?.value || '').trim().toLowerCase();
+  const filtrados = productoresAdmin.filter((item) =>
+    !termino || [item.p.nombre, item.p.comunidad, item.p.contacto].some((v) => String(v || '').toLowerCase().includes(termino)));
+  const cont = document.getElementById('admin-productores-lista');
+  document.getElementById('admin-productores-empty').classList.toggle('hidden', filtrados.length > 0);
+  cont.innerHTML = filtrados.map((item, i) => renderTarjetaProductorAdmin(item.p, item.total, i)).join('');
+  filtrados.forEach((item) => {
+    const p = item.p;
+    if (hayCoordenadas(p.latitud, p.longitud)) {
+      crearMapaSoloLectura(`mapa-productor-admin-${p.id}`, p.latitud, p.longitud, '<i class="ti ti-tractor"></i>', '#2d6a4f', escapeAttr(p.nombre));
+    }
+  });
+}
+
+async function cargarProductoresAdmin() {
+  const cont = document.getElementById('admin-productores-lista');
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    const [productores, productos] = await Promise.all([
+      Api.productores.listar(),
+      Api.productos.listar().catch(() => []),
+    ]);
+    const totalPorProductor = {};
+    productos.forEach((pr) => { totalPorProductor[pr.productor_id] = (totalPorProductor[pr.productor_id] || 0) + 1; });
+    // Más productos publicados primero; a igualdad, alfabético.
+    productoresAdmin = productores
+      .map((p) => ({ p, total: totalPorProductor[p.id] || 0 }))
+      .sort((a, b) => b.total - a.total || String(a.p.nombre).localeCompare(String(b.p.nombre), 'es'));
+    const badge = document.getElementById('admin-productores-total');
+    badge.textContent = productores.length;
+    badge.classList.toggle('hidden', !productores.length);
+    pintarProductoresAdmin();
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los productores');
+  }
 }
 
 // Secciones dedicadas del Panel Admin (Inicio / Invitaciones / Pendientes por Capacidad /
@@ -4072,6 +4186,7 @@ function refrescarResumenAdmin() {
     productosTransitoActualesAdmin.length,
     enviosPorCapacidadActualesAdmin.length,
   );
+  animarContadoresResumen(document.getElementById('admin-resumen'));
 }
 
 async function cargarInvitaciones() {
@@ -4373,7 +4488,20 @@ function renderTarjetaPropuesta(envio, indice = 0) {
     </div>`;
 }
 
-function renderTarjetaEnvio(envio, ruta, indice = 0) {
+// Contacto del comprador para el repartidor: el teléfono ya es obligatorio al pedir (ver
+// PedidoCrear en pedidos/main.py) y este es el único lugar donde alguien lo usa. Los pedidos
+// anteriores a esa validación pueden no tenerlo — en ese caso no se pinta nada.
+function renderContactoComprador(pedido) {
+  const telefono = String(pedido?.comprador_telefono || '').replace(/\D/g, '');
+  if (!pedido || !telefono) return '';
+  return `
+      <div class="envio-contacto">
+        <span class="envio-contacto-nombre"><i class="ti ti-user"></i> ${escapeAttr(pedido.comprador_nombre || 'Comprador')}</span>
+        <a class="btn btn-outline btn-sm envio-contacto-llamar" href="tel:${telefono}"><i class="ti ti-phone"></i> ${telefono}</a>
+      </div>`;
+}
+
+function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
   const activo = ['asignado', 'en_camino'].includes(envio.estado);
   const finalizado = ['entregado', 'cancelado', 'rechazado'].includes(envio.estado);
   const retraso = Math.min(indice, 12) * 35;
@@ -4386,6 +4514,7 @@ function renderTarjetaEnvio(envio, ruta, indice = 0) {
         </div>
         ${badgeEstadoEnvio(envio.estado)}
       </div>
+      ${activo ? renderContactoComprador(pedido) : ''}
       ${activo ? renderBloqueRuta(envio, ruta) : ''}
       ${!finalizado ? `
       <div class="envio-actualizar">
@@ -4466,13 +4595,16 @@ async function cargarListaEnvios(miRepartidorId) {
 
   const activos = mios.filter((e) => ['asignado', 'en_camino'].includes(e.estado));
   const rutasPorEnvio = {};
+  const pedidosPorEnvio = {};
+  // Ruta (seguimiento en mapa) y pedido (nombre + teléfono de contacto del comprador) son
+  // independientes y opcionales: si alguna falla, la tarjeta se pinta igual sin ese bloque.
   await Promise.all(activos.map(async (e) => {
-    try {
-      rutasPorEnvio[e.id] = await Api.transporte.ruta(e.id);
-    } catch { /* seguimiento de ruta no disponible por ahora */ }
+    const [ruta, pedido] = await Promise.allSettled([Api.transporte.ruta(e.id), Api.pedidos.obtener(e.pedido_id)]);
+    if (ruta.status === 'fulfilled') rutasPorEnvio[e.id] = ruta.value;
+    if (pedido.status === 'fulfilled') pedidosPorEnvio[e.id] = pedido.value;
   }));
 
-  cont.innerHTML = mios.map((e, i) => renderTarjetaEnvio(e, rutasPorEnvio[e.id], i)).join('');
+  cont.innerHTML = mios.map((e, i) => renderTarjetaEnvio(e, rutasPorEnvio[e.id], i, pedidosPorEnvio[e.id])).join('');
   activos.forEach((e) => {
     const ruta = rutasPorEnvio[e.id];
     if (ruta?.disponible) iniciarMapaRutaPedido(e.id, ruta);
@@ -5661,6 +5793,8 @@ function inicializarEventos() {
     const btn = e.target.closest('.btn-revocar-invitacion');
     if (btn) revocarInvitacionDesdeLista(btn.dataset.invitacionId);
   });
+  document.getElementById('btn-refrescar-productores').addEventListener('click', cargarProductoresAdmin);
+  document.getElementById('admin-productores-buscar').addEventListener('input', pintarProductoresAdmin);
   document.getElementById('btn-refrescar-productos-transito').addEventListener('click', cargarProductosEnTransito);
   document.getElementById('productos-transito-lista').addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-confirmar-llegada');

@@ -384,8 +384,23 @@ input, select { font-family: inherit; }
   white-space: nowrap;
 }
 .btn:active { transform: scale(0.96); }
-.btn-primary { background: var(--color-primario); color: white; box-shadow: var(--sombra); }
-.btn-primary:hover { background: var(--color-primario-hover); box-shadow: var(--sombra-hover); transform: translateY(-1px); }
+.btn-primary {
+  background: linear-gradient(135deg, var(--color-primario-hover), var(--color-primario));
+  color: white; box-shadow: var(--sombra);
+  position: relative; overflow: hidden;
+}
+.btn-primary:hover { background: linear-gradient(135deg, var(--color-primario-hover), var(--color-primario-hover)); box-shadow: var(--sombra-hover); transform: translateY(-1px); }
+/* Barrido de brillo al pasar el mouse — puramente decorativo, un solo elemento ::after
+   reusado por todos los .btn-primary del sitio, sin JS ni markup adicional por botón. */
+.btn-primary::after {
+  content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%;
+  background: linear-gradient(120deg, transparent, rgba(255,255,255,0.25), transparent);
+  transform: skewX(-20deg);
+  transition: left 0.55s ease;
+  pointer-events: none;
+}
+.btn-primary:hover::after { left: 130%; }
+@media (prefers-reduced-motion: reduce) { .btn-primary::after { display: none; } }
 .btn-outline { background: white; color: var(--color-primario); border: 1.5px solid var(--color-borde); }
 .btn-outline:hover { background: color-mix(in srgb, var(--color-borde) 14%, transparent); transform: translateY(-1px); }
 .btn-ghost { background: transparent; color: var(--texto-suave); }
@@ -951,6 +966,26 @@ input, select { font-family: inherit; }
 }
 .section-header.inner { margin-top: 32px; }
 
+/* Cabecera con foto — pedido explícito de "imágenes" para los 4 paneles operativos
+   (Productor/Repartidor/Admin/Verificador). Reusa la MISMA foto que ya usa el hero de la
+   landing (hero-valle-andino), no una fototeca nueva — con degradado de la paleta de marca
+   encima para que el texto/ícono queden legibles en blanco. */
+.panel-header-hero {
+  background-image: linear-gradient(120deg, color-mix(in srgb, var(--color-primario) 92%, transparent), color-mix(in srgb, var(--color-primario-hover) 78%, transparent)), url('../assets/hero-valle-andino-1600.jpg');
+  background-size: cover;
+  background-position: center 65%;
+  border-radius: var(--radio-lg, 22px);
+  padding: 26px 28px;
+  margin-bottom: 22px;
+  color: white;
+}
+.panel-header-hero h2 { color: white; }
+.panel-header-hero .btn-outline { background: rgba(255,255,255,0.92); }
+
+@media (max-width: 560px) {
+  .panel-header-hero { padding: 20px 18px; border-radius: 16px; }
+}
+
 .btn-sm { padding: 6px 12px; font-size: 0.8rem; margin-left: auto; }
 
 /* ---------- GRID / CARDS ---------- */
@@ -1305,6 +1340,26 @@ input, select { font-family: inherit; }
 }
 #pedidos-list .pedido-card {
   animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+/* Mismo hover que #envios-list, sumado ahora a las listas de tarjetas de Productor/Admin/
+   Verificador (pedido explícito de más "dinamismo" en esos 4 paneles) — explícito por
+   contenedor, no un .pedido-card global, para no tocar Mis Pedidos (ver comentario de arriba). */
+#entregas-directas-lista .pedido-card,
+#invitaciones-lista .pedido-card,
+#pendientes-capacidad-lista .pedido-card,
+#productos-transito-lista .pedido-card,
+#verificador-cosechas-lista .pedido-card,
+#verificador-historial-lista .pedido-card {
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+#entregas-directas-lista .pedido-card:hover,
+#invitaciones-lista .pedido-card:hover,
+#pendientes-capacidad-lista .pedido-card:hover,
+#productos-transito-lista .pedido-card:hover,
+#verificador-cosechas-lista .pedido-card:hover,
+#verificador-historial-lista .pedido-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--sombra-hover);
 }
 .pedido-card-header {
   display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 10px;
@@ -3017,3 +3072,122 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 @media (max-width: 560px) {
   .productor-tab-btn { padding: 10px 14px; font-size: 0.85rem; }
 }
+
+/* ============================================================================
+   AMPLIACIÓN — detalle de producto y flujo de pago (checkout). Pedido explícito: "muy
+   pequeño, hazlo un poco más grande". Va al final a propósito: gana por orden sobre las reglas
+   base de arriba sin tener que tocarlas una por una. El widget de Culqi (paso de tarjeta) es un
+   iframe de terceros — su tamaño lo fija Culqi, no esta hoja de estilos.
+   ============================================================================ */
+
+/* ---------- Detalle de producto ---------- */
+.detalle-info-columna { max-width: 980px; font-size: 1.05rem; }
+.detalle-hero, .detalle-galeria-item { height: 62vh; min-height: 340px; }
+.detalle-sticky-header { padding: 18px 28px; }
+.detalle-sticky-nombre { font-size: 1.15rem; max-width: 380px; }
+.detalle-sticky-precio { font-size: 1.15rem; }
+.detalle-tab { padding: 11px 22px; font-size: 1rem; }
+
+.detalle-encabezado .pill { font-size: 0.95rem; padding: 8px 16px; }
+.btn-favorito-detalle { padding: 10px 20px; font-size: 0.95rem; }
+.detalle-cabecera { gap: 12px; margin: 22px 0 28px; }
+.detalle-cabecera h2 { font-size: clamp(1.9rem, 3.2vw, 2.6rem); line-height: 1.15; }
+.detalle-precio-row .product-price { font-size: clamp(1.8rem, 3vw, 2.4rem); }
+.detalle-precio-row .product-stock { font-size: 1rem; }
+
+.detalle-unidad-label { font-size: 1rem; gap: 8px; }
+.detalle-unidad-label select { padding: 15px 16px; font-size: 1.05rem; border-radius: 12px; }
+
+.detalle-accion-principal { gap: 18px; margin-bottom: 32px; }
+.detalle-accion-principal .btn { padding: 18px 28px; font-size: 1.15rem; }
+.detalle-cantidad-selector { padding: 8px 14px; gap: 16px; }
+.detalle-cantidad-selector button { width: 46px; height: 46px; font-size: 1.4rem; }
+.detalle-cantidad-selector span { min-width: 32px; font-size: 1.3rem; }
+
+.detalle-productor-card { padding: 26px 28px; }
+.detalle-productor-icono { width: 64px; height: 64px; font-size: 1.9rem; }
+.detalle-productor-nombre { font-size: 1.35rem; }
+.detalle-productor-label { font-size: 0.8rem; }
+.detalle-productor-ubicacion { font-size: 0.98rem; }
+.detalle-productor-card .mapa-mini { height: 260px; }
+.detalle-seccion-titulo { font-size: 1.45rem; }
+.detalle-seccion-bloque { margin-top: 44px; padding-top: 32px; }
+
+/* ---------- Checkout: resumen → pago → confirmación ---------- */
+.modal-checkout { max-width: 780px; padding: 40px 44px; }
+.modal-checkout .modal-close { top: 20px; right: 20px; width: 40px; height: 40px; font-size: 1.1rem; }
+
+.checkout-stepper { gap: 10px; margin-bottom: 36px; }
+.checkout-step-circle { width: 46px; height: 46px; font-size: 1.05rem; }
+.checkout-step-label { font-size: 0.95rem; }
+.checkout-step-line { width: 90px; height: 3px; margin-top: 22px; }
+
+.checkout-panel h3 { display: flex; align-items: center; gap: 10px; font-size: 1.65rem; margin-bottom: 8px; }
+.checkout-panel .muted { font-size: 1.02rem; }
+.checkout-panel > label { display: flex; flex-direction: column; gap: 8px; font-size: 1rem; font-weight: 600; margin-bottom: 18px; }
+.checkout-panel > label input { padding: 15px 18px; font-size: 1.1rem; border-radius: 12px; border: 1.5px solid var(--color-borde); }
+.checkout-panel > label input:focus { outline: none; border-color: var(--color-primario); }
+.checkout-panel > label small { display: block; margin-top: 6px; font-weight: 400; font-size: 0.88rem; line-height: 1.4; }
+
+.modal-checkout .carrito-items { gap: 14px; max-height: 340px; }
+.modal-checkout .carrito-item { padding: 16px 18px; gap: 16px; border-radius: 14px; }
+.modal-checkout .carrito-item-info strong { font-size: 1.12rem; }
+.modal-checkout .carrito-item-info span { font-size: 0.92rem; }
+.modal-checkout .carrito-qty button { width: 38px; height: 38px; font-size: 1.15rem; }
+.modal-checkout .carrito-qty span { font-size: 1.15rem; min-width: 30px; }
+.modal-checkout .carrito-remove { font-size: 1rem; }
+.modal-checkout .carrito-total { padding: 20px 0; font-size: 1.2rem; margin-bottom: 22px; }
+.modal-checkout .carrito-total strong { font-size: 1.9rem; }
+.modal-checkout .mapa-seleccionable { height: 320px; }
+.modal-checkout .mapa-selector-label { font-size: 1rem; }
+
+.metodo-pago-grid { gap: 18px; margin: 24px 0; }
+.metodo-pago-card { padding: 34px 18px; border-radius: 18px; gap: 12px; }
+.metodo-pago-icon { font-size: 3rem; }
+.metodo-pago-nombre { font-size: 1.2rem; }
+
+.checkout-actions { gap: 16px; margin-top: 26px; }
+.checkout-actions .btn, .checkout-panel > .btn-block { padding: 17px 24px; font-size: 1.1rem; }
+
+.checkout-confirmacion .icono-grande { font-size: 5.5rem; }
+.checkout-confirmacion h3 { justify-content: center; font-size: 2rem; }
+.checkout-confirmacion p { font-size: 1.1rem; }
+
+@media (max-width: 560px) {
+  .detalle-hero, .detalle-galeria-item { height: 44vh; min-height: 260px; }
+  .detalle-sticky-header { padding: 14px 16px; }
+  .detalle-sticky-nombre { max-width: 150px; font-size: 1rem; }
+  .detalle-info-columna { font-size: 1rem; }
+  .detalle-accion-principal .btn { padding: 16px 20px; font-size: 1.05rem; }
+  .modal-checkout { padding: 28px 20px; }
+  .checkout-step-line { width: 36px; }
+  .checkout-step-circle { width: 40px; height: 40px; }
+  .checkout-step-line { margin-top: 19px; }
+  .checkout-panel h3 { font-size: 1.35rem; }
+  .metodo-pago-card { padding: 24px 12px; }
+}
+
+/* Contacto del comprador dentro de la tarjeta de envío (Gestionar Envíos). */
+.envio-contacto {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--color-superficie); border: 1px solid var(--color-borde);
+  border-radius: 12px; padding: 10px 14px; margin-top: 12px;
+}
+.envio-contacto-nombre { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--color-primario); }
+.envio-contacto-llamar { margin-left: 0; text-decoration: none; font-size: 0.95rem; padding: 8px 16px; }
+
+/* ---------- Admin > Productores ---------- */
+.admin-buscador {
+  display: flex; align-items: center; gap: 10px;
+  background: white; border: 1.5px solid var(--color-borde); border-radius: 14px;
+  padding: 4px 16px; margin-bottom: 22px; max-width: 560px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.admin-buscador:focus-within { border-color: var(--color-primario); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primario) 15%, transparent); }
+.admin-buscador i { color: var(--color-secundario); font-size: 1.2rem; }
+.admin-buscador input { flex: 1; border: none; outline: none; background: transparent; padding: 12px 0; font-size: 1rem; font-family: inherit; }
+.productor-admin-card .chacra-card-mapa-mini { margin-top: 12px; }
+.productor-admin-tel { color: var(--color-primario); font-weight: 700; text-decoration: none; }
+.productor-admin-tel:hover { text-decoration: underline; }
+#admin-productores-lista .pedido-card { transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1); }
+#admin-productores-lista .pedido-card:hover { transform: translateY(-4px); box-shadow: var(--sombra-hover); }

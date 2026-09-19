@@ -302,7 +302,7 @@
 
   <!-- PANEL PRODUCTOR -->
   <section id="view-panel-productor" class="view">
-    <div class="section-header">
+    <div class="section-header panel-header-hero">
       <h2><i class="ti ti-tractor"></i> Panel del Productor</h2>
     </div>
 
@@ -459,7 +459,7 @@
 
   <!-- GESTIONAR ENVÍOS (solo repartidor) -->
   <section id="view-gestion-envios" class="view">
-    <div class="section-header">
+    <div class="section-header panel-header-hero">
       <h2><i class="ti ti-truck"></i> Gestionar Envíos</h2>
       <button class="btn btn-outline" id="btn-refrescar-envios">↻ Refrescar</button>
     </div>
@@ -527,7 +527,7 @@
        (cosechas pendientes, aprobar/rechazar, historial real) van en entregas separadas.
        Vista SPA como panel-productor / gestion-envios; guard en iniciarPanelVerificador(). -->
   <section id="view-panel-verificador" class="view">
-    <div class="section-header">
+    <div class="section-header panel-header-hero">
       <h2><i class="ti ti-shield-check"></i> Panel Verificador</h2>
     </div>
 
@@ -568,13 +568,14 @@
        panel-verificador (mismo patrón: sección propia + nav-link condicional + guard en
        iniciarPanelAdmin()). -->
   <section id="view-panel-admin" class="view">
-    <div class="section-header">
+    <div class="section-header panel-header-hero">
       <h2><i class="ti ti-shield-lock"></i> Panel Admin</h2>
     </div>
 
     <div class="admin-shell">
       <nav class="admin-tabs" role="tablist">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio"><i class="ti ti-home"></i> Inicio</button>
+        <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
         <button type="button" class="admin-tab-btn" data-admintab="invitaciones"><i class="ti ti-ticket"></i> Invitaciones</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
         <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
@@ -587,6 +588,23 @@
             <h4><i class="ti ti-chart-pie"></i> Invitaciones por estado</h4>
             <canvas id="grafico-invitaciones-estado"></canvas>
           </div>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="productores">
+        <div class="section-header inner">
+          <h3><i class="ti ti-tractor"></i> Productores registrados <span id="admin-productores-total" class="badge-contador hidden">0</span></h3>
+          <button class="btn btn-outline" id="btn-refrescar-productores">↻ Refrescar</button>
+        </div>
+        <div class="admin-buscador">
+          <i class="ti ti-search"></i>
+          <input type="search" id="admin-productores-buscar" placeholder="Buscar por nombre, comunidad o contacto…" autocomplete="off">
+        </div>
+        <div id="admin-productores-lista" class="grid-admin"></div>
+        <div id="admin-productores-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-tractor"></i></span>
+          <p><strong>No hay productores para mostrar</strong></p>
+          <p class="muted">Cuando alguien complete su perfil de productor, aparece acá.</p>
         </div>
       </div>
 
@@ -761,8 +779,9 @@
         <span>Total estimado</span>
         <strong id="carrito-total">S/ 0.00</strong>
       </div>
-      <label>Teléfono de contacto (opcional)
-        <input type="text" id="pedido-telefono" placeholder="Ej. 987654321">
+      <label>Teléfono de contacto (obligatorio)
+        <input type="tel" id="pedido-telefono" inputmode="numeric" maxlength="9" pattern="9[0-9]{8}" placeholder="Ej. 987654321" autocomplete="tel-national" required>
+        <small class="muted" style="margin:0;">Lo usa el repartidor para coordinar la entrega contigo. 9 dígitos, empieza con 9.</small>
       </label>
       <div class="mapa-selector-bloque">
         <div class="mapa-selector-label">
