@@ -11,12 +11,15 @@ from fastapi.responses import StreamingResponse
 
 from database import Base, engine, SessionLocal
 import models
+from migraciones import asegurar_indice_unico_de_bloques
 from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
 from auth import requiere_rol
 from fastapi import Header
 import json
 
 Base.metadata.create_all(bind=engine)
+# create_all() no agrega restricciones a una tabla que ya existe: ver migraciones.py.
+asegurar_indice_unico_de_bloques(engine)
 
 app = FastAPI()
 

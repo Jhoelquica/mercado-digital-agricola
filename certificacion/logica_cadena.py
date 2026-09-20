@@ -5,6 +5,7 @@ import math
 import httpx
 import os
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 HASH_GENESIS = "0" * 64
 
@@ -56,35 +57,58 @@ def calcular_hash(indice, producto_id, evento, datos, fecha, hash_anterior) -> s
     return hashlib.sha256(contenido.encode()).hexdigest()
 
 
-def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificador_id: str = None) -> models.Bloque:
-    ultimo = db.query(models.Bloque).filter(
+INTENTOS_CREAR_BLOQUE = 5
+
+
+def _ultimo_bloque(db, producto_id):
+    return db.query(models.Bloque).filter(
         models.Bloque.producto_id == producto_id
     ).order_by(models.Bloque.indice.desc()).first()
 
-    if ultimo:
-        indice = ultimo.indice + 1
-        hash_anterior = ultimo.hash_actual
-    else:
-        indice = 0
-        hash_anterior = HASH_GENESIS
 
-    fecha = datetime.utcnow()
-    hash_actual = calcular_hash(indice, producto_id, evento, datos, str(fecha), hash_anterior)
+def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificador_id: str = None) -> models.Bloque:
+    """Agrega un bloque al final de la cadena del producto.
 
-    nuevo_bloque = models.Bloque(
-        producto_id=producto_id,
-        indice=indice,
-        evento=evento,
-        datos=datos,
-        fecha=fecha,
-        hash_anterior=hash_anterior,
-        hash_actual=hash_actual,
-        verificador_id=verificador_id,
-    )
-    db.add(nuevo_bloque)
-    db.commit()
-    db.refresh(nuevo_bloque)
-    return nuevo_bloque
+    La base exige un índice único por producto (uq_bloque_producto_indice): si otro proceso agregó un
+    bloque entre que se leyó el último y se insertó este, el insert falla, se vuelve a leer el último
+    (ahora el del otro proceso) y se reintenta con el índice siguiente. Sin esto, dos escrituras
+    simultáneas dejaban dos bloques con el mismo índice y la cadena bifurcada."""
+    for intento in range(1, INTENTOS_CREAR_BLOQUE + 1):
+        ultimo = _ultimo_bloque(db, producto_id)
+
+        if ultimo:
+            indice = ultimo.indice + 1
+            hash_anterior = ultimo.hash_actual
+        else:
+            indice = 0
+            hash_anterior = HASH_GENESIS
+
+        fecha = datetime.utcnow()
+        hash_actual = calcular_hash(indice, producto_id, evento, datos, str(fecha), hash_anterior)
+
+        nuevo_bloque = models.Bloque(
+            producto_id=producto_id,
+            indice=indice,
+            evento=evento,
+            datos=datos,
+            fecha=fecha,
+            hash_anterior=hash_anterior,
+            hash_actual=hash_actual,
+            verificador_id=verificador_id,
+        )
+        db.add(nuevo_bloque)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            if intento == INTENTOS_CREAR_BLOQUE:
+                raise HTTPException(
+                    status_code=409,
+                    detail="No se pudo registrar el evento porque se estaba registrando otro a la vez. Intenta de nuevo.",
+                )
+            continue
+        db.refresh(nuevo_bloque)
+        return nuevo_bloque
 
 def verificar_cadena(db, producto_id: str) -> dict:
     bloques = db.query(models.Bloque).filter(

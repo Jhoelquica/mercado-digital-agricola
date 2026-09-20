@@ -1,11 +1,15 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
 class Bloque(Base):
     __tablename__ = "bloques"
+    # Un solo bloque por posición dentro de la cadena de cada producto: sin esto, dos escrituras
+    # simultáneas dejaban dos bloques con el mismo índice y verificar_cadena marcaba la cadena como
+    # alterada. En una base ya creada la restricción la agrega migraciones.py al arrancar.
+    __table_args__ = (UniqueConstraint("producto_id", "indice", name="uq_bloque_producto_indice"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     verificador_id = Column(UUID(as_uuid=True), nullable=True)
