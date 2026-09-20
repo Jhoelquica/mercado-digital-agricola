@@ -180,6 +180,7 @@ def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: d
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
+    estaba_pendiente = pago.estado == "pendiente"
 
     resultado = crear_cargo(
         token=datos.token_culqi,
@@ -216,7 +217,11 @@ def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: d
     else:
         pago.estado = "rechazado"
         db.commit()
-        compensar_stock(pago.items)
+        # El stock se devuelve UNA sola vez, al pasar de "pendiente" a "rechazado". La interfaz deja reintentar
+        # el pago de un pedido rechazado, y antes cada intento fallido volvía a reponer las cantidades: con
+        # una tarjeta mala repetida, el stock del producto subía sin límite.
+        if estaba_pendiente:
+            compensar_stock(pago.items)
         publicar_evento({
             "evento": "pago_rechazado",
             "pedido_id": str(pago.pedido_id),

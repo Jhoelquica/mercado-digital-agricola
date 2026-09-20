@@ -568,3 +568,31 @@ def test_ver_un_pago_si_pedidos_no_responde_da_503_y_si_no_existe_el_pedido_404(
 def test_un_id_de_pedido_mal_formado_falla_422_no_500():
     resp = client.get("/pagos/no-es-un-uuid", headers=CON_TOKEN)
     assert resp.status_code == 422
+
+
+# ============ Un pago rechazado repone el stock una sola vez ============
+
+def _mockear_cargo_rechazado(monkeypatch):
+    monkeypatch.setattr(main, "crear_cargo", lambda **kwargs: {"status_code": 400, "data": {"user_message": "Tarjeta rechazada"}})
+
+
+def test_reintentar_un_pago_rechazado_no_repone_el_stock_otra_vez(monkeypatch):
+    """La interfaz deja reintentar el pago de un pedido rechazado. Antes cada intento fallido volvía a reponer
+    las cantidades en Productos: con una tarjeta mala repetida, el stock del producto subía sin límite."""
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 20.0}])
+    _mockear_cargo_rechazado(monkeypatch)
+    compensar = MagicMock()
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    primero = _procesar(pago)
+    segundo = _procesar(pago)
+    tercero = _procesar(pago)
+
+    assert (primero.status_code, segundo.status_code, tercero.status_code) == (402, 402, 402)
+    compensar.assert_called_once()
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).first().estado == "rechazado"
+    finally:
+        db.close()
