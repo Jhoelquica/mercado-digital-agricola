@@ -5765,6 +5765,7 @@ function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
             <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required>
           </label>
         </div>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
         <div class="form-confirmar-entrega-acciones">
           <button type="button" class="btn btn-ghost btn-sm btn-cancelar-entrega">Cancelar</button>
           <button type="submit" class="btn btn-primary btn-sm">Confirmar entrega</button>
@@ -5860,6 +5861,7 @@ async function confirmarEntregaConPin(form) {
   if (!archivoFoto) return;
 
   const btnConfirmar = form.querySelector('button[type="submit"]');
+  form.querySelector('.form-entrega-mensaje')?.classList.add('hidden');
   form.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
   btnConfirmar.textContent = 'Confirmando...';
   try {
@@ -5868,9 +5870,29 @@ async function confirmarEntregaConPin(form) {
     if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
   } catch (err) {
     manejarError(err, 'confirmar la entrega');
-    form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
-    btnConfirmar.textContent = 'Confirmar entrega';
+    mostrarMensajeEntrega(form, err.message, err.status === 429 ? 'bloqueado' : 'error');
+    if (err.status === 429) {
+      // Envío bloqueado por demasiados códigos incorrectos: el formulario queda deshabilitado (con el
+      // mensaje a la vista, no solo en un aviso que desaparece) hasta que pase el bloqueo. Al volver a
+      // abrir la lista se vuelve a intentar y el servidor dice cuántos minutos faltan.
+      btnConfirmar.textContent = 'Bloqueado temporalmente';
+      form.querySelector('.btn-cancelar-entrega').disabled = false;
+    } else {
+      form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+      btnConfirmar.textContent = 'Confirmar entrega';
+      form.pin.value = '';
+      form.pin.focus();
+    }
   }
+}
+
+// Mensaje de error fijo dentro del formulario de confirmar entrega (role="alert": se anuncia solo).
+function mostrarMensajeEntrega(form, mensaje, tipo) {
+  const el = form.querySelector('.form-entrega-mensaje');
+  if (!el) return;
+  const icono = tipo === 'bloqueado' ? 'ti-lock' : 'ti-alert-circle';
+  el.className = `form-entrega-mensaje ${tipo}`;
+  el.innerHTML = `<i class="ti ${icono}"></i><span>${escapeAttr(mensaje)}</span>`;
 }
 
 async function responderPropuesta(envioId, accion) {

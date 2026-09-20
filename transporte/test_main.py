@@ -1161,8 +1161,13 @@ def test_tras_cinco_codigos_incorrectos_el_envio_se_bloquea_aunque_el_sexto_sea_
     """Sin tope, un repartidor podía probar los 10.000 códigos y marcar la entrega sin ver al comprador."""
     envio = _preparar_entrega_con_pin(monkeypatch)
 
-    for _ in range(main.MAX_INTENTOS_PIN):
+    for _ in range(main.MAX_INTENTOS_PIN - 1):
         assert _confirmar_entrega(envio.id, pin="0000").status_code == 400
+
+    # el intento que agota el tope ya responde 429, no el siguiente
+    ultimo = _confirmar_entrega(envio.id, pin="0000")
+    assert ultimo.status_code == 429, ultimo.text
+    assert f"se bloqueó {main.BLOQUEO_PIN_MINUTOS} minutos" in ultimo.json()["detail"]
 
     bloqueado = _confirmar_entrega(envio.id, pin="7391")  # el código correcto, pero ya está bloqueado
     assert bloqueado.status_code == 429, bloqueado.text
@@ -1175,7 +1180,7 @@ def test_tras_cinco_codigos_incorrectos_el_envio_se_bloquea_aunque_el_sexto_sea_
 def test_el_bloqueo_del_pin_se_levanta_solo_y_una_entrega_correcta_reinicia_el_contador(monkeypatch):
     envio = _preparar_entrega_con_pin(monkeypatch)
     for _ in range(main.MAX_INTENTOS_PIN):
-        _confirmar_entrega(envio.id, pin="0000")
+        assert _confirmar_entrega(envio.id, pin="0000").status_code in (400, 429)
 
     # pasan los minutos de bloqueo
     db = main.SessionLocal()
@@ -1201,3 +1206,14 @@ def test_menos_de_cinco_fallos_no_bloquean_y_el_codigo_correcto_sigue_funcionand
 
     assert _envio_recargado(envio.id).pin_bloqueado_hasta is None
     assert _confirmar_entrega(envio.id, pin="7391").status_code == 200
+
+
+def test_cada_codigo_incorrecto_dice_cuantos_intentos_quedan(monkeypatch):
+    """El repartidor tiene que saber, antes de que ocurra, que el envío se va a bloquear."""
+    envio = _preparar_entrega_con_pin(monkeypatch)
+
+    detalles = [_confirmar_entrega(envio.id, pin="0000").json()["detail"] for _ in range(main.MAX_INTENTOS_PIN - 1)]
+
+    assert "Te quedan 4 intentos" in detalles[0]
+    assert "Te quedan 1 intento antes" in detalles[-1]  # singular en el último
+    assert all("no coincide" in d for d in detalles)

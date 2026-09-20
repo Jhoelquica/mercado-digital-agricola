@@ -518,11 +518,22 @@ def confirmar_entrega(
         )
     if not envio.pin_entrega or not hmac.compare_digest(pin.encode("utf-8"), envio.pin_entrega.encode("utf-8")):
         envio.pin_intentos_fallidos = (envio.pin_intentos_fallidos or 0) + 1
-        if envio.pin_intentos_fallidos >= MAX_INTENTOS_PIN:
+        restantes = MAX_INTENTOS_PIN - envio.pin_intentos_fallidos
+        if restantes <= 0:
+            # El intento que agota el tope ya responde 429: el repartidor lo ve al momento, no en el
+            # siguiente intento.
             envio.pin_bloqueado_hasta = ahora + timedelta(minutes=BLOQUEO_PIN_MINUTOS)
             envio.pin_intentos_fallidos = 0
+            db.commit()
+            raise HTTPException(
+                status_code=429,
+                detail=f"Demasiados códigos incorrectos. Por seguridad, la confirmación de este envío se bloqueó {BLOQUEO_PIN_MINUTOS} minutos.",
+            )
         db.commit()
-        raise HTTPException(status_code=400, detail="El código no coincide con el que le dieron al comprador.")
+        raise HTTPException(
+            status_code=400,
+            detail=f"El código no coincide con el que le dieron al comprador. Te quedan {restantes} intento{'s' if restantes != 1 else ''} antes de que se bloquee.",
+        )
 
     try:
         url_foto = subir_foto_entrega(foto.file, foto.content_type)

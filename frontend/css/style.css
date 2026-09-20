@@ -1506,6 +1506,13 @@ input, select { font-family: inherit; }
 }
 .form-confirmar-entrega-campos input[type="file"] { font-size: 0.82rem; }
 .form-confirmar-entrega-acciones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.form-entrega-mensaje {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
+  font-size: 0.85rem; font-weight: 600; line-height: 1.4;
+  color: #b3401f; background: #fdf1ec; border: 1px solid #f1c9bb;
+}
+.form-entrega-mensaje i { font-size: 1.1rem; line-height: 1.2; flex: none; }
+.form-entrega-mensaje.bloqueado { color: var(--acento-cosecha-texto); background: var(--acento-cosecha-suave); border-color: #ecd9ae; }
 
 /* ---------- Confirmar llegada al almacén (cantidad recibida + observaciones) ----------
    Mismo lenguaje que "Confirmar entrega": borde punteado arriba, etiquetas visibles y campos de 44px.
