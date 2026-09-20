@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import os
 import json
+import uuid
 import httpx
 import logging
 
@@ -19,8 +20,9 @@ logging.basicConfig(level=logging.INFO)
 
 from database import Base, engine, SessionLocal
 import models
-from auth import verificar_token, requiere_rol
+from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
+from fastapi.security import HTTPAuthorizationCredentials
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
@@ -30,6 +32,7 @@ from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 logger = logging.getLogger("pagos.main")
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # para llamar a reponer_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pago (DELETE de limpieza QA)
@@ -106,8 +109,35 @@ def listar_pagos_sin_liquidaciones(db: Session = Depends(get_db), usuario: dict 
     antes de /productos/{producto_id} en Productos)."""
     return pagos_sin_liquidaciones(db)
 
+def _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario: dict, token: str):
+    """Solo el comprador dueño del pedido (y el admin, que ni llega acá) puede ver su pago. Se le pregunta
+    a Pedidos con el mismo token del usuario: si responde 200 se compara el usuario_id del pedido con el del
+    token (un repartidor o un productor también reciben 200 ahí, pero no son el comprador)."""
+    try:
+        with httpx.Client() as client:
+            resp = client.get(
+                f"{PEDIDOS_URL}/pedidos/{pedido_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servicio de Pedidos no disponible")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
+    if resp.status_code != 200 or str(resp.json().get("usuario_id")) != str(usuario.get("sub")):
+        raise HTTPException(status_code=403, detail="No tienes permiso para ver este pago")
+
+
+# Antes era público: bastaba conocer el id de un pedido para leer el monto y el cargo de Culqi de su pago.
 @app.get("/pagos/{pedido_id}")
-def obtener_pago(pedido_id: str, db: Session = Depends(get_db)):
+def obtener_pago(
+    pedido_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(verificar_token),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    if usuario.get("rol") != "admin":
+        _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario, credenciales.credentials)
     pago = db.query(models.Pago).filter(models.Pago.pedido_id == pedido_id).first()
     if not pago:
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")

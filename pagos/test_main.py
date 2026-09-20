@@ -435,3 +435,136 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+# ============ GET /pagos/{pedido_id}: ya no es público ============
+
+class _ClientePedidosFalso:
+    """Reemplaza httpx.Client() para la pregunta a Pedidos "¿de quién es este pedido?": guarda la
+    (url, kwargs) de cada llamada y responde un pedido fijo, sin tocar la red."""
+    def __init__(self, llamadas, status=200, usuario_id=None, roto=False):
+        self._llamadas, self._status, self._usuario_id, self._roto = llamadas, status, usuario_id, roto
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        self._llamadas.append((url, kwargs))
+        if self._roto:
+            raise main.httpx.RequestError("boom", request=None)
+        respuesta = MagicMock()
+        respuesta.status_code = self._status
+        respuesta.json.return_value = {"usuario_id": self._usuario_id}
+        return respuesta
+
+
+def _mockear_pedidos(monkeypatch, **kwargs):
+    llamadas = []
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClientePedidosFalso(llamadas, **kwargs))
+    return llamadas
+
+
+def _como(sub, rol):
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(sub), "rol": rol}
+
+
+CON_TOKEN = {"Authorization": "Bearer token-de-prueba"}
+
+
+def _restaurar_sesion_por_defecto():
+    _como(uuid.uuid4(), "comprador")
+
+
+def _pago_de_prueba():
+    return _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 20.0}])
+
+
+def test_un_pago_no_se_puede_leer_sin_sesion():
+    pago = _pago_de_prueba()
+    guardado = main.app.dependency_overrides.pop(verificar_token)
+    try:
+        resp = client.get(f"/pagos/{pago.pedido_id}")
+        assert resp.status_code in (401, 403)
+        assert "monto" not in resp.text
+    finally:
+        main.app.dependency_overrides[verificar_token] = guardado
+
+
+def test_el_comprador_dueno_del_pedido_ve_su_pago(monkeypatch):
+    comprador = uuid.uuid4()
+    pago = _pago_de_prueba()
+    llamadas = _mockear_pedidos(monkeypatch, usuario_id=str(comprador))
+    _como(comprador, "comprador")
+    try:
+        resp = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN)
+    finally:
+        _restaurar_sesion_por_defecto()
+
+    assert resp.status_code == 200, resp.text
+    assert float(resp.json()["monto"]) == 40.0
+    # le pregunta a Pedidos con el mismo token del usuario (no con un secreto de servicio)
+    url, kwargs = llamadas[0]
+    assert url.endswith(f"/pedidos/{pago.pedido_id}")
+    assert kwargs["headers"] == {"Authorization": "Bearer token-de-prueba"}
+
+
+def test_un_comprador_ajeno_no_ve_el_pago(monkeypatch):
+    pago = _pago_de_prueba()
+    _mockear_pedidos(monkeypatch, usuario_id=str(uuid.uuid4()))  # el pedido es de otro comprador
+    _como(uuid.uuid4(), "comprador")
+    try:
+        resp = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN)
+    finally:
+        _restaurar_sesion_por_defecto()
+
+    assert resp.status_code == 403, resp.text
+    assert "monto" not in resp.text
+
+
+def test_un_repartidor_o_productor_tampoco_ve_el_pago_aunque_puedan_leer_el_pedido(monkeypatch):
+    pago = _pago_de_prueba()
+    _mockear_pedidos(monkeypatch, usuario_id=str(uuid.uuid4()))  # Pedidos les responde 200 (rol con acceso)
+    try:
+        for rol in ("repartidor", "productor", "verificador"):
+            _como(uuid.uuid4(), rol)
+            resp = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN)
+            assert resp.status_code == 403, (rol, resp.text)
+    finally:
+        _restaurar_sesion_por_defecto()
+
+
+def test_el_admin_ve_cualquier_pago_sin_preguntarle_a_pedidos(monkeypatch):
+    pago = _pago_de_prueba()
+    llamadas = _mockear_pedidos(monkeypatch, usuario_id=str(uuid.uuid4()))
+    _como(uuid.uuid4(), "admin")
+    try:
+        resp = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN)
+    finally:
+        _restaurar_sesion_por_defecto()
+
+    assert resp.status_code == 200, resp.text
+    assert llamadas == []
+
+
+def test_ver_un_pago_si_pedidos_no_responde_da_503_y_si_no_existe_el_pedido_404(monkeypatch):
+    pago = _pago_de_prueba()
+    try:
+        _como(uuid.uuid4(), "comprador")
+        _mockear_pedidos(monkeypatch, roto=True)
+        assert client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN).status_code == 503
+
+        _mockear_pedidos(monkeypatch, status=404)
+        assert client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN).status_code == 404
+
+        _mockear_pedidos(monkeypatch, status=401)  # Pedidos no acepta el token
+        assert client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN).status_code == 403
+    finally:
+        _restaurar_sesion_por_defecto()
+
+
+def test_un_id_de_pedido_mal_formado_falla_422_no_500():
+    resp = client.get("/pagos/no-es-un-uuid", headers=CON_TOKEN)
+    assert resp.status_code == 422
