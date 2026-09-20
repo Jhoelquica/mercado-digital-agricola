@@ -77,6 +77,18 @@ function formatearFecha(fechaStr) {
   return d.toLocaleString('es-PE', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+// Para fechas de calendario que escribe el usuario (siembra, cosecha): la API las guarda a
+// medianoche, así que mostrar la hora ("12:00 a. m.") solo mete ruido. Una cadena sin hora
+// ("2026-04-13") se lee como fecha local: con new Date() directo se interpretaría en UTC y en Perú
+// saldría el día anterior.
+function formatearFechaCorta(fechaStr) {
+  if (!fechaStr) return '—';
+  const sinHora = /^(\d{4})-(\d{2})-(\d{2})$/.exec(fechaStr);
+  const d = sinHora ? new Date(Number(sinHora[1]), Number(sinHora[2]) - 1, Number(sinHora[3])) : new Date(fechaStr);
+  if (isNaN(d)) return fechaStr;
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 // Para timestamps generados por el servidor (datetime.utcnow, que el JSON entrega sin zona): sin la Z
 // el navegador los lee como hora local y los muestra corridos (en Perú, +5 h — a veces el día
 // siguiente). NO usar con fechas que escribe el usuario (siembra, cosecha): esas son fechas de
@@ -94,7 +106,8 @@ function formatearFechaServidor(fechaStr) {
 
 function formatearMoneda(valor) {
   const n = Number(valor) || 0;
-  return `S/ ${n.toFixed(2)}`;
+  const monto = Math.abs(n).toFixed(2);
+  return `${n < 0 && Number(monto) !== 0 ? '-' : ''}S/ ${monto}`; // "-S/ 199.46", no "S/ -199.46"
 }
 
 function hashCorto(hash) {
@@ -4715,10 +4728,14 @@ function renderResumenProductor() {
   const misProductosDisponibles = (Estado.misProductos || []).filter((p) => p.estado === 'disponible');
   const chacras = Estado.chacras || [];
   const registros = Estado.registrosProduccion || [];
-  const enCurso = registros.filter((r) => r.estado !== 'cosechado');
+  // Máquina de estados de un registro (ver productores/models.py): planificado ->
+  // pendiente_verificacion -> aprobado | rechazado. "En curso" es todo lo que aún no terminó
+  // (aprobado ya está cosechado y verificado; "cosechado" es un valor legado equivalente).
+  const enCurso = registros.filter((r) => r.estado !== 'aprobado' && r.estado !== 'cosechado');
 
-  const proximaCosecha = enCurso
-    .filter((r) => r.fecha_cosecha_estimada)
+  // La próxima cosecha solo puede ser de una siembra que todavía no se cosechó.
+  const proximaCosecha = registros
+    .filter((r) => r.estado === 'planificado' && r.fecha_cosecha_estimada)
     .sort((a, b) => new Date(a.fecha_cosecha_estimada) - new Date(b.fecha_cosecha_estimada))[0];
 
   const entregasDirectas = Estado.entregasDirectasPendientes || [];
@@ -4751,7 +4768,7 @@ function renderResumenProductor() {
       ${proximaCosecha ? `
       <div class="resumen-destacado">
         <i class="ti ti-calendar-event"></i>
-        Próxima cosecha estimada: <strong>${escapeAttr(proximaCosecha.cultivo)}</strong> el ${formatearFecha(proximaCosecha.fecha_cosecha_estimada)}
+        Próxima cosecha estimada: <strong>${escapeAttr(proximaCosecha.cultivo)}</strong> el ${formatearFechaCorta(proximaCosecha.fecha_cosecha_estimada)}
       </div>` : ''}
       ${entregasDirectas.length ? `
       <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-entregas-directas">
@@ -5024,7 +5041,7 @@ function renderTarjetaCosechaPendiente(r, indice = 0) {
         <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(r.productor_nombre || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(r.chacra_codigo || '—')}${r.chacra_nombre ? ' — ' + escapeAttr(r.chacra_nombre) : ''}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Cosecha real</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_cosecha_real)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Cosecha real</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_cosecha_real)}</span></div>
       </div>
       <div class="verificador-cosecha-acciones">
         <button type="button" class="btn btn-primary btn-sm btn-aprobar-cosecha" data-registro-id="${escapeAttr(r.id)}"><i class="ti ti-check"></i> Aprobar</button>
@@ -6137,7 +6154,7 @@ function renderTablaUltimasSiembras(registros) {
     const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
     return `
       <tr>
-        <td>${formatearFecha(r.fecha_siembra)}</td>
+        <td>${formatearFechaCorta(r.fecha_siembra)}</td>
         <td>${escapeAttr(r.cultivo)}</td>
         <td>${chacra ? escapeAttr(chacra.codigo) : '—'}</td>
         <td><span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span></td>
@@ -6240,8 +6257,8 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     <div class="perfil-datos-grid">
       <div class="perfil-dato"><span class="perfil-dato-label">Parcelas</span><span class="perfil-dato-valor">${r.numero_parcelas}</span></div>
       <div class="perfil-dato"><span class="perfil-dato-label">Ubicación</span><span class="perfil-dato-valor">${escapeAttr(r.ubicacion_cosecha || '—')}</span></div>
-      <div class="perfil-dato"><span class="perfil-dato-label">Siembra</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_siembra)}</span></div>
-      <div class="perfil-dato"><span class="perfil-dato-label">Cosecha estimada</span><span class="perfil-dato-valor">${formatearFecha(r.fecha_cosecha_estimada)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Siembra</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_siembra)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">Cosecha estimada</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_cosecha_estimada)}</span></div>
       <div class="perfil-dato"><span class="perfil-dato-label">Costo total</span><span class="perfil-dato-valor">${formatearMoneda(r.costo_total)}</span></div>
     </div>`;
 
