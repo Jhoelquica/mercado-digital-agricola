@@ -262,6 +262,67 @@ def test_cambiar_ubicacion_almacen_afecta_costo_de_pedidos_futuros():
     assert float(segundo.json()["costo_envio"]) == 12.00
 
 
+# ============ Cotización del envío (GET /pedidos/costo-envio) ============
+
+def _cotizar(lat, lon):
+    return client.get("/pedidos/costo-envio", params={"latitud": lat, "longitud": lon})
+
+
+def test_cotizar_envio_devuelve_el_costo_de_cada_tramo():
+    _fijar_almacen(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA)
+    for km, costo_esperado in [(5, 5.00), (17, 8.00), (35, 12.00)]:
+        lat, lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, km)
+        resp = _cotizar(lat, lon)
+        assert resp.status_code == 200, resp.text
+        cuerpo = resp.json()
+        assert cuerpo["costo_envio"] == costo_esperado
+        assert abs(cuerpo["distancia_km"] - km) < 0.5
+
+
+def test_cotizar_envio_coincide_con_el_costo_que_guarda_crear_pedido():
+    _fijar_almacen(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA)
+    lat, lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 17)
+    cotizado = _cotizar(lat, lon).json()["costo_envio"]
+
+    payload = _payload({"destino_latitud": lat, "destino_longitud": lon}, precio_item=50.0)
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        creado = client.post("/pedidos", json=payload)
+
+    assert creado.status_code == 200, creado.text
+    assert float(creado.json()["costo_envio"]) == cotizado
+
+
+def test_cotizar_envio_no_requiere_autenticacion():
+    # Sin ninguna sobreescritura de auth explícita, igual que /configuracion/almacen: si el
+    # endpoint exigiera un token, TestClient recibiría 401/403 en vez de 200. Además prueba que la
+    # ruta se declaró antes de /pedidos/{pedido_id} (si no, "costo-envio" se leería como un id).
+    resp = _cotizar(DESTINO_DENTRO_AYACUCHO["destino_latitud"], DESTINO_DENTRO_AYACUCHO["destino_longitud"])
+    assert resp.status_code == 200, resp.text
+    assert "costo_envio" in resp.json() and "distancia_km" in resp.json()
+
+
+def test_cotizar_envio_fuera_de_ayacucho_falla_400():
+    resp = _cotizar(DESTINO_FUERA_AYACUCHO["destino_latitud"], DESTINO_FUERA_AYACUCHO["destino_longitud"])
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "El destino del pedido debe estar dentro de la región de Ayacucho."
+
+
+def test_cotizar_envio_sin_coordenadas_falla_422():
+    assert client.get("/pedidos/costo-envio").status_code == 422
+    assert client.get("/pedidos/costo-envio", params={"latitud": -13.15}).status_code == 422
+
+
+def test_cotizar_envio_sigue_la_ubicacion_actual_del_almacen():
+    _fijar_almacen(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA)
+    lat, lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 5)
+    assert _cotizar(lat, lon).json()["costo_envio"] == 5.00
+
+    lejano_lat, lejano_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 40)
+    _fijar_almacen(lejano_lat, lejano_lon)
+    assert _cotizar(lat, lon).json()["costo_envio"] == 12.00
+    _fijar_almacen(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA)
+
+
 def test_actualizar_almacen_sin_rol_admin_falla_403():
     # El override de módulo (comprador) sigue vigente acá — ningún test anterior lo deja
     # cambiado (_fijar_almacen siempre restaura "comprador" en su finally).

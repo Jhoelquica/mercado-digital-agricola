@@ -148,6 +148,32 @@ def get_db():
     finally:
         db.close()
 
+# Validación fail-fast: el destino de entrega debe caer dentro de la región de Ayacucho. La usan
+# crear_pedido y la cotización del envío, para que ambas rechacen exactamente lo mismo.
+def validar_destino_en_region(latitud: float, longitud: float):
+    if not (AYACUCHO_LAT_MIN <= latitud <= AYACUCHO_LAT_MAX) or \
+       not (AYACUCHO_LNG_MIN <= longitud <= AYACUCHO_LNG_MAX):
+        raise HTTPException(
+            status_code=400,
+            detail="El destino del pedido debe estar dentro de la región de Ayacucho.",
+        )
+
+# Distancia y costo de envío desde la ubicación ACTUAL del almacén (nunca hardcodeada: un cambio del
+# Admin en /configuracion/almacen afecta a los pedidos nuevos sin tocar código). Es la única
+# fuente del costo: la usan crear_pedido (que lo guarda) y la cotización (que lo muestra antes de
+# pagar), así que lo que ve el comprador es siempre lo que se le cobra.
+def calcular_envio_a_destino(db: Session, latitud: float, longitud: float):
+    almacen = db.query(models.ConfiguracionSistema).filter(
+        models.ConfiguracionSistema.clave == CLAVE_ALMACEN
+    ).first()
+    if not almacen:
+        # No debería pasar nunca en la práctica (sembrar_configuracion_almacen corre al arrancar
+        # cada réplica), pero sin esto se devolvería/guardaría un costo de envío inventado.
+        raise HTTPException(status_code=503, detail="No se pudo calcular el costo de envío: falta la configuración del almacén")
+
+    distancia_km = calcular_distancia_km(almacen.valor_latitud, almacen.valor_longitud, latitud, longitud)
+    return distancia_km, calcular_costo_envio(distancia_km)
+
 class ItemPedido(BaseModel):
     producto_id: str
     cantidad: int
@@ -263,29 +289,11 @@ def actualizar_umbral_pedido_grande(
 def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
     # Validación 1 (fail-fast, antes de tocar la base de datos): el destino de entrega debe caer
     # dentro de la región de Ayacucho.
-    if not (AYACUCHO_LAT_MIN <= datos.destino_latitud <= AYACUCHO_LAT_MAX) or \
-       not (AYACUCHO_LNG_MIN <= datos.destino_longitud <= AYACUCHO_LNG_MAX):
-        raise HTTPException(
-            status_code=400,
-            detail="El destino del pedido debe estar dentro de la región de Ayacucho.",
-        )
+    validar_destino_en_region(datos.destino_latitud, datos.destino_longitud)
 
     # El costo de envío se calcula acá (no depende de los items, así que no hace falta esperar a
-    # validarlos) contra la ubicación ACTUAL del almacén — nunca hardcodeada, así un cambio del
-    # Admin en /configuracion/almacen afecta a los pedidos nuevos sin tocar código.
-    almacen = db.query(models.ConfiguracionSistema).filter(
-        models.ConfiguracionSistema.clave == CLAVE_ALMACEN
-    ).first()
-    if not almacen:
-        # No debería pasar nunca en la práctica (sembrar_configuracion_almacen corre al arrancar
-        # cada réplica), pero sin esto un pedido se crearía con un costo de envío inventado.
-        raise HTTPException(status_code=503, detail="No se pudo calcular el costo de envío: falta la configuración del almacén")
-
-    distancia_envio_km = calcular_distancia_km(
-        almacen.valor_latitud, almacen.valor_longitud,
-        datos.destino_latitud, datos.destino_longitud,
-    )
-    costo_envio = calcular_costo_envio(distancia_envio_km)
+    # validarlos) — ver calcular_envio_a_destino.
+    _, costo_envio = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
 
     items_validados = []
 
@@ -420,6 +428,15 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         ],
     })
     return nuevo_pedido
+
+# Público a propósito (mismo criterio que /configuracion/almacen): el comprador ve cuánto le va a
+# costar el envío ANTES de pagar, sin crear todavía el pedido. DEBE declararse antes de
+# /pedidos/{pedido_id}: si no, esa ruta con parámetro se comería "costo-envio" como si fuera un id.
+@app.get("/pedidos/costo-envio")
+def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(get_db)):
+    validar_destino_en_region(latitud, longitud)
+    distancia_km, costo_envio = calcular_envio_a_destino(db, latitud, longitud)
+    return {"costo_envio": costo_envio, "distancia_km": distancia_km}
 
 @app.get("/pedidos/{pedido_id}")
 def obtener_pedido(pedido_id: str, db: Session = Depends(get_db)):
