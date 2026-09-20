@@ -14,7 +14,8 @@ Cubre:
   falla si el mismo comprador ya reservó ese producto
 - GET /productos/{id}/reservas: admin o el productor dueño del producto
 - PATCH /productos/{id}: edita categoria y/o precio de un borrador propio; falla si no es el
-  dueño, si el producto ya está publicado, o si el precio es <= 0
+  dueño, si el producto ya está publicado, o si el precio es <= 0; la categoría debe ser una de
+  las 8 (se normaliza a minúsculas sin tildes) y cualquier otra cosa -> 422
 - POST /productos ya no existe (405): un producto solo nace de una cosecha aprobada
 - POST /productos/interno/crear-desde-cosecha: sin el secreto correcto -> 403,
   con el secreto correcto crea el borrador esperado (sin precio/categoría, no visible en el
@@ -817,3 +818,52 @@ def test_post_productos_ya_no_existe():
         headers=HEADERS_AUTH,
     )
     assert resp.status_code == 405
+
+
+def test_actualizar_categoria_no_valida_falla_422(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador", precio=None, categoria=None)
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    for basura in ['"><img src=x onerror=alert(1)>', "Hortaliza", "<b>fruta</b>", ""]:
+        resp = client.patch(f"/productos/{producto.id}", json={"categoria": basura}, headers=HEADERS_AUTH)
+        assert resp.status_code == 422, (basura, resp.text)
+
+    # y el borrador no cambió
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Producto).get(producto.id).categoria is None
+    finally:
+        db.close()
+
+
+def test_actualizar_categoria_se_normaliza_a_minusculas_sin_tildes(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador", precio=None, categoria=None)
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    for escrito, canonico in [("Tubérculo ", "tuberculo"), ("LÁCTEO", "lacteo"), ("Fruta", "fruta")]:
+        resp = client.patch(f"/productos/{producto.id}", json={"categoria": escrito}, headers=HEADERS_AUTH)
+        assert resp.status_code == 200, (escrito, resp.text)
+        assert resp.json()["categoria"] == canonico
+
+
+def test_publicar_con_categoria_no_valida_falla_400(monkeypatch):
+    """Defensa en profundidad: aunque un borrador llegara con una categoría sucia (dato viejo o
+    escrito directo en la base), no se puede publicar."""
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(
+        productor_id=productor_id, estado="borrador", precio=10.0, categoria='"><img src=x onerror=alert(1)>',
+    )
+    _agregar_imagen(producto.id)
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    resp = client.patch(f"/productos/{producto.id}/publicar", headers=HEADERS_AUTH)
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Elige una categoría válida antes de publicar."

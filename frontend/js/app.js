@@ -1536,11 +1536,11 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
-          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${escapeAttr(nombreCategoria(p.categoria))}</span>
           ${tieneCalificacion ? `<span class="product-rating"><span class="rating-stars"><i class="ti ti-star estrella-llena"></i></span> ${Number(p.calificacion_promedio).toFixed(1)} <span class="rating-count-mini">(${p.total_resenas})</span></span>` : ''}
         </div>
-        <h4>${p.nombre}</h4>
-        <span class="product-productor"><i class="ti ti-plant-2"></i> ${p.productor_nombre || 'Productor local'}</span>
+        <h4>${escapeAttr(p.nombre)}</h4>
+        <span class="product-productor"><i class="ti ti-plant-2"></i> ${escapeAttr(p.productor_nombre || 'Productor local')}</span>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
         <span class="product-stock ${stockBajo ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
         ${clickable ? `
@@ -1944,7 +1944,7 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
   return `
     <aside class="detalle-compra" id="detalle-compra" aria-label="Comprar ${escapeAttr(p.nombre)}">
       <div class="detalle-encabezado">
-        <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+        <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${escapeAttr(nombreCategoria(p.categoria))}</span>
         <button type="button" class="btn-favorito btn-favorito-detalle ${favorito ? 'activo' : ''}" data-id="${p.id}" aria-label="Favorito" aria-pressed="${favorito}">
           <i class="ti ti-heart"></i> ${favorito ? 'Guardado' : 'Guardar'}
         </button>
@@ -4170,9 +4170,9 @@ function renderTarjetaProductorProducto(p, indice) {
       </div>
       <div class="product-card-body">
         <div class="product-card-top">
-          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${nombreCategoria(p.categoria)}</span>
+          <span class="pill pill-categoria">${iconoCategoria(p.categoria)} ${escapeAttr(nombreCategoria(p.categoria))}</span>
         </div>
-        <h4>${p.nombre}</h4>
+        <h4>${escapeAttr(p.nombre)}</h4>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
         <span class="product-stock ${stockBajo || sinStock ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
         <div class="stock-barra"><div class="stock-barra-fill ${stockBajo || sinStock ? 'low' : ''}" style="width:${Math.min(100, (Number(p.stock) / 50) * 100)}%"></div></div>

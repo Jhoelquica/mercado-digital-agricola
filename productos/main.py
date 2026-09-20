@@ -1,10 +1,11 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import unicodedata
 import httpx
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from auth import verificar_token, requiere_rol, security
@@ -45,6 +46,21 @@ PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 # (app.js) — si se agrega una unidad acá, hay que agregarla ahí también.
 UNIDADES_VALIDAS = ["kg", "unidad", "saco", "arroba", "litro"]
 
+# Las 8 categorías del catálogo (mismo conjunto que CATEGORIAS_PRODUCTO en frontend/js/app.js — si
+# cambia en un lado, hay que cambiarlo en el otro). Antes la categoría era texto libre: cualquier
+# cosa que un productor escribiera terminaba en la página pública del producto.
+CATEGORIAS_VALIDAS = ("fruta", "verdura", "tuberculo", "grano", "legumbre", "lacteo", "huevo", "hierba")
+
+
+def normalizar_categoria(valor):
+    """Devuelve la categoría canónica (minúsculas, sin tildes) o None si no es una de las 8."""
+    if valor is None:
+        return None
+    sin_tildes = "".join(
+        c for c in unicodedata.normalize("NFKD", str(valor).strip().lower()) if not unicodedata.combining(c)
+    )
+    return sin_tildes if sin_tildes in CATEGORIAS_VALIDAS else None
+
 def get_db():
     db = SessionLocal()
     try:
@@ -67,6 +83,16 @@ class ProductoCrearDesdeCosecha(BaseModel):
 class ProductoActualizar(BaseModel):
     categoria: str | None = None
     precio: float | None = None
+
+    @field_validator("categoria")
+    @classmethod
+    def _categoria_valida(cls, valor):
+        if valor is None:
+            return None
+        canonica = normalizar_categoria(valor)
+        if canonica is None:
+            raise ValueError("Categoría no válida. Elige una de: " + ", ".join(CATEGORIAS_VALIDAS))
+        return canonica
 
 class ImagenCrear(BaseModel):
     url: str
@@ -797,6 +823,8 @@ def publicar_producto(
         raise HTTPException(status_code=400, detail="Agrega un precio mayor a 0 antes de publicar.")
     if not producto.categoria or not producto.categoria.strip():
         raise HTTPException(status_code=400, detail="Elige una categoría antes de publicar.")
+    if normalizar_categoria(producto.categoria) is None:
+        raise HTTPException(status_code=400, detail="Elige una categoría válida antes de publicar.")
     tiene_imagen = db.query(models.ProductoImagen).filter(
         models.ProductoImagen.producto_id == producto_id
     ).first() is not None
