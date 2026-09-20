@@ -1,5 +1,6 @@
 import os
 import httpx
+from pedidos_interno import cabecera_pedidos
 
 import models
 
@@ -8,14 +9,15 @@ PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 
 
 def _obtener_pedido(pedido_id):
-    """GET /pedidos/{id} (Transporte ya consume este mismo endpoint en obtener_ruta y en
-    logica_liquidacion_repartidor/logica_certificacion) envuelto en su propio try/except: una
+    """GET /pedidos/interno/{id} (la ruta interna con secreto de servicio: GET /pedidos/{id} ya no es
+    público; Transporte la usa también en obtener_ruta y en logica_liquidacion_repartidor/
+    logica_certificacion) envuelto en su propio try/except: una
     falla acá (Pedidos caído, timeout, 404) degrada a "no se pudo determinar" — devuelve None, y
     quien llama lo trata exactamente igual que un pedido con peso_total_kg desconocido (ver
     proponer_envio_a_repartidor). Nunca debe bloquear ni hacer fallar la asignación del envío."""
     try:
         with httpx.Client() as client:
-            resp = client.get(f"{PEDIDOS_URL}/pedidos/{pedido_id}", timeout=5)
+            resp = client.get(f"{PEDIDOS_URL}/pedidos/interno/{pedido_id}", headers=cabecera_pedidos(), timeout=5)
     except httpx.RequestError:
         return None
     if resp.status_code != 200:

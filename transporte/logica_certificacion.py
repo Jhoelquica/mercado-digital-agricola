@@ -19,6 +19,7 @@ tipo de límite aceptado que el cargo de Culqi no reversible en Pagos.
 """
 import os
 import httpx
+from pedidos_interno import cabecera_pedidos
 from sqlalchemy.orm import Session
 
 import models
@@ -41,7 +42,7 @@ def notificar_entrega_a_certificacion(db: Session, envio: models.Envio):
     con ella. No hace su propio commit: quien llama decide cuándo (mismo criterio que
     notificar_liquidacion_repartidor)."""
     with httpx.Client() as client:
-        resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/{envio.pedido_id}", timeout=5)
+        resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/interno/{envio.pedido_id}", headers=cabecera_pedidos(), timeout=5)
         resp_pedido.raise_for_status()
         pedido = resp_pedido.json()
 

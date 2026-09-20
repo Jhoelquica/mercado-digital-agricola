@@ -9,6 +9,7 @@ pagos/logica_liquidaciones.py).
 """
 import os
 import httpx
+from pedidos_interno import cabecera_pedidos
 from sqlalchemy.orm import Session
 
 import models
@@ -21,9 +22,9 @@ TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO")
 
 def notificar_liquidacion_repartidor(db: Session, envio: models.Envio):
     """Avisa a Pagos que este Envio "entregado" ya puede liquidarse al repartidor — resuelve
-    costo_envio consultando GET /pedidos/{pedido_id} (Transporte ya consume ese mismo endpoint
-    para obtener_ruta) y se lo pasa a POST /pagos/interno/liquidar-repartidor junto con
-    pedido_id/repartidor_id.
+    costo_envio consultando GET /pedidos/interno/{pedido_id} (la ruta interna de Pedidos, con secreto
+    de servicio; Transporte la consume también en obtener_ruta) y se lo pasa a
+    POST /pagos/interno/liquidar-repartidor junto con pedido_id/repartidor_id.
 
     La llaman dos lugares: main.actualizar_estado (justo después de notificar a Certificación,
     en su propio try/except) y reintento_liquidacion_repartidor.reintentar_liquidaciones_repartidor_pendientes
@@ -33,7 +34,7 @@ def notificar_liquidacion_repartidor(db: Session, envio: models.Envio):
     llama decide cuándo (mismo criterio que crear_liquidaciones en Pagos).
     """
     with httpx.Client() as client:
-        resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/{envio.pedido_id}", timeout=5)
+        resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/interno/{envio.pedido_id}", headers=cabecera_pedidos(), timeout=5)
         resp_pedido.raise_for_status()
         costo_envio = resp_pedido.json()["costo_envio"]
 

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -51,6 +51,11 @@ class Envio(Base):
     foto_entrega_url = Column(String, nullable=True)
     entrega_latitud = Column(String, nullable=True)
     entrega_longitud = Column(String, nullable=True)
+    # Intentos fallidos con el PIN (ver confirmar_entrega en main.py): tras MAX_INTENTOS_PIN el envío se
+    # bloquea unos minutos, para que probar los 10.000 códigos posibles no sea viable. Null = 0 / sin
+    # bloqueo. Nullable a propósito: migraciones.py agrega solas las columnas nuevas que aceptan NULL.
+    pin_intentos_fallidos = Column(Integer, nullable=True)
+    pin_bloqueado_hasta = Column(DateTime, nullable=True)
 
 class Repartidor(Base):
     __tablename__ = "repartidores"

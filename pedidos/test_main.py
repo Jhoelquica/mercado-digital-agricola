@@ -40,6 +40,10 @@ DESTINO_DENTRO_AYACUCHO = {"destino_latitud": -13.1588, "destino_longitud": -74.
 DESTINO_FUERA_AYACUCHO = {"destino_latitud": -12.0464, "destino_longitud": -77.0428}
 
 
+def _como(sub: str, rol: str):
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": sub, "rol": rol}
+
+
 def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg", equivalencia_kg=None):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
     PATCH (descuento de stock) no hace nada real."""
@@ -550,7 +554,9 @@ def test_cambiar_umbral_afecta_pedidos_futuros_sin_tocar_los_ya_creados():
 
     # El pedido ya creado ANTES del cambio de umbral conserva su valor original (mismo criterio
     # que costo_envio con la ubicación del almacén: no se recalcula retroactivamente).
+    _como(str(uuid.uuid4()), "admin")  # GET /pedidos/{id} ya no es público
     reconsulta = client.get(f"/pedidos/{primero.json()['id']}")
+    _como(str(uuid.uuid4()), "comprador")
     assert reconsulta.status_code == 200, reconsulta.text
     assert reconsulta.json()["requiere_vehiculo_grande"] is True
 
@@ -564,6 +570,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     import uuid as _uuid
     protegidos = [
         ("DELETE", f"/pedidos/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
+        ("GET", f"/pedidos/interno/{_uuid.uuid4()}", None, "TRANSPORTE_A_PEDIDOS_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
         for valor in (None, ""):
@@ -578,3 +585,63 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+# ============ GET /pedidos/{id}: ya no es público ============
+
+def _crear_pedido_de(comprador_sub: str) -> str:
+    _como(comprador_sub, "comprador")
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+def test_un_pedido_solo_lo_ven_su_comprador_y_los_roles_de_entrega_o_administracion():
+    """Antes cualquiera, sin sesión, leía el nombre, el teléfono y las coordenadas exactas del comprador."""
+    dueno = str(uuid.uuid4())
+    pedido_id = _crear_pedido_de(dueno)
+    try:
+        _como(dueno, "comprador")
+        propio = client.get(f"/pedidos/{pedido_id}")
+        assert propio.status_code == 200, propio.text
+        assert propio.json()["comprador_telefono"] == "987654321"
+
+        for rol in ("comprador", "verificador"):
+            _como(str(uuid.uuid4()), rol)
+            ajeno = client.get(f"/pedidos/{pedido_id}")
+            assert ajeno.status_code == 403, (rol, ajeno.text)
+            assert "987654321" not in ajeno.text
+
+        for rol in ("admin", "repartidor", "productor"):
+            _como(str(uuid.uuid4()), rol)
+            assert client.get(f"/pedidos/{pedido_id}").status_code == 200, rol
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_un_pedido_no_se_puede_leer_sin_sesion():
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    guardado = main.app.dependency_overrides.pop(verificar_token)
+    try:
+        assert client.get(f"/pedidos/{pedido_id}").status_code in (401, 403)
+    finally:
+        main.app.dependency_overrides[verificar_token] = guardado
+
+
+def test_la_ruta_interna_de_pedidos_solo_responde_con_el_secreto_de_transporte(monkeypatch):
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-transporte")
+
+    ok = client.get(f"/pedidos/interno/{pedido_id}", headers={"X-Servicio-Secreto": "secreto-transporte"})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["id"] == pedido_id and "costo_envio" in ok.json() and "items" in ok.json()
+
+    assert client.get(f"/pedidos/interno/{pedido_id}").status_code == 403
+    assert client.get(f"/pedidos/interno/{pedido_id}", headers={"X-Servicio-Secreto": "otro"}).status_code == 403
+    assert client.get(f"/pedidos/interno/{uuid.uuid4()}", headers={"X-Servicio-Secreto": "secreto-transporte"}).status_code == 404
+
+
+def test_un_id_de_pedido_mal_formado_falla_422_no_500():
+    assert client.get("/pedidos/no-es-un-uuid").status_code == 422

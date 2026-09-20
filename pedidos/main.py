@@ -2,6 +2,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import re
 import math
+import uuid
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
@@ -103,6 +104,7 @@ PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
+TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO")  # obtener_pedido_interno (lo llama Transporte)
 
 # Rango aproximado del departamento de Ayacucho — el pedido solo se acepta si el destino de
 # entrega cae dentro de esta caja (no es el polígono real del departamento, es un rectángulo que
@@ -439,12 +441,41 @@ def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(g
     distancia_km, costo_envio = calcular_envio_a_destino(db, latitud, longitud)
     return {"costo_envio": costo_envio, "distancia_km": distancia_km}
 
-@app.get("/pedidos/{pedido_id}")
-def obtener_pedido(pedido_id: str, db: Session = Depends(get_db)):
+def _pedido_o_404(db: Session, pedido_id: uuid.UUID):
     pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
     pedido.items  # fuerza la carga de la relación para que se incluya en la respuesta
+    return pedido
+
+
+# Ruta INTERNA para Transporte (proponer envíos, liquidar al repartidor, certificar la entrega y comprobar
+# de quién es un pedido antes de mostrar un envío): esos procesos no tienen a ningún usuario detrás, así que
+# se protege con el secreto de servicio TRANSPORTE_A_PEDIDOS_SECRETO. Va antes de /pedidos/{pedido_id}.
+@app.get("/pedidos/interno/{pedido_id}")
+def obtener_pedido_interno(
+    pedido_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    x_servicio_secreto: str = Header(None),
+):
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_PEDIDOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    return _pedido_o_404(db, pedido_id)
+
+
+# Quién puede ver un pedido: el comprador que lo hizo y los roles que participan de la entrega (repartidor,
+# productor) o administran (admin). Antes era público: bastaba conocer el id de un pedido para leer el
+# nombre, el teléfono y las coordenadas exactas del comprador. pedido_id va tipado como UUID: un id mal
+# formado da 422 en vez de un error de la base.
+ROLES_CON_ACCESO_A_PEDIDOS = ("admin", "repartidor", "productor")
+
+
+@app.get("/pedidos/{pedido_id}")
+def obtener_pedido(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+    pedido = _pedido_o_404(db, pedido_id)
+    es_el_comprador = str(pedido.usuario_id) == str(usuario.get("sub"))
+    if not es_el_comprador and usuario.get("rol") not in ROLES_CON_ACCESO_A_PEDIDOS:
+        raise HTTPException(status_code=403, detail="No tienes permiso para ver este pedido")
     return pedido
 
 @app.delete("/pedidos/{pedido_id}")

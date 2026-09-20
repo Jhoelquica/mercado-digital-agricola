@@ -1,5 +1,7 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import hmac
+import uuid
 import logging
 
 # Sin esto, el proceso nunca queda con un handler configurado y Python cae al "handler de
@@ -10,13 +12,15 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 import httpx
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
+from pedidos_interno import cabecera_pedidos
 
 from database import Base, engine, SessionLocal
 import models
@@ -96,16 +100,52 @@ class UbicacionActualizar(BaseModel):
 #endpoint
 
 
+# Un envío SIN el PIN: es lo que reciben el repartidor, el productor (entrega directa) y el admin en los
+# listados y en cada respuesta que devuelve un envío. El PIN (pin_entrega) es el código que el comprador
+# le dicta al repartidor en la puerta como prueba de que de verdad recibió el pedido: si el repartidor
+# pudiera leerlo, podría marcar la entrega sin ver al comprador y cobrar la liquidación. Solo lo ven el
+# comprador dueño del pedido y el admin (EnvioConPin, en GET /envios/{pedido_id}).
+class EnvioSalida(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    repartidor_id: uuid.UUID | None = None
+    pedido_id: uuid.UUID
+    estado: str | None = None
+    transportista: str | None = None
+    fecha_creacion: datetime | None = None
+    repartidor_latitud: str | None = None
+    repartidor_longitud: str | None = None
+    liquidacion_confirmada: bool | None = None
+    certificacion_confirmada: bool | None = None
+    productor_id: uuid.UUID | None = None
+    motivo_pendiente: str | None = None
+    foto_entrega_url: str | None = None
+    entrega_latitud: str | None = None
+    entrega_longitud: str | None = None
+
+
+class EnvioConPin(EnvioSalida):
+    pin_entrega: str | None = None
+
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "transporte"}
 
-@app.get("/envios")
+# Solo los envíos del propio repartidor: antes devolvía TODOS los envíos (con su PIN y su ubicación) a
+# cualquier repartidor.
+@app.get("/envios", response_model=list[EnvioSalida])
 def listar_envios(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
-    return db.query(models.Envio).all()
+    repartidor = db.query(models.Repartidor).filter(
+        models.Repartidor.usuario_id == usuario.get("sub")
+    ).first()
+    if not repartidor:
+        return []
+    return db.query(models.Envio).filter(models.Envio.repartidor_id == repartidor.id).all()
 
 #ENDPOINT PARA VER PROPUESTAS PENDIENTES
-@app.get("/envios/propuestas")
+@app.get("/envios/propuestas", response_model=list[EnvioSalida])
 def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
         models.Repartidor.usuario_id == usuario.get("sub")
@@ -121,6 +161,43 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
+
+MAX_INTENTOS_PIN = 5        # códigos incorrectos seguidos antes de bloquear la confirmación
+BLOQUEO_PIN_MINUTOS = 15    # con 5 intentos cada 15 minutos, probar los 10.000 códigos toma semanas
+
+
+def _pedido_interno(pedido_id) -> dict:
+    """El pedido completo por la ruta interna de Pedidos (con el secreto de servicio). 503 si Pedidos no
+    responde, 404 si no existe."""
+    try:
+        with httpx.Client() as client:
+            resp = client.get(f"{PEDIDOS_URL}/pedidos/interno/{pedido_id}", headers=cabecera_pedidos(), timeout=5)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servicio de Pedidos no disponible")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    return resp.json()
+
+
+def _autorizar_envio(envio, usuario: dict, db: Session, pedido: dict | None = None) -> bool:
+    """Comprueba que quien pide puede ver este envío y devuelve si además puede ver su PIN.
+
+    - admin: sí, con PIN.
+    - comprador: solo si el pedido es suyo (se le pregunta a Pedidos), con PIN.
+    - repartidor: solo si el envío está asignado a él, SIN PIN.
+    Cualquier otro caso: 403. Antes GET /envios/{pedido_id} y GET /envios/{id}/ruta eran públicos."""
+    rol, sub = usuario.get("rol"), str(usuario.get("sub"))
+    if rol == "admin":
+        return True
+    if rol == "comprador":
+        pedido = pedido or _pedido_interno(envio.pedido_id)
+        if str(pedido.get("usuario_id")) == sub:
+            return True
+    elif rol == "repartidor":
+        repartidor = db.query(models.Repartidor).filter(models.Repartidor.usuario_id == sub).first()
+        if repartidor and str(envio.repartidor_id) == str(repartidor.id):
+            return False
+    raise HTTPException(status_code=403, detail="No tienes permiso para ver este envío")
 
 def _resolver_productor_autenticado(token: str):
     """Resuelve el Productor autenticado llamando a GET /productores/me con el mismo bearer
@@ -146,7 +223,7 @@ def _resolver_productor_autenticado(token: str):
 # sub-entrega anterior): filtra por Envio.productor_id, la columna que proponer_envio_a_repartidor
 # ya puebla al decidir esta transición (ver logica_repartidores.py) — sin repetir la resolución
 # cruzada contra Productos en cada consulta.
-@app.get("/envios/pendientes-entrega-directa")
+@app.get("/envios/pendientes-entrega-directa", response_model=list[EnvioSalida])
 def envios_pendientes_entrega_directa(
     db: Session = Depends(get_db),
     usuario: dict = Depends(requiere_rol("productor")),
@@ -162,7 +239,7 @@ def envios_pendientes_entrega_directa(
 # == "sin_capacidad_suficiente") — no los que simplemente esperan que se libere cualquier
 # repartidor (motivo_pendiente == "sin_repartidor_disponible"), que no requieren ninguna acción
 # del Admin y se resuelven solos apenas alguien quede disponible.
-@app.get("/envios/pendientes-por-capacidad")
+@app.get("/envios/pendientes-por-capacidad", response_model=list[EnvioSalida])
 def envios_pendientes_por_capacidad(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
     return db.query(models.Envio).filter(
         models.Envio.estado == "pendiente_asignacion",
@@ -170,20 +247,16 @@ def envios_pendientes_por_capacidad(db: Session = Depends(get_db), usuario: dict
     ).all()
 
 @app.get("/envios/{envio_id}/ruta")
-def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
+def obtener_ruta(envio_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
 
-    with httpx.Client() as client:
-        try:
-            resp_pedido = client.get(f"{PEDIDOS_URL}/pedidos/{envio.pedido_id}", timeout=5)
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Pedidos no disponible")
-
-    if resp_pedido.status_code != 200:
-        raise HTTPException(status_code=404, detail="Pedido no encontrado")
-    pedido = resp_pedido.json()
+    # A Pedidos solo se le pregunta antes de autorizar cuando hace falta (el comprador: su pedido dice de
+    # quién es); el resto se autoriza con la base de Transporte y el pedido se pide después, para la ruta.
+    pedido = _pedido_interno(envio.pedido_id) if usuario.get("rol") == "comprador" else None
+    _autorizar_envio(envio, usuario, db, pedido=pedido)
+    pedido = pedido or _pedido_interno(envio.pedido_id)
 
     if not pedido.get("destino_latitud") or not pedido.get("destino_longitud"):
         return {"disponible": False, "mensaje": "Este pedido no tiene coordenadas de destino registradas"}
@@ -203,7 +276,7 @@ def obtener_ruta(envio_id: str, db: Session = Depends(get_db)):
         "origen": {"latitud": envio.repartidor_latitud, "longitud": envio.repartidor_longitud},
         "destino": {"latitud": pedido["destino_latitud"], "longitud": pedido["destino_longitud"]},
     }
-@app.post("/envios/{envio_id}/aceptar")
+@app.post("/envios/{envio_id}/aceptar", response_model=EnvioSalida)
 def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
         models.Repartidor.usuario_id == usuario.get("sub")
@@ -267,11 +340,13 @@ def rechazar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: di
     return {"mensaje": "Propuesta rechazada, se ofreció a otro repartidor"}
 
 @app.get("/envios/{pedido_id}")
-def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
+def obtener_envio(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
     envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado para ese pedido")
-    return envio
+    ve_el_pin = _autorizar_envio(envio, usuario, db)
+    modelo = EnvioConPin if ve_el_pin else EnvioSalida
+    return modelo.model_validate(envio).model_dump(mode="json")
 
 @app.delete("/envios/{envio_id}")
 def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
@@ -344,7 +419,7 @@ def _efectos_post_entrega(db: Session, envio: models.Envio):
             )
 
 
-@app.patch("/envios/{envio_id}/estado")
+@app.patch("/envios/{envio_id}/estado", response_model=EnvioSalida)
 def actualizar_estado(
     envio_id: str,
     datos: EstadoEnvio,
@@ -402,7 +477,7 @@ def actualizar_estado(
     return envio
 
 
-@app.post("/envios/{envio_id}/entregar")
+@app.post("/envios/{envio_id}/entregar", response_model=EnvioSalida)
 def confirmar_entrega(
     envio_id: str,
     pin: str = Form(...),
@@ -423,14 +498,30 @@ def confirmar_entrega(
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
 
-    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    # with_for_update: dos intentos simultáneos con el mismo envío se turnan en vez de leer el mismo
+    # contador de fallos (sin esto, mandar muchos códigos en paralelo esquivaba el tope de intentos).
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).with_for_update().first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
     if str(envio.repartidor_id) != str(repartidor.id):
         raise HTTPException(status_code=403, detail="No puedes confirmar la entrega de un envío que no es tuyo")
     if envio.estado not in ["asignado", "en_camino"]:
         raise HTTPException(status_code=409, detail="Este envío no está en un estado que permita confirmar la entrega")
-    if not envio.pin_entrega or pin != envio.pin_entrega:
+    # Sin este tope, el repartidor podía probar los 10.000 códigos posibles y marcar la entrega sin ver
+    # al comprador. La comparación va en tiempo constante.
+    ahora = datetime.utcnow()
+    if envio.pin_bloqueado_hasta and envio.pin_bloqueado_hasta > ahora:
+        minutos = -(-int((envio.pin_bloqueado_hasta - ahora).total_seconds()) // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Demasiados códigos incorrectos. Vuelve a intentarlo en {max(minutos, 1)} minuto(s).",
+        )
+    if not envio.pin_entrega or not hmac.compare_digest(pin.encode("utf-8"), envio.pin_entrega.encode("utf-8")):
+        envio.pin_intentos_fallidos = (envio.pin_intentos_fallidos or 0) + 1
+        if envio.pin_intentos_fallidos >= MAX_INTENTOS_PIN:
+            envio.pin_bloqueado_hasta = ahora + timedelta(minutes=BLOQUEO_PIN_MINUTOS)
+            envio.pin_intentos_fallidos = 0
+        db.commit()
         raise HTTPException(status_code=400, detail="El código no coincide con el que le dieron al comprador.")
 
     try:
@@ -442,6 +533,8 @@ def confirmar_entrega(
     envio.foto_entrega_url = url_foto
     envio.entrega_latitud = envio.repartidor_latitud
     envio.entrega_longitud = envio.repartidor_longitud
+    envio.pin_intentos_fallidos = 0
+    envio.pin_bloqueado_hasta = None
     db.commit()
     db.refresh(envio)
 
@@ -521,7 +614,7 @@ def eliminar_repartidor(repartidor_id: str, db: Session = Depends(get_db), x_ser
     db.commit()
     return {"mensaje": "Repartidor eliminado"}
 
-@app.patch("/envios/{envio_id}/ubicacion")
+@app.patch("/envios/{envio_id}/ubicacion", response_model=EnvioSalida)
 def actualizar_ubicacion(envio_id: str, datos: UbicacionActualizar, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
         models.Repartidor.usuario_id == usuario.get("sub")

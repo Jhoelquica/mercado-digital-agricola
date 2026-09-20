@@ -901,3 +901,303 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+
+# ============ Privacidad: quién ve un envío, el PIN de entrega y el tope de intentos ============
+
+class _ClientePedidosFalso:
+    """Reemplaza httpx.Client() para las llamadas a Pedidos: guarda cada (url, kwargs) para poder
+    comprobar que se usó la ruta interna con el secreto, y responde un pedido fijo."""
+    def __init__(self, pedido, llamadas, status=200, roto=False):
+        self._pedido, self._llamadas, self._status, self._roto = pedido, llamadas, status, roto
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        self._llamadas.append((url, kwargs))
+        if self._roto:
+            raise main.httpx.RequestError("boom", request=None)
+        return _RespuestaFalsa(self._status, self._pedido)
+
+
+def _pedido_de(comprador_sub, **extra):
+    return {"id": str(uuid.uuid4()), "usuario_id": str(comprador_sub), "destino_latitud": "-13.16",
+            "destino_longitud": "-74.22", **extra}
+
+
+def _mockear_pedidos(monkeypatch, pedido, status=200, roto=False):
+    llamadas = []
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClientePedidosFalso(pedido, llamadas, status, roto))
+    return llamadas
+
+
+def _sin_sesion():
+    main.app.dependency_overrides.pop(verificar_token, None)
+    main.app.dependency_overrides.pop(security, None)
+
+
+def test_un_envio_no_se_puede_leer_sin_sesion():
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino", pin_entrega="7391")
+    _sin_sesion()
+    try:
+        for ruta in (f"/envios/{envio.pedido_id}", f"/envios/{envio.id}/ruta"):
+            resp = client.get(ruta)
+            assert resp.status_code in (401, 403), (ruta, resp.status_code)
+            assert "7391" not in resp.text
+    finally:
+        _auth(str(uuid.uuid4()))
+
+
+def test_el_comprador_dueno_ve_su_envio_con_el_pin(monkeypatch):
+    comprador = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino", pin_entrega="7391")
+    _mockear_pedidos(monkeypatch, _pedido_de(comprador))
+
+    _auth(comprador, "comprador")
+    resp = client.get(f"/envios/{envio.pedido_id}")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["pin_entrega"] == "7391"
+    assert resp.json()["id"] == str(envio.id)
+
+
+def test_un_comprador_ajeno_no_ve_el_envio_ni_su_pin_ni_su_ruta(monkeypatch):
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino", pin_entrega="7391")
+    _mockear_pedidos(monkeypatch, _pedido_de(uuid.uuid4()))  # el pedido es de otro comprador
+
+    _auth(str(uuid.uuid4()), "comprador")
+    for ruta in (f"/envios/{envio.pedido_id}", f"/envios/{envio.id}/ruta"):
+        resp = client.get(ruta)
+        assert resp.status_code == 403, (ruta, resp.text)
+        assert "7391" not in resp.text
+
+
+def test_el_repartidor_asignado_ve_el_envio_pero_sin_el_pin():
+    """El PIN es la prueba de que el comprador recibió el pedido: si el repartidor lo leyera, podría
+    marcar la entrega sin verlo y cobrar la liquidación."""
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega="7391")
+
+    _auth(usuario)
+    resp = client.get(f"/envios/{envio.pedido_id}")
+
+    assert resp.status_code == 200, resp.text
+    assert "pin_entrega" not in resp.json()
+    assert "7391" not in resp.text
+
+
+def test_otro_repartidor_no_ve_un_envio_que_no_es_suyo():
+    dueno = _crear_repartidor_directo(usuario_id=str(uuid.uuid4()))
+    envio = _crear_envio_directo(dueno.id, estado="en_camino", pin_entrega="7391")
+    otro = str(uuid.uuid4())
+    _crear_repartidor_directo(usuario_id=otro)
+
+    _auth(otro)
+    for ruta in (f"/envios/{envio.pedido_id}", f"/envios/{envio.id}/ruta"):
+        resp = client.get(ruta)
+        assert resp.status_code == 403, (ruta, resp.text)
+        assert "7391" not in resp.text
+
+
+def test_el_admin_ve_el_envio_con_el_pin_y_un_productor_no_lo_ve():
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino", pin_entrega="7391")
+
+    _auth(str(uuid.uuid4()), "admin")
+    admin = client.get(f"/envios/{envio.pedido_id}")
+    assert admin.status_code == 200 and admin.json()["pin_entrega"] == "7391"
+
+    _auth(str(uuid.uuid4()), "productor")
+    productor = client.get(f"/envios/{envio.pedido_id}")
+    assert productor.status_code == 403 and "7391" not in productor.text
+
+
+def test_la_ruta_del_envio_solo_la_ven_el_comprador_dueno_y_el_repartidor_asignado(monkeypatch):
+    comprador, usuario_repartidor = str(uuid.uuid4()), str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario_repartidor)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega="7391")
+    _mockear_pedidos(monkeypatch, _pedido_de(comprador))
+
+    _auth(comprador, "comprador")
+    duenio = client.get(f"/envios/{envio.id}/ruta")
+    assert duenio.status_code == 200, duenio.text
+    assert "7391" not in duenio.text
+
+    _auth(usuario_repartidor)
+    assert client.get(f"/envios/{envio.id}/ruta").status_code == 200
+
+
+def test_transporte_le_pide_el_pedido_a_pedidos_por_la_ruta_interna_con_el_secreto(monkeypatch):
+    import pedidos_interno
+    monkeypatch.setattr(pedidos_interno, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-de-prueba-pedidos")
+    comprador = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino")
+    llamadas = _mockear_pedidos(monkeypatch, _pedido_de(comprador))
+
+    _auth(comprador, "comprador")
+    assert client.get(f"/envios/{envio.pedido_id}").status_code == 200
+
+    url, kwargs = llamadas[0]
+    assert url.endswith(f"/pedidos/interno/{envio.pedido_id}")
+    assert kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-pedidos"}
+
+
+def test_los_procesos_internos_tambien_usan_la_ruta_interna_de_pedidos(monkeypatch):
+    """Proponer un envío, liquidar al repartidor y certificar la entrega no tienen a un usuario detrás:
+    si siguieran llamando a GET /pedidos/{id} (que ahora exige sesión), dejarían de funcionar."""
+    import pedidos_interno
+    monkeypatch.setattr(pedidos_interno, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-de-prueba-pedidos")
+    llamadas = []
+
+    class _Captura:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, url, **kwargs):
+            llamadas.append((url, kwargs))
+            return _RespuestaFalsa(200, {"costo_envio": 5.0, "items": []})
+
+        def post(self, url, **kwargs):
+            return _RespuestaFalsa(200, {"mensaje": "ok"})
+
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _Captura())
+    repartidor = _crear_repartidor_directo()
+    envio = _crear_envio_directo(repartidor.id, estado="entregado")
+
+    db = main.SessionLocal()
+    try:
+        logica_repartidores._obtener_pedido(str(envio.pedido_id))
+        logica_certificacion.notificar_entrega_a_certificacion(db, _envio_recargado(envio.id))
+        logica_liquidacion_repartidor.notificar_liquidacion_repartidor(db, _envio_recargado(envio.id))
+    finally:
+        db.close()
+
+    assert len(llamadas) >= 3
+    for url, kwargs in llamadas:
+        if "/pedidos/" in url:
+            assert "/pedidos/interno/" in url, url
+            assert kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-pedidos"}
+
+
+def test_si_pedidos_no_responde_ver_un_envio_da_503_no_un_error_del_servidor(monkeypatch):
+    comprador = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino")
+    _mockear_pedidos(monkeypatch, None, roto=True)
+
+    _auth(comprador, "comprador")
+    assert client.get(f"/envios/{envio.pedido_id}").status_code == 503
+
+
+def test_un_id_de_pedido_o_envio_mal_formado_falla_422(monkeypatch):
+    _auth(str(uuid.uuid4()), "admin")
+    assert client.get("/envios/no-es-un-uuid").status_code == 422
+    assert client.get("/envios/no-es-un-uuid/ruta").status_code == 422
+
+
+def test_un_repartidor_solo_lista_sus_propios_envios_y_sin_pin():
+    usuario = str(uuid.uuid4())
+    mio = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="en_camino", pin_entrega="7391")
+    ajeno = _crear_envio_directo(_crear_repartidor_directo(usuario_id=str(uuid.uuid4())).id, estado="en_camino", pin_entrega="5150")
+
+    _auth(usuario)
+    resp = client.get("/envios")
+
+    assert resp.status_code == 200, resp.text
+    ids = [e["id"] for e in resp.json()]
+    assert ids == [str(mio.id)]
+    assert str(ajeno.id) not in ids
+    assert "7391" not in resp.text and "5150" not in resp.text
+    assert all("pin_entrega" not in e for e in resp.json())
+
+
+def test_un_usuario_repartidor_sin_perfil_lista_cero_envios():
+    _auth(str(uuid.uuid4()))
+    resp = client.get("/envios")
+    assert resp.status_code == 200 and resp.json() == []
+
+
+def test_las_respuestas_que_devuelven_un_envio_no_llevan_el_pin(monkeypatch):
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    propuesto = _crear_envio_directo(repartidor.id, estado="propuesto", pin_entrega="7391")
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    _auth(usuario)
+    propuestas = client.get("/envios/propuestas")
+    assert propuestas.status_code == 200 and propuestas.text.count("pin_entrega") == 0
+
+    aceptado = client.post(f"/envios/{propuesto.id}/aceptar")
+    assert aceptado.status_code == 200, aceptado.text
+    assert "pin_entrega" not in aceptado.json() and "7391" not in aceptado.text
+
+    ubicacion = client.patch(f"/envios/{propuesto.id}/ubicacion", json={"latitud": "-13.16", "longitud": "-74.22"})
+    assert ubicacion.status_code == 200, ubicacion.text
+    assert "pin_entrega" not in ubicacion.json()
+
+
+# ---- tope de intentos con el PIN
+
+def _preparar_entrega_con_pin(monkeypatch, pin="7391"):
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega=pin)
+    _mockear_pagos_ok(monkeypatch)
+    _mockear_certificacion_ok(monkeypatch)
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto-entrega.jpg")
+    _auth(usuario)
+    return envio
+
+
+def test_tras_cinco_codigos_incorrectos_el_envio_se_bloquea_aunque_el_sexto_sea_el_bueno(monkeypatch):
+    """Sin tope, un repartidor podía probar los 10.000 códigos y marcar la entrega sin ver al comprador."""
+    envio = _preparar_entrega_con_pin(monkeypatch)
+
+    for _ in range(main.MAX_INTENTOS_PIN):
+        assert _confirmar_entrega(envio.id, pin="0000").status_code == 400
+
+    bloqueado = _confirmar_entrega(envio.id, pin="7391")  # el código correcto, pero ya está bloqueado
+    assert bloqueado.status_code == 429, bloqueado.text
+    assert "minuto" in bloqueado.json()["detail"]
+    recargado = _envio_recargado(envio.id)
+    assert recargado.estado == "en_camino"
+    assert recargado.pin_bloqueado_hasta is not None
+
+
+def test_el_bloqueo_del_pin_se_levanta_solo_y_una_entrega_correcta_reinicia_el_contador(monkeypatch):
+    envio = _preparar_entrega_con_pin(monkeypatch)
+    for _ in range(main.MAX_INTENTOS_PIN):
+        _confirmar_entrega(envio.id, pin="0000")
+
+    # pasan los minutos de bloqueo
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Envio).filter(main.models.Envio.id == envio.id).first()
+        fila.pin_bloqueado_hasta = main.datetime.utcnow() - main.timedelta(seconds=1)
+        db.commit()
+    finally:
+        db.close()
+
+    resp = _confirmar_entrega(envio.id, pin="7391")
+    assert resp.status_code == 200, resp.text
+    recargado = _envio_recargado(envio.id)
+    assert recargado.estado == "entregado"
+    assert recargado.pin_intentos_fallidos == 0
+    assert recargado.pin_bloqueado_hasta is None
+
+
+def test_menos_de_cinco_fallos_no_bloquean_y_el_codigo_correcto_sigue_funcionando(monkeypatch):
+    envio = _preparar_entrega_con_pin(monkeypatch)
+    for _ in range(main.MAX_INTENTOS_PIN - 1):
+        assert _confirmar_entrega(envio.id, pin="0000").status_code == 400
+
+    assert _envio_recargado(envio.id).pin_bloqueado_hasta is None
+    assert _confirmar_entrega(envio.id, pin="7391").status_code == 200

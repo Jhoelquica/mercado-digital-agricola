@@ -72,6 +72,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            # Transporte -> Pedidos: GET /pedidos/interno/{id} (Pedidos lo valida, Transporte lo envía).
+            - name: TRANSPORTE_A_PEDIDOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: TRANSPORTE_A_PEDIDOS_SECRETO
 ---
 apiVersion: v1
 kind: Service
