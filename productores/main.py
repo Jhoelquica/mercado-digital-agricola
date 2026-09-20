@@ -1,3 +1,4 @@
+import math
 import os
 import uuid
 import logging
@@ -65,6 +66,46 @@ class ProductorCrear(BaseModel):
     ubicacion: Ubicacion | None = None
     latitud: LatitudTexto | None = None
     longitud: LongitudTexto | None = None
+
+class ProductorPublico(BaseModel):
+    """Lo que ve cualquier visitante de un productor (rutas públicas GET /productores y
+    /productores/{id}, que consume el detalle de producto para mostrar "cultivado por" y la zona de
+    origen). No incluye el contacto (teléfono) ni el usuario_id, y las coordenadas van redondeadas:
+    el dueño lo ve todo en /productores/me y el admin en /productores/admin/todos."""
+    id: uuid.UUID
+    nombre: str
+    comunidad: str | None = None
+    ubicacion: str | None = None
+    fecha_registro: datetime | None = None
+    latitud: str | None = None
+    longitud: str | None = None
+
+
+DECIMALES_COORDENADA_PUBLICA = 2  # 0,01° ≈ 1,1 km: sirve para mostrar la zona de origen, no la finca
+
+
+def _aproximar_coordenada(valor):
+    if valor is None:
+        return None
+    try:
+        numero = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numero):
+        return None
+    return f"{numero:.{DECIMALES_COORDENADA_PUBLICA}f}"
+
+
+def _a_publico(productor) -> ProductorPublico:
+    return ProductorPublico(
+        id=productor.id,
+        nombre=productor.nombre,
+        comunidad=productor.comunidad,
+        ubicacion=productor.ubicacion,
+        fecha_registro=productor.fecha_registro,
+        latitud=_aproximar_coordenada(productor.latitud),
+        longitud=_aproximar_coordenada(productor.longitud),
+    )
 
 # ============ Chacras ============
 
@@ -151,16 +192,27 @@ def mi_perfil_productor(db: Session = Depends(get_db), usuario: dict = Depends(r
     return productor
 
 
-@app.get("/productores/{productor_id}")
-def obtener_productor(productor_id: str, db: Session = Depends(get_db)):
+# Lista completa (con contacto y coordenadas exactas) solo para el panel de administración. Va con dos
+# segmentos de ruta, así que no choca con GET /productores/{productor_id}.
+@app.get("/productores/admin/todos")
+def listar_productores_completo(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    return db.query(models.Productor).all()
+
+
+# Públicas a propósito (el comprador ve quién cultiva un producto y de qué zona viene), pero solo con
+# lo público: antes devolvían la fila entera, con el teléfono, el usuario_id y las coordenadas exactas
+# de cada finca, a cualquiera y sin sesión. productor_id va tipado como UUID: un id mal formado da 422
+# en vez de un error 500 de la base.
+@app.get("/productores/{productor_id}", response_model=ProductorPublico)
+def obtener_productor(productor_id: uuid.UUID, db: Session = Depends(get_db)):
     productor = db.query(models.Productor).filter(models.Productor.id == productor_id).first()
     if not productor:
         raise HTTPException(status_code=404, detail="Productor no encontrado")
-    return productor
+    return _a_publico(productor)
 
-@app.get("/productores")
+@app.get("/productores", response_model=list[ProductorPublico])
 def listar_productores(db: Session = Depends(get_db)):
-    return db.query(models.Productor).all()
+    return [_a_publico(p) for p in db.query(models.Productor).all()]
 
 @app.post("/productores")
 def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):

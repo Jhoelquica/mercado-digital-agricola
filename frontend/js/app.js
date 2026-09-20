@@ -1567,7 +1567,8 @@ function renderBloqueProductor(p, productor) {
           ${ubicacionTexto ? `<span class="detalle-productor-ubicacion"><i class="ti ti-map-pin" aria-hidden="true"></i> ${escapeAttr(ubicacionTexto)}</span>` : ''}
         </div>
       </div>
-      ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini" role="img" aria-label="Ubicación de ${escapeAttr(nombre)} en el mapa"></div>` : ''}
+      ${tieneMapa ? `<div id="mapa-productor-detalle" class="mapa-mini" role="img" aria-label="Zona de origen aproximada de ${escapeAttr(nombre)} en el mapa"></div>
+      <p class="mapa-ayuda">Zona de origen aproximada.</p>` : ''}
     </div>`;
 }
 
@@ -5288,7 +5289,7 @@ async function cargarProductoresAdmin() {
   cont.innerHTML = renderSkeletonFilas(2);
   try {
     const [productores, productos] = await Promise.all([
-      Api.productores.listar(),
+      Api.productores.listarAdmin(),
       Api.productos.listar().catch(() => []),
     ]);
     const totalPorProductor = {};

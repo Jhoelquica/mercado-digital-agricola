@@ -131,6 +131,8 @@ const Api = {
   },
   productores: {
     listar: () => request('productores', '/productores'),
+    // Lista completa (contacto y coordenadas exactas): solo la puede pedir un admin.
+    listarAdmin: () => request('productores', '/productores/admin/todos', { auth: true }),
     obtener: (id) => request('productores', `/productores/${id}`),
     miPerfil: () => request('productores', '/productores/me', { auth: true }),
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),

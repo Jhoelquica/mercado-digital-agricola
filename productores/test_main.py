@@ -23,6 +23,8 @@ Cubre:
   uno que nunca se rechazó)
 - historial-verificacion solo trae decisiones del verificador autenticado, ordenadas por fecha
   descendente
+- datos personales: las rutas públicas de productores no devuelven teléfono, usuario_id ni las
+  coordenadas exactas (van redondeadas); el dueño lo ve todo en /me y el admin en /admin/todos
 - el servidor exige lo que el formulario solo sugiere: números finitos y acotados (sin costos
   negativos, NaN ni Infinity), textos con largo máximo, coordenadas válidas y fechas coherentes
   (cosecha no anterior a la siembra ni en el futuro)
@@ -895,3 +897,86 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+# ============ Datos personales: lo público, lo del dueño y lo del admin ============
+
+CAMPOS_PUBLICOS = {"id", "nombre", "comunidad", "ubicacion", "fecha_registro", "latitud", "longitud"}
+
+
+def _productor_con_datos_personales():
+    """Crea un productor con teléfono y coordenadas exactas y deja a su usuario como el autenticado.
+    Devuelve (usuario_id, productor_id)."""
+    sub = str(uuid.uuid4())
+    _auth(sub)
+    resp = client.post("/productores", json={
+        "nombre": "Finca de prueba", "comunidad": "Quinua", "contacto": "987654321",
+        "latitud": "-13.158812", "longitud": "-74.223940",
+    })
+    assert resp.status_code == 200, resp.text
+    return sub, resp.json()["id"]
+
+
+def test_las_rutas_publicas_de_productores_no_exponen_telefono_usuario_ni_coordenadas_exactas():
+    sub, productor_id = _productor_con_datos_personales()
+
+    lista = client.get("/productores")
+    assert lista.status_code == 200
+    en_lista = next(p for p in lista.json() if p["id"] == productor_id)
+    detalle = client.get(f"/productores/{productor_id}")
+    assert detalle.status_code == 200
+
+    for vista in (en_lista, detalle.json()):
+        assert set(vista) == CAMPOS_PUBLICOS
+        assert vista["nombre"] == "Finca de prueba" and vista["comunidad"] == "Quinua"
+        # una zona aproximada (2 decimales ~ 1 km), no la finca
+        assert (vista["latitud"], vista["longitud"]) == ("-13.16", "-74.22")
+        texto = json.dumps(vista)
+        assert "987654321" not in texto and sub not in texto and "-13.158812" not in texto
+
+
+def test_un_productor_sin_coordenadas_validas_se_muestra_sin_mapa():
+    db = main.SessionLocal()
+    try:
+        sin_datos = main.models.Productor(nombre="Sin mapa", latitud=None, longitud=None)
+        sucio = main.models.Productor(nombre="Coordenadas sucias", latitud="abc", longitud="nan")
+        db.add_all([sin_datos, sucio])
+        db.commit()
+        ids = [str(sin_datos.id), str(sucio.id)]
+    finally:
+        db.close()
+
+    for productor_id in ids:
+        vista = client.get(f"/productores/{productor_id}").json()
+        assert vista["latitud"] is None and vista["longitud"] is None
+
+
+def test_el_dueno_sigue_viendo_su_perfil_completo():
+    sub, _ = _productor_con_datos_personales()
+    resp = client.get("/productores/me")
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["contacto"] == "987654321"
+    assert (cuerpo["latitud"], cuerpo["longitud"]) == ("-13.158812", "-74.223940")
+    assert cuerpo["usuario_id"] == sub
+
+
+def test_el_admin_ve_la_lista_completa_y_los_demas_roles_no():
+    sub, productor_id = _productor_con_datos_personales()
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.get("/productores/admin/todos")
+    assert resp.status_code == 200, resp.text
+    item = next(p for p in resp.json() if p["id"] == productor_id)
+    assert item["contacto"] == "987654321"
+    assert (item["latitud"], item["longitud"]) == ("-13.158812", "-74.223940")
+    assert item["usuario_id"] == sub
+
+    for rol in ("productor", "comprador", "verificador"):
+        _auth(str(uuid.uuid4()), rol=rol)
+        assert client.get("/productores/admin/todos").status_code == 403, rol
+
+
+def test_un_id_de_productor_mal_formado_falla_422_no_500():
+    assert client.get("/productores/no-es-un-uuid").status_code == 422
+    assert client.get(f"/productores/{uuid.uuid4()}").status_code == 404
