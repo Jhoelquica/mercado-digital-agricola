@@ -23,6 +23,9 @@ Cubre:
   uno que nunca se rechazó)
 - historial-verificacion solo trae decisiones del verificador autenticado, ordenadas por fecha
   descendente
+- el servidor exige lo que el formulario solo sugiere: números finitos y acotados (sin costos
+  negativos, NaN ni Infinity), textos con largo máximo, coordenadas válidas y fechas coherentes
+  (cosecha no anterior a la siembra ni en el futuro)
 
 Requiere una base de datos Postgres real accesible según database.py (tipos UUID de
 postgresql + create_all() al importar main) — no se puede sustituir por SQLite.
@@ -34,6 +37,7 @@ Productos para crear el producto (_pedir_crear_producto_desde_cosecha) — como 
 levanta ese servicio, los tests que ejercitan esos caminos mockean esas funciones puntuales (no
 el circuit breaker ni httpx) para no depender de una red real ni de sus timeouts.
 """
+import json
 import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -722,3 +726,146 @@ def test_historial_verificacion_requiere_rol_verificador():
     _auth(str(uuid.uuid4()), rol="productor")
     resp = client.get("/productores/produccion/historial-verificacion")
     assert resp.status_code == 403
+
+
+# ============ Validación de los formularios: el servidor no confía en el frontend ============
+
+def _con_json_crudo(metodo, ruta, texto_json):
+    """Manda el cuerpo tal cual: JSON.stringify no puede producir NaN ni Infinity, pero cualquier
+    otro cliente de la API sí."""
+    return client.request(metodo, ruta, content=texto_json, headers={"Content-Type": "application/json"})
+
+
+def _nueva_chacra() -> str:
+    _nuevo_productor()
+    resp = client.post("/chacras", json=_chacra_payload(codigo=f"CH-{uuid.uuid4().hex[:6]}"))
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
+def test_chacra_con_datos_invalidos_falla_422_y_no_guarda_nada():
+    _nuevo_productor()
+    invalidas = [
+        {**_chacra_payload(), "ubicacion_latitud": 95},
+        {**_chacra_payload(), "ubicacion_longitud": -181},
+        {**_chacra_payload(), "codigo": "   "},
+        {**_chacra_payload(), "codigo": "X" * 31},
+        {**_chacra_payload(), "nombre": "N" * 81},
+        {**_chacra_payload(), "codigo": "A\u0000B"},
+    ]
+    for cuerpo in invalidas:
+        resp = client.post("/chacras", json=cuerpo)
+        assert resp.status_code == 422, (cuerpo, resp.text)
+    for coordenada in ("NaN", "Infinity", "-Infinity"):
+        crudo = '{"codigo": "CH-NAN", "ubicacion_latitud": %s, "ubicacion_longitud": -74.2}' % coordenada
+        assert _con_json_crudo("POST", "/chacras", crudo).status_code == 422, coordenada
+    assert client.get("/chacras/me").json() == []
+
+
+def test_codigo_de_chacra_se_recorta():
+    _nuevo_productor()
+    resp = client.post("/chacras", json=_chacra_payload(codigo="  CH-99  "))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["codigo"] == "CH-99"
+
+
+def test_perfil_de_productor_con_datos_invalidos_falla_422():
+    _auth(str(uuid.uuid4()))
+    for cuerpo in (
+        {"nombre": ""}, {"nombre": "   "}, {"nombre": "N" * 121}, {"nombre": "ok", "contacto": "9" * 61},
+        {"nombre": "ok", "latitud": "abc"}, {"nombre": "ok", "latitud": "95", "longitud": "-74"},
+        {"nombre": "ok", "longitud": "NaN"}, {"nombre": "ok", "comunidad": "C" * 121},
+    ):
+        resp = client.post("/productores", json=cuerpo)
+        assert resp.status_code == 422, (cuerpo, resp.text)
+    ok = client.post("/productores", json={"nombre": "Con ubicación", "latitud": "-13.16", "longitud": "-74.22"})
+    assert ok.status_code == 200, ok.text
+
+
+def test_siembra_con_numeros_o_textos_invalidos_falla_422_y_no_guarda_nada():
+    chacra_id = _nueva_chacra()
+    cambios = [
+        {"costo_semillas": -1}, {"costo_insumos": -0.01}, {"costo_semillas": 10_000_000}, {"numero_parcelas": 1001},
+        {"numero_parcelas": 10**11}, {"unidad_medida": "litro", "equivalencia_kg": -2},
+        {"unidad_medida": "litro", "equivalencia_kg": 5001}, {"cultivo": "   "}, {"cultivo": "P" * 81},
+        {"cultivo": "pa\u0000pa"}, {"ubicacion_cosecha": "U" * 201},
+    ]
+    for cambio in cambios:
+        resp = client.post("/productores/produccion", json={**_registro_payload(chacra_id), **cambio})
+        assert resp.status_code == 422, (cambio, resp.text)
+    for campo in ("costo_semillas", "costo_insumos"):
+        for valor in ("NaN", "Infinity", "-Infinity"):
+            crudo = json.dumps({**_registro_payload(chacra_id), campo: 0}).replace(f'"{campo}": 0', f'"{campo}": {valor}')
+            assert _con_json_crudo("POST", "/productores/produccion", crudo).status_code == 422, (campo, valor)
+    assert client.get("/productores/produccion/me").json() == []
+
+
+def test_siembra_con_fechas_absurdas_falla_422_pero_planificar_a_futuro_cercano_si():
+    chacra_id = _nueva_chacra()
+    hoy = datetime.utcnow()
+    absurdas = [
+        (datetime(1999, 12, 31), datetime(2000, 6, 1)),
+        (hoy + timedelta(days=731), hoy + timedelta(days=900)),
+        (datetime(2026, 1, 1), datetime(2026, 1, 1) + timedelta(days=1826)),
+        (datetime(2026, 3, 1), datetime(2026, 2, 1)),
+    ]
+    for siembra, estimada in absurdas:
+        payload = {**_registro_payload(chacra_id), "fecha_siembra": siembra.isoformat(), "fecha_cosecha_estimada": estimada.isoformat()}
+        resp = client.post("/productores/produccion", json=payload)
+        assert resp.status_code == 422, (siembra, estimada, resp.text)
+
+    planificada = {
+        **_registro_payload(chacra_id),
+        "fecha_siembra": (hoy + timedelta(days=30)).isoformat(),
+        "fecha_cosecha_estimada": (hoy + timedelta(days=150)).isoformat(),
+    }
+    assert client.post("/productores/produccion", json=planificada).status_code == 200
+
+
+def test_fechas_con_zona_horaria_no_rompen_la_comparacion():
+    """Una fecha con zona ("...Z") junto a una sin zona lanzaba un error 500 al compararlas."""
+    chacra_id = _nueva_chacra()
+    payload = {**_registro_payload(chacra_id), "fecha_siembra": "2026-01-01T00:00:00Z", "fecha_cosecha_estimada": "2026-05-01T00:00:00"}
+    resp = client.post("/productores/produccion", json=payload)
+    assert resp.status_code == 200, resp.text
+    payload["fecha_cosecha_estimada"] = "2026-01-01T04:00:00+00:00"
+    assert client.post("/productores/produccion", json=payload).status_code == 200
+
+
+def test_completar_cosecha_con_datos_invalidos_falla_422_y_no_cambia_nada(monkeypatch):
+    chacra_id = _nueva_chacra()
+    registro = client.post("/productores/produccion", json=_registro_payload(chacra_id))
+    assert registro.status_code == 200, registro.text
+    registro_id = registro.json()["id"]
+    monkeypatch.setattr(main, "_consultar_precio_referencia", lambda cultivo: (10.0, None))
+
+    url = f"/productores/produccion/{registro_id}/completar-cosecha"
+    base = {"cantidad_cosechada": 50.0, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(), "costo_mano_obra": 20.0, "costo_envio": 10.0}
+    hoy = datetime.utcnow()
+    invalidos = [
+        {"cantidad_cosechada": 1e12}, {"cantidad_cosechada": 1_000_001}, {"cantidad_cosechada": 0}, {"cantidad_cosechada": -5},
+        {"costo_mano_obra": -1}, {"costo_envio": -0.5}, {"costo_mano_obra": 10_000_000},
+        {"fecha_cosecha_real": datetime(2025, 12, 31).isoformat()},      # antes de la siembra (2026-01-01)
+        {"fecha_cosecha_real": (hoy + timedelta(days=5)).isoformat()},   # en el futuro
+    ]
+    for cambio in invalidos:
+        resp = client.patch(url, json={**base, **cambio})
+        assert resp.status_code == 422, (cambio, resp.text)
+    for campo in ("cantidad_cosechada", "costo_mano_obra", "costo_envio"):
+        for valor in ("NaN", "Infinity"):
+            crudo = json.dumps(base).replace(f'"{campo}": {json.dumps(base[campo])}', f'"{campo}": {valor}')
+            assert _con_json_crudo("PATCH", url, crudo).status_code == 422, (campo, valor)
+
+    actual = next(r for r in client.get("/productores/produccion/me").json() if r["id"] == registro_id)
+    assert actual["estado"] == "planificado" and actual["cantidad_cosechada"] is None
+
+    sano = client.patch(url, json=base)
+    assert sano.status_code == 200, sano.text
+    assert sano.json()["estado"] == "pendiente_verificacion"
+
+
+def test_rechazar_con_motivo_demasiado_largo_falla_422(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _como_verificador()
+    resp = client.post(f"/productores/produccion/{registro_id}/rechazar", json={"motivo": "m" * 501})
+    assert resp.status_code == 422, resp.text

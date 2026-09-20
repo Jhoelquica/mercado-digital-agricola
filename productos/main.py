@@ -1,4 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+import math
 import os
 import unicodedata
 import httpx
@@ -8,6 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, field_validator
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from auth import verificar_token, requiere_rol, security
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
@@ -28,6 +32,15 @@ breaker_productores = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
+
+
+@app.exception_handler(RequestValidationError)
+async def _errores_de_validacion(request, exc):
+    """Igual que el manejador por defecto de FastAPI, pero sin el valor recibido ("input"): si el
+    cliente manda NaN o Infinity, ese valor no se puede serializar a JSON y la respuesta 422 salía
+    como un error 500."""
+    detalle = [{clave: valor for clave, valor in error.items() if clave != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detalle)})
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,6 +73,36 @@ def normalizar_categoria(valor):
         c for c in unicodedata.normalize("NFKD", str(valor).strip().lower()) if not unicodedata.combining(c)
     )
     return sin_tildes if sin_tildes in CATEGORIAS_VALIDAS else None
+
+
+# Topes de lo que se puede escribir en un precio/factor/texto. NaN e Infinity entran por JSON
+# (Python los acepta) y NaN pasa cualquier comparación "<= 0" sin saltar: se rechazan acá. El límite
+# inferior (> 0) lo comprueba cada endpoint con su propio mensaje.
+PRECIO_MAXIMO = 100_000            # soles por unidad de venta
+FACTOR_MAXIMO = 10_000             # unidades base por unidad alternativa (ej. un saco de 50 kg)
+COMENTARIO_RESENA_MAXIMO = 1_000
+TERMINO_BUSQUEDA_MAXIMO = 100
+
+
+def _numero_acotado(valor, maximo):
+    if valor is None:
+        return None
+    if not math.isfinite(valor):
+        raise ValueError("debe ser un número válido")
+    if valor > maximo:
+        raise ValueError(f"no puede superar {maximo}")
+    return valor
+
+
+def _texto_acotado(valor, maximo):
+    if valor is None:
+        return None
+    valor = valor.strip()
+    if "\x00" in valor:
+        raise ValueError("contiene caracteres no válidos")
+    if len(valor) > maximo:
+        raise ValueError(f"no puede superar {maximo} caracteres")
+    return valor
 
 def get_db():
     db = SessionLocal()
@@ -94,6 +137,11 @@ class ProductoActualizar(BaseModel):
             raise ValueError("Categoría no válida. Elige una de: " + ", ".join(CATEGORIAS_VALIDAS))
         return canonica
 
+    @field_validator("precio")
+    @classmethod
+    def _precio_acotado(cls, valor):
+        return _numero_acotado(valor, PRECIO_MAXIMO)
+
 class ImagenCrear(BaseModel):
     url: str
     orden: int = 0
@@ -101,6 +149,11 @@ class ImagenCrear(BaseModel):
 class ResenaCrear(BaseModel):
     calificacion: int
     comentario: str | None = None
+
+    @field_validator("comentario")
+    @classmethod
+    def _comentario_acotado(cls, valor):
+        return _texto_acotado(valor, COMENTARIO_RESENA_MAXIMO)
 
 class DescontarStock(BaseModel):
     cantidad: int
@@ -114,14 +167,39 @@ class OrdenImagen(BaseModel):
 class BusquedaRegistrar(BaseModel):
     termino: str
 
+    @field_validator("termino")
+    @classmethod
+    def _termino_acotado(cls, valor):
+        return _texto_acotado(valor, TERMINO_BUSQUEDA_MAXIMO)
+
 class UnidadAlternativaCrear(BaseModel):
     unidad: str
     precio: float
     factor_a_base: float
 
+    @field_validator("precio")
+    @classmethod
+    def _precio_acotado(cls, valor):
+        return _numero_acotado(valor, PRECIO_MAXIMO)
+
+    @field_validator("factor_a_base")
+    @classmethod
+    def _factor_acotado(cls, valor):
+        return _numero_acotado(valor, FACTOR_MAXIMO)
+
 class UnidadAlternativaActualizar(BaseModel):
     precio: float | None = None
     factor_a_base: float | None = None
+
+    @field_validator("precio")
+    @classmethod
+    def _precio_acotado(cls, valor):
+        return _numero_acotado(valor, PRECIO_MAXIMO)
+
+    @field_validator("factor_a_base")
+    @classmethod
+    def _factor_acotado(cls, valor):
+        return _numero_acotado(valor, FACTOR_MAXIMO)
 
 @breaker_productores
 def llamar_productores_me(token: str):

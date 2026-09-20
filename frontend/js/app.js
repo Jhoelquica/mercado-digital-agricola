@@ -6305,25 +6305,25 @@ function renderFormRegistroProduccion() {
           <button type="button" class="btn btn-outline btn-sm" id="btn-ir-a-chacras">Registra una chacra</button> antes de continuar.
         </p>`}
         <label>Número de parcelas
-          <input type="number" id="produccion-parcelas" min="1" step="1" required placeholder="1">
+          <input type="number" id="produccion-parcelas" min="1" max="1000" step="1" required placeholder="1">
         </label>
         <label>Ubicación de la cosecha (opcional)
           <input type="text" id="produccion-ubicacion" placeholder="Ej. Parcela norte">
         </label>
         <label>Costo de semillas (S/)
-          <input type="number" id="produccion-costo-semillas" min="0" step="0.01" value="0">
+          <input type="number" id="produccion-costo-semillas" min="0" max="9999999.99" step="0.01" value="0">
         </label>
         <label>Costo de insumos (S/)
-          <input type="number" id="produccion-costo-insumos" min="0" step="0.01" value="0">
+          <input type="number" id="produccion-costo-insumos" min="0" max="9999999.99" step="0.01" value="0">
         </label>
         <label>Unidad de medida
           <select id="produccion-unidad">${opcionesUnidadMedidaHtml([], { soloBase: true })}</select>
         </label>
         <label id="produccion-equivalencia-bloque" class="hidden">Equivalencia a kg (1 unidad = X kg)
-          <input type="number" id="produccion-equivalencia" min="0.0001" step="0.0001" placeholder="Ej. 11.5">
+          <input type="number" id="produccion-equivalencia" min="0.0001" max="5000" step="0.0001" placeholder="Ej. 11.5">
         </label>
         <label>Fecha de siembra
-          <input type="date" id="produccion-fecha-siembra" required>
+          <input type="date" id="produccion-fecha-siembra" required min="2000-01-01">
         </label>
         <label>Fecha estimada de cosecha
           <input type="date" id="produccion-fecha-cosecha-estimada" required>
@@ -6376,16 +6376,16 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
       <button type="button" class="btn btn-outline btn-sm btn-toggle-completar-cosecha" data-id="${r.id}">${esRechazado ? 'Corregir y reenviar' : 'Completar cosecha'}</button>
       <form class="form-grid form-completar-cosecha hidden" data-id="${r.id}">
         <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
-          <input type="number" name="cantidad_cosechada" min="0.01" step="0.01" required value="${valorCantidad}">
+          <input type="number" name="cantidad_cosechada" min="0.01" max="1000000" step="0.01" required value="${valorCantidad}">
         </label>
         <label>Fecha real de cosecha
-          <input type="date" name="fecha_cosecha_real" required value="${valorFecha}">
+          <input type="date" name="fecha_cosecha_real" required min="${String(r.fecha_siembra || '').slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" value="${valorFecha}">
         </label>
         <label>Costo de mano de obra final (S/)
-          <input type="number" name="costo_mano_obra" min="0" step="0.01" value="${valorManoObra}" required>
+          <input type="number" name="costo_mano_obra" min="0" max="9999999.99" step="0.01" value="${valorManoObra}" required>
         </label>
         <label>Costo de envío final (S/)
-          <input type="number" name="costo_envio" min="0" step="0.01" value="${valorEnvio}" required>
+          <input type="number" name="costo_envio" min="0" max="9999999.99" step="0.01" value="${valorEnvio}" required>
         </label>
         <button type="submit" class="btn btn-primary btn-sm">${esRechazado ? 'Reenviar a verificación' : 'Confirmar cosecha'}</button>
       </form>`;

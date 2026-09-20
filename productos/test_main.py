@@ -867,3 +867,55 @@ def test_publicar_con_categoria_no_valida_falla_400(monkeypatch):
     resp = client.patch(f"/productos/{producto.id}/publicar", headers=HEADERS_AUTH)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Elige una categoría válida antes de publicar."
+
+
+# ============ Números finitos y textos acotados ============
+
+def _con_json_crudo(metodo, ruta, texto_json):
+    """JSON.stringify no puede producir NaN ni Infinity, pero cualquier otro cliente de la API sí."""
+    return client.request(metodo, ruta, content=texto_json, headers={**HEADERS_AUTH, "Content-Type": "application/json"})
+
+
+def test_actualizar_precio_no_finito_o_gigante_falla_422(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador", precio=None, categoria="fruta")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    for valor in ("NaN", "Infinity", "-Infinity", "1e9", "100001"):
+        resp = _con_json_crudo("PATCH", f"/productos/{producto.id}", '{"precio": %s}' % valor)
+        assert resp.status_code == 422, (valor, resp.text)
+
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Producto).get(producto.id).precio is None
+    finally:
+        db.close()
+
+
+def test_unidad_alternativa_con_numeros_no_finitos_o_gigantes_falla_422(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="disponible")
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    for precio, factor in (("NaN", "10"), ("Infinity", "10"), ("100001", "10"), ("5", "NaN"), ("5", "Infinity"), ("5", "10001")):
+        cuerpo = '{"unidad": "saco", "precio": %s, "factor_a_base": %s}' % (precio, factor)
+        resp = _con_json_crudo("POST", f"/productos/{producto.id}/unidades", cuerpo)
+        assert resp.status_code == 422, (precio, factor, resp.text)
+
+
+def test_resena_y_busqueda_limitan_el_largo_del_texto():
+    import pytest
+    from pydantic import ValidationError
+
+    assert main.ResenaCrear(calificacion=5, comentario="  Muy buena  ").comentario == "Muy buena"
+    with pytest.raises(ValidationError):
+        main.ResenaCrear(calificacion=5, comentario="x" * 1001)
+    with pytest.raises(ValidationError):
+        main.ResenaCrear(calificacion=5, comentario="mal\u0000texto")
+    with pytest.raises(ValidationError):
+        main.BusquedaRegistrar(termino="b" * 101)
+    assert main.BusquedaRegistrar(termino="  papa ").termino == "papa"

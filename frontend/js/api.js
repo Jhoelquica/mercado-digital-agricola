@@ -30,6 +30,20 @@ class ApiError extends Error {
   }
 }
 
+// FastAPI devuelve los errores de validación (422) como una lista de {loc, msg}: se convierte en un
+// texto legible ("costo_semillas: debe estar entre 0 y 9999999.99") en vez de mostrar el JSON crudo.
+function mensajeDeDetalle(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((e) => {
+      const campo = Array.isArray(e.loc) ? e.loc.filter((parte) => parte !== 'body').join(' › ') : '';
+      const mensaje = String(e.msg || '').replace(/^Value error, /, '');
+      return campo ? `${campo}: ${mensaje}` : mensaje;
+    }).join(' · ');
+  }
+  return JSON.stringify(detail);
+}
+
 async function request(baseKey, path, { method = 'GET', body, auth = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (auth) {
@@ -60,7 +74,7 @@ async function request(baseKey, path, { method = 'GET', body, auth = false } = {
       throw new ApiError('No tienes permiso para esta acción.', 403);
     }
     const detail = (data && data.detail) ? data.detail : `Error ${resp.status} en ${baseKey}`;
-    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), resp.status);
+    throw new ApiError(mensajeDeDetalle(detail), resp.status);
   }
 
   return data;
@@ -92,7 +106,7 @@ async function requestFormData(baseKey, path, formData) {
       throw new ApiError('No tienes permiso para esta acción.', 403);
     }
     const detail = (data && data.detail) ? data.detail : `Error ${resp.status} en ${baseKey}`;
-    throw new ApiError(typeof detail === 'string' ? detail : JSON.stringify(detail), resp.status);
+    throw new ApiError(mensajeDeDetalle(detail), resp.status);
   }
 
   return data;

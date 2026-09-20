@@ -2,15 +2,24 @@ import os
 import uuid
 import logging
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict
 from auth import verificar_token, requiere_rol
 import pybreaker
+from validaciones import (
+    Cantidad, CodigoChacra, Comunidad, Contacto, Cultivo, Equivalencia, Fecha, Latitud, LatitudTexto,
+    Longitud, LongitudTexto, Monto, MotivoRechazo, NombreChacra, NombreProductor, Parcelas, Ubicacion,
+    UnidadMedida, CICLO_MAXIMO_DIAS, COSECHA_FUTURA_TOLERANCIA_DIAS, FECHA_SIEMBRA_MINIMA,
+    SIEMBRA_FUTURA_MAXIMA_DIAS,
+)
 
 from database import Base, engine, SessionLocal
 import models
@@ -22,6 +31,15 @@ logger = logging.getLogger("productores.main")
 app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
+
+
+@app.exception_handler(RequestValidationError)
+async def _errores_de_validacion(request, exc):
+    """Igual que el manejador por defecto de FastAPI, pero sin el valor recibido ("input"): si el
+    cliente manda NaN o Infinity, ese valor no se puede serializar a JSON y la respuesta 422 salía
+    como un error 500."""
+    detalle = [{clave: valor for clave, valor in error.items() if clave != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detalle)})
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,20 +56,22 @@ def get_db():
         db.close()
 
 class ProductorCrear(BaseModel):
-    nombre: str
-    comunidad: str | None = None
-    contacto: str | None = None
-    ubicacion: str | None = None
-    latitud: str | None = None
-    longitud: str | None = None
+    # Los tipos de validaciones.py exigen lo mismo que el formulario (largos, coordenadas numéricas)
+    # sin depender de que la petición venga del frontend.
+    nombre: NombreProductor
+    comunidad: Comunidad | None = None
+    contacto: Contacto | None = None
+    ubicacion: Ubicacion | None = None
+    latitud: LatitudTexto | None = None
+    longitud: LongitudTexto | None = None
 
 # ============ Chacras ============
 
 class ChacraCrear(BaseModel):
-    codigo: str
-    nombre: str | None = None
-    ubicacion_latitud: float
-    ubicacion_longitud: float
+    codigo: CodigoChacra
+    nombre: NombreChacra | None = None
+    ubicacion_latitud: Latitud
+    ubicacion_longitud: Longitud
 
 class ChacraSalida(BaseModel):
     # Los demás endpoints devuelven el objeto ORM crudo; acá se usa un schema de salida
@@ -72,26 +92,26 @@ class RegistroProduccionCrear(BaseModel):
     # Toda siembra se asocia a una chacra del productor (obligatorio). Se valida en el
     # endpoint que la chacra pertenezca a la cuenta autenticada, no solo que exista.
     chacra_id: uuid.UUID
-    cultivo: str
-    numero_parcelas: int
-    ubicacion_cosecha: str | None = None
+    cultivo: Cultivo
+    numero_parcelas: Parcelas
+    ubicacion_cosecha: Ubicacion | None = None
     # Solo costos "de entrada" — mano de obra y envío se completan recién al cosechar
     # (ver comentario en models.RegistroProduccion).
-    costo_semillas: float = 0
-    costo_insumos: float = 0
-    unidad_medida: str = "kg"
-    equivalencia_kg: float | None = None
-    fecha_siembra: datetime
-    fecha_cosecha_estimada: datetime
+    costo_semillas: Monto = 0
+    costo_insumos: Monto = 0
+    unidad_medida: UnidadMedida = "kg"
+    equivalencia_kg: Equivalencia | None = None
+    fecha_siembra: Fecha
+    fecha_cosecha_estimada: Fecha
 
 class CompletarCosechaDatos(BaseModel):
-    cantidad_cosechada: float
-    fecha_cosecha_real: datetime
-    costo_mano_obra: float
-    costo_envio: float
+    cantidad_cosechada: Cantidad
+    fecha_cosecha_real: Fecha
+    costo_mano_obra: Monto
+    costo_envio: Monto
 
 class RechazarCosechaDatos(BaseModel):
-    motivo: str
+    motivo: MotivoRechazo
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
@@ -485,6 +505,14 @@ def crear_registro_produccion(
         raise HTTPException(status_code=422, detail="El número de parcelas debe ser mayor a 0")
     if datos.fecha_cosecha_estimada < datos.fecha_siembra:
         raise HTTPException(status_code=422, detail="La fecha de cosecha estimada no puede ser anterior a la de siembra")
+    ahora = datetime.utcnow()
+    if datos.fecha_siembra < FECHA_SIEMBRA_MINIMA or datos.fecha_siembra > ahora + timedelta(days=SIEMBRA_FUTURA_MAXIMA_DIAS):
+        raise HTTPException(
+            status_code=422,
+            detail="La fecha de siembra no es válida: debe ser posterior al año 2000 y no pasar de dos años a partir de hoy",
+        )
+    if datos.fecha_cosecha_estimada > datos.fecha_siembra + timedelta(days=CICLO_MAXIMO_DIAS):
+        raise HTTPException(status_code=422, detail="La fecha de cosecha estimada no puede pasar de cinco años desde la siembra")
     if datos.unidad_medida not in UNIDADES_COSECHA_VALIDAS:
         raise HTTPException(
             status_code=422,
@@ -559,6 +587,12 @@ def completar_cosecha(
 
     if datos.cantidad_cosechada <= 0:
         raise HTTPException(status_code=422, detail="La cantidad cosechada debe ser mayor a 0")
+    # Una cosecha no puede ser anterior a su siembra ni haber ocurrido en el futuro (margen de un día
+    # por la diferencia de zona horaria con el navegador).
+    if datos.fecha_cosecha_real < registro.fecha_siembra:
+        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede ser anterior a la de siembra")
+    if datos.fecha_cosecha_real > datetime.utcnow() + timedelta(days=COSECHA_FUTURA_TOLERANCIA_DIAS):
+        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede estar en el futuro")
 
     registro.cantidad_cosechada = datos.cantidad_cosechada
     registro.fecha_cosecha_real = datos.fecha_cosecha_real
