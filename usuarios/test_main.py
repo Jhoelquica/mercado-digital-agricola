@@ -526,3 +526,35 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+# ============ GET /usuarios/{id}: solo el propio usuario o un admin ============
+
+def test_un_usuario_ve_su_propio_perfil():
+    usuario_id = _crear_usuario("comprador")
+    _auth(usuario_id, "comprador")
+    resp = client.get(f"/usuarios/{usuario_id}")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["id"] == usuario_id
+
+
+def test_un_usuario_no_puede_ver_el_perfil_de_otro():
+    ajeno = _crear_usuario("productor")
+    propio = _crear_usuario("comprador")
+    _auth(propio, "comprador")
+    resp = client.get(f"/usuarios/{ajeno}")
+    assert resp.status_code == 403
+    assert "@" not in resp.text  # ni rastro del correo del otro usuario
+
+
+def test_un_admin_puede_ver_cualquier_perfil():
+    ajeno = _crear_usuario("productor")
+    _admin_autenticado()
+    resp = client.get(f"/usuarios/{ajeno}")
+    assert resp.status_code == 200, resp.text
+    assert "@" in resp.json()["email"]
+
+
+def test_un_id_de_usuario_mal_formado_falla_422_no_500():
+    _auth(str(uuid.uuid4()), "comprador")
+    assert client.get("/usuarios/no-es-un-uuid").status_code == 422

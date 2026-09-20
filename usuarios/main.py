@@ -1,4 +1,5 @@
 import os
+import uuid
 from datetime import datetime
 
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -257,7 +258,13 @@ def validar_token(response: Response, usuario: dict = Depends(verificar_token)):
     return {"valido": True}
 
 @app.get("/usuarios/{usuario_id}")
-def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+def obtener_usuario(usuario_id: uuid.UUID, db: Session = Depends(get_db), solicitante: dict = Depends(verificar_token)):
+    # Solo el propio usuario o un admin: antes cualquier usuario con sesión podía leer el correo de
+    # cualquier otro conociendo su id (y varios ids circulan en respuestas públicas, p. ej. las
+    # reseñas). Quienes llaman a este endpoint (el frontend al iniciar sesión y Productos al
+    # publicar una reseña) piden siempre el perfil del propio usuario del token.
+    if str(usuario_id) != str(solicitante.get("sub")) and solicitante.get("rol") != "admin":
+        raise HTTPException(status_code=403, detail="Solo puedes ver tu propio perfil")
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
