@@ -184,16 +184,16 @@ const Api = {
   },
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),
-    obtener: (id) => request('pedidos', `/pedidos/${id}`),
+    obtener: (id) => request('pedidos', `/pedidos/${id}`, { auth: true }),
     // Costo de envío según la distancia del destino al almacén (público): permite mostrar el total
     // real antes de crear el pedido.
     cotizarEnvio: (latitud, longitud) => request('pedidos', `/pedidos/costo-envio?latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`),
   },
   transporte: {
-    obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`),
+    obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`, { auth: true }),
     listarTodos: () => request('transporte', '/envios', { auth: true }),
     actualizarEstado: (envioId, estado) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado }, auth: true }),
-    ruta: (envioId) => request('transporte', `/envios/${envioId}/ruta`),
+    ruta: (envioId) => request('transporte', `/envios/${envioId}/ruta`, { auth: true }),
     actualizarUbicacion: (envioId, latitud, longitud) => request('transporte', `/envios/${envioId}/ubicacion`, { method: 'PATCH', body: { latitud: String(latitud), longitud: String(longitud) }, auth: true }),
     propuestas: () => request('transporte', '/envios/propuestas', { auth: true }),
     aceptar: (envioId) => request('transporte', `/envios/${envioId}/aceptar`, { method: 'POST', auth: true }),
