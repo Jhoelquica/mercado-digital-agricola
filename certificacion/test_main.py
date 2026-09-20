@@ -8,6 +8,8 @@ Cubre:
 - el bloque certificado_productor lleva el verificador cuando su usuario tiene perfil
 - idempotente: repetir la llamada no duplica bloques
 - completa solo lo que falta si ya existía cosecha_registrada
+- POST /certificacion/{id}/eventos ya no existe: nadie puede agregar bloques a la cadena de un
+  producto por la API pública (solo entran por los endpoints internos con secreto)
 
 Requiere Postgres real (tipos UUID + create_all al importar main), igual que el resto de servicios.
 """
@@ -148,3 +150,16 @@ def test_completa_solo_el_evento_que_falta(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"creados": 1, "total_bloques": 2}
     assert [b.evento for b in _bloques(producto_id)] == ["cosecha_registrada", "certificado_productor"]
+
+
+def test_el_endpoint_publico_de_eventos_ya_no_existe():
+    """Antes cualquier productor o verificador podía agregar bloques con texto libre a la cadena de
+    CUALQUIER producto (existiera o no). Ahora la ruta no existe y no se crea ningún bloque."""
+    producto_id = str(uuid.uuid4())
+    for cuerpo in (
+        {"evento": "cosecha_registrada", "datos": "texto falso", "latitud": "-13.15", "longitud": "-74.22"},
+        {"evento": "certificado_productor", "datos": "certificado falso"},
+    ):
+        resp = client.post(f"/certificacion/{producto_id}/eventos", json=cuerpo, headers={"Authorization": "Bearer x"})
+        assert resp.status_code == 404
+    assert _bloques(producto_id) == []

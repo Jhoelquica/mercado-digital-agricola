@@ -144,7 +144,6 @@ const Api = {
     mios: () => request('productos', '/productos/mios', { auth: true }),
     obtener: (id) => request('productos', `/productos/${id}`),
     precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
-    crear: (datos) => request('productos', '/productos', { method: 'POST', body: datos, auth: true }),
     actualizar: (id, datos) => request('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
     publicar: (id) => request('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),
     confirmarLlegadaAlmacen: (id) => request('productos', `/productos/${id}/confirmar-llegada-almacen`, { method: 'PATCH', auth: true }),

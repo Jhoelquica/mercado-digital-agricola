@@ -15,6 +15,7 @@ Cubre:
 - GET /productos/{id}/reservas: admin o el productor dueño del producto
 - PATCH /productos/{id}: edita categoria y/o precio de un borrador propio; falla si no es el
   dueño, si el producto ya está publicado, o si el precio es <= 0
+- POST /productos ya no existe (405): un producto solo nace de una cosecha aprobada
 - POST /productos/interno/crear-desde-cosecha: sin el secreto correcto -> 403,
   con el secreto correcto crea el borrador esperado (sin precio/categoría, no visible en el
   catálogo)
@@ -25,7 +26,7 @@ Redis real: cache.py se degrada a "sin caché" solo con que Redis no responda (v
 docstring), así que un Redis inalcanzable en el entorno de test no rompe nada, solo hace que
 cada GET pegue directo a Postgres.
 
-crear_producto (el flujo manual POST /productos) y las operaciones sobre imágenes/publicar
+Las operaciones sobre imágenes/publicar/editar
 validan el perfil de productor llamando a PRODUCTORES_URL/productores/me con httpx.Client()
 crudo (no un helper con circuit breaker) — se mockea reemplazando main.httpx.Client por un
 stub, en vez de levantar un servicio de Productores real. Los productos que estos tests
@@ -801,3 +802,18 @@ def test_crear_desde_cosecha_duplicado_falla_409():
     segunda = client.post("/productos/interno/crear-desde-cosecha", json=payload, headers=headers)
     assert segunda.status_code == 409
     assert segunda.json()["detail"] == "Ya existe un producto para esta cosecha."
+
+
+# ============ Categoría validada en el servidor + POST /productos cerrado ============
+
+def test_post_productos_ya_no_existe():
+    """POST /productos dejaba a cualquier productor crear un producto "disponible" sin cosecha ni
+    verificación, con precio y stock libres. Ya no existe: un producto solo nace de una cosecha
+    aprobada (POST /productos/interno/crear-desde-cosecha, con secreto de servicio)."""
+    _auth(str(uuid.uuid4()))
+    resp = client.post(
+        "/productos",
+        json={"nombre": "QA falso", "categoria": "fruta", "precio": -5, "stock": 999},
+        headers=HEADERS_AUTH,
+    )
+    assert resp.status_code == 405

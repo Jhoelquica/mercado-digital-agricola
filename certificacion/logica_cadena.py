@@ -24,6 +24,8 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     return R * c
 
 
+# Sin uso desde que se cerró POST /certificacion/{id}/eventos: el flujo real (aprobar cosecha ->
+# /cosecha-aprobada) no valida ubicación. Se conserva por si se decide exigir geofencing al aprobar.
 def validar_geofencing(token: str, latitud_evento: str, longitud_evento: str):
     headers = {"Authorization": f"Bearer {token}"}
     try:

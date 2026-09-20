@@ -11,9 +11,8 @@ from fastapi.responses import StreamingResponse
 
 from database import Base, engine, SessionLocal
 import models
-from logica_cadena import crear_bloque, verificar_cadena, validar_geofencing, generar_certificado_pedido
-from auth import requiere_rol, security
-from fastapi.security import HTTPAuthorizationCredentials
+from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
+from auth import requiere_rol
 from fastapi import Header
 import json
 
@@ -37,12 +36,6 @@ def get_db():
     finally:
         db.close()
 
-
-class EventoCrear(BaseModel):
-    evento: str
-    datos: str | None = None
-    latitud: str | None = None
-    longitud: str | None = None
 
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
@@ -164,43 +157,11 @@ def registrar_cosecha_aprobada(
 def salud():
     return {"estado": "ok", "servicio": "certificacion"}
 
-@app.post("/certificacion/{producto_id}/eventos")
-def registrar_evento(
-        producto_id: str,
-        datos: EventoCrear,
-        db: Session = Depends(get_db),
-        usuario: dict = Depends(requiere_rol("productor", "verificador")),
-        credentials: HTTPAuthorizationCredentials = Depends(security)
-):
-    if datos.evento not in ["cosecha_registrada", "certificado_productor"]:
-        raise HTTPException(status_code=422, detail="Tipo de evento no válido")
-
-    rol = usuario.get("rol")
-
-    if datos.evento == "cosecha_registrada" and rol != "productor":
-        raise HTTPException(status_code=403, detail="Solo un productor puede registrar la cosecha")
-
-    if datos.evento == "certificado_productor" and rol != "verificador":
-        raise HTTPException(status_code=403, detail="Solo un verificador puede certificar el producto")
-
-    if datos.evento == "cosecha_registrada":
-        if not datos.latitud or not datos.longitud:
-            raise HTTPException(status_code=422, detail="Latitud y longitud son requeridas para registrar la cosecha")
-
-        token = credentials.credentials
-        validar_geofencing(token, datos.latitud, datos.longitud)
-
-    verificador_id = None
-    if datos.evento == "certificado_productor":
-        verificador = db.query(models.Verificador).filter(
-            models.Verificador.usuario_id == usuario.get("sub")
-        ).first()
-        if not verificador:
-            raise HTTPException(status_code=404, detail="Aún no tienes un perfil de verificador. Créalo primero.")
-        verificador_id = verificador.id
-
-    bloque = crear_bloque(db, producto_id, datos.evento, datos.datos, verificador_id)
-    return bloque
+# POST /certificacion/{producto_id}/eventos se eliminó: dejaba a cualquier productor o verificador
+# agregar bloques a la cadena de CUALQUIER producto (no comprobaba que existiera ni que fuera suyo),
+# con texto libre, y dos escrituras simultáneas bifurcaban la cadena. Ningún flujo lo usaba: los
+# eventos de la cadena solo entran por los endpoints internos con secreto de servicio
+# (/cosecha-aprobada desde Productores y /eventos-internos desde Transporte).
 
 @app.get("/certificacion/{producto_id}/historial")
 def historial(producto_id: str, db: Session = Depends(get_db)):

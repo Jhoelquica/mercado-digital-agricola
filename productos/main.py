@@ -52,14 +52,6 @@ def get_db():
     finally:
         db.close()
 
-class ProductoCrear(BaseModel):
-    nombre: str
-    categoria: str | None = None
-    precio: float | None = None
-    stock: int = 0
-    unidad_medida: str = "kg"
-    imagen_url: str | None = None
-
 class ProductoCrearDesdeCosecha(BaseModel):
     productor_id: str
     productor_nombre: str
@@ -194,51 +186,11 @@ def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
 
-@app.post("/productos")
-def crear_producto(
-        datos: ProductoCrear,
-        db: Session = Depends(get_db),
-        usuario: dict = Depends(requiere_rol("productor")),
-        credenciales: HTTPAuthorizationCredentials = Depends(security),
-):
-    try:
-        resp = llamar_productores_me(credenciales.credentials)
-    except pybreaker.CircuitBreakerError:
-        raise HTTPException(status_code=503, detail="Servicio de Productores no disponible temporalmente, intenta en unos segundos")
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de publicar productos")
-        raise HTTPException(status_code=502, detail="No se pudo verificar tu perfil de productor")
-    except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
-
-    productor = resp.json()
-    nuevo = models.Producto(
-        productor_id=productor["id"],
-        productor_nombre=productor["nombre"],
-        nombre=datos.nombre,
-        categoria=datos.categoria,
-        precio=datos.precio,
-        stock=datos.stock,
-        unidad_medida=datos.unidad_medida,
-        # Disponible de inmediato (sin pasar por "en_transito"): este es el flujo manual de
-        # siempre (el productor ya llena precio en el mismo formulario), a diferencia del alta
-        # automática desde una cosecha aprobada (crear_producto_desde_cosecha), que sí nace en
-        # "borrador" porque no tiene precio ni imágenes todavía. NOTA: el ciclo
-        # borrador -> en_transito -> disponible se pensó para productos físicos que viajan desde
-        # una chacra hasta el almacén central — este endpoint (sin uso desde el frontend, el
-        # formulario de alta manual se quitó en una sub-entrega anterior) preserva el
-        # comportamiento previo de visibilidad inmediata en vez de forzarlo también por el
-        # tránsito. El default de la columna es "borrador" — se pisa acá a propósito.
-        estado="disponible",
-    )
-    db.add(nuevo)
-    db.commit()
-    db.refresh(nuevo)
-    # Producto nuevo: no tiene todavía una clave de detalle propia en caché (id recién
-    # generado), pero sí hay que sacarlo del catálogo cacheado para que aparezca de inmediato.
-    cache.invalidar(cache.CLAVE_CATALOGO)
-    return nuevo
+# POST /productos se eliminó: dejaba a cualquier productor publicar un producto "disponible" con
+# nombre, precio, stock y unidad libres, sin cosecha, sin verificación y sin certificación. Un
+# producto solo nace desde una cosecha aprobada por un Verificador (crear_producto_desde_cosecha,
+# más abajo), pasa por borrador -> en_transito -> disponible y su cadena de certificación se registra
+# en ese mismo flujo.
 
 @app.post("/productos/{producto_id}/imagenes/subir")
 def subir_imagen_producto(
