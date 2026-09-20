@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, field_validator
 from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
+from auth import secreto_de_servicio_valido
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from auth import verificar_token, requiere_rol
 
@@ -448,7 +449,7 @@ def obtener_pedido(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/pedidos/{pedido_id}")
 def eliminar_pedido(pedido_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()

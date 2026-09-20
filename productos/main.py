@@ -13,6 +13,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from auth import verificar_token, requiere_rol, security
+from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
 import models
@@ -277,7 +278,7 @@ PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")  
 
 @app.post("/productos/{producto_id}/stock/reponer")
 def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
-    if x_servicio_secreto != PAGOS_A_PRODUCTOS_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PRODUCTOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
@@ -390,7 +391,7 @@ def eliminar_imagen(
 
 @app.delete("/productos/{producto_id}")
 def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
@@ -643,7 +644,7 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
 
 @app.patch("/productos/{producto_id}/stock")
 def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
-    if x_servicio_secreto != PEDIDOS_A_PRODUCTOS_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
@@ -1044,7 +1045,7 @@ def crear_producto_desde_cosecha(
     un fallo de red — acá solo se traduce esa violación en un 409 legible, no se re-implementa
     la unicidad a mano con un SELECT previo (que además sería vulnerable a una carrera entre
     el chequeo y el insert)."""
-    if x_servicio_secreto != PRODUCTORES_A_PRODUCTOS_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, PRODUCTORES_A_PRODUCTOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     if datos.unidad_medida != "kg" and not datos.equivalencia_kg:

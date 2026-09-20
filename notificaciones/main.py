@@ -5,6 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from auth import verificar_token
+from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
@@ -44,7 +45,7 @@ def salud():
 
 @app.delete("/notificaciones/{notificacion_id}")
 def eliminar_notificacion(notificacion_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     notificacion = db.query(models.Notificacion).filter(models.Notificacion.id == notificacion_id).first()

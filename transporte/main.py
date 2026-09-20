@@ -16,6 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from auth import verificar_token, requiere_rol, security
+from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
@@ -274,7 +275,7 @@ def obtener_envio(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/envios/{envio_id}")
 def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
@@ -502,7 +503,7 @@ def mi_perfil_repartidor(db: Session = Depends(get_db), usuario: dict = Depends(
 
 @app.delete("/repartidores/{repartidor_id}")
 def eliminar_repartidor(repartidor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()

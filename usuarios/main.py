@@ -11,6 +11,7 @@ from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
 from auth import verificar_token, requiere_rol
+from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
@@ -264,7 +265,7 @@ def obtener_usuario(usuario_id: str, db: Session = Depends(get_db), usuario: dic
 
 @app.delete("/usuarios/{usuario_id}")
 def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()

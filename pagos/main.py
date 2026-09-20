@@ -20,6 +20,7 @@ logging.basicConfig(level=logging.INFO)
 from database import Base, engine, SessionLocal
 import models
 from auth import verificar_token, requiere_rol
+from auth import secreto_de_servicio_valido
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
@@ -114,7 +115,7 @@ def obtener_pago(pedido_id: str, db: Session = Depends(get_db)):
 
 @app.delete("/pagos/{pago_id}")
 def eliminar_pago(pago_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     pago = db.query(models.Pago).filter(models.Pago.id == pago_id).first()
@@ -136,7 +137,7 @@ def liquidar_repartidor(
     repartidor: acá el monto ya viene resuelto (costo_envio), no hace falta ninguna llamada
     cruzada para calcularlo. Ver el docstring de crear_liquidacion_repartidor sobre por qué esto
     responde 200 incluso ante un duplicado (idempotente vía UniqueConstraint, no un 409)."""
-    if x_servicio_secreto != TRANSPORTE_A_PAGOS_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_PAGOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     crear_liquidacion_repartidor(db, datos.pedido_id, datos.repartidor_id, datos.costo_envio)

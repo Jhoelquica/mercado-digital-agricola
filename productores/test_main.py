@@ -869,3 +869,29 @@ def test_rechazar_con_motivo_demasiado_largo_falla_422(monkeypatch):
     _como_verificador()
     resp = client.post(f"/productores/produccion/{registro_id}/rechazar", json={"motivo": "m" * 501})
     assert resp.status_code == 422, resp.text
+
+
+# ============ Los secretos de servicio fallan cerrados ============
+
+def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_esta_configurado(monkeypatch):
+    """Antes cada guarda hacía `if cabecera != SECRETO`: con la variable de entorno sin definir
+    (SECRETO = None) una petición sin cabecera (None) resultaba igual y PASABA. Ahora, sin secreto
+    configurado, no pasa nadie; y con uno configurado solo pasa el correcto."""
+    import uuid as _uuid
+    protegidos = [
+        ("DELETE", f"/productores/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
+        ("DELETE", f"/productores/produccion/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
+    ]
+    for metodo, ruta, cuerpo, variable in protegidos:
+        for valor in (None, ""):
+            monkeypatch.setattr(main, variable, valor)
+            sin_cabecera = client.request(metodo, ruta, json=cuerpo)
+            assert sin_cabecera.status_code == 403, (ruta, valor, sin_cabecera.text)
+            cabecera_vacia = client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": ""})
+            assert cabecera_vacia.status_code == 403, (ruta, valor, cabecera_vacia.text)
+
+    # con el secreto configurado: el incorrecto no pasa y el correcto sí llega al endpoint
+    metodo, ruta, cuerpo, variable = protegidos[0]
+    monkeypatch.setattr(main, variable, "secreto-de-prueba")
+    assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
+    assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403

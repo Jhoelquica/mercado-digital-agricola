@@ -14,6 +14,7 @@ import models
 from migraciones import asegurar_indice_unico_de_bloques
 from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
 from auth import requiere_rol
+from auth import secreto_de_servicio_valido
 from fastapi import Header
 import json
 
@@ -67,7 +68,7 @@ def crear_certificado_pedido(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None)
 ):
-    if x_servicio_secreto != TRANSPORTE_A_CERTIFICACION_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_CERTIFICACION_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     existente = db.query(models.CertificadoPedido).filter(
@@ -111,7 +112,7 @@ def registrar_evento_interno(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None)
 ):
-    if x_servicio_secreto != TRANSPORTE_A_CERTIFICACION_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_CERTIFICACION_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     if datos.evento != "verificado_punto_venta":
@@ -135,7 +136,7 @@ def registrar_cosecha_aprobada(
     Idempotente por evento: un reintento (o un aprobar que se repite tras un fallo parcial) solo
     crea los que falten, nunca duplica. Falla cerrado: si el secreto no está configurado en este
     servicio, rechaza todo (a diferencia de comparar None == None)."""
-    if not PRODUCTORES_A_CERTIFICACION_SECRETO or x_servicio_secreto != PRODUCTORES_A_CERTIFICACION_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, PRODUCTORES_A_CERTIFICACION_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     existentes = {
@@ -254,7 +255,7 @@ def mi_perfil_verificador(db: Session = Depends(get_db), usuario: dict = Depends
 
 @app.delete("/verificadores/{verificador_id}")
 def eliminar_verificador(verificador_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     verificador = db.query(models.Verificador).filter(models.Verificador.id == verificador_id).first()

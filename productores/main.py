@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict
 from auth import verificar_token, requiere_rol
+from auth import secreto_de_servicio_valido
 import pybreaker
 from validaciones import (
     Cantidad, CodigoChacra, Comunidad, Contacto, Cultivo, Equivalencia, Fecha, Latitud, LatitudTexto,
@@ -186,7 +187,7 @@ def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuari
 
 @app.delete("/productores/{productor_id}")
 def eliminar_productor(productor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     productor = db.query(models.Productor).filter(models.Productor.id == productor_id).first()
@@ -836,7 +837,7 @@ def eliminar_registro_produccion(
     db: Session = Depends(get_db),
     x_servicio_secreto: str = Header(None),
 ):
-    if x_servicio_secreto != QA_LIMPIEZA_SECRETO:
+    if not secreto_de_servicio_valido(x_servicio_secreto, QA_LIMPIEZA_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     registro = db.query(models.RegistroProduccion).filter(
