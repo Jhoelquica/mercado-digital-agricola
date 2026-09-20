@@ -1507,6 +1507,30 @@ input, select { font-family: inherit; }
 .form-confirmar-entrega-campos input[type="file"] { font-size: 0.82rem; }
 .form-confirmar-entrega-acciones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 
+/* ---------- Confirmar llegada al almacén (cantidad recibida + observaciones) ----------
+   Mismo lenguaje que "Confirmar entrega": borde punteado arriba, etiquetas visibles y campos de 44px.
+   El mensaje de diferencia va pegado al campo (role=status, se anuncia sin mover el foco) y no depende solo
+   del color: cada estado dice qué pasa con palabras. */
+.form-llegada { --llegada-error: #b3401f; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--borde); }
+.form-llegada-campos { display: flex; flex-direction: column; gap: 14px; }
+@media (min-width: 640px) {
+  .form-llegada-campos { flex-direction: row; align-items: flex-start; }
+  .form-llegada-campos label:first-child { flex: 0 0 min(320px, 40%); }
+}
+.form-llegada-campos label { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.form-llegada-campos input {
+  min-height: 44px; padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--borde);
+  font: inherit; font-size: 1rem; font-weight: 500; color: var(--texto); background: white;
+}
+.form-llegada-campos input[type="number"] { font-weight: 700; font-variant-numeric: tabular-nums; }
+.form-llegada-campos input:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.form-llegada-campos input[aria-invalid="true"] { border-color: var(--llegada-error); }
+.form-llegada-ayuda { font-size: 0.8rem; font-weight: 600; line-height: 1.4; }
+.form-llegada-ayuda.ok { color: var(--color-primario); }
+.form-llegada-ayuda.aviso { color: var(--acento-cosecha-texto); background: var(--acento-cosecha-suave); padding: 6px 10px; border-radius: 8px; }
+.form-llegada-ayuda.error { color: var(--llegada-error); }
+.form-llegada-acciones { display: flex; justify-content: flex-end; margin-top: 12px; }
+
 /* ---------- PANEL ADMIN — mismas secciones dedicadas + ancho completo que Productor/Repartidor ---------- */
 .admin-shell { display: flex; flex-direction: column; gap: 22px; }
 

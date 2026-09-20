@@ -162,7 +162,9 @@ const Api = {
     precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
     actualizar: (id, datos) => request('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
     publicar: (id) => request('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),
-    confirmarLlegadaAlmacen: (id) => request('productos', `/productos/${id}/confirmar-llegada-almacen`, { method: 'PATCH', auth: true }),
+    // El Admin dice cuánto llegó de verdad (entero, no más de lo declarado) y, si quiere, una observación:
+    // el servidor deja ambos escritos en la cadena de certificación del producto.
+    confirmarLlegadaAlmacen: (id, cantidadRecibida, observaciones = '') => request('productos', `/productos/${id}/confirmar-llegada-almacen`, { method: 'PATCH', body: { cantidad_recibida: cantidadRecibida, observaciones: observaciones || null }, auth: true }),
     reservas: (id) => request('productos', `/productos/${id}/reservas`, { auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),

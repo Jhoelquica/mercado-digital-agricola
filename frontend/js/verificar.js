@@ -26,6 +26,7 @@ function hashCorto(hash) {
 const EVENTOS_LABEL = {
   cosecha_registrada: { icono: 'ti-seedling', texto: 'Cosecha registrada' },
   certificado_productor: { icono: 'ti-certificate', texto: 'Certificado por el productor' },
+  llegada_almacen: { icono: 'ti-building-warehouse', texto: 'Llegada al almacén' },
   verificado_punto_venta: { icono: 'ti-building-store', texto: 'Verificado en punto de venta' },
 };
 

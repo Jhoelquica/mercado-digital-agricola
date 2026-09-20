@@ -118,6 +118,7 @@ function hashCorto(hash) {
 const EVENTOS_CERTIFICACION = {
   cosecha_registrada: { emoji: '<i class="ti ti-wheat"></i>', texto: 'Cosecha registrada' },
   certificado_productor: { emoji: '<i class="ti ti-circle-check"></i>', texto: 'Certificado por el productor' },
+  llegada_almacen: { emoji: '<i class="ti ti-building-warehouse"></i>', texto: 'Llegada al almacén' },
   verificado_punto_venta: { emoji: '<i class="ti ti-building-store"></i>', texto: 'Verificado en punto de venta' },
 };
 
@@ -5543,6 +5544,9 @@ async function cargarEnviosPendientesPorCapacidad() {
 // ---- Productos en tránsito (confirmar llegada al almacén) ----
 function renderTarjetaProductoTransito(p, totalReservas, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
+  const unidad = UNIDADES_MEDIDA[p.unidad_medida]?.etiqueta || p.unidad_medida || 'kg';
+  const declarada = Math.max(Number(p.stock) || 0, 0);
+  const idCantidad = `llegada-cantidad-${escapeAttr(p.id)}`;
   return `
     <div class="pedido-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
       <div class="pedido-card-header">
@@ -5553,9 +5557,23 @@ function renderTarjetaProductoTransito(p, totalReservas, indice = 0) {
         <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(p.productor_nombre || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Categoría</span><span class="perfil-dato-valor">${escapeAttr(nombreCategoria(p.categoria))}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Precio</span><span class="perfil-dato-valor">${formatearMoneda(p.precio)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Declarado</span><span class="perfil-dato-valor">${declarada} ${escapeAttr(unidad)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Reservas</span><span class="perfil-dato-valor">${totalReservas}</span></div>
       </div>
-      <button type="button" class="btn btn-primary btn-sm btn-confirmar-llegada" data-producto-id="${escapeAttr(p.id)}"><i class="ti ti-building-warehouse"></i> Confirmar llegada al almacén</button>
+      <form class="form-llegada" data-producto-id="${escapeAttr(p.id)}" data-declarada="${declarada}" data-unidad="${escapeAttr(unidad)}" novalidate>
+        <div class="form-llegada-campos">
+          <label for="${idCantidad}">Cantidad recibida (${escapeAttr(unidad)})
+            <input id="${idCantidad}" type="number" name="cantidad" inputmode="numeric" min="1" max="${declarada}" step="1" value="${declarada}" required aria-describedby="${idCantidad}-ayuda">
+            <span class="form-llegada-ayuda ok" id="${idCantidad}-ayuda" role="status" aria-live="polite">Llegó todo lo declarado.</span>
+          </label>
+          <label>Observaciones (opcional)
+            <input type="text" name="observaciones" maxlength="300" placeholder="Ej.: 2 cajas golpeadas" autocomplete="off">
+          </label>
+        </div>
+        <div class="form-llegada-acciones">
+          <button type="submit" class="btn btn-primary btn-sm btn-confirmar-llegada"><i class="ti ti-building-warehouse"></i> Confirmar llegada al almacén</button>
+        </div>
+      </form>
     </div>`;
 }
 
@@ -5602,16 +5620,61 @@ function quitarTarjetaProductoTransito(productoId) {
   refrescarResumenAdmin();
 }
 
-async function confirmarLlegadaAlmacen(productoId) {
-  const card = document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`);
-  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+// Revisa la cantidad escrita contra lo declarado por el productor, muestra el mensaje junto al campo y
+// habilita o no el botón. Devuelve la cantidad si es válida, o null. El servidor vuelve a comprobarlo
+// todo: esto solo evita el viaje de ida y vuelta y explica el porqué al instante.
+function evaluarCantidadLlegada(form) {
+  const declarada = Number(form.dataset.declarada);
+  const unidad = form.dataset.unidad;
+  const campo = form.elements.cantidad;
+  const ayuda = form.querySelector('.form-llegada-ayuda');
+  const texto = campo.value.trim();
+  const cantidad = Number(texto);
+
+  let estado;
+  let mensaje;
+  let valida = false;
+  if (!texto || !Number.isInteger(cantidad) || cantidad < 1) {
+    estado = 'error';
+    mensaje = `Escribe un número entero de 1 a ${declarada}.`;
+  } else if (cantidad > declarada) {
+    estado = 'error';
+    mensaje = `No puede llegar más de lo declarado (${declarada} ${unidad}): esa es la cantidad que certificó la cosecha.`;
+  } else if (cantidad < declarada) {
+    estado = 'aviso';
+    mensaje = `Faltan ${declarada - cantidad} ${unidad} de los ${declarada} declarados. La diferencia queda escrita en la cadena de certificación.`;
+    valida = true;
+  } else {
+    estado = 'ok';
+    mensaje = 'Llegó todo lo declarado.';
+    valida = true;
+  }
+
+  ayuda.className = `form-llegada-ayuda ${estado}`;
+  ayuda.textContent = mensaje;
+  campo.setAttribute('aria-invalid', estado === 'error' ? 'true' : 'false');
+  form.querySelector('button[type="submit"]').disabled = !valida;
+  return valida ? cantidad : null;
+}
+
+async function confirmarLlegadaAlmacen(form) {
+  const productoId = form.dataset.productoId;
+  const cantidad = evaluarCantidadLlegada(form);
+  if (cantidad === null) {
+    form.elements.cantidad.focus();
+    return;
+  }
+  const observaciones = form.elements.observaciones.value.trim();
+  const controles = form.querySelectorAll('button, input');
+  controles.forEach((c) => { c.disabled = true; });
   try {
-    await Api.productos.confirmarLlegadaAlmacen(productoId);
-    toast('Llegada confirmada — el producto ya está disponible para comprar y se avisó a quienes lo reservaron 📦');
+    await Api.productos.confirmarLlegadaAlmacen(productoId, cantidad, observaciones);
+    toast(`Llegada confirmada: ${cantidad} ${form.dataset.unidad} ya se pueden comprar y se avisó a quienes lo reservaron 📦`);
     quitarTarjetaProductoTransito(productoId);
   } catch (err) {
     manejarError(err, 'confirmar la llegada al almacén');
-    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    controles.forEach((c) => { c.disabled = false; });
+    evaluarCantidadLlegada(form);
   }
 }
 
@@ -7308,9 +7371,16 @@ function inicializarEventos() {
   document.getElementById('btn-refrescar-productores').addEventListener('click', cargarProductoresAdmin);
   document.getElementById('admin-productores-buscar').addEventListener('input', pintarProductoresAdmin);
   document.getElementById('btn-refrescar-productos-transito').addEventListener('click', cargarProductosEnTransito);
-  document.getElementById('productos-transito-lista').addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn-confirmar-llegada');
-    if (btn) confirmarLlegadaAlmacen(btn.dataset.productoId);
+  const listaTransito = document.getElementById('productos-transito-lista');
+  listaTransito.addEventListener('input', (e) => {
+    const form = e.target.closest('.form-llegada');
+    if (form && e.target.name === 'cantidad') evaluarCantidadLlegada(form);
+  });
+  listaTransito.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-llegada');
+    if (!form) return;
+    e.preventDefault();
+    confirmarLlegadaAlmacen(form);
   });
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btnCancelar = e.target.closest('.btn-cancelar-entrega');
