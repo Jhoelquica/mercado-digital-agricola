@@ -3884,21 +3884,43 @@ function claveProductorId() {
   return `agro_productor_id_${Estado.usuarioId}`;
 }
 
+// El perfil de productor vive en el servidor; localStorage solo lo recuerda para no preguntarlo cada
+// vez. Si este navegador no lo recuerda (otro dispositivo, sesión nueva, datos borrados) se le pregunta
+// al servidor, en vez de pedirle crear un perfil que ya tiene (POST /productores respondería 409).
+// Devuelve null solo cuando de verdad todavía no tiene perfil; cualquier otro error se propaga.
+async function resolverProductorId() {
+  const guardado = localStorage.getItem(claveProductorId());
+  if (guardado) {
+    try {
+      await Api.productores.obtener(guardado);
+      return guardado;
+    } catch (err) {
+      if (err.status !== 404) throw err;
+      localStorage.removeItem(claveProductorId());
+    }
+  }
+  try {
+    const perfil = await Api.productores.miPerfil();
+    localStorage.setItem(claveProductorId(), perfil.id);
+    return perfil.id;
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
 async function iniciarPanelProductor() {
   if (!Estado.token || Estado.rol !== 'productor') {
     cambiarVista('inicio');
     return;
   }
 
-  Estado.productorId = localStorage.getItem(claveProductorId());
-
-  if (Estado.productorId) {
-    try {
-      await Api.productores.obtener(Estado.productorId);
-    } catch {
-      Estado.productorId = null;
-      localStorage.removeItem(claveProductorId());
-    }
+  try {
+    Estado.productorId = await resolverProductorId();
+  } catch (err) {
+    manejarError(err, 'cargar tu perfil de productor');
+    cambiarVista('inicio');
+    return;
   }
 
   const setup = document.getElementById('productor-setup');
