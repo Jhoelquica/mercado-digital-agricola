@@ -48,6 +48,13 @@ spec:
               value: http://certificacion:8008
             - name: PAGOS_URL
               value: http://pagos:8007
+            # Sin estas dos, Transporte cae en su default (localhost) y dentro del pod no llega a nadie:
+            # PRODUCTOS_URL resuelve el productor de cada envío (entrega directa) y PRODUCTORES_URL
+            # resuelve al productor autenticado en GET /envios/pendientes-entrega-directa.
+            - name: PRODUCTOS_URL
+              value: http://productos:8002
+            - name: PRODUCTORES_URL
+              value: http://productores:8001
             # Reemplaza SERVICIO_SECRETO: Transporte necesita la clave de cada par donde ES quien
             # llama (Transporte→Certificación, Transporte→Pagos) más la de limpieza QA.
             - name: TRANSPORTE_A_CERTIFICACION_SECRETO
