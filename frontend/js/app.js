@@ -3953,6 +3953,7 @@ async function iniciarPanelProductor() {
       cargarRegistrosProduccionProductor(),
       cargarEntregasDirectasPendientes(),
     ]);
+    pintarResumenChacras();
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
     animarContadoresResumen(document.getElementById('productor-resumen'));
 
@@ -4657,7 +4658,8 @@ async function crearChacra(e) {
     toast('Chacra registrada 🌱');
     document.getElementById('form-chacra').reset();
     inicializarMapaUbicacionChacra();
-    cargarMisChacras();
+    await cargarMisChacras();
+    pintarResumenChacras();
   } catch (err) {
     manejarError(err, 'registrar la chacra');
   } finally {
@@ -4669,14 +4671,42 @@ function renderTarjetaChacra(c, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   return `
     <div class="chacra-card" style="animation-delay:${retraso}ms">
-      <div class="chacra-card-banner"><span class="chacra-codigo-badge">${escapeAttr(c.codigo)}</span></div>
+      <div class="chacra-card-banner">
+        <span class="chacra-codigo-badge">${escapeAttr(c.codigo)}</span>
+        <span class="chacra-siembras" data-chacra-siembras="${c.id}"></span>
+      </div>
       <div class="chacra-card-body">
         <h4>${c.nombre ? escapeAttr(c.nombre) : escapeAttr(c.codigo)}</h4>
-        <div class="chacra-card-ubicacion"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</div>
+        <div class="chacra-card-cultivos" data-chacra-cultivos="${c.id}"></div>
         <div id="mapa-chacra-mini-${c.id}" class="chacra-card-mapa-mini"></div>
+        <div class="chacra-card-ubicacion"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</div>
       </div>
     </div>`;
 }
+
+// Cuántas siembras y qué cultivos tiene cada chacra. Las chacras y los registros se cargan en
+// paralelo, así que esto se llama cuando ya están las dos cosas (tras el Promise.all de
+// iniciarPanelProductor y tras registrar una chacra nueva); antes de eso los elementos quedan vacíos.
+function pintarResumenChacras() {
+  const registros = Estado.registrosProduccion || [];
+  (Estado.chacras || []).forEach((c) => {
+    const propias = registros.filter((r) => r.chacra_id === c.id);
+    const cultivos = [...new Set(propias.map((r) => r.cultivo))];
+    const id = CSS.escape(String(c.id));
+    const contador = document.querySelector(`[data-chacra-siembras="${id}"]`);
+    const lista = document.querySelector(`[data-chacra-cultivos="${id}"]`);
+    if (contador) contador.textContent = `${propias.length} ${propias.length === 1 ? 'siembra' : 'siembras'}`;
+    if (lista) {
+      lista.innerHTML = cultivos.length
+        ? cultivos.map((nombre) => `<span class="chacra-cultivo-chip">${escapeAttr(nombre)}</span>`).join('')
+        : '<span class="muted">Sin siembras todavía</span>';
+    }
+  });
+}
+
+// Los mapas de "Mis Chacras" se crean con la pestaña oculta (tamaño 0) y Leaflet no se entera de que
+// después se muestra: hay que pedirle que recalcule su tamaño cada vez que se activa la pestaña.
+let mapasChacras = [];
 
 async function cargarMisChacras() {
   const cont = document.getElementById('chacras-lista');
@@ -4695,9 +4725,12 @@ async function cargarMisChacras() {
     // Mini-mapa de solo lectura por chacra (mismo helper que ya usa Mi Perfil para
     // #mapa-perfil-productor) — se inicializa después de pintar el HTML porque Leaflet
     // necesita que el contenedor ya exista en el DOM.
+    mapasChacras.forEach((m) => { try { m.remove(); } catch { /* ya estaba destruido */ } });
+    mapasChacras = [];
     chacras.forEach((c) => {
       if (hayCoordenadas(c.ubicacion_latitud, c.ubicacion_longitud)) {
-        crearMapaSoloLectura(`mapa-chacra-mini-${c.id}`, c.ubicacion_latitud, c.ubicacion_longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(c.nombre || c.codigo));
+        const mini = crearMapaSoloLectura(`mapa-chacra-mini-${c.id}`, c.ubicacion_latitud, c.ubicacion_longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(c.nombre || c.codigo));
+        if (mini) mapasChacras.push(mini);
       }
     });
   } catch (err) {
@@ -6020,11 +6053,27 @@ function renderEstadisticasProductor(registros) {
 
 function renderEconomiaStatsProductor(registros) {
   const { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada } = calcularResumenEconomico(registros);
+  // Margen sobre el ingreso estimado: misma definición que margen_porcentaje de cada registro (Productores).
+  const ingresoTotal = conGanancia.reduce((suma, r) => suma + (Number(r.ingreso_estimado) || 0), 0);
+  const margen = conGanancia.length && ingresoTotal > 0 ? (gananciaAcumulada / ingresoTotal) * 100 : null;
+  const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
+  const tarjeta = (icono, etiqueta, valor, pie, claseValor = '') => `
+    <div class="economia-stat">
+      <div class="economia-stat-cabeza">
+        <span class="economia-stat-icono"><i class="ti ti-${icono}" aria-hidden="true"></i></span>
+        <span class="economia-stat-label">${etiqueta}</span>
+      </div>
+      <span class="economia-stat-valor ${claseValor}">${valor}</span>
+      ${pie}
+    </div>`;
+  const pieGanancia = margen === null
+    ? '<span class="economia-stat-sub">Aún sin cosechas verificadas</span>'
+    : `<span class="economia-badge ${margen >= 0 ? 'positivo' : 'negativo'}"><i class="ti ti-trending-${margen >= 0 ? 'up' : 'down'}" aria-hidden="true"></i> ${margen >= 0 ? '+' : '-'}${Math.abs(margen).toFixed(1)}% de margen</span>`;
   return `
     <div class="economia-stats">
-      <div class="economia-stat"><span class="economia-stat-label">Total invertido</span><span class="economia-stat-valor">${formatearMoneda(totalInvertido)}</span></div>
-      <div class="economia-stat"><span class="economia-stat-label">Total cosechado</span><span class="economia-stat-valor">${cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—'}</span></div>
-      <div class="economia-stat"><span class="economia-stat-label">Ganancia acumulada</span><span class="economia-stat-valor ${gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—'}</span></div>
+      ${tarjeta('coin', 'Total invertido', formatearMoneda(totalInvertido), `<span class="economia-stat-sub">en ${plural(registros.length, 'siembra', 'siembras')}</span>`)}
+      ${tarjeta('scale', 'Total cosechado', cosechados.length ? `${totalCosechadoKg.toFixed(2)} kg` : '—', `<span class="economia-stat-sub">${cosechados.length ? `de ${plural(cosechados.length, 'cosecha', 'cosechas')}` : 'Aún sin cosechas'}</span>`)}
+      ${tarjeta(gananciaAcumulada >= 0 ? 'trending-up' : 'trending-down', 'Ganancia acumulada', conGanancia.length ? formatearMoneda(gananciaAcumulada) : '—', pieGanancia, gananciaAcumulada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa')}
     </div>`;
 }
 
@@ -6039,19 +6088,23 @@ function renderTablaHistorialCosechas(registros) {
     const ganancia = r.ganancia_estimada != null
       ? `<span class="${r.ganancia_estimada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${formatearMoneda(r.ganancia_estimada)}</span>`
       : '—';
+    const margen = r.margen_porcentaje != null
+      ? `<span class="${r.margen_porcentaje >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${r.margen_porcentaje < 0 ? '-' : ''}${Math.abs(Number(r.margen_porcentaje)).toFixed(1)}%</span>`
+      : '—';
     return `
       <tr>
         <td>${escapeAttr(r.cultivo)}</td>
-        <td>${formatearMoneda(r.costo_total)}</td>
-        <td>${cosechado}</td>
-        <td>${ingreso}</td>
-        <td>${ganancia}</td>
+        <td class="num">${formatearMoneda(r.costo_total)}</td>
+        <td class="num">${cosechado}</td>
+        <td class="num">${ingreso}</td>
+        <td class="num">${ganancia}</td>
+        <td class="num">${margen}</td>
         <td><span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span></td>
       </tr>`;
   }).join('');
   return `
-    <table class="tabla-simple">
-      <thead><tr><th>Cultivo</th><th>Costo total</th><th>Cosechado</th><th>Ingreso est.</th><th>Ganancia</th><th>Estado</th></tr></thead>
+    <table class="tabla-simple tabla-numerica">
+      <thead><tr><th>Cultivo</th><th class="num">Costo total</th><th class="num">Cosechado</th><th class="num">Ingreso est.</th><th class="num">Ganancia</th><th class="num">Margen</th><th>Estado</th></tr></thead>
       <tbody>${filas}</tbody>
     </table>`;
 }
@@ -6081,6 +6134,9 @@ function calcularDistribucionCostos(registros) {
 let chartCosechasMes = null;
 let chartGananciaCultivo = null;
 let chartCostos = null;
+// Semillas, insumos, mano de obra, envío. El beige va más oscuro que el fondo de la tarjeta para que
+// la porción se distinga.
+const COLORES_COSTOS = ['#2D3B2A', '#82907A', '#CDBF9F', '#8A6D1A'];
 
 // Cuenta registros por mes de fecha_siembra, últimos 6 meses (incluye el actual). Los canvases
 // viven fijos en index.html (no se recrean por innerHTML), así que hay que destruir la instancia
@@ -6108,9 +6164,12 @@ function dibujarGraficoCosechasPorMes(registros) {
 
   chartCosechasMes?.destroy();
   chartCosechasMes = new Chart(canvas, {
-    type: 'line',
-    data: { labels: etiquetas, datasets: [{ label: 'Siembras registradas', data: conteos, borderColor: '#2D3B2A', backgroundColor: 'rgba(45,59,42,0.12)', tension: 0.35, fill: true, pointRadius: 4 }] },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+    type: 'bar',
+    data: { labels: etiquetas, datasets: [{ label: 'Siembras', data: conteos, backgroundColor: '#2D3B2A', borderRadius: 6, maxBarThickness: 44 }] },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.parsed.y} ${c.parsed.y === 1 ? 'siembra' : 'siembras'}` } } },
+      scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0, stepSize: 1 } } },
+    },
   });
 }
 
@@ -6120,23 +6179,56 @@ function dibujarGraficosEconomiaProductor(registros) {
   if (!canvasGanancia || !canvasCostos || typeof Chart === 'undefined') return;
 
   const { labels, valores } = agruparGananciaPorCultivo(registros);
+  const datosGanancia = valores.length ? valores : [0];
+  // Las pérdidas en el mismo rojo que .ganancia-negativa de la tabla, para verlas de un vistazo.
+  const colorBarra = (v) => (v < 0 ? '#b3401f' : '#2D3B2A');
   chartGananciaCultivo?.destroy();
   chartGananciaCultivo = new Chart(canvasGanancia, {
     type: 'bar',
-    data: { labels: labels.length ? labels : ['Sin datos'], datasets: [{ label: 'Ganancia (S/)', data: valores.length ? valores : [0], backgroundColor: '#2D3B2A', borderRadius: 6 }] },
-    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } },
+    data: { labels: labels.length ? labels : ['Sin datos'], datasets: [{ label: 'Ganancia (S/)', data: datosGanancia, backgroundColor: datosGanancia.map(colorBarra), borderRadius: 6 }] },
+    options: {
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => formatearMoneda(c.parsed.y) } } },
+      scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { callback: (v) => `${v < 0 ? '-' : ''}S/ ${Math.abs(v)}` } } },
+    },
   });
 
+  // Donut + lista de detalle: el color solo no dice cuánto es cada costo, así que la leyenda lleva
+  // monto y porcentaje (y sirve de alternativa de texto al gráfico).
   const costos = calcularDistribucionCostos(registros);
+  const nombresCostos = ['Semillas', 'Insumos', 'Mano de obra', 'Envío'];
+  const valoresCostos = [costos.semillas, costos.insumos, costos.manoObra, costos.envio];
+  const totalCostos = valoresCostos.reduce((suma, v) => suma + v, 0);
   chartCostos?.destroy();
   chartCostos = new Chart(canvasCostos, {
     type: 'doughnut',
-    data: {
-      labels: ['Semillas', 'Insumos', 'Mano de obra', 'Envío'],
-      datasets: [{ data: [costos.semillas, costos.insumos, costos.manoObra, costos.envio], backgroundColor: ['#2D3B2A', '#82907A', '#E8E1D3', '#8A6D1A'] }],
+    data: { labels: nombresCostos, datasets: [{ data: valoresCostos, backgroundColor: COLORES_COSTOS, borderColor: '#fff', borderWidth: 2 }] },
+    options: {
+      cutout: '62%',
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => `${c.label}: ${formatearMoneda(c.parsed)} (${totalCostos ? Math.round((c.parsed / totalCostos) * 100) : 0}%)` } },
+      },
     },
-    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
   });
+  renderLeyendaCostos(nombresCostos, valoresCostos);
+}
+
+function renderLeyendaCostos(nombres, valores) {
+  const cont = document.getElementById('costos-leyenda');
+  if (!cont) return;
+  const total = valores.reduce((suma, v) => suma + v, 0);
+  if (!total) {
+    cont.innerHTML = '<li class="muted">Aún no hay costos registrados.</li>';
+    return;
+  }
+  cont.innerHTML = nombres.map((nombre, i) => `
+    <li>
+      <span class="costos-chip" style="background:${COLORES_COSTOS[i]}" aria-hidden="true"></span>
+      <span class="costos-nombre">${nombre}</span>
+      <span class="costos-monto">${formatearMoneda(valores[i])}</span>
+      <span class="costos-pct">${Math.round((valores[i] / total) * 100)}%</span>
+    </li>`).join('') + `
+    <li class="costos-total"><span class="costos-nombre">Total</span><span class="costos-monto">${formatearMoneda(total)}</span></li>`;
 }
 
 function renderTablaUltimasSiembras(registros) {
@@ -6175,6 +6267,12 @@ let graficosEconomiaProductorListos = false;
 function activarTabProductor(nombreTab) {
   document.querySelectorAll('.productor-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.tab === nombreTab));
   document.querySelectorAll('.productor-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.tabPanel === nombreTab));
+  if (nombreTab === 'chacras') {
+    setTimeout(() => {
+      mapasChacras.forEach((m) => m.invalidateSize());
+      mapaUbicacionChacra?.mapa.invalidateSize();
+    }, 60);
+  }
   if (nombreTab === 'economia') {
     if (!graficosEconomiaProductorListos) {
       dibujarGraficosEconomiaProductor(Estado.registrosProduccion || []);

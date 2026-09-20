@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=31808643">
+<link rel="stylesheet" href="css/style.css?v=79ba30d6">
 </head>
 <body>
 
@@ -485,8 +485,8 @@
 
         <div class="inicio-graficos">
           <div class="card-panel grafico-card">
-            <h4><i class="ti ti-chart-line"></i> Cosechas registradas (últimos 6 meses)</h4>
-            <canvas id="grafico-cosechas-mes"></canvas>
+            <h4><i class="ti ti-chart-bar"></i> Siembras por mes (últimos 6 meses)</h4>
+            <canvas id="grafico-cosechas-mes" role="img" aria-label="Siembras registradas por mes en los últimos seis meses"></canvas>
           </div>
           <div class="card-panel">
             <h4 style="margin-bottom:12px;"><i class="ti ti-list"></i> Últimas siembras</h4>
@@ -565,11 +565,14 @@
         <div class="economia-graficos">
           <div class="card-panel grafico-card">
             <h4><i class="ti ti-chart-bar"></i> Ganancia por cultivo (S/)</h4>
-            <canvas id="grafico-ganancia-cultivo"></canvas>
+            <canvas id="grafico-ganancia-cultivo" role="img" aria-label="Ganancia acumulada por cultivo, en soles"></canvas>
           </div>
           <div class="card-panel grafico-card">
             <h4><i class="ti ti-chart-pie"></i> Distribución de costos</h4>
-            <canvas id="grafico-costos"></canvas>
+            <div class="costos-cuerpo">
+              <div class="costos-donut"><canvas id="grafico-costos" role="img" aria-label="Distribución de costos entre semillas, insumos, mano de obra y envío"></canvas></div>
+              <ul class="costos-leyenda" id="costos-leyenda" aria-label="Detalle de costos"></ul>
+            </div>
           </div>
         </div>
         <div class="card-panel">
@@ -1122,6 +1125,6 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=8fb9b840"></script>
-<script src="js/app.js?v=a778c8ff"></script>
+<script src="js/app.js?v=c6188525"></script>
 </body>
 </html>
