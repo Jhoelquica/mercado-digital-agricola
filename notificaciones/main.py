@@ -1,4 +1,5 @@
 import os
+import uuid
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -56,9 +57,14 @@ def eliminar_notificacion(notificacion_id: str, db: Session = Depends(get_db), x
     db.commit()
     return {"mensaje": "Notificación eliminada"}
 
+# Solo los avisos del propio usuario sobre ese pedido (el admin ve todos): antes cualquier usuario con sesión
+# leía las notificaciones de CUALQUIER pedido con solo conocer su id.
 @app.get("/notificaciones/{pedido_id}")
-def historial_por_pedido(pedido_id: str, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
-    return db.query(models.Notificacion).filter(models.Notificacion.pedido_id == pedido_id).all()
+def historial_por_pedido(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+    consulta = db.query(models.Notificacion).filter(models.Notificacion.pedido_id == pedido_id)
+    if usuario.get("rol") != "admin":
+        consulta = consulta.filter(models.Notificacion.usuario_id == usuario.get("sub"))
+    return consulta.all()
 
 
 @app.get("/notificaciones")

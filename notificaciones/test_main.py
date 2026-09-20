@@ -85,3 +85,27 @@ def test_el_endpoint_de_limpieza_rechaza_a_todos_si_el_secreto_no_esta_configura
         assert error.value.status_code == 404
     finally:
         db.close()
+
+
+# ============ GET /notificaciones/{pedido_id}: solo los avisos del propio usuario ============
+
+def test_el_historial_de_un_pedido_solo_devuelve_los_avisos_del_usuario_que_lo_pide():
+    """Antes cualquier usuario con sesión leía las notificaciones de cualquier pedido con solo conocer su id.
+    Se llama a la función del endpoint directamente: la imagen de este servicio no trae httpx (TestClient)."""
+    import main
+
+    dueno = str(uuid.uuid4())
+    pedido_id = str(uuid.uuid4())
+    _procesar({"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": dueno, "comprador_nombre": "Rosa", "costo_envio": 5})
+
+    db = SessionLocal()
+    try:
+        propios = main.historial_por_pedido(uuid.UUID(pedido_id), db, {"sub": dueno, "rol": "comprador"})
+        ajenos = main.historial_por_pedido(uuid.UUID(pedido_id), db, {"sub": str(uuid.uuid4()), "rol": "comprador"})
+        admin = main.historial_por_pedido(uuid.UUID(pedido_id), db, {"sub": str(uuid.uuid4()), "rol": "admin"})
+    finally:
+        db.close()
+
+    assert len(propios) == 1 and str(propios[0].usuario_id) == dueno
+    assert ajenos == []
+    assert len(admin) == 1
