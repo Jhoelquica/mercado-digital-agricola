@@ -21,6 +21,7 @@ const Estado = {
 };
 
 const SESSION_KEY = 'agro_sesion';
+let sesionVencidaAlIniciar = false; // había una sesión guardada, pero su token ya había vencido (ver cargarSesionGuardada)
 
 // A qué vista aterriza cada rol apenas hay sesión activa — login exitoso (manejarLogin) o F5 con
 // sesión restaurada desde localStorage (iniciar). Único lugar donde vive este mapeo, para no
@@ -779,13 +780,56 @@ function guardarSesion() {
   }));
 }
 
+// ¿El token sigue vigente por su fecha de vencimiento (exp)? Es solo una comprobación local para no
+// restaurar una sesión que ya venció: quien decide de verdad es el servidor (ver manejarSesionExpirada).
+function tokenVigente(token) {
+  const payload = decodeJwt(token);
+  if (!payload) return false;
+  if (typeof payload.exp !== 'number') return true;
+  return payload.exp * 1000 > Date.now();
+}
+
 function cargarSesionGuardada() {
   const raw = localStorage.getItem(SESSION_KEY);
   if (!raw) return;
   try {
     const datos = JSON.parse(raw);
+    if (!datos.token || !tokenVigente(datos.token)) {
+      // Los tokens duran 60 minutos. Antes se restauraba igual: la interfaz seguía "con sesión" y cada
+      // llamada fallaba con "Token inválido o expirado" hasta que el usuario cerraba sesión a mano.
+      localStorage.removeItem(SESSION_KEY);
+      sesionVencidaAlIniciar = true;
+      return;
+    }
     Object.assign(Estado, datos);
   } catch { /* sesión corrupta, se ignora */ }
+}
+
+// Vistas que necesitan sesión: si esta vence mientras el usuario está en una, se le saca de ahí. En las
+// públicas (inicio, detalle de producto) se queda donde estaba.
+const VISTAS_CON_SESION = ['mis-pedidos', 'notificaciones', 'panel-productor', 'gestion-envios', 'panel-verificador', 'panel-admin', 'perfil'];
+
+// Un servicio respondió 401 a una petición con sesión (api.js): el token venció o ya no vale. Se cierra la
+// sesión local y se abre el acceso con el motivo a la vista. Varias peticiones en vuelo responden 401 a la
+// vez, y una respuesta tardía puede ser de una sesión anterior: solo se actúa si ese token sigue siendo el
+// de la sesión actual. El carrito se conserva (no tiene datos personales y el usuario suele volver a entrar).
+function manejarSesionExpirada(tokenUsado) {
+  if (!Estado.token || (tokenUsado && tokenUsado !== Estado.token)) return;
+  Estado.token = null;
+  Estado.usuarioId = null;
+  Estado.nombre = null;
+  Estado.email = null;
+  Estado.rol = null;
+  Estado.productorId = null;
+  Estado.repartidorId = null;
+  localStorage.removeItem(SESSION_KEY);
+  actualizarUIAuth();
+  renderCarrito();
+  const vistaActual = document.querySelector('.view.active')?.id?.replace('view-', '');
+  if (VISTAS_CON_SESION.includes(vistaActual)) cambiarVista('landing');
+  cambiarTabAuth('login');
+  abrirModal('modal-auth');
+  mostrarErrorAuth('login-alerta', MENSAJE_SESION_EXPIRADA);
 }
 
 function cerrarSesion() {
@@ -7484,12 +7528,14 @@ function cambiarTabAuth(tab) {
 
 // ============ INICIO ============
 function iniciar() {
+  alExpirarSesion = manejarSesionExpirada;
   cargarSesionGuardada();
   actualizarUIAuth();
   renderNavCategorias();
   inicializarEventos();
   inicializarGoogleSignIn();
   cambiarVista(vistaInicialPara(Estado.rol));
+  if (sesionVencidaAlIniciar) toast('Tu sesión anterior venció. Inicia sesión de nuevo para continuar.');
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);

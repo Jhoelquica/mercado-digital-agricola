@@ -23,6 +23,12 @@ const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
 // dominio real).
 const GOOGLE_CLIENT_ID = '546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com';
 
+// La asigna app.js (manejarSesionExpirada). Se llama cuando un servicio responde 401 a una petición hecha
+// CON sesión: el token venció (duran 60 minutos) o ya no vale. Recibe el token con el que se hizo la
+// petición, para que la respuesta tardía de una sesión anterior no cierre la sesión nueva.
+let alExpirarSesion = null;
+const MENSAJE_SESION_EXPIRADA = 'Tu sesión expiró. Inicia sesión de nuevo para continuar.';
+
 class ApiError extends Error {
   constructor(message, status) {
     super(message);
@@ -46,10 +52,12 @@ function mensajeDeDetalle(detail) {
 
 async function request(baseKey, path, { method = 'GET', body, auth = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
+  let tokenUsado = null;
   if (auth) {
     const token = Estado.token;
     if (!token) throw new ApiError('Debes iniciar sesión para continuar.', 401);
     headers['Authorization'] = `Bearer ${token}`;
+    tokenUsado = token;
   }
 
   let resp;
@@ -70,6 +78,10 @@ async function request(baseKey, path, { method = 'GET', body, auth = false } = {
   }
 
   if (!resp.ok) {
+    if (resp.status === 401 && tokenUsado) {
+      if (alExpirarSesion) alExpirarSesion(tokenUsado);
+      throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
+    }
     if (resp.status === 403) {
       throw new ApiError('No tienes permiso para esta acción.', 403);
     }
@@ -102,6 +114,10 @@ async function requestFormData(baseKey, path, formData) {
   }
 
   if (!resp.ok) {
+    if (resp.status === 401) {
+      if (alExpirarSesion) alExpirarSesion(token);
+      throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
+    }
     if (resp.status === 403) {
       throw new ApiError('No tienes permiso para esta acción.', 403);
     }
