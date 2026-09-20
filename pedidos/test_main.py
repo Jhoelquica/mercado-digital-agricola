@@ -44,6 +44,12 @@ def _como(sub: str, rol: str):
     main.app.dependency_overrides[verificar_token] = lambda: {"sub": sub, "rol": rol}
 
 
+# GET /pedidos/{id} además declara Depends(security) para reenviar el token a Transporte: sin un header
+# Authorization real, HTTPBearer lo rechaza antes de llegar al cuerpo. El valor no importa (verificar_token
+# está overrideado y nunca lo decodifica).
+CON_TOKEN = {"Authorization": "Bearer token-de-prueba"}
+
+
 def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg", equivalencia_kg=None):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
     POST (descuento de stock en lote) no hace nada real."""
@@ -555,7 +561,7 @@ def test_cambiar_umbral_afecta_pedidos_futuros_sin_tocar_los_ya_creados():
     # El pedido ya creado ANTES del cambio de umbral conserva su valor original (mismo criterio
     # que costo_envio con la ubicación del almacén: no se recalcula retroactivamente).
     _como(str(uuid.uuid4()), "admin")  # GET /pedidos/{id} ya no es público
-    reconsulta = client.get(f"/pedidos/{primero.json()['id']}")
+    reconsulta = client.get(f"/pedidos/{primero.json()['id']}", headers=CON_TOKEN)
     _como(str(uuid.uuid4()), "comprador")
     assert reconsulta.status_code == 200, reconsulta.text
     assert reconsulta.json()["requiere_vehiculo_grande"] is True
@@ -598,25 +604,107 @@ def _crear_pedido_de(comprador_sub: str) -> str:
     return resp.json()["id"]
 
 
-def test_un_pedido_solo_lo_ven_su_comprador_y_los_roles_de_entrega_o_administracion():
+class _ClienteTransporteFalso:
+    """Reemplaza httpx.Client() para la pregunta a Transporte "¿este repartidor tiene el envío?": guarda cada
+    (url, kwargs) y responde lo que se le indique, sin tocar la red."""
+    def __init__(self, llamadas, status=200, estado=None, roto=False):
+        self._llamadas, self._status, self._estado, self._roto = llamadas, status, estado, roto
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        self._llamadas.append((url, kwargs))
+        if self._roto:
+            raise main.httpx.RequestError("boom")
+        respuesta = MagicMock()
+        respuesta.status_code = self._status
+        respuesta.json.return_value = {"estado": self._estado}
+        return respuesta
+
+
+def _leer_como_repartidor(pedido_id, **transporte):
+    llamadas = []
+    _como(str(uuid.uuid4()), "repartidor")
+    with patch("main.httpx.Client", return_value=_ClienteTransporteFalso(llamadas, **transporte)):
+        resp = client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN)
+    return resp, llamadas
+
+
+def test_un_pedido_solo_lo_ven_su_comprador_y_el_admin():
     """Antes cualquiera, sin sesión, leía el nombre, el teléfono y las coordenadas exactas del comprador."""
     dueno = str(uuid.uuid4())
     pedido_id = _crear_pedido_de(dueno)
     try:
         _como(dueno, "comprador")
-        propio = client.get(f"/pedidos/{pedido_id}")
+        propio = client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN)
         assert propio.status_code == 200, propio.text
         assert propio.json()["comprador_telefono"] == "987654321"
 
-        for rol in ("comprador", "verificador"):
+        # otro comprador, un verificador y un productor (que no lo necesita para nada): 403
+        for rol in ("comprador", "verificador", "productor"):
             _como(str(uuid.uuid4()), rol)
-            ajeno = client.get(f"/pedidos/{pedido_id}")
+            ajeno = client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN)
             assert ajeno.status_code == 403, (rol, ajeno.text)
             assert "987654321" not in ajeno.text
 
-        for rol in ("admin", "repartidor", "productor"):
-            _como(str(uuid.uuid4()), rol)
-            assert client.get(f"/pedidos/{pedido_id}").status_code == 200, rol
+        _como(str(uuid.uuid4()), "admin")
+        assert client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN).status_code == 200
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_un_repartidor_ve_el_pedido_solo_si_tiene_asignado_su_envio():
+    """Tras exigir sesión, cualquier repartidor con solo conocer el id leía el nombre, el teléfono y las
+    coordenadas del comprador de un pedido que no era suyo."""
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    try:
+        for estado in ("asignado", "en_camino", "entregado"):
+            resp, llamadas = _leer_como_repartidor(pedido_id, estado=estado)
+            assert resp.status_code == 200, (estado, resp.text)
+            # le pregunta a Transporte con el token del propio repartidor
+            url, kwargs = llamadas[0]
+            assert url.endswith(f"/envios/{pedido_id}")
+            assert kwargs["headers"] == {"Authorization": "Bearer token-de-prueba"}
+
+        # una propuesta todavía no aceptada, o rechazada, no da acceso
+        for estado in ("propuesto", "rechazado", "pendiente_asignacion", None):
+            resp, _ = _leer_como_repartidor(pedido_id, estado=estado)
+            assert resp.status_code == 403, (estado, resp.text)
+            assert "987654321" not in resp.text
+
+        # Transporte le dice que ese envío no es suyo (403) o que no existe (404)
+        for status in (403, 404):
+            resp, _ = _leer_como_repartidor(pedido_id, status=status)
+            assert resp.status_code == 403, (status, resp.text)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_si_transporte_no_responde_un_repartidor_recibe_503_no_el_pedido():
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    try:
+        resp, _ = _leer_como_repartidor(pedido_id, roto=True)
+        assert resp.status_code == 503, resp.text
+        assert "987654321" not in resp.text
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_el_comprador_dueno_y_el_admin_no_necesitan_preguntarle_a_transporte():
+    dueno = str(uuid.uuid4())
+    pedido_id = _crear_pedido_de(dueno)
+    llamadas = []
+    try:
+        with patch("main.httpx.Client", return_value=_ClienteTransporteFalso(llamadas, status=403)):
+            _como(dueno, "comprador")
+            assert client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN).status_code == 200
+            _como(str(uuid.uuid4()), "admin")
+            assert client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN).status_code == 200
+        assert llamadas == []
     finally:
         _como(str(uuid.uuid4()), "comprador")
 
@@ -644,7 +732,7 @@ def test_la_ruta_interna_de_pedidos_solo_responde_con_el_secreto_de_transporte(m
 
 
 def test_un_id_de_pedido_mal_formado_falla_422_no_500():
-    assert client.get("/pedidos/no-es-un-uuid").status_code == 422
+    assert client.get("/pedidos/no-es-un-uuid", headers=CON_TOKEN).status_code == 422
 
 
 

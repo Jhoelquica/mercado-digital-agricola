@@ -21,6 +21,9 @@ spec:
           env:
             - name: DB_HOST
               value: db-pedidos
+            # GET /pedidos/{id} le pregunta a Transporte si el repartidor que lo pide tiene ese envío asignado.
+            - name: TRANSPORTE_URL
+              value: http://transporte:8004
             - name: PRODUCTOS_URL
               value: http://productos:8002
             - name: RABBITMQ_HOST

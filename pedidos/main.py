@@ -5,6 +5,7 @@ import math
 import uuid
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -13,7 +14,7 @@ from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
 from auth import secreto_de_servicio_valido
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
-from auth import verificar_token, requiere_rol
+from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
 import models
@@ -101,6 +102,7 @@ app.add_middleware(
 )
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+TRANSPORTE_URL = os.getenv("TRANSPORTE_URL", "http://localhost:8004")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
@@ -511,20 +513,47 @@ def obtener_pedido_interno(
     return _pedido_o_404(db, pedido_id)
 
 
-# Quién puede ver un pedido: el comprador que lo hizo y los roles que participan de la entrega (repartidor,
-# productor) o administran (admin). Antes era público: bastaba conocer el id de un pedido para leer el
-# nombre, el teléfono y las coordenadas exactas del comprador. pedido_id va tipado como UUID: un id mal
-# formado da 422 en vez de un error de la base.
-ROLES_CON_ACCESO_A_PEDIDOS = ("admin", "repartidor", "productor")
+# El repartidor solo ve el pedido (nombre, teléfono y dirección del comprador) cuando ya aceptó el envío: una
+# propuesta que todavía no aceptó, o que rechazó, no cuenta.
+ESTADOS_DE_ENVIO_CON_ACCESO_AL_PEDIDO = ("asignado", "en_camino", "entregado")
 
 
+def _repartidor_tiene_el_envio(pedido_id: uuid.UUID, token: str) -> bool:
+    """¿El repartidor que pide el pedido tiene asignado su envío? Se le pregunta a Transporte con el token del
+    propio repartidor: GET /envios/{pedido_id} solo responde 200 al repartidor asignado (además del comprador
+    dueño y el admin), y ese 200 trae el estado del envío."""
+    try:
+        with httpx.Client() as client:
+            resp = client.get(
+                f"{TRANSPORTE_URL}/envios/{pedido_id}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servicio de Transporte no disponible")
+    return resp.status_code == 200 and resp.json().get("estado") in ESTADOS_DE_ENVIO_CON_ACCESO_AL_PEDIDO
+
+
+# Quién puede ver un pedido: el comprador que lo hizo, el admin y el repartidor que tiene asignado su envío.
+# Antes era público (bastaba conocer el id para leer el nombre, el teléfono y las coordenadas exactas del
+# comprador) y, tras exigir sesión, lo leía cualquier repartidor o productor con solo conocer el id. Un
+# productor no lo necesita para nada (ve sus ventas en otro lado), así que no entra. pedido_id va tipado
+# como UUID: un id mal formado da 422 en vez de un error de la base.
 @app.get("/pedidos/{pedido_id}")
-def obtener_pedido(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+def obtener_pedido(
+    pedido_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(verificar_token),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
     pedido = _pedido_o_404(db, pedido_id)
+    rol = usuario.get("rol")
     es_el_comprador = str(pedido.usuario_id) == str(usuario.get("sub"))
-    if not es_el_comprador and usuario.get("rol") not in ROLES_CON_ACCESO_A_PEDIDOS:
-        raise HTTPException(status_code=403, detail="No tienes permiso para ver este pedido")
-    return pedido
+    if es_el_comprador or rol == "admin":
+        return pedido
+    if rol == "repartidor" and _repartidor_tiene_el_envio(pedido_id, credenciales.credentials):
+        return pedido
+    raise HTTPException(status_code=403, detail="No tienes permiso para ver este pedido")
 
 @app.delete("/pedidos/{pedido_id}")
 def eliminar_pedido(pedido_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
