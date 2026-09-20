@@ -932,6 +932,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
         ("DELETE", f"/productos/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
         ("POST", f"/productos/{_uuid.uuid4()}/stock/reponer", {"cantidad": 1}, "PAGOS_A_PRODUCTOS_SECRETO"),
         ("PATCH", f"/productos/{_uuid.uuid4()}/stock", {"cantidad": 1}, "PEDIDOS_A_PRODUCTOS_SECRETO"),
+        ("POST", "/productos/interno/descontar-stock-lote", {"lineas": [{"producto_id": str(_uuid.uuid4()), "cantidad": 1}]}, "PEDIDOS_A_PRODUCTOS_SECRETO"),
         ("POST", "/productos/interno/crear-desde-cosecha", {"productor_id": str(_uuid.uuid4()), "productor_nombre": "x", "nombre": "x", "stock": 1, "registro_produccion_id": str(_uuid.uuid4())}, "PRODUCTORES_A_PRODUCTOS_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
@@ -947,3 +948,151 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+
+# ============ Descuento de stock en lote y estado del producto ============
+
+SECRETO_PEDIDOS = "secreto-de-prueba-pedidos"
+
+
+def _descontar_lote(monkeypatch, lineas, secreto=SECRETO_PEDIDOS):
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", SECRETO_PEDIDOS)
+    headers = {"X-Servicio-Secreto": secreto} if secreto is not None else {}
+    return client.post(
+        "/productos/interno/descontar-stock-lote",
+        json={"lineas": [{"producto_id": str(pid), "cantidad": cantidad} for pid, cantidad in lineas]},
+        headers=headers,
+    )
+
+
+def _stock_de(producto_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Producto).filter(main.models.Producto.id == producto_id).first().stock
+    finally:
+        db.close()
+
+
+def test_descontar_lote_baja_el_stock_de_todas_las_lineas(monkeypatch):
+    a = _crear_producto_directo(stock=10)
+    b = _crear_producto_directo(stock=20)
+
+    resp = _descontar_lote(monkeypatch, [(a.id, 3), (b.id, 5)])
+
+    assert resp.status_code == 200, resp.text
+    assert (_stock_de(a.id), _stock_de(b.id)) == (7, 15)
+
+
+def test_descontar_lote_sin_el_secreto_correcto_falla_403_y_no_toca_el_stock(monkeypatch):
+    a = _crear_producto_directo(stock=10)
+
+    assert _descontar_lote(monkeypatch, [(a.id, 3)], secreto=None).status_code == 403
+    assert _descontar_lote(monkeypatch, [(a.id, 3)], secreto="otro").status_code == 403
+    assert _stock_de(a.id) == 10
+
+
+def test_descontar_lote_es_todo_o_nada_si_una_linea_no_alcanza(monkeypatch):
+    """Antes se descontaba línea por línea y no se miraba la respuesta: si la segunda fallaba, la primera
+    ya estaba descontada y el pedido se creaba igual."""
+    alcanza = _crear_producto_directo(stock=10)
+    no_alcanza = _crear_producto_directo(stock=2)
+
+    resp = _descontar_lote(monkeypatch, [(alcanza.id, 4), (no_alcanza.id, 3)])
+
+    assert resp.status_code == 409, resp.text
+    assert "Stock insuficiente" in resp.json()["detail"]
+    assert (_stock_de(alcanza.id), _stock_de(no_alcanza.id)) == (10, 2)
+
+
+def test_descontar_lote_suma_las_lineas_repetidas_del_mismo_producto(monkeypatch):
+    """Dos líneas de 6 con stock 10: cada una por separado cabe, juntas no."""
+    producto = _crear_producto_directo(stock=10)
+
+    resp = _descontar_lote(monkeypatch, [(producto.id, 6), (producto.id, 6)])
+
+    assert resp.status_code == 409, resp.text
+    assert _stock_de(producto.id) == 10
+
+    ok = _descontar_lote(monkeypatch, [(producto.id, 6), (producto.id, 4)])
+    assert ok.status_code == 200, ok.text
+    assert _stock_de(producto.id) == 0
+
+
+def test_descontar_lote_solo_vende_productos_disponibles(monkeypatch):
+    """Un producto en tránsito hacia el almacén (solo reservable) o un borrador no se compran por API."""
+    disponible = _crear_producto_directo(stock=10)
+    en_transito = _crear_producto_directo(stock=10, estado="en_transito")
+    borrador = _crear_producto_directo(stock=10, estado="borrador", precio=None, categoria=None)
+
+    for producto in (en_transito, borrador):
+        resp = _descontar_lote(monkeypatch, [(disponible.id, 1), (producto.id, 1)])
+        assert resp.status_code == 409, resp.text
+        assert "no está disponible" in resp.json()["detail"]
+        assert (_stock_de(disponible.id), _stock_de(producto.id)) == (10, 10)
+
+
+def test_descontar_lote_con_un_producto_que_no_existe_falla_404(monkeypatch):
+    existente = _crear_producto_directo(stock=10)
+
+    resp = _descontar_lote(monkeypatch, [(existente.id, 1), (uuid.uuid4(), 1)])
+
+    assert resp.status_code == 404, resp.text
+    assert _stock_de(existente.id) == 10
+
+
+def test_descontar_lote_redondea_hacia_arriba_una_cantidad_fraccionaria(monkeypatch):
+    """1 arroba = 11,5 kg: el stock es un entero, así que se descuentan 12 (antes el PATCH con un
+    número fraccionario se rechazaba y, como nadie miraba la respuesta, no se descontaba nada)."""
+    producto = _crear_producto_directo(stock=20)
+
+    resp = _descontar_lote(monkeypatch, [(producto.id, 11.5)])
+
+    assert resp.status_code == 200, resp.text
+    assert _stock_de(producto.id) == 8
+
+
+def test_descontar_lote_rechaza_cantidades_negativas_cero_o_no_numericas(monkeypatch):
+    """Con una cantidad negativa el stock subía en vez de bajar."""
+    producto = _crear_producto_directo(stock=10)
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", SECRETO_PEDIDOS)
+    headers = {"X-Servicio-Secreto": SECRETO_PEDIDOS}
+
+    for cantidad in (-5, 0, "abc", 10_000_000):
+        resp = client.post(
+            "/productos/interno/descontar-stock-lote",
+            json={"lineas": [{"producto_id": str(producto.id), "cantidad": cantidad}]},
+            headers=headers,
+        )
+        assert resp.status_code == 422, (cantidad, resp.text)
+    # NaN no es JSON válido pero Python lo emite y acepta: se manda como texto crudo
+    resp = client.post(
+        "/productos/interno/descontar-stock-lote",
+        content='{"lineas": [{"producto_id": "%s", "cantidad": NaN}]}' % producto.id,
+        headers={**headers, "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 422, resp.text
+    for cuerpo in ({"lineas": []}, {"lineas": [{"producto_id": "no-es-uuid", "cantidad": 1}]}):
+        assert client.post("/productos/interno/descontar-stock-lote", json=cuerpo, headers=headers).status_code == 422
+    assert _stock_de(producto.id) == 10
+
+
+def test_el_descuento_y_la_reposicion_individuales_tampoco_aceptan_cantidades_negativas(monkeypatch):
+    producto = _crear_producto_directo(stock=10)
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", SECRETO_PEDIDOS)
+    monkeypatch.setattr(main, "PAGOS_A_PRODUCTOS_SECRETO", "secreto-de-prueba-pagos")
+
+    descontar = client.patch(f"/productos/{producto.id}/stock", json={"cantidad": -5}, headers={"X-Servicio-Secreto": SECRETO_PEDIDOS})
+    reponer = client.post(f"/productos/{producto.id}/stock/reponer", json={"cantidad": -5}, headers={"X-Servicio-Secreto": "secreto-de-prueba-pagos"})
+
+    assert descontar.status_code == 422 and reponer.status_code == 422
+    assert _stock_de(producto.id) == 10
+
+
+def test_el_detalle_publico_del_producto_incluye_su_estado():
+    producto = _crear_producto_directo(estado="en_transito")
+
+    resp = client.get(f"/productos/{producto.id}")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "en_transito"

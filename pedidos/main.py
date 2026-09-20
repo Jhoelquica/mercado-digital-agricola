@@ -8,7 +8,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
 from auth import secreto_de_servicio_valido
@@ -177,17 +177,40 @@ def calcular_envio_a_destino(db: Session, latitud: float, longitud: float):
     distancia_km = calcular_distancia_km(almacen.valor_latitud, almacen.valor_longitud, latitud, longitud)
     return distancia_km, calcular_costo_envio(distancia_km)
 
+# Topes de un pedido. Sin límite inferior, una línea con cantidad negativa restaba dinero al total (el
+# cargo se calcula sumando cantidad x precio) y "descontaba" stock al revés; con una segunda línea
+# positiva para pasar el mínimo de compra, el pedido salía casi gratis y el stock del producto subía.
+CANTIDAD_MAXIMA_POR_LINEA = 100_000
+LINEAS_MAXIMAS_POR_PEDIDO = 50
+NOMBRE_COMPRADOR_MAXIMO = 100
+
+
 class ItemPedido(BaseModel):
-    producto_id: str
-    cantidad: int
+    # UUID y no str: el valor se pega en la URL que se le pide a Productos, y un texto libre podía
+    # colar rutas ("../") en esa petición.
+    producto_id: uuid.UUID
+    cantidad: int = Field(ge=1, le=CANTIDAD_MAXIMA_POR_LINEA)
     # None = unidad base del producto (comportamiento de siempre). Un valor (ej. "saco") busca esa
     # unidad dentro de producto["unidades_alternativas"] al validar (ver crear_pedido) — nunca se
     # acepta un precio del cliente, solo el nombre de la unidad; el precio siempre sale de
     # Productos.
-    unidad: str | None = None
+    unidad: str | None = Field(default=None, max_length=30)
 
 class PedidoCrear(BaseModel):
     comprador_nombre: str
+
+    @field_validator("comprador_nombre")
+    @classmethod
+    def _nombre_valido(cls, valor: str) -> str:
+        limpio = (valor or "").strip()
+        if not limpio:
+            raise ValueError("Indica el nombre de quien recibe el pedido")
+        if "\x00" in limpio:
+            raise ValueError("El nombre contiene caracteres no válidos")
+        if len(limpio) > NOMBRE_COMPRADOR_MAXIMO:
+            raise ValueError(f"El nombre no puede superar {NOMBRE_COMPRADOR_MAXIMO} caracteres")
+        return limpio
+
     # Obligatorio: es el único canal para que el repartidor coordine la entrega con el
     # comprador (ver el bloque de contacto en Gestionar Envíos). Celular peruano: 9 dígitos
     # que empiezan con 9 — se normaliza (sin espacios) antes de guardarse.
@@ -203,7 +226,7 @@ class PedidoCrear(BaseModel):
 
     destino_latitud: float
     destino_longitud: float
-    items: list[ItemPedido]
+    items: list[ItemPedido] = Field(min_length=1, max_length=LINEAS_MAXIMAS_POR_PEDIDO)
 
 class AlmacenActualizar(BaseModel):
     latitud: float
@@ -312,6 +335,12 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
 
             producto = resp.json()
 
+            # Un borrador (sin precio) o un producto que aún viaja al almacén no se compra. Esta es la
+            # revisión rápida para dar un mensaje claro antes de tocar la base; la definitiva es atómica,
+            # dentro de Productos, al descontar el stock (más abajo).
+            if producto.get("estado", "disponible") != "disponible" or producto.get("precio") is None:
+                raise HTTPException(status_code=409, detail=f"{producto.get('nombre', 'El producto')} aún no está disponible para comprar")
+
             if item.unidad is None:
                 # Comportamiento de siempre, sin cambios: precio y cantidad ya están en la unidad
                 # base del producto.
@@ -396,13 +425,32 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía
 
-        for item, producto, precio_unitario, cantidad_base, peso_kg in items_validados:
-            client.patch(
-                f"{PRODUCTOS_URL}/productos/{item.producto_id}/stock",
-                json={"cantidad": cantidad_base},
-                headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO},
+        # Todas las líneas se descuentan juntas, en una sola llamada: si una no alcanza (otro comprador se
+        # llevó el stock justo antes, dos líneas del mismo producto que juntas superan el stock, un
+        # producto que ya no está disponible) Productos responde 409 y no descuenta nada. Antes se llamaba
+        # línea por línea sin mirar la respuesta y el pedido se creaba igual.
+        try:
+            resp_stock = client.post(
+                f"{PRODUCTOS_URL}/productos/interno/descontar-stock-lote",
+                json={"lineas": [
+                    {"producto_id": str(item.producto_id), "cantidad": cantidad_base}
+                    for item, _, _, cantidad_base, _ in items_validados
+                ]},
+                headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO or ""},
                 timeout=5,
             )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productos no disponible")
+        if resp_stock.status_code != 200:
+            try:
+                detalle = resp_stock.json().get("detail")
+            except ValueError:
+                detalle = None
+            if resp_stock.status_code in (404, 409) and isinstance(detalle, str):
+                raise HTTPException(status_code=resp_stock.status_code, detail=detalle)
+            raise HTTPException(status_code=503, detail="No se pudo reservar el stock de los productos")
+
+        for item, producto, precio_unitario, cantidad_base, peso_kg in items_validados:
             nuevo_item = models.PedidoItem(
                 pedido_id=nuevo_pedido.id,
                 producto_id=item.producto_id,

@@ -46,7 +46,7 @@ def _como(sub: str, rol: str):
 
 def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_alternativas=None, unidad_medida="kg", equivalencia_kg=None):
     """Reemplaza httpx.Client() dentro de main: GET devuelve el producto simulado,
-    PATCH (descuento de stock) no hace nada real."""
+    POST (descuento de stock en lote) no hace nada real."""
     mock_client = MagicMock()
     mock_client.__enter__.return_value = mock_client
     mock_client.__exit__.return_value = False
@@ -63,7 +63,7 @@ def _mock_httpx_client(precio, stock=100, nombre="Producto de prueba", unidades_
         "equivalencia_kg": equivalencia_kg,
     }
     mock_client.get.return_value = respuesta_get
-    mock_client.patch.return_value = MagicMock(status_code=200)
+    mock_client.post.return_value = MagicMock(status_code=200)
     return mock_client
 
 
@@ -373,9 +373,9 @@ def test_pedido_en_unidad_alternativa_cobra_precio_y_descuenta_stock_convertido(
     assert float(item["precio_unitario"]) == 45.0
     assert item["cantidad"] == 3  # se guarda en la unidad que compró, no convertida
 
-    # descontar_stock recibe la cantidad YA convertida a unidad base: 3 sacos * 10 kg/saco = 30 kg.
-    llamada_stock = mock_client.patch.call_args
-    assert llamada_stock.kwargs["json"]["cantidad"] == 30.0
+    # el descuento de stock recibe la cantidad YA convertida a unidad base: 3 sacos * 10 kg/saco = 30 kg.
+    llamada_stock = mock_client.post.call_args
+    assert llamada_stock.kwargs["json"]["lineas"][0]["cantidad"] == 30.0
 
 
 def test_pedido_en_unidad_alternativa_valida_stock_ya_convertido():
@@ -521,7 +521,7 @@ def test_pedido_con_una_linea_no_kg_entre_varias_deja_peso_total_null():
         "unidades_alternativas": [], "unidad_medida": "unidad",
     }
     mock_client.get.side_effect = [respuesta_kg, respuesta_unidad]
-    mock_client.patch.return_value = MagicMock(status_code=200)
+    mock_client.post.return_value = MagicMock(status_code=200)
 
     with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento"):
         resp = client.post("/pedidos", json=payload)
@@ -645,3 +645,132 @@ def test_la_ruta_interna_de_pedidos_solo_responde_con_el_secreto_de_transporte(m
 
 def test_un_id_de_pedido_mal_formado_falla_422_no_500():
     assert client.get("/pedidos/no-es-un-uuid").status_code == 422
+
+
+
+# ============ Cantidades y productos que se pueden comprar ============
+
+def _pedidos_de(usuario_sub):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pedido).filter(main.models.Pedido.usuario_id == uuid.UUID(usuario_sub)).count()
+    finally:
+        db.close()
+
+
+def _intentar_pedido(payload, cliente_falso):
+    sub = str(uuid.uuid4())
+    _como(sub, "comprador")
+    with patch("main.httpx.Client", return_value=cliente_falso), patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=payload)
+    return sub, resp, mock_publicar
+
+
+def test_un_pedido_con_una_cantidad_negativa_cero_o_enorme_falla_422_y_no_crea_nada():
+    """Una línea con cantidad negativa restaba dinero al total (el cargo suma cantidad x precio) y subía el
+    stock del producto: con otra línea positiva para pasar el mínimo, el pedido salía casi gratis."""
+    for cantidad in (-50, 0, 100_001):
+        payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=cantidad)
+        sub, resp, publicar = _intentar_pedido(payload, _mock_httpx_client(precio=50.0))
+        assert resp.status_code == 422, (cantidad, resp.text)
+        publicar.assert_not_called()
+        assert _pedidos_de(sub) == 0
+
+
+def test_el_ataque_de_la_linea_negativa_no_pasa():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=100)
+    payload["items"].append({"producto_id": str(uuid.uuid4()), "cantidad": -50})
+
+    sub, resp, publicar = _intentar_pedido(payload, _mock_httpx_client(precio=50.0))
+
+    assert resp.status_code == 422, resp.text
+    publicar.assert_not_called()
+    assert _pedidos_de(sub) == 0
+
+
+def test_un_pedido_sin_lineas_o_con_demasiadas_falla_422():
+    vacio = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    vacio["items"] = []
+    largo = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    largo["items"] = [{"producto_id": str(uuid.uuid4()), "cantidad": 1} for _ in range(main.LINEAS_MAXIMAS_POR_PEDIDO + 1)]
+
+    for payload in (vacio, largo):
+        _, resp, _ = _intentar_pedido(payload, _mock_httpx_client(precio=50.0))
+        assert resp.status_code == 422, resp.text
+
+
+def test_un_id_de_producto_que_no_es_uuid_falla_422_y_no_llega_a_la_url_de_productos():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    payload["items"][0]["producto_id"] = "../../productos/mios"
+    cliente = _mock_httpx_client(precio=50.0)
+
+    _, resp, _ = _intentar_pedido(payload, cliente)
+
+    assert resp.status_code == 422, resp.text
+    cliente.get.assert_not_called()
+
+
+def test_el_nombre_de_quien_recibe_no_puede_estar_vacio_ni_ser_enorme():
+    for nombre in ("", "   ", "x" * 101):
+        payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+        payload["comprador_nombre"] = nombre
+        _, resp, _ = _intentar_pedido(payload, _mock_httpx_client(precio=50.0))
+        assert resp.status_code == 422, (nombre, resp.text)
+
+
+def test_un_producto_en_transito_o_borrador_no_se_puede_comprar():
+    for estado, precio in (("en_transito", 50.0), ("borrador", None)):
+        cliente = _mock_httpx_client(precio=precio)
+        cliente.get.return_value.json.return_value["estado"] = estado
+        payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+
+        sub, resp, publicar = _intentar_pedido(payload, cliente)
+
+        assert resp.status_code == 409, (estado, resp.text)
+        assert "no está disponible" in resp.json()["detail"]
+        cliente.post.assert_not_called()  # no se descontó nada
+        publicar.assert_not_called()
+        assert _pedidos_de(sub) == 0
+
+
+def test_el_stock_se_descuenta_de_todas_las_lineas_juntas_y_con_el_secreto(monkeypatch):
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", "secreto-de-prueba-pedidos")
+    cliente = _mock_httpx_client(precio=50.0)
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2)
+
+    sub, resp, _ = _intentar_pedido(payload, cliente)
+
+    assert resp.status_code == 200, resp.text
+    cliente.post.assert_called_once()
+    llamada = cliente.post.call_args
+    assert llamada.args[0].endswith("/productos/interno/descontar-stock-lote")
+    assert llamada.kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-pedidos"}
+    assert llamada.kwargs["json"]["lineas"] == [{"producto_id": payload["items"][0]["producto_id"], "cantidad": 2}]
+
+
+def test_si_productos_rechaza_el_descuento_el_pedido_no_se_crea():
+    """Antes la respuesta del descuento se ignoraba: si otro comprador se llevó el stock justo antes, el
+    pedido se creaba igual y se vendía stock que no existía."""
+    cliente = _mock_httpx_client(precio=50.0)
+    cliente.post.return_value = MagicMock(status_code=409)
+    cliente.post.return_value.json.return_value = {"detail": "Stock insuficiente para Producto de prueba"}
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+
+    sub, resp, publicar = _intentar_pedido(payload, cliente)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "Stock insuficiente para Producto de prueba"
+    publicar.assert_not_called()
+    assert _pedidos_de(sub) == 0
+
+
+def test_si_productos_no_responde_al_descontar_el_pedido_no_se_crea_y_da_503():
+    cliente = _mock_httpx_client(precio=50.0)
+    cliente.post.side_effect = main.httpx.RequestError("boom")
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+
+    sub, resp, publicar = _intentar_pedido(payload, cliente)
+
+    assert resp.status_code == 503, resp.text
+    publicar.assert_not_called()
+    assert _pedidos_de(sub) == 0

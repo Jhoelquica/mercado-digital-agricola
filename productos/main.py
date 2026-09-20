@@ -2,11 +2,12 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import math
 import os
 import unicodedata
+import uuid
 import httpx
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
@@ -156,11 +157,27 @@ class ResenaCrear(BaseModel):
     def _comentario_acotado(cls, valor):
         return _texto_acotado(valor, COMENTARIO_RESENA_MAXIMO)
 
+# Tope de una línea de compra o reposición. Sin límite inferior, una cantidad negativa "descontaba" stock
+# al revés: el stock subía en vez de bajar.
+CANTIDAD_MAXIMA_LINEA = 1_000_000
+
+
 class DescontarStock(BaseModel):
-    cantidad: int
+    cantidad: int = Field(ge=1, le=CANTIDAD_MAXIMA_LINEA)
 
 class ReponerStock(BaseModel):
-    cantidad: int
+    cantidad: int = Field(ge=1, le=CANTIDAD_MAXIMA_LINEA)
+
+
+class LineaDescuento(BaseModel):
+    producto_id: uuid.UUID
+    # En la unidad base del producto; puede ser fraccionaria (1 arroba = 11,5 kg) y se redondea hacia
+    # arriba al descontar, porque el stock es un entero.
+    cantidad: float = Field(gt=0, le=CANTIDAD_MAXIMA_LINEA, allow_inf_nan=False)
+
+
+class DescontarLote(BaseModel):
+    lineas: list[LineaDescuento] = Field(min_length=1, max_length=100)
 
 class OrdenImagen(BaseModel):
     orden: int
@@ -631,6 +648,7 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
         "equivalencia_kg": producto.equivalencia_kg,
         "imagen_url": producto.imagen_url,
         "fecha_publicacion": producto.fecha_publicacion,
+        "estado": producto.estado,
         "imagenes": [{"id": img.id, "url": img.url, "orden": img.orden} for img in imagenes],
         "calificacion_promedio": promedio,
         "total_resenas": total_resenas,
@@ -641,6 +659,43 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
     }
     cache.guardar(clave, resultado)
     return resultado
+
+# Descuenta el stock de TODAS las líneas de un pedido en una sola transacción: o se descuentan todas o no
+# se descuenta ninguna. Antes Pedidos llamaba a PATCH /productos/{id}/stock una vez por línea y no miraba la
+# respuesta: si una fallaba (stock que otro se llevó justo antes, cantidad fraccionaria rechazada por el
+# tipo entero) el pedido se creaba igual y se vendía stock que no existía. Además es aquí donde se decide
+# de verdad qué se puede comprar: solo los productos "disponible" (ya en el almacén), no los borradores ni
+# los que siguen en tránsito. Las filas se bloquean en orden de id, así dos pedidos simultáneos no se
+# traban entre sí, y las líneas repetidas de un mismo producto se suman antes de comparar con el stock.
+@app.post("/productos/interno/descontar-stock-lote")
+def descontar_stock_lote(datos: DescontarLote, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
+    if not secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    pedido_por_producto = {}
+    for linea in datos.lineas:
+        pedido_por_producto[linea.producto_id] = pedido_por_producto.get(linea.producto_id, 0) + linea.cantidad
+
+    ids = sorted(pedido_por_producto, key=str)
+    productos = db.query(models.Producto).filter(
+        models.Producto.id.in_(ids)
+    ).order_by(models.Producto.id).with_for_update().all()
+    por_id = {p.id: p for p in productos}
+
+    for producto_id in ids:
+        producto = por_id.get(producto_id)
+        if producto is None:
+            raise HTTPException(status_code=404, detail=f"Producto {producto_id} no existe")
+        if producto.estado != "disponible":
+            raise HTTPException(status_code=409, detail=f"{producto.nombre} aún no está disponible para comprar")
+        if producto.stock < math.ceil(pedido_por_producto[producto_id]):
+            raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto.nombre}")
+
+    for producto_id in ids:
+        por_id[producto_id].stock -= math.ceil(pedido_por_producto[producto_id])
+    db.commit()
+    cache.invalidar(cache.CLAVE_CATALOGO, *[cache.clave_detalle(str(pid)) for pid in ids])
+    return {"descontados": len(ids)}
 
 @app.patch("/productos/{producto_id}/stock")
 def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
