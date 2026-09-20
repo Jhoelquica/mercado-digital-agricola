@@ -169,6 +169,22 @@ class ReponerStock(BaseModel):
     cantidad: int = Field(ge=1, le=CANTIDAD_MAXIMA_LINEA)
 
 
+OBSERVACIONES_LLEGADA_MAXIMO = 300
+
+
+class LlegadaAlmacen(BaseModel):
+    """Lo que el Admin comprobó al recibir el producto en el almacén."""
+    # Unidades enteras, igual que el stock. El tope contra lo declarado por el productor lo comprueba el
+    # endpoint (depende del producto).
+    cantidad_recibida: int = Field(ge=1, le=CANTIDAD_MAXIMA_LINEA)
+    observaciones: str | None = None
+
+    @field_validator("observaciones")
+    @classmethod
+    def _observaciones_acotadas(cls, valor):
+        return _texto_acotado(valor, OBSERVACIONES_LLEGADA_MAXIMO) or None
+
+
 class LineaDescuento(BaseModel):
     producto_id: uuid.UUID
     # En la unidad base del producto; puede ser fraccionaria (1 arroba = 11,5 kg) y se redondea hacia
@@ -291,6 +307,8 @@ def crear_resena(
 PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # reponer_stock (Pagos llama tras un pago rechazado)
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # descontar_stock (Pedidos llama al crear un pedido)
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_producto (DELETE de limpieza QA)
+CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://localhost:8008")
+PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO")  # registrar la llegada al almacén en la cadena (Productos llama a Certificación)
 PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")  # crear_producto_desde_cosecha (Productores llama al aprobar una cosecha — sub-entrega 3, todavía no conectado)
 
 @app.post("/productos/{producto_id}/stock/reponer")
@@ -974,21 +992,81 @@ def publicar_producto(
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
 
+def _texto_de_llegada(producto, declarada: int, recibida: int, observaciones: str | None) -> str:
+    """El texto que queda en la cadena de certificación: lo que se declaró, lo que llegó y, si hay
+    diferencia u observaciones, también eso. La fecha la pone el bloque."""
+    unidad = producto.unidad_medida or "kg"
+    if recibida == declarada:
+        texto = f"Llegaron al almacén {recibida} {unidad} de {producto.nombre}: la cantidad completa declarada por el productor."
+    else:
+        texto = (
+            f"Llegaron al almacén {recibida} {unidad} de {producto.nombre}: "
+            f"{declarada - recibida} {unidad} menos de las {declarada} declaradas por el productor."
+        )
+    if observaciones:
+        texto += f" Observaciones: {observaciones}"
+    return texto
+
+
+def _registrar_llegada_en_la_cadena(producto_id, texto: str) -> None:
+    """Deja el evento llegada_almacen en Certificación ANTES de cambiar el producto: si no se puede
+    registrar, el producto sigue "en_transito" y el Admin reintenta (el evento es idempotente en
+    Certificación). Así ningún producto pasa a "disponible" sin su registro de llegada."""
+    error = HTTPException(
+        status_code=503,
+        detail="No se pudo registrar la llegada en la cadena de certificación. El producto sigue en tránsito: intenta de nuevo en un momento.",
+    )
+    try:
+        resp = httpx.post(
+            f"{CERTIFICACION_URL}/certificacion/{producto_id}/llegada-almacen",
+            json={"datos": texto},
+            headers={"X-Servicio-Secreto": PRODUCTOS_A_CERTIFICACION_SECRETO or ""},
+            timeout=5,
+        )
+    except httpx.RequestError:
+        raise error
+    if resp.status_code != 200:
+        raise error
+
+
 @app.patch("/productos/{producto_id}/confirmar-llegada-almacen")
 def confirmar_llegada_almacen(
-        producto_id: str,
+        producto_id: uuid.UUID,
+        datos: LlegadaAlmacen,
         db: Session = Depends(get_db),
         usuario: dict = Depends(requiere_rol("admin")),
 ):
-    """El Admin confirma que un producto "en_transito" llegó físicamente al almacén central —
-    recién ahí pasa a "disponible" (comprable de verdad, no solo reservable)."""
-    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    """El Admin confirma que un producto "en_transito" llegó físicamente al almacén central y cuánto llegó:
+    recién ahí pasa a "disponible" (comprable de verdad, no solo reservable) y su stock pasa a ser lo
+    recibido. Antes no se registraba ninguna cantidad (el stock seguía siendo lo que el productor declaró)
+    ni quedaba rastro en la cadena.
+
+    - No puede recibirse más de lo declarado: esa cantidad es la que certificó la cosecha aprobada.
+    - Si llegó menos, el stock es lo recibido y la diferencia queda escrita en la cadena.
+    - La fila se bloquea mientras se decide: dos confirmaciones simultáneas se turnan y la segunda ve el
+      producto ya "disponible" (400)."""
+    producto_id = str(producto_id)
+    producto = db.query(models.Producto).filter(
+        models.Producto.id == producto_id
+    ).with_for_update().first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     if producto.estado != "en_transito":
         raise HTTPException(status_code=400, detail="Este producto no está en tránsito hacia el almacén")
 
+    declarada = producto.stock
+    if datos.cantidad_recibida > declarada:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No puede llegar más de lo declarado por el productor ({declarada} {producto.unidad_medida or 'kg'}): esa es la cantidad que certificó la cosecha.",
+        )
+
+    _registrar_llegada_en_la_cadena(
+        producto_id, _texto_de_llegada(producto, declarada, datos.cantidad_recibida, datos.observaciones)
+    )
+
+    producto.stock = datos.cantidad_recibida
     producto.estado = "disponible"
     db.commit()
     db.refresh(producto)

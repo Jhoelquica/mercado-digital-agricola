@@ -15,7 +15,7 @@ class Bloque(Base):
     verificador_id = Column(UUID(as_uuid=True), nullable=True)
     producto_id = Column(UUID(as_uuid=True), nullable=False)
     indice = Column(Integer, nullable=False)  # posición dentro de la cadena de ESE producto
-    evento = Column(String, nullable=False)   # cosecha_registrada, certificado_productor, verificado_punto_venta
+    evento = Column(String, nullable=False)   # cosecha_registrada, certificado_productor, llegada_almacen, verificado_punto_venta
     datos = Column(String, nullable=True)     # descripción libre del evento
     fecha = Column(DateTime, default=datetime.utcnow)
     hash_anterior = Column(String, nullable=False)

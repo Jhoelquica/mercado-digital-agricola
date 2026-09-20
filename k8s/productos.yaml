@@ -82,6 +82,15 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: PRODUCTORES_A_PRODUCTOS_SECRETO
+            # Al confirmar la llegada de un producto al almacén, Productos deja el evento llegada_almacen
+            # en su cadena de Certificación (con esta clave, que Certificación valida).
+            - name: CERTIFICACION_URL
+              value: http://certificacion:8008
+            - name: PRODUCTOS_A_CERTIFICACION_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTOS_A_CERTIFICACION_SECRETO
             # Caché del catálogo (ver productos/cache.py). Valor fijo por ahora: Redis solo es
             # alcanzable dentro del clúster (Service ClusterIP en k8s/redis.yaml) y hoy no tiene
             # contraseña — cuando se le active requirepass, esto pasa a secretKeyRef igual que

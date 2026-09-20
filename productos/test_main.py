@@ -276,30 +276,188 @@ def test_publicar_producto_ajeno_falla_403(monkeypatch):
 
 # ============ PATCH /productos/{id}/confirmar-llegada-almacen ============
 
-def test_confirmar_llegada_desde_en_transito_funciona():
-    producto = _crear_producto_directo(estado="en_transito")
+def _mockear_cadena(monkeypatch, status=200, roto=False):
+    """La llegada se registra en Certificación con un httpx.post directo: se reemplaza por un stub que
+    guarda cada (url, kwargs) para comprobar qué se le mandó, sin tocar la red."""
+    llamadas = []
+
+    def falso_post(url, **kwargs):
+        llamadas.append((url, kwargs))
+        if roto:
+            raise main.httpx.RequestError("boom")
+        return _RespuestaFalsa(status, {"creado": True, "indice": 2})
+
+    monkeypatch.setattr(main.httpx, "post", falso_post)
+    monkeypatch.setattr(main, "PRODUCTOS_A_CERTIFICACION_SECRETO", "secreto-de-prueba-certificacion")
+    return llamadas
+
+
+def _confirmar_llegada(producto, cantidad, **extra):
+    return client.patch(
+        f"/productos/{producto.id}/confirmar-llegada-almacen",
+        json={"cantidad_recibida": cantidad, **extra},
+    )
+
+
+def _estado_y_stock(producto_id):
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Producto).filter(main.models.Producto.id == producto_id).first()
+        return fila.estado, fila.stock
+    finally:
+        db.close()
+
+
+def test_confirmar_llegada_con_toda_la_cantidad_declarada_funciona(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    llamadas = _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
-    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    resp = _confirmar_llegada(producto, 50)
+
     assert resp.status_code == 200, resp.text
     assert resp.json()["estado"] == "disponible"
+    assert _estado_y_stock(producto.id) == ("disponible", 50)
+    # queda escrito en la cadena, con el secreto del par Productos -> Certificación
+    assert len(llamadas) == 1
+    url, kwargs = llamadas[0]
+    assert url.endswith(f"/certificacion/{producto.id}/llegada-almacen")
+    assert kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-certificacion"}
+    assert "50 kg" in kwargs["json"]["datos"] and "cantidad completa" in kwargs["json"]["datos"]
 
 
-def test_confirmar_llegada_falla_si_no_esta_en_transito():
-    producto = _crear_producto_directo(estado="borrador", precio=None, categoria=None)
+def test_confirmar_llegada_con_menos_cantidad_deja_el_stock_en_lo_recibido_y_la_diferencia_en_la_cadena(monkeypatch):
+    """Antes no se registraba ninguna cantidad: el stock seguía siendo lo que el productor declaró, aunque
+    en el almacén hubiera llegado menos."""
+    producto = _crear_producto_directo(estado="en_transito", stock=50, nombre="Papa Nativa")
+    llamadas = _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
-    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    resp = _confirmar_llegada(producto, 48, observaciones="  2 cajas golpeadas  ")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["stock"] == 48
+    assert _estado_y_stock(producto.id) == ("disponible", 48)
+    texto = llamadas[0][1]["json"]["datos"]
+    assert "48 kg de Papa Nativa" in texto
+    assert "2 kg menos de las 50 declaradas" in texto
+    assert texto.endswith("Observaciones: 2 cajas golpeadas")
+
+
+def test_no_puede_llegar_mas_de_lo_declarado_por_el_productor(monkeypatch):
+    """La cantidad declarada es la que certificó la cosecha aprobada: recibir más inflaría el stock por
+    encima de lo certificado."""
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    llamadas = _mockear_cadena(monkeypatch)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = _confirmar_llegada(producto, 51)
+
+    assert resp.status_code == 422, resp.text
+    assert "50 kg" in resp.json()["detail"]
+    assert _estado_y_stock(producto.id) == ("en_transito", 50)
+    assert llamadas == []
+
+
+def test_la_cantidad_recibida_es_obligatoria_y_debe_ser_un_entero_positivo(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    llamadas = _mockear_cadena(monkeypatch)
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    for cantidad in (0, -3, "abc", 2.5, 10_000_000):
+        resp = _confirmar_llegada(producto, cantidad)
+        assert resp.status_code == 422, (cantidad, resp.text)
+    assert client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen").status_code == 422  # sin cuerpo
+    assert client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen", json={}).status_code == 422
+    assert _estado_y_stock(producto.id) == ("en_transito", 50)
+    assert llamadas == []
+
+
+def test_las_observaciones_de_la_llegada_se_acotan(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    _mockear_cadena(monkeypatch)
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    for observaciones in ("mal\u0000texto", "x" * (main.OBSERVACIONES_LLEGADA_MAXIMO + 1)):
+        assert _confirmar_llegada(producto, 50, observaciones=observaciones).status_code == 422
+    assert _estado_y_stock(producto.id) == ("en_transito", 50)
+
+
+def test_sin_observaciones_o_en_blanco_la_cadena_no_lleva_esa_frase(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    llamadas = _mockear_cadena(monkeypatch)
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    resp = _confirmar_llegada(producto, 50, observaciones="   ")
+
+    assert resp.status_code == 200, resp.text
+    assert "Observaciones" not in llamadas[0][1]["json"]["datos"]
+
+
+def test_si_la_cadena_no_responde_o_rechaza_el_producto_sigue_en_transito(monkeypatch):
+    """Ningún producto pasa a "disponible" sin su registro de llegada: el Admin reintenta."""
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    _mockear_cadena(monkeypatch, roto=True)
+    resp = _confirmar_llegada(producto, 50)
+    assert resp.status_code == 503, resp.text
+    assert "sigue en tránsito" in resp.json()["detail"]
+    assert _estado_y_stock(producto.id) == ("en_transito", 50)
+
+    _mockear_cadena(monkeypatch, status=500)
+    assert _confirmar_llegada(producto, 50).status_code == 503
+    assert _estado_y_stock(producto.id) == ("en_transito", 50)
+
+    # y al reintentar cuando Certificación responde, funciona
+    _mockear_cadena(monkeypatch)
+    assert _confirmar_llegada(producto, 50).status_code == 200
+    assert _estado_y_stock(producto.id) == ("disponible", 50)
+
+
+def test_confirmar_dos_veces_la_llegada_no_registra_dos_eventos(monkeypatch):
+    producto = _crear_producto_directo(estado="en_transito", stock=50)
+    llamadas = _mockear_cadena(monkeypatch)
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    assert _confirmar_llegada(producto, 50).status_code == 200
+    segunda = _confirmar_llegada(producto, 50)
+
+    assert segunda.status_code == 400, segunda.text
+    assert len(llamadas) == 1
+
+
+def test_confirmar_llegada_falla_si_no_esta_en_transito(monkeypatch):
+    producto = _crear_producto_directo(estado="borrador", precio=None, categoria=None)
+    llamadas = _mockear_cadena(monkeypatch)
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = _confirmar_llegada(producto, 5)
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Este producto no está en tránsito hacia el almacén"
+    assert llamadas == []
 
 
-def test_confirmar_llegada_requiere_admin():
+def test_confirmar_llegada_de_un_producto_que_no_existe_o_con_id_mal_formado(monkeypatch):
+    _mockear_cadena(monkeypatch)
+    _auth(str(uuid.uuid4()), rol="admin")
+
+    assert client.patch(f"/productos/{uuid.uuid4()}/confirmar-llegada-almacen", json={"cantidad_recibida": 5}).status_code == 404
+    assert client.patch("/productos/no-es-uuid/confirmar-llegada-almacen", json={"cantidad_recibida": 5}).status_code == 422
+
+
+def test_confirmar_llegada_requiere_admin(monkeypatch):
     producto = _crear_producto_directo(estado="en_transito")
+    llamadas = _mockear_cadena(monkeypatch)
 
-    _auth(str(uuid.uuid4()), rol="productor")
-    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen", headers=HEADERS_AUTH)
-    assert resp.status_code == 403
+    for rol in ("productor", "comprador", "verificador", "repartidor"):
+        _auth(str(uuid.uuid4()), rol=rol)
+        resp = client.patch(
+            f"/productos/{producto.id}/confirmar-llegada-almacen", json={"cantidad_recibida": 1}, headers=HEADERS_AUTH
+        )
+        assert resp.status_code == 403, (rol, resp.text)
+    assert _estado_y_stock(producto.id)[0] == "en_transito"
+    assert llamadas == []
 
 
 def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
@@ -319,9 +477,10 @@ def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
 
     mock_publicar = MagicMock()
     monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+    _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
-    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
 
     assert mock_publicar.call_count == 2
@@ -338,9 +497,10 @@ def test_confirmar_llegada_sin_reservas_no_publica_nada(monkeypatch):
 
     mock_publicar = MagicMock()
     monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+    _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
-    resp = client.patch(f"/productos/{producto.id}/confirmar-llegada-almacen")
+    resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
     mock_publicar.assert_not_called()
 

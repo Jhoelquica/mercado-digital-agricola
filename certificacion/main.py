@@ -1,10 +1,11 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import uuid
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import qrcode
 import io
 from fastapi.responses import StreamingResponse
@@ -45,6 +46,7 @@ def get_db():
 TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_verificador (DELETE de limpieza QA)
 PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")  # registrar_cosecha_aprobada (lo llama Productores)
+PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO")  # registrar_llegada_almacen (lo llama Productos)
 
 class EventoInterno(BaseModel):
     evento: str
@@ -52,6 +54,25 @@ class EventoInterno(BaseModel):
 
 class CertificadoPedidoCrear(BaseModel):
     productos_ids: list[str]
+
+DATOS_LLEGADA_MAXIMO = 600
+
+
+class LlegadaAlmacenInterno(BaseModel):
+    datos: str
+
+    @field_validator("datos")
+    @classmethod
+    def _datos_validos(cls, valor: str) -> str:
+        limpio = (valor or "").strip()
+        if not limpio:
+            raise ValueError("Indica qué llegó al almacén")
+        if "\x00" in limpio:
+            raise ValueError("El texto contiene caracteres no válidos")
+        if len(limpio) > DATOS_LLEGADA_MAXIMO:
+            raise ValueError(f"El texto no puede superar {DATOS_LLEGADA_MAXIMO} caracteres")
+        return limpio
+
 
 class CosechaAprobadaInterno(BaseModel):
     datos_cosecha: str | None = None
@@ -156,6 +177,34 @@ def registrar_cosecha_aprobada(
 
     total = db.query(models.Bloque).filter(models.Bloque.producto_id == producto_id).count()
     return {"creados": len(creados), "total_bloques": total}
+
+@app.post("/certificacion/{producto_id}/llegada-almacen")
+def registrar_llegada_almacen(
+        producto_id: uuid.UUID,
+        datos: LlegadaAlmacenInterno,
+        db: Session = Depends(get_db),
+        x_servicio_secreto: str = Header(None)
+):
+    """Llamado por Productos cuando un Admin confirma que el producto llegó al almacén: deja el evento
+    llegada_almacen (con lo declarado, lo recibido y las observaciones, en texto) al final de la cadena.
+    Hasta ahora esa llegada no dejaba ningún rastro: el producto pasaba a "disponible" sin cantidad
+    recibida y sin evento en la cadena que escanea el comprador.
+
+    Idempotente: un producto tiene un solo evento de llegada, así que un reintento (por ejemplo, tras un
+    fallo de Productos justo después de esta llamada) no duplica el bloque. Falla cerrado si el secreto
+    no está configurado."""
+    if not secreto_de_servicio_valido(x_servicio_secreto, PRODUCTOS_A_CERTIFICACION_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    existente = db.query(models.Bloque).filter(
+        models.Bloque.producto_id == producto_id,
+        models.Bloque.evento == "llegada_almacen",
+    ).first()
+    if existente:
+        return {"creado": False, "indice": existente.indice}
+
+    bloque = crear_bloque(db, str(producto_id), "llegada_almacen", datos.datos)
+    return {"creado": True, "indice": bloque.indice}
 
 @app.get("/salud")
 def salud():

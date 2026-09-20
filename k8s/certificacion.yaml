@@ -52,6 +52,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: PRODUCTORES_A_CERTIFICACION_SECRETO
+            # Productos -> Certificación: POST /certificacion/{id}/llegada-almacen (Certificación lo valida).
+            - name: PRODUCTOS_A_CERTIFICACION_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PRODUCTOS_A_CERTIFICACION_SECRETO
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:

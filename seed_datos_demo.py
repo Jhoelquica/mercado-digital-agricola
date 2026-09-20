@@ -330,9 +330,11 @@ def confirmar_llegadas(api, token_admin, ids_productores):
     catalogo = api.pedir("GET", "productos", "/productos").json()
     en_transito = [p for p in catalogo if p.get("estado") == "en_transito" and p.get("productor_id") in ids_productores]
     for p in en_transito:
-        r = api.pedir("PATCH", "productos", f"/productos/{p['id']}/confirmar-llegada-almacen", token_admin)
+        # El admin dice cuanto llego: en la demo llega todo lo que el agricultor declaro (el stock).
+        r = api.pedir("PATCH", "productos", f"/productos/{p['id']}/confirmar-llegada-almacen", token_admin,
+                      json={"cantidad_recibida": p["stock"]})
         exigir(r, f"confirmar llegada de {p['nombre']}")
-        log(f"    + {p['nombre']}: llego al almacen -> disponible")
+        log(f"    + {p['nombre']}: llegaron {p['stock']} al almacen -> disponible")
     if not en_transito:
         log("    (no habia productos en transito de estos agricultores)")
 

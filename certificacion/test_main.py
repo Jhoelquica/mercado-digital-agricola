@@ -299,6 +299,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
         ("DELETE", f"/verificadores/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
         ("POST", f"/certificacion/pedido/{_uuid.uuid4()}/certificado", {"productos_ids": []}, "TRANSPORTE_A_CERTIFICACION_SECRETO"),
         ("POST", f"/certificacion/{_uuid.uuid4()}/eventos-internos", {"evento": "verificado_punto_venta"}, "TRANSPORTE_A_CERTIFICACION_SECRETO"),
+        ("POST", f"/certificacion/{_uuid.uuid4()}/llegada-almacen", {"datos": "llegaron 5 kg"}, "PRODUCTOS_A_CERTIFICACION_SECRETO"),
         ("POST", f"/certificacion/{_uuid.uuid4()}/cosecha-aprobada", {"datos_cosecha": "x"}, "PRODUCTORES_A_CERTIFICACION_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
@@ -314,3 +315,100 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     monkeypatch.setattr(main, variable, "secreto-de-prueba")
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
     assert client.request(metodo, ruta, json=cuerpo, headers={"X-Servicio-Secreto": "secreto-de-prueba"}).status_code != 403
+
+
+
+# ============ POST /certificacion/{id}/llegada-almacen (lo llama Productos) ============
+
+SECRETO_PRODUCTOS = "secreto-de-prueba-productos"
+
+
+def _url_llegada(producto_id):
+    return f"/certificacion/{producto_id}/llegada-almacen"
+
+
+def _con_secreto_de_productos(monkeypatch):
+    monkeypatch.setattr(main, "PRODUCTOS_A_CERTIFICACION_SECRETO", SECRETO_PRODUCTOS)
+
+
+def _sembrar_cadena(producto_id):
+    db = main.SessionLocal()
+    try:
+        main.crear_bloque(db, producto_id, "cosecha_registrada", "45 kg de papa cosechados")
+        main.crear_bloque(db, producto_id, "certificado_productor", "revisada por un verificador")
+    finally:
+        db.close()
+
+
+def test_la_llegada_sin_secreto_o_con_uno_incorrecto_falla_403_y_no_crea_bloques(monkeypatch):
+    _con_secreto_de_productos(monkeypatch)
+    producto_id = str(uuid.uuid4())
+
+    assert client.post(_url_llegada(producto_id), json={"datos": "llegaron 5 kg"}).status_code == 403
+    assert client.post(
+        _url_llegada(producto_id), json={"datos": "llegaron 5 kg"}, headers={"X-Servicio-Secreto": "otro"}
+    ).status_code == 403
+    # el secreto de Productores o de Transporte tampoco sirve acá: cada par de servicios tiene el suyo
+    assert client.post(
+        _url_llegada(producto_id), json={"datos": "llegaron 5 kg"}, headers={"X-Servicio-Secreto": SECRETO}
+    ).status_code == 403
+    assert _bloques(producto_id) == []
+
+
+def test_la_llegada_se_agrega_al_final_de_la_cadena_y_la_cadena_sigue_integra(monkeypatch):
+    _con_secreto_de_productos(monkeypatch)
+    producto_id = str(uuid.uuid4())
+    _sembrar_cadena(producto_id)
+
+    resp = client.post(
+        _url_llegada(producto_id),
+        json={"datos": "Llegaron al almacén 48 kg de Papa: 2 kg menos de las 50 declaradas por el productor."},
+        headers={"X-Servicio-Secreto": SECRETO_PRODUCTOS},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"creado": True, "indice": 2}
+    bloques = _bloques(producto_id)
+    assert [b.evento for b in bloques] == ["cosecha_registrada", "certificado_productor", "llegada_almacen"]
+    assert "48 kg" in bloques[2].datos
+    assert bloques[2].hash_anterior == bloques[1].hash_actual
+    db = main.SessionLocal()
+    try:
+        assert verificar_cadena(db, producto_id)["valido"] is True
+    finally:
+        db.close()
+    historial = client.get(f"/certificacion/{producto_id}/historial").json()
+    assert historial[-1]["evento"] == "llegada_almacen"
+
+
+def test_la_llegada_es_idempotente_un_reintento_no_duplica_el_bloque(monkeypatch):
+    _con_secreto_de_productos(monkeypatch)
+    producto_id = str(uuid.uuid4())
+    _sembrar_cadena(producto_id)
+    headers = {"X-Servicio-Secreto": SECRETO_PRODUCTOS}
+
+    primera = client.post(_url_llegada(producto_id), json={"datos": "llegaron 50 kg"}, headers=headers)
+    segunda = client.post(_url_llegada(producto_id), json={"datos": "llegaron 50 kg"}, headers=headers)
+
+    assert primera.json() == {"creado": True, "indice": 2}
+    assert segunda.status_code == 200 and segunda.json() == {"creado": False, "indice": 2}
+    assert len(_bloques(producto_id)) == 3
+
+
+def test_la_llegada_rechaza_textos_vacios_con_caracteres_nulos_o_enormes(monkeypatch):
+    _con_secreto_de_productos(monkeypatch)
+    producto_id = str(uuid.uuid4())
+    headers = {"X-Servicio-Secreto": SECRETO_PRODUCTOS}
+
+    for datos in ("", "   ", "mal\u0000texto", "x" * (main.DATOS_LLEGADA_MAXIMO + 1)):
+        resp = client.post(_url_llegada(producto_id), json={"datos": datos}, headers=headers)
+        assert resp.status_code == 422, (datos[:20], resp.text)
+    assert _bloques(producto_id) == []
+
+
+def test_la_llegada_con_un_id_de_producto_mal_formado_falla_422_no_500(monkeypatch):
+    _con_secreto_de_productos(monkeypatch)
+    resp = client.post(
+        _url_llegada("no-es-un-uuid"), json={"datos": "llegaron 5 kg"}, headers={"X-Servicio-Secreto": SECRETO_PRODUCTOS}
+    )
+    assert resp.status_code == 422
