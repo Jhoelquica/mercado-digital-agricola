@@ -1961,7 +1961,7 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
             <button type="button" id="btn-cantidad-mas" aria-label="Aumentar cantidad">+</button>
           </div>
           <div class="detalle-total" aria-live="polite">
-            <span>Total estimado</span>
+            <span>Subtotal</span>
             <strong id="detalle-total-valor">${formatearMoneda(p.precio)}</strong>
           </div>
         </div>` : ''}
@@ -2609,12 +2609,13 @@ function resetCheckout() {
 }
 
 // ---- Reintentar el pago de un pedido ya existente (rechazado) ----
-let pedidoReintento = null; // { id, monto }
+let pedidoReintento = null; // { id, monto, envio }
 
-function reintentarPago(pedidoId, monto) {
-  pedidoReintento = { id: pedidoId, monto };
+function reintentarPago(pedidoId, monto, envio = 0) {
+  pedidoReintento = { id: pedidoId, monto, envio };
   abrirModal('modal-pedido');
-  document.getElementById('checkout-total-paso2').textContent = formatearMoneda(monto);
+  pintarTotalesPaso2(monto - envio, envio);
+  envioCotizado = null;
   document.getElementById('checkout-bloque-entrega').classList.add('hidden'); // el pedido ya tiene su entrega
   document.getElementById('checkout-recap').innerHTML = `
     <li class="checkout-recap-reintento">
@@ -2626,13 +2627,13 @@ function reintentarPago(pedidoId, monto) {
 
 async function manejarClickPagar() {
   if (pedidoReintento) {
-    const { id, monto } = pedidoReintento;
+    const { id, monto, envio } = pedidoReintento;
     const metodo = document.querySelector('input[name="metodo-pago"]:checked')?.value || 'tarjeta';
     const btn = document.getElementById('btn-checkout-pagar');
     btn.disabled = true;
     btn.textContent = 'Enviando pedido...';
     pedidoReintento = null;
-    abrirCheckoutCulqi(id, monto, metodo);
+    abrirCheckoutCulqi(id, monto, metodo, envio);
     return;
   }
   await confirmarYPagar();
@@ -2648,6 +2649,7 @@ function inicializarMapaDestino() {
     mapaDestinoPedido = null;
   }
   destinoSeleccionado = null;
+  quitarResaltadoMapaDestino(); // el aviso de "falta el destino" no debe sobrevivir a reabrir el checkout
   const ayuda = document.getElementById('mapa-destino-ayuda');
   if (ayuda) {
     ayuda.textContent = 'Toca el mapa para marcar dónde quieres recibir tu pedido.';
@@ -2729,8 +2731,20 @@ function renderRecapCheckout() {
     </li>`).join('');
 }
 
-function irAPaso2() {
-  if (!Estado.carrito.length) return;
+let cotizandoEnvio = false;
+let envioCotizado = null; // costo de envío que se le mostró al comprador en el paso 2
+
+// Desglose del paso 2: lo que se ve aquí es lo que se cobra (Pagos suma subtotal + envío).
+function pintarTotalesPaso2(subtotal, envio, distanciaKm = null) {
+  document.getElementById('checkout-subtotal-paso2').textContent = formatearMoneda(subtotal);
+  document.getElementById('checkout-envio-etiqueta').textContent =
+    Number.isFinite(distanciaKm) ? `Envío · ${distanciaKm.toFixed(1)} km` : 'Envío';
+  document.getElementById('checkout-envio-paso2').textContent = formatearMoneda(envio);
+  document.getElementById('checkout-total-paso2').textContent = formatearMoneda(subtotal + envio);
+}
+
+async function irAPaso2() {
+  if (!Estado.carrito.length || cotizandoEnvio) return;
   const telefono = telefonoContactoValido();
   if (!telefono) return;
   // El punto de entrega se marca en el paso 1: pedirlo aquí (donde el mapa se ve) y no recién al pagar,
@@ -2740,8 +2754,30 @@ function irAPaso2() {
     resaltarMapaDestino();
     return;
   }
-  const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
-  document.getElementById('checkout-total-paso2').textContent = formatearMoneda(total);
+
+  // El envío depende de la distancia al almacén y lo calcula el backend: se cotiza acá para que el
+  // total que ve el comprador sea el mismo que se cobra.
+  const btn = document.getElementById('btn-checkout-paso1-siguiente');
+  const textoBtn = btn.textContent;
+  cotizandoEnvio = true;
+  btn.disabled = true;
+  btn.textContent = 'Calculando envío...';
+  let cotizacion;
+  try {
+    cotizacion = await Api.pedidos.cotizarEnvio(destinoSeleccionado.lat, destinoSeleccionado.lng);
+  } catch (err) {
+    manejarError(err, 'calcular el envío');
+    if (err.status === 400) resaltarMapaDestino(); // destino fuera de la región de entrega
+    return;
+  } finally {
+    cotizandoEnvio = false;
+    btn.disabled = !Estado.carrito.length;
+    btn.textContent = textoBtn;
+  }
+
+  const subtotal = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+  envioCotizado = Number(cotizacion.costo_envio) || 0;
+  pintarTotalesPaso2(subtotal, envioCotizado, Number(cotizacion.distancia_km));
   document.getElementById('checkout-entrega-telefono').textContent = telefono;
   document.getElementById('checkout-entrega-punto').innerHTML =
     `<i class="ti ti-map-pin" aria-hidden="true"></i> Marcado en el mapa (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
@@ -2773,7 +2809,7 @@ async function confirmarYPagar() {
   btn.textContent = 'Enviando pedido...';
 
   try {
-    const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
+    const subtotal = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
     const datos = {
       comprador_nombre: Estado.nombre || 'Cliente Chakra Shop',
       comprador_telefono: document.getElementById('pedido-telefono').value.replace(/\s+/g, ''),
@@ -2796,7 +2832,14 @@ async function confirmarYPagar() {
     // el panel de búsqueda no sigan mostrando cantidades desactualizadas.
     try { Estado.productos = await Api.productos.listar(); } catch { /* no bloquea el checkout si falla */ }
 
-    abrirCheckoutCulqi(pedido.id, total, metodo);
+    // El envío lo calcula el backend según la distancia al destino; Pagos cobra subtotal + envío,
+    // así que Culqi y la confirmación deben mostrar ese mismo monto.
+    const envio = Number(pedido.costo_envio) || 0;
+    if (envioCotizado !== null && Math.abs(envio - envioCotizado) > 0.005) {
+      toast(`El costo de envío cambió a ${formatearMoneda(envio)}. Revisa el monto antes de pagar.`);
+    }
+    envioCotizado = null;
+    abrirCheckoutCulqi(pedido.id, subtotal + envio, metodo, envio);
   } catch (err) {
     manejarError(err, 'crear el pedido');
     resetearBotonPago();
@@ -2804,16 +2847,16 @@ async function confirmarYPagar() {
 }
 
 // ============ PAGO (CULQI) ============
-let pagoEnCurso = null; // { pedidoId, email, monto }
+let pagoEnCurso = null; // { pedidoId, email, monto, envio }
 
-function abrirCheckoutCulqi(pedidoId, montoTotal, metodo = 'tarjeta') {
+function abrirCheckoutCulqi(pedidoId, montoTotal, metodo = 'tarjeta', envio = 0) {
   if (typeof Culqi === 'undefined') {
     toast('No se pudo cargar la pasarela de pagos. Vuelve a intentar el pago desde "Mis Pedidos".', 'error');
     resetearBotonPago();
     return;
   }
 
-  pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal };
+  pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal, envio };
   Culqi.publicKey = CULQI_PUBLIC_KEY;
   Culqi.settings({
     title: 'Chakra Shop',
@@ -2851,7 +2894,7 @@ window.culqi = function () {
 };
 
 async function procesarPagoCulqi(tokenCulqi, datosPago) {
-  const { pedidoId, email, monto } = datosPago;
+  const { pedidoId, email, monto, envio } = datosPago;
   let resultado = null;
   let errorMsg = null;
   try {
@@ -2864,12 +2907,12 @@ async function procesarPagoCulqi(tokenCulqi, datosPago) {
     errorMsg = err.message;
   }
 
-  mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg });
+  mostrarConfirmacionCheckout({ pedidoId, monto, envio, resultado, errorMsg });
   resetearBotonPago();
   irPasoCheckout(3);
 }
 
-function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
+function mostrarConfirmacionCheckout({ pedidoId, monto, envio = 0, resultado, errorMsg }) {
   const cont = document.getElementById('checkout-confirmacion');
   const aprobado = resultado?.estado === 'aprobado';
   const idCorto = String(pedidoId).slice(0, 8);
@@ -2879,7 +2922,7 @@ function mostrarConfirmacionCheckout({ pedidoId, monto, resultado, errorMsg }) {
       <span class="checkout-exito-icono"><i class="ti ti-check" aria-hidden="true"></i></span>
       <h3>¡Pago aprobado!</h3>
       <p>Tu pedido <strong>#${idCorto}</strong> está confirmado.</p>
-      <div class="checkout-exito-total"><span>Total pagado</span><strong>${formatearMoneda(monto)}</strong></div>
+      <div class="checkout-exito-total"><span>Total pagado</span><strong>${formatearMoneda(monto)}</strong>${envio > 0 ? `<small>Incluye ${formatearMoneda(envio)} de envío</small>` : ''}</div>
       <ol class="checkout-siguientes">
         <li><i class="ti ti-receipt" aria-hidden="true"></i><div><strong>Recibimos tu pedido</strong><span>Ya está registrado y pagado.</span></div></li>
         <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><div><strong>Un repartidor lo lleva a tu punto</strong><span>Te llamará al teléfono que indicaste para coordinar.</span></div></li>
@@ -2928,10 +2971,15 @@ function esPedidoEntregado(d) {
   return d.envio ? d.envio.estado === 'entregado' : d.pedido?.estado === 'entregado';
 }
 
-// Lo que el comprador pagó por el pedido: suma de las líneas (es el mismo monto que se cobra al
-// pagar y al reintentar el pago).
-function totalPedido(pedido) {
+// Suma de las líneas del pedido, sin envío.
+function subtotalPedido(pedido) {
   return (pedido.items || []).reduce((acc, i) => acc + Number(i.precio_unitario) * i.cantidad, 0);
+}
+
+// Lo que se cobra por el pedido: líneas + envío. Es el mismo monto que calcula Pagos al crear el
+// pedido (subtotal + costo_envio), así que también es el que se reintenta si el pago se rechaza.
+function totalPedido(pedido) {
+  return subtotalPedido(pedido) + (Number(pedido.costo_envio) || 0);
 }
 
 function conteosPedidos() {
@@ -3347,6 +3395,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
   const d = { pedido, envio, pago };
   const items = (pedido.items || []).map((i) => ({ ...i, producto: Estado.productos.find((p) => p.id === i.producto_id) }));
   const total = totalPedido(pedido);
+  const costoEnvio = Number(pedido.costo_envio) || 0;
   const general = estadoGeneralPedido(d);
   const activo = envio && ['asignado', 'en_camino'].includes(envio.estado);
   const entregado = esPedidoEntregado(d);
@@ -3371,6 +3420,13 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       </li>`;
   }).join('');
 
+  const cobro = `
+    <dl class="mp-cobro" aria-label="Detalle del cobro">
+      <div><dt>Subtotal</dt><dd>${formatearMoneda(subtotalPedido(pedido))}</dd></div>
+      <div><dt>Envío</dt><dd>${formatearMoneda(costoEnvio)}</dd></div>
+      <div class="mp-cobro-total"><dt>Total</dt><dd>${formatearMoneda(total)}</dd></div>
+    </dl>`;
+
   const contacto = `
     <dl class="mp-kv">
       ${pedido.comprador_nombre ? `<div><dt><i class="ti ti-user"></i> Recibe</dt><dd>${escapeAttr(pedido.comprador_nombre)}</dd></div>` : ''}
@@ -3382,7 +3438,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
     <div class="mp-alerta" role="alert">
       <i class="ti ti-alert-triangle"></i>
       <div><strong>Tu pago fue rechazado</strong><span>Puedes volver a intentarlo sin perder tu pedido.</span></div>
-      <button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}">Reintentar pago</button>
+      <button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}" data-envio="${costoEnvio}">Reintentar pago</button>
     </div>` : '';
 
   const pin = activo && envio.pin_entrega ? renderPinEntrega(envio.pin_entrega) : '';
@@ -3430,6 +3486,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
         <section class="mp-col-items">
           <h4 class="mp-bloque-titulo"><i class="ti ti-basket"></i> Productos</h4>
           <ul class="mp-items">${itemsHtml}</ul>
+          ${cobro}
           ${contacto}
         </section>
         ${lateral ? `<aside class="mp-col-lateral">${lateral}</aside>` : ''}
@@ -6843,7 +6900,7 @@ function inicializarEventos() {
     const calificar = e.target.closest('.btn-calificar-producto');
     if (calificar) { cambiarVista('detalle-producto', calificar.dataset.productoId); return; }
     const reintentar = e.target.closest('.btn-reintentar-pago');
-    if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto)); return; }
+    if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto), Number(reintentar.dataset.envio)); return; }
     const certPedido = e.target.closest('.btn-ver-certificado-pedido');
     if (certPedido) { alternarCertificadoPedido(certPedido.dataset.pedidoId); return; }
     const copiarPin = e.target.closest('.btn-copiar-pin');

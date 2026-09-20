@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=5ad0e5e6">
+<link rel="stylesheet" href="css/style.css?v=31808643">
 </head>
 <body>
 
@@ -1017,9 +1017,10 @@
             <h3>Resumen</h3>
             <div class="checkout-resumen-fila"><span>Productos</span><span id="carrito-resumen-cantidad">0</span></div>
             <div class="carrito-total">
-              <span>Total estimado</span>
+              <span>Subtotal</span>
               <strong id="carrito-total">S/ 0.00</strong>
             </div>
+            <p class="checkout-resumen-nota"><i class="ti ti-truck-delivery" aria-hidden="true"></i><span>El envío se calcula según la distancia a tu punto de entrega. Lo verás en el siguiente paso, antes de pagar.</span></p>
             <button type="button" class="btn btn-primary btn-block" id="btn-checkout-paso1-siguiente">Continuar al pago →</button>
             <ul class="checkout-garantias">
               <li><i class="ti ti-lock" aria-hidden="true"></i><span>Pago seguro con Culqi</span></li>
@@ -1066,6 +1067,10 @@
           <aside class="checkout-resumen" aria-label="Resumen del pedido">
             <h3>Tu pedido</h3>
             <ul class="checkout-recap" id="checkout-recap"></ul>
+            <div class="checkout-resumen-desglose">
+              <div class="checkout-resumen-fila"><span>Subtotal</span><span id="checkout-subtotal-paso2">S/ 0.00</span></div>
+              <div class="checkout-resumen-fila"><span id="checkout-envio-etiqueta">Envío</span><span id="checkout-envio-paso2">S/ 0.00</span></div>
+            </div>
             <div class="carrito-total">
               <span>Total a pagar</span>
               <strong id="checkout-total-paso2">S/ 0.00</strong>
@@ -1116,7 +1121,7 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=bcfdafa9"></script>
-<script src="js/app.js?v=cf48e185"></script>
+<script src="js/api.js?v=8fb9b840"></script>
+<script src="js/app.js?v=a778c8ff"></script>
 </body>
 </html>

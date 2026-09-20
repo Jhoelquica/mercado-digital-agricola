@@ -170,6 +170,9 @@ const Api = {
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),
     obtener: (id) => request('pedidos', `/pedidos/${id}`),
+    // Costo de envío según la distancia del destino al almacén (público): permite mostrar el total
+    // real antes de crear el pedido.
+    cotizarEnvio: (latitud, longitud) => request('pedidos', `/pedidos/costo-envio?latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`),
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`),
