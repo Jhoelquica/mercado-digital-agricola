@@ -1803,6 +1803,18 @@ input, select { font-family: inherit; }
 }
 .propuesta-actions .btn { flex: 1; padding: 12px 16px; font-size: 0.92rem; }
 
+/* En el celular (375px) tres columnas dejan cifras y etiquetas partidas en varias líneas y "Aceptar envío" se corta
+   dentro de su botón: los datos pasan a lista (ícono, etiqueta y cifra a la derecha) y los botones a ancho completo. */
+@media (max-width: 560px) {
+  .propuesta-metricas { grid-template-columns: 1fr; gap: 8px; }
+  .propuesta-metrica { flex-direction: row; align-items: center; gap: 10px; min-height: 44px; padding: 8px 14px; }
+  .propuesta-metrica i { margin-bottom: 0; }
+  .propuesta-metrica span { order: 1; flex: 1; }
+  .propuesta-metrica strong { order: 2; white-space: nowrap; text-align: right; }
+  .propuesta-actions { flex-direction: column; gap: 8px; }
+  .propuesta-actions .btn { flex: none; width: 100%; min-height: 46px; }
+}
+
 .pedido-card-activo {
   border-left: 4px solid var(--color-primario);
   box-shadow: var(--sombra-hover);
