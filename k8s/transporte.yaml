@@ -42,6 +42,21 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
+            # MinIO (foto de entrega, bucket privado transporte-entregas): las mismas credenciales de raíz con las que
+            # arranca MinIO (ver k8s/minio.yaml). Sin esto el servicio caía en sus valores por defecto (admin/admin123),
+            # que solo coinciden por casualidad con el Secret de desarrollo: con una contraseña real la foto no se subiría.
+            - name: MINIO_ENDPOINT
+              value: minio:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
             - name: PEDIDOS_URL
               value: http://pedidos:8003
             - name: CERTIFICACION_URL
