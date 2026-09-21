@@ -1,5 +1,6 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import io
+import logging
 import math
 import os
 import unicodedata
@@ -23,7 +24,7 @@ from sqlalchemy import func
 from fastapi import FastAPI, Depends, HTTPException, Header
 
 from fastapi import UploadFile, File
-from minio_client import subir_imagen
+from minio_client import subir_imagen, asegurar_bucket_publico
 import pybreaker
 import cache
 from rabbitmq_publisher import publicar_evento
@@ -259,6 +260,16 @@ def llamar_productores_me(token: str):
         )
         resp.raise_for_status()
         return resp
+
+@app.on_event("startup")
+def preparar_almacen_de_imagenes():
+    """Crea el bucket de imágenes (y su lectura pública) si no existe: en un MinIO nuevo no hay nada. Best-effort: MinIO
+    puede tardar en estar listo, y subir_imagen lo vuelve a intentar en la primera subida."""
+    try:
+        asegurar_bucket_publico()
+    except Exception:
+        logging.getLogger(__name__).warning("No se pudo preparar el bucket de imágenes al arrancar", exc_info=True)
+
 
 @app.get("/salud")
 def salud():

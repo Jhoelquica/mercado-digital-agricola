@@ -1538,3 +1538,125 @@ def test_subir_una_imagen_sigue_pidiendo_ser_el_productor_dueno(monkeypatch):
 
     assert _subir(producto, PNG_VALIDO).status_code == 403
     assert _subir(producto, b"no soy una imagen").status_code == 403  # la propiedad se comprueba antes que el contenido
+
+
+
+# ============ Bucket de imágenes: se prepara solo (antes se hacía a mano en la consola de MinIO) ============
+# En un MinIO nuevo (otro entorno) no existía `productos-imagenes`: toda subida fallaba con NoSuchBucket y, aunque se
+# creara a mano, sus fotos no se veían sin la política de lectura pública.
+
+import io
+import json as _json
+
+import pytest
+
+import minio_client
+from minio.error import S3Error
+
+
+def _error_s3(codigo):
+    return S3Error(None, codigo, "simulado", "/productos-imagenes", "id-de-prueba", "host-de-prueba")  # la respuesta HTTP va primero
+
+
+class _MinioFalso:
+    def __init__(self, existe=False, fallas_al_crear=(), fallas_al_subir=()):
+        self.existe = existe
+        self.fallas_al_crear = list(fallas_al_crear)
+        self.fallas_al_subir = list(fallas_al_subir)
+        self.buckets_creados = []
+        self.politicas = []
+        self.subidas = []
+
+    def bucket_exists(self, nombre):
+        return self.existe
+
+    def make_bucket(self, nombre):
+        if self.fallas_al_crear:
+            raise self.fallas_al_crear.pop(0)
+        self.buckets_creados.append(nombre)
+        self.existe = True
+
+    def set_bucket_policy(self, nombre, politica):
+        self.politicas.append((nombre, _json.loads(politica)))
+
+    def put_object(self, bucket, nombre, archivo, **kwargs):
+        contenido = archivo.read()  # como el cliente real, consume el archivo
+        if self.fallas_al_subir:
+            raise self.fallas_al_subir.pop(0)
+        self.subidas.append((bucket, nombre, contenido))
+
+
+def _con_minio_falso(monkeypatch, **kwargs):
+    falso = _MinioFalso(**kwargs)
+    monkeypatch.setattr(minio_client, "client", falso)
+    return falso
+
+
+def test_el_bucket_de_imagenes_se_crea_y_queda_de_lectura_publica(monkeypatch):
+    falso = _con_minio_falso(monkeypatch, existe=False)
+
+    minio_client.asegurar_bucket_publico()
+
+    assert falso.buckets_creados == ["productos-imagenes"]
+    [(bucket, politica)] = falso.politicas
+    assert bucket == "productos-imagenes"
+    [regla] = politica["Statement"]
+    # cualquiera puede LEER las fotos; nada más (escribir exige credenciales)
+    assert regla["Effect"] == "Allow" and regla["Principal"] == {"AWS": ["*"]}
+    assert regla["Action"] == ["s3:GetObject"]
+    assert regla["Resource"] == ["arn:aws:s3:::productos-imagenes/*"]
+
+
+def test_si_el_bucket_ya_existe_no_se_crea_de_nuevo_pero_se_reafirma_la_politica(monkeypatch):
+    falso = _con_minio_falso(monkeypatch, existe=True)
+
+    minio_client.asegurar_bucket_publico()
+    minio_client.asegurar_bucket_publico()
+
+    assert falso.buckets_creados == []
+    assert len(falso.politicas) == 2  # idempotente: repetirlo no rompe nada
+
+
+def test_si_otra_replica_creo_el_bucket_a_la_vez_se_sigue_adelante(monkeypatch):
+    falso = _con_minio_falso(monkeypatch, existe=False, fallas_al_crear=[_error_s3("BucketAlreadyOwnedByYou")])
+
+    minio_client.asegurar_bucket_publico()
+
+    assert len(falso.politicas) == 1  # igual se fijó la política
+
+
+def test_un_error_real_al_preparar_el_bucket_no_se_traga(monkeypatch):
+    _con_minio_falso(monkeypatch, existe=False, fallas_al_crear=[_error_s3("AccessDenied")])
+    with pytest.raises(S3Error):
+        minio_client.asegurar_bucket_publico()
+
+
+def test_subir_una_imagen_a_un_minio_sin_bucket_lo_prepara_y_reintenta_una_vez(monkeypatch):
+    falso = _con_minio_falso(monkeypatch, existe=False, fallas_al_subir=[_error_s3("NoSuchBucket")])
+    monkeypatch.setattr(minio_client, "MINIO_PUBLIC_URL", "https://tienda.ejemplo/media")
+    contenido = b"\x89PNG\r\n\x1a\n" + bytes(64)
+
+    url = minio_client.subir_imagen(io.BytesIO(contenido), "image/png")
+
+    assert url.startswith("https://tienda.ejemplo/media/productos-imagenes/") and url.endswith(".png")
+    assert falso.buckets_creados == ["productos-imagenes"]
+    [(bucket, nombre, subido)] = falso.subidas
+    assert subido == contenido  # el reintento subió el archivo COMPLETO, no lo que quedó tras el primer intento
+
+
+def test_otros_errores_al_subir_se_propagan_sin_reintentar(monkeypatch):
+    falso = _con_minio_falso(monkeypatch, existe=True, fallas_al_subir=[_error_s3("AccessDenied")])
+
+    with pytest.raises(S3Error):
+        minio_client.subir_imagen(io.BytesIO(b"x"), "image/png")
+
+    assert falso.subidas == [] and falso.buckets_creados == []
+
+
+def test_el_arranque_no_se_cae_si_minio_todavia_no_responde(monkeypatch):
+    class _MinioCaido:
+        def bucket_exists(self, nombre):
+            raise ConnectionError("MinIO todavía no responde")
+
+    monkeypatch.setattr(minio_client, "client", _MinioCaido())
+    main.preparar_almacen_de_imagenes()  # solo avisa: subir_imagen lo vuelve a intentar en la primera subida
