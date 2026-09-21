@@ -2992,11 +2992,16 @@ function mostrarConfirmacionCheckout({ pedidoId, monto, envio = 0, resultado, er
     const motivo = (errorMsg && !pareceJson)
       ? errorMsg
       : `El pago quedó en estado "${resultado?.estado || 'pendiente'}".`;
+    // Al reintentar el pago de un pedido rechazado, el servidor vuelve a reservar su stock: si ya no alcanza
+    // responde "... Crea un nuevo pedido." y reintentar más tarde no serviría de nada.
+    const sinReintento = /crea un nuevo pedido/i.test(errorMsg || '');
     cont.innerHTML = `
       <span class="checkout-exito-icono es-alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i></span>
       <h3>No se pudo confirmar el pago</h3>
       <p>${escapeAttr(motivo)}</p>
-      <p>Tu pedido <strong>#${idCorto}</strong> quedó registrado — puedes reintentar el pago más tarde.</p>`;
+      ${sinReintento
+        ? `<p>Tu pedido <strong>#${idCorto}</strong> ya no se puede pagar. Vuelve al catálogo y crea uno nuevo.</p>`
+        : `<p>Tu pedido <strong>#${idCorto}</strong> quedó registrado — puedes reintentar el pago más tarde.</p>`}`;
   }
 }
 
