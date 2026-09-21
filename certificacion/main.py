@@ -268,14 +268,30 @@ def generar_qr(producto_id: str):
     return StreamingResponse(buffer, media_type="image/png")
 
 
+# El nombre y la credencial salen tal cual en el certificado que ve quien escanea el QR del producto.
+VERIFICADOR_NOMBRE_MINIMO = 2
+VERIFICADOR_NOMBRE_MAXIMO = 120
+VERIFICADOR_CREDENCIAL_MAXIMA = 60
+
+
 class VerificadorCrear(BaseModel):
     nombre: str
     credencial: str
 
 @app.post("/verificadores")
 def crear_verificador(datos: VerificadorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("verificador"))):
-    if not datos.credencial.strip():
+    nombre = (datos.nombre or "").strip()
+    credencial = (datos.credencial or "").strip()
+    if len(nombre) < VERIFICADOR_NOMBRE_MINIMO:
+        raise HTTPException(status_code=422, detail=f"El nombre debe tener al menos {VERIFICADOR_NOMBRE_MINIMO} caracteres")
+    if len(nombre) > VERIFICADOR_NOMBRE_MAXIMO:
+        raise HTTPException(status_code=422, detail=f"El nombre no puede superar {VERIFICADOR_NOMBRE_MAXIMO} caracteres")
+    if not credencial:
         raise HTTPException(status_code=422, detail="La credencial no puede estar vacía")
+    if len(credencial) > VERIFICADOR_CREDENCIAL_MAXIMA:
+        raise HTTPException(status_code=422, detail=f"La credencial no puede superar {VERIFICADOR_CREDENCIAL_MAXIMA} caracteres")
+    if "\x00" in nombre or "\x00" in credencial:
+        raise HTTPException(status_code=422, detail="El nombre y la credencial no pueden tener caracteres no válidos")
 
     usuario_id = usuario.get("sub")
     existente = db.query(models.Verificador).filter(models.Verificador.usuario_id == usuario_id).first()
@@ -284,8 +300,8 @@ def crear_verificador(datos: VerificadorCrear, db: Session = Depends(get_db), us
 
     nuevo = models.Verificador(
         usuario_id=usuario_id,
-        nombre=datos.nombre,
-        credencial=datos.credencial,
+        nombre=nombre,
+        credencial=credencial,
     )
     db.add(nuevo)
     db.commit()

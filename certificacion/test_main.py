@@ -27,6 +27,7 @@ import main
 import logica_cadena
 import migraciones
 from logica_cadena import verificar_cadena
+from auth import verificar_token
 
 client = TestClient(main.app)
 SECRETO = "secreto-de-prueba"
@@ -412,3 +413,88 @@ def test_la_llegada_con_un_id_de_producto_mal_formado_falla_422_no_500(monkeypat
         _url_llegada("no-es-un-uuid"), json={"datos": "llegaron 5 kg"}, headers={"X-Servicio-Secreto": SECRETO_PRODUCTOS}
     )
     assert resp.status_code == 422
+
+
+
+# ============ Perfil del verificador: POST /verificadores y GET /verificadores/me ============
+# Sin perfil, lo que el verificador aprueba sale en el certificado sin "Certificado por" (el bloque se crea igual, sin
+# nombre) y esa cadena no se puede corregir después: la pantalla "Mi cuenta" lo pide y estos endpoints (que no tenían
+# ninguna prueba) tienen que ser sólidos.
+
+@pytest.fixture
+def como_verificador():
+    def _como(usuario_id=None, rol="verificador"):
+        usuario_id = str(usuario_id or uuid.uuid4())
+        main.app.dependency_overrides[verificar_token] = lambda: {"sub": usuario_id, "rol": rol}
+        return usuario_id
+
+    yield _como
+    main.app.dependency_overrides.pop(verificar_token, None)
+
+
+def test_un_verificador_crea_su_perfil_y_despues_lo_consulta(como_verificador):
+    usuario_id = como_verificador()
+    assert client.get("/verificadores/me").status_code == 404
+
+    resp = client.post("/verificadores", json={"nombre": "  Ana Pérez  ", "credencial": " COL-123 "})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["nombre"] == "Ana Pérez" and resp.json()["credencial"] == "COL-123"  # sin espacios de sobra
+    mio = client.get("/verificadores/me")
+    assert mio.status_code == 200
+    assert mio.json()["usuario_id"] == usuario_id and mio.json()["credencial"] == "COL-123"
+
+
+def test_no_se_puede_crear_un_segundo_perfil(como_verificador):
+    como_verificador()
+    assert client.post("/verificadores", json={"nombre": "Ana Pérez", "credencial": "COL-1"}).status_code == 200
+
+    segundo = client.post("/verificadores", json={"nombre": "Otra Persona", "credencial": "COL-2"})
+
+    assert segundo.status_code == 409
+    assert client.get("/verificadores/me").json()["credencial"] == "COL-1"
+
+
+def test_el_perfil_rechaza_nombre_corto_credencial_vacia_y_textos_enormes_o_con_nulos(como_verificador):
+    como_verificador()
+    invalidos = [
+        {"nombre": "A", "credencial": "COL-1"},
+        {"nombre": "   ", "credencial": "COL-1"},
+        {"nombre": "Ana Pérez", "credencial": ""},
+        {"nombre": "Ana Pérez", "credencial": "   "},
+        {"nombre": "x" * (main.VERIFICADOR_NOMBRE_MAXIMO + 1), "credencial": "COL-1"},
+        {"nombre": "Ana Pérez", "credencial": "x" * (main.VERIFICADOR_CREDENCIAL_MAXIMA + 1)},
+        {"nombre": "Ana\u0000Pérez", "credencial": "COL-1"},
+        {"nombre": "Ana Pérez", "credencial": "COL\u00001"},
+    ]
+
+    for cuerpo in invalidos:
+        resp = client.post("/verificadores", json=cuerpo)
+        assert resp.status_code == 422, (cuerpo["nombre"][:12], cuerpo["credencial"][:12], resp.text)
+
+    assert client.get("/verificadores/me").status_code == 404  # no quedó nada guardado
+
+
+def test_el_perfil_acepta_justo_los_largos_maximos(como_verificador):
+    como_verificador()
+    cuerpo = {"nombre": "n" * main.VERIFICADOR_NOMBRE_MAXIMO, "credencial": "c" * main.VERIFICADOR_CREDENCIAL_MAXIMA}
+    assert client.post("/verificadores", json=cuerpo).status_code == 200
+
+
+def test_solo_un_verificador_crea_o_consulta_un_perfil(como_verificador):
+    for rol in ("comprador", "productor", "repartidor", "admin"):
+        como_verificador(rol=rol)
+        assert client.post("/verificadores", json={"nombre": "Ana Pérez", "credencial": "COL-1"}).status_code == 403, rol
+        assert client.get("/verificadores/me").status_code == 403, rol
+
+
+def test_el_certificado_de_una_cosecha_lleva_el_nombre_de_quien_creo_su_perfil_por_la_api(como_verificador, monkeypatch):
+    _con_secreto(monkeypatch)
+    usuario_id = como_verificador()
+    assert client.post("/verificadores", json={"nombre": "Ana Pérez", "credencial": "COL-9"}).status_code == 200
+    producto_id = str(uuid.uuid4())
+
+    resp = client.post(_url(producto_id), json=_cuerpo(usuario_id), headers={"X-Servicio-Secreto": SECRETO})
+
+    assert resp.status_code == 200, resp.text
+    assert client.get(f"/certificacion/{producto_id}/historial").json()[1]["verificador_nombre"] == "Ana Pérez"
