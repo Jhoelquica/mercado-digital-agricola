@@ -10,6 +10,8 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:5432/transporte"
 
-engine = create_engine(DATABASE_URL)
+# pool_pre_ping: antes de usar una conexión del pool comprueba que siga viva. Sin esto, cuando la base se reinicia (una
+# actualización, el mantenimiento del nodo) cada conexión vieja del pool falla UNA vez con un 500 antes de renovarse.
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
