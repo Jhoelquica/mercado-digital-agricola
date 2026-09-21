@@ -65,7 +65,9 @@ async function request(baseKey, path, { method = 'GET', body, auth = false } = {
   if (auth === 'opcional') {
     // Ruta pública que muestra más a su dueño (un borrador): si hay sesión se manda el token, si no se pide como
     // visitante. Un token vencido no cierra la sesión aquí (el servidor lo trata como visitante, sin 401).
-    if (Estado.token) headers['Authorization'] = `Bearer ${Estado.token}`;
+    // `Estado` lo define app.js; verificar.html (la página pública del QR) no lo carga: ahí siempre se pide como visitante.
+    const token = typeof Estado !== 'undefined' ? Estado.token : null;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
   } else if (auth) {
     const token = Estado.token;
     if (!token) throw new ApiError('Debes iniciar sesión para continuar.', 401);
