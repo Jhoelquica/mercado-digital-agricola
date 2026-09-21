@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=b19f245b">
+<link rel="stylesheet" href="css/style.css?v=3eb9940f">
 </head>
 <body>
 
@@ -670,7 +670,7 @@
         <i class="ti ti-alert-triangle" aria-hidden="true"></i>
         <div class="verificador-aviso-texto">
           <strong>Completa tu perfil para aprobar cosechas</strong>
-          <span>Tu nombre queda en el certificado que ve quien escanea el QR del producto. Rechazar sí puedes.</span>
+          <span>Tu nombre y tu credencial quedan en el certificado que ve quien escanea el QR del producto. Rechazar sí puedes.</span>
         </div>
         <button type="button" class="btn btn-primary btn-sm" id="btn-verificador-completar-perfil">Completar perfil</button>
       </div>
@@ -696,16 +696,16 @@
         <h3 id="verificador-cuenta-nombre">Mi cuenta</h3>
         <p class="muted" id="verificador-cuenta-detalle">—</p>
         <form id="form-perfil-verificador" class="form-grid form-perfil-verificador hidden" novalidate>
-          <p class="form-perfil-verificador-intro">Tu nombre aparece en el certificado de cada cosecha que apruebes: quien escanee el QR del producto verá quién la verificó. Tu credencial es tu identificación como verificador. Sin este perfil no puedes aprobar cosechas.</p>
+          <p class="form-perfil-verificador-intro">Tu nombre y tu credencial aparecen en el certificado de cada cosecha que apruebes: quien escanee el QR del producto verá quién la verificó. La credencial te la asigna el administrador. Sin este perfil no puedes aprobar cosechas.</p>
           <label for="perfil-verificador-nombre"><span>Nombre completo <span class="campo-requerido" aria-hidden="true">*</span></span>
             <input type="text" id="perfil-verificador-nombre" name="nombre" maxlength="120" autocomplete="name" required aria-describedby="perfil-verificador-nombre-error">
             <span class="campo-error" id="perfil-verificador-nombre-error" role="alert"></span>
           </label>
-          <label for="perfil-verificador-credencial"><span>Credencial <span class="campo-requerido" aria-hidden="true">*</span></span>
-            <input type="text" id="perfil-verificador-credencial" name="credencial" maxlength="60" autocomplete="off" required placeholder="Ej. N.º de colegiatura o código interno" aria-describedby="perfil-verificador-credencial-ayuda perfil-verificador-credencial-error">
-            <small class="muted" id="perfil-verificador-credencial-ayuda">Con ella se te reconoce como verificador de Chakra Shop.</small>
-            <span class="campo-error" id="perfil-verificador-credencial-error" role="alert"></span>
-          </label>
+          <div class="perfil-verificador-credencial" id="perfil-verificador-credencial-bloque" data-estado="consultando" aria-live="polite">
+            <span class="perfil-verificador-credencial-etiqueta">Credencial asignada por el administrador</span>
+            <strong id="perfil-verificador-credencial-valor">Consultando…</strong>
+            <small class="muted" id="perfil-verificador-credencial-ayuda"></small>
+          </div>
           <button type="submit" class="btn btn-primary">Guardar perfil</button>
         </form>
         <button type="button" class="btn btn-outline" id="btn-verificador-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
@@ -761,11 +761,16 @@
         <div class="card-panel">
           <h3>Generar código de invitación</h3>
           <p class="muted">El código habilita a una persona a registrarse con el rol elegido. Es de un solo uso y expira a los 7 días.</p>
-          <form id="form-invitacion" class="form-grid">
+          <form id="form-invitacion" class="form-grid" novalidate>
             <label>Rol a habilitar
               <!-- Opciones pobladas por poblarSelectRolDestino() desde ROLES_INVITABLES en app.js —
                    agregar un rol restringido nuevo es sumarlo ahí, no tocar este HTML. -->
               <select id="invitacion-rol-destino"></select>
+            </label>
+            <label id="invitacion-credencial-campo" for="invitacion-credencial"><span>Credencial de la persona invitada <span class="campo-requerido" aria-hidden="true">*</span></span>
+              <input type="text" id="invitacion-credencial" maxlength="60" autocomplete="off" required placeholder="Ej. N.º de colegiatura o código interno" aria-describedby="invitacion-credencial-ayuda invitacion-credencial-error">
+              <small class="muted" id="invitacion-credencial-ayuda">La escribes tú: ella no puede inventarla ni cambiarla. Se muestra junto a su nombre, públicamente, en el certificado de cada cosecha que apruebe.</small>
+              <span class="campo-error" id="invitacion-credencial-error" role="alert"></span>
             </label>
             <button type="submit" class="btn btn-primary">Generar código de invitación</button>
           </form>
@@ -776,6 +781,7 @@
               <button type="button" class="btn btn-sm btn-outline" id="btn-copiar-codigo"><i class="ti ti-copy"></i> Copiar</button>
             </div>
             <span class="muted" id="invitacion-expira-texto"></span>
+            <span class="muted" id="invitacion-credencial-texto"></span>
           </div>
         </div>
 
@@ -1146,7 +1152,7 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=83347fce"></script>
-<script src="js/app.js?v=383a2f55"></script>
+<script src="js/api.js?v=aa5978b0"></script>
+<script src="js/app.js?v=4851d6f3"></script>
 </body>
 </html>

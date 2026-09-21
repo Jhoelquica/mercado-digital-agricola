@@ -156,7 +156,8 @@ const Api = {
   admin: {
     // El rol Admin vive en el servicio de usuarios (mismo servicio del login/registro) —
     // mismo caso que Api.verificadores, que apunta a un servicio propio del rol.
-    crearInvitacion: (rolDestino) => request('usuarios', '/admin/invitaciones', { method: 'POST', body: { rol_destino: rolDestino }, auth: true }),
+    // `credencial` la escribe el admin al invitar a un verificador (sale en el certificado público de lo que apruebe).
+    crearInvitacion: (rolDestino, credencial) => request('usuarios', '/admin/invitaciones', { method: 'POST', body: { rol_destino: rolDestino, credencial }, auth: true }),
     listarInvitaciones: () => request('usuarios', '/admin/invitaciones', { auth: true }),
     revocarInvitacion: (id) => request('usuarios', `/admin/invitaciones/${id}`, { method: 'DELETE', auth: true }),
   },
@@ -260,6 +261,8 @@ const Api = {
     // El rol Verificador vive en el servicio de certificación (8008) — mismo caso que
     // Api.repartidores, que usa el servicio de transporte y no uno propio.
     miPerfil: () => request('certificacion', '/verificadores/me', { auth: true }),
+    // La credencial que el admin le asignó (solo lectura): el verificador no la escribe.
+    credencialAsignada: () => request('certificacion', '/verificadores/credencial-asignada', { auth: true }),
     crear: (datos) => request('certificacion', '/verificadores', { method: 'POST', body: datos, auth: true }),
   },
   notificaciones: {

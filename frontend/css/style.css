@@ -4633,3 +4633,20 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .campo-requerido { color: #b3401f; }
 .campo-error { min-height: 1.1em; font-size: 0.8rem; font-weight: 600; line-height: 1.4; color: #b3401f; }
 .verificador-cuenta #btn-verificador-logout { margin-top: 18px; }
+
+/* ---------- Credencial asignada por el admin (solo lectura) ----------
+   Un dato, no un campo: no se parece a un input (no se puede editar) y explica por qué. Cuando falta, el aviso ámbar lo
+   dice con palabras además del color. */
+.perfil-verificador-credencial {
+  display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 12px;
+  background: var(--verde-pastel); border: 1px solid var(--verde-claro);
+}
+.perfil-verificador-credencial-etiqueta { font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.perfil-verificador-credencial strong { font-family: var(--font-titulo); font-size: 1.1rem; color: var(--texto); overflow-wrap: anywhere; }
+.perfil-verificador-credencial small { font-size: 0.8rem; line-height: 1.4; }
+.perfil-verificador-credencial[data-estado="faltante"], .perfil-verificador-credencial[data-estado="error"] {
+  background: var(--acento-cosecha-suave); border-color: #e6d3a3;
+}
+.perfil-verificador-credencial[data-estado="faltante"] small, .perfil-verificador-credencial[data-estado="error"] small {
+  color: var(--acento-cosecha-texto); font-weight: 600;
+}

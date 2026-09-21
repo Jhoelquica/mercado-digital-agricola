@@ -39,7 +39,9 @@ function labelEvento(evento) {
 function renderVerificadorLinea(b) {
   if (b.evento !== 'certificado_productor' || !b.verificador_id) return '';
   const nombre = b.verificador_nombre || `verificador ${String(b.verificador_id).slice(0, 8)}`;
-  return `<p class="timeline-verificador"><i class="ti ti-user-check"></i> Certificado por: ${escapeHtml(nombre)}</p>`;
+  // La credencial la asignó el admin al invitarlo (ver Invitacion.credencial en usuarios); null en perfiles anteriores.
+  const credencial = b.verificador_credencial ? ` · Credencial: ${escapeHtml(b.verificador_credencial)}` : '';
+  return `<p class="timeline-verificador"><i class="ti ti-user-check"></i> Certificado por: ${escapeHtml(nombre)}${credencial}</p>`;
 }
 
 function obtenerProductoIdDeUrl() {

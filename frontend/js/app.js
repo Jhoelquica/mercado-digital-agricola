@@ -5124,6 +5124,42 @@ async function iniciarPanelVerificador() {
     else detalleEl.textContent = 'No se pudo cargar tu perfil de verificador.';
   }
   pintarPerfilVerificador();
+  if (perfilVerificador === null) cargarCredencialAsignada(); // sin perfil: se le muestra la credencial que le asignó el admin
+}
+
+// Credencial que el admin le asignó al verificador al invitarlo (Certificación se la pide a Usuarios). Él no la escribe: se
+// le muestra solo de lectura. undefined = consultando, texto = asignada, null = todavía no tiene, false = no se pudo consultar.
+let credencialAsignadaVerificador;
+
+function pintarCredencialAsignada() {
+  const estado = typeof credencialAsignadaVerificador === 'string' ? 'asignada'
+    : credencialAsignadaVerificador === null ? 'faltante'
+      : credencialAsignadaVerificador === false ? 'error' : 'consultando';
+  document.getElementById('perfil-verificador-credencial-bloque').dataset.estado = estado;
+  document.getElementById('perfil-verificador-credencial-valor').textContent = {
+    asignada: credencialAsignadaVerificador,
+    faltante: 'Todavía sin asignar',
+    error: 'No se pudo consultar',
+    consultando: 'Consultando…',
+  }[estado];
+  document.getElementById('perfil-verificador-credencial-ayuda').textContent = {
+    asignada: 'Aparece junto a tu nombre en el certificado de cada cosecha que apruebes. No puedes cambiarla.',
+    faltante: 'El administrador todavía no te asignó una credencial. Pídesela para poder completar tu perfil.',
+    error: 'No se pudo consultar tu credencial. Recarga la página en un momento.',
+    consultando: '',
+  }[estado];
+  document.querySelector('#form-perfil-verificador button[type="submit"]').disabled = estado === 'faltante';
+}
+
+async function cargarCredencialAsignada() {
+  credencialAsignadaVerificador = undefined;
+  pintarCredencialAsignada();
+  try {
+    credencialAsignadaVerificador = (await Api.verificadores.credencialAsignada()).credencial;
+  } catch (err) {
+    credencialAsignadaVerificador = err.status === 409 ? null : false; // 409 = el admin aún no se la asignó
+  }
+  pintarCredencialAsignada();
 }
 
 // Perfil del verificador (nombre + credencial). undefined = aún no se sabe (o no se pudo cargar), null = no lo tiene,
@@ -5154,24 +5190,15 @@ async function crearPerfilVerificador(e) {
   e.preventDefault();
   const form = e.target;
   const nombre = form.elements.nombre.value.trim();
-  const credencial = form.elements.credencial.value.trim();
-  const errores = {
-    nombre: nombre.length < 2 ? 'Escribe tu nombre completo (mínimo 2 letras).' : '',
-    credencial: credencial ? '' : 'Escribe tu credencial, por ejemplo tu N.º de colegiatura.',
-  };
-  let primerInvalido = null;
-  ['nombre', 'credencial'].forEach((campo) => {
-    const input = form.elements[campo];
-    document.getElementById(`perfil-verificador-${campo}-error`).textContent = errores[campo];
-    input.setAttribute('aria-invalid', errores[campo] ? 'true' : 'false');
-    if (errores[campo] && !primerInvalido) primerInvalido = input;
-  });
-  if (primerInvalido) { primerInvalido.focus(); return; }
+  const error = nombre.length < 2 ? 'Escribe tu nombre completo (mínimo 2 letras).' : '';
+  document.getElementById('perfil-verificador-nombre-error').textContent = error;
+  form.elements.nombre.setAttribute('aria-invalid', error ? 'true' : 'false');
+  if (error) { form.elements.nombre.focus(); return; }
 
   const boton = form.querySelector('button[type="submit"]');
   boton.disabled = true;
   try {
-    perfilVerificador = await Api.verificadores.crear({ nombre, credencial });
+    perfilVerificador = await Api.verificadores.crear({ nombre }); // la credencial la pone el servidor: es la que asignó el admin
     form.reset();
     pintarPerfilVerificador();
     toast('Perfil guardado: tu nombre aparecerá en el certificado de lo que apruebes ✅');
@@ -5365,13 +5392,31 @@ async function cargarHistorialVerificacion() {
 // Roles restringidos que un admin puede invitar — agregar uno acá habilita la opción en el
 // <select> del formulario (poblarSelectRolDestino) sin tocar el HTML ni el resto de esta lógica.
 const ROLES_INVITABLES = [
-  { value: 'verificador', label: 'Verificador' },
+  { value: 'verificador', label: 'Verificador', pideCredencial: true },
 ];
 
 // Única fuente de verdad de "¿este rol necesita código de invitación?" — la usan tanto el
 // formulario de registro (actualizarCampoCodigoInvitacion, más arriba) como este panel.
 function rolRequiereInvitacion(rol) {
   return ROLES_INVITABLES.some((r) => r.value === rol);
+}
+
+// ¿La invitación de este rol lleva una credencial escrita por el admin? (el servidor también lo exige)
+function rolPideCredencial(rol) {
+  return ROLES_INVITABLES.some((r) => r.value === rol && r.pideCredencial);
+}
+
+// El campo de la credencial se muestra (y es obligatorio) solo para los roles que la llevan.
+function actualizarCampoCredencialInvitacion() {
+  const pide = rolPideCredencial(document.getElementById('invitacion-rol-destino').value);
+  const campo = document.getElementById('invitacion-credencial-campo');
+  campo.classList.toggle('hidden', !pide);
+  document.getElementById('invitacion-credencial').required = pide;
+}
+
+function marcarErrorCredencialInvitacion(mensaje) {
+  document.getElementById('invitacion-credencial-error').textContent = mensaje;
+  document.getElementById('invitacion-credencial').setAttribute('aria-invalid', mensaje ? 'true' : 'false');
 }
 
 function poblarSelectRolDestino() {
@@ -5389,6 +5434,8 @@ async function iniciarPanelAdmin() {
   poblarSelectRolDestino();
   document.getElementById('invitacion-resultado').classList.add('hidden');
   document.getElementById('form-invitacion').reset();
+  marcarErrorCredencialInvitacion('');
+  actualizarCampoCredencialInvitacion();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
   await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin()]);
@@ -5493,6 +5540,7 @@ function renderInvitacionCard(inv) {
         <span class="pill pill-estado pill-${estado.clave}">${estado.etiqueta}</span>
       </div>
       <p><strong>Rol:</strong> ${escapeAttr(inv.rol_destino)}</p>
+      ${inv.credencial ? `<p><strong>Credencial:</strong> ${escapeAttr(inv.credencial)}</p>` : ''}
       <p class="pedido-fecha">Creada: ${formatearFechaServidor(inv.fecha_creacion)} · Vence: ${formatearFechaServidor(inv.fecha_expiracion)}</p>
       ${estado.clave === 'vigente'
         ? `<button type="button" class="btn btn-outline btn-sm btn-revocar-invitacion" data-invitacion-id="${escapeAttr(inv.id)}">Revocar</button>`
@@ -5620,6 +5668,7 @@ function renderResumenAdmin(invitaciones, totalProductosTransito = 0, totalPendi
 function mostrarInvitacionGenerada(inv) {
   document.getElementById('invitacion-codigo-texto').textContent = inv.codigo;
   document.getElementById('invitacion-expira-texto').textContent = `Vence: ${formatearFechaServidor(inv.fecha_expiracion)}`;
+  document.getElementById('invitacion-credencial-texto').textContent = inv.credencial ? `Credencial asignada: ${inv.credencial}` : '';
   document.getElementById('invitacion-resultado').classList.remove('hidden');
 }
 
@@ -5627,9 +5676,17 @@ async function generarInvitacion(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
   const rolDestino = document.getElementById('invitacion-rol-destino').value;
+  const campoCredencial = document.getElementById('invitacion-credencial');
+  const credencial = campoCredencial.value.trim();
+  if (rolPideCredencial(rolDestino) && !credencial) {
+    marcarErrorCredencialInvitacion('Escribe la credencial que se le asigna a esta persona.');
+    campoCredencial.focus();
+    return;
+  }
   btn.disabled = true;
   try {
-    const invitacion = await Api.admin.crearInvitacion(rolDestino);
+    const invitacion = await Api.admin.crearInvitacion(rolDestino, rolPideCredencial(rolDestino) ? credencial : undefined);
+    campoCredencial.value = '';
     mostrarInvitacionGenerada(invitacion);
     await cargarInvitaciones(); // la nueva invitación aparece en la lista sin recargar la página
     toast('Código de invitación generado');
@@ -7654,6 +7711,8 @@ function inicializarEventos() {
     if (btn) activarTabAdmin(btn.dataset.admintab);
   });
   document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);
+  document.getElementById('invitacion-rol-destino').addEventListener('change', actualizarCampoCredencialInvitacion);
+  document.getElementById('invitacion-credencial').addEventListener('input', () => marcarErrorCredencialInvitacion(''));
   document.getElementById('btn-copiar-codigo').addEventListener('click', copiarCodigoInvitacion);
   document.getElementById('btn-refrescar-invitaciones').addEventListener('click', cargarInvitaciones);
   document.getElementById('admin-resumen').addEventListener('click', (e) => {
