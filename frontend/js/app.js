@@ -501,7 +501,8 @@ function badgeEstadoEnvio(estado) {
   const clase = ESTADOS_BADGE_CONOCIDOS.has(clave) ? `pill-${clave}` : 'pill-default';
   const iconoClase = ICONOS_ESTADO[clave];
   const icono = iconoClase ? `<i class="ti ti-${iconoClase}"></i>` : '•';
-  return `<span class="pill pill-estado ${clase}">${icono} ${estado || 'pendiente'}</span>`;
+  // el estado llega como identificador ("en_camino"): se muestra con espacios, no con guiones bajos
+  return `<span class="pill pill-estado ${clase}">${icono} ${String(estado || 'pendiente').replace(/_/g, ' ')}</span>`;
 }
 
 // Única fuente de verdad de las unidades de medida válidas — la usan tanto la visualización
@@ -4948,9 +4949,14 @@ const DISPONIBILIDAD_INFO = {
   desconectado: { texto: 'Desconectado', clase: 'disponibilidad-gris', detalle: 'No recibirás nuevas propuestas hasta que te conectes.' },
 };
 
-function renderBannerDisponibilidad(estado) {
+function renderBannerDisponibilidad(estado, { propuestas = 0, activos = 0 } = {}) {
   const clave = (estado || 'desconectado').toLowerCase();
-  const info = DISPONIBILIDAD_INFO[clave] || DISPONIBILIDAD_INFO.desconectado;
+  let info = DISPONIBILIDAD_INFO[clave] || DISPONIBILIDAD_INFO.desconectado;
+  // "Ocupado" también es lo que queda mientras hay una propuesta sin responder (el servidor reserva al
+  // repartidor al proponérsela): decir "atendiendo un envío" en ese caso confundía.
+  if (clave === 'ocupado' && activos === 0 && propuestas > 0) {
+    info = { ...info, detalle: `Tienes ${propuestas === 1 ? 'una propuesta' : `${propuestas} propuestas`} de envío por responder: acéptala o recházala.` };
+  }
   return `
     <div class="disponibilidad-banner ${info.clase}">
       <span class="disponibilidad-icono"><span class="disponibilidad-punto"></span></span>
@@ -4993,10 +4999,35 @@ async function cargarGestionEnvios() {
   document.getElementById('repartidor-resumen').innerHTML = renderSkeletonResumen(2);
 
   await cargarListaEnvios(miRepartidor.id);
+  pintarResumenYDisponibilidadRepartidor(miRepartidor.estado_disponibilidad);
+  iniciarSeguimientoRepartidor();
+}
+
+// Pinta el banner de disponibilidad, los contadores y el gráfico a partir de lo ya cargado (Estado.enviosRepartidor
+// y Estado.propuestasRepartidor, que llena cargarListaEnvios).
+function pintarResumenYDisponibilidadRepartidor(estadoDisponibilidad) {
+  if (estadoDisponibilidad !== undefined) Estado.disponibilidadRepartidor = estadoDisponibilidad;
+  const activos = (Estado.enviosRepartidor || []).filter((e) => ['asignado', 'en_camino'].includes(e.estado)).length;
+  document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(
+    Estado.disponibilidadRepartidor,
+    { propuestas: (Estado.propuestasRepartidor || []).length, activos },
+  );
   document.getElementById('repartidor-resumen').innerHTML = renderResumenRepartidor();
   animarContadoresResumen(document.getElementById('repartidor-resumen'));
   dibujarGraficoEnviosRepartidor();
-  iniciarSeguimientoRepartidor();
+}
+
+// Tras aceptar/rechazar una propuesta, cambiar el estado de un envío o confirmar una entrega hay que repintar
+// TODO el panel: antes solo se recargaba la lista y los contadores, el gráfico y el banner de disponibilidad
+// quedaban desactualizados ("0 pendientes" con un envío recién aceptado) hasta pulsar "Refrescar".
+async function refrescarPanelRepartidor() {
+  if (!Estado.repartidorId) return;
+  let disponibilidad;
+  try {
+    disponibilidad = (await Api.repartidores.miPerfil()).estado_disponibilidad;
+  } catch { /* el banner queda como estaba */ }
+  await cargarListaEnvios(Estado.repartidorId);
+  pintarResumenYDisponibilidadRepartidor(disponibilidad);
 }
 
 let chartEnviosRepartidor = null;
@@ -5841,6 +5872,7 @@ async function cargarListaEnvios(miRepartidorId) {
   try {
     propuestas = await Api.transporte.propuestas();
   } catch { /* si falla, seguimos mostrando al menos los envíos ya asignados */ }
+  Estado.propuestasRepartidor = propuestas;
 
   let mios = [];
   try {
@@ -5895,7 +5927,7 @@ async function actualizarEstadoEnvio(envioId, nuevoEstado) {
   try {
     await Api.transporte.actualizarEstado(envioId, nuevoEstado);
     toast(`Estado del envío actualizado a "${nuevoEstado}" ✅`);
-    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
+    refrescarPanelRepartidor();
   } catch (err) {
     manejarError(err, 'actualizar el estado del envío');
   }
@@ -5916,7 +5948,7 @@ async function confirmarEntregaConPin(form) {
   try {
     await Api.transporte.confirmarEntrega(envioId, pin, archivoFoto);
     toast('Entrega confirmada ✅');
-    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
+    refrescarPanelRepartidor();
   } catch (err) {
     manejarError(err, 'confirmar la entrega');
     mostrarMensajeEntrega(form, err.message, err.status === 429 ? 'bloqueado' : 'error');
@@ -5929,8 +5961,14 @@ async function confirmarEntregaConPin(form) {
     } else {
       form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
       btnConfirmar.textContent = 'Confirmar entrega';
-      form.pin.value = '';
-      form.pin.focus();
+      // Solo un código incorrecto (400) se borra; si falló la foto (no es una imagen, pesa de más) el código
+      // escrito sigue bueno y el foco va al campo de la foto.
+      if (err.status === 400) {
+        form.pin.value = '';
+        form.pin.focus();
+      } else {
+        form.foto.focus();
+      }
     }
   }
 }
@@ -5952,7 +5990,7 @@ async function responderPropuesta(envioId, accion) {
     if (accion === 'aceptar') await Api.transporte.aceptar(envioId);
     else await Api.transporte.rechazar(envioId);
     toast(accion === 'aceptar' ? 'Envío aceptado, ¡buen viaje! 🚚' : 'Envío rechazado.');
-    if (Estado.repartidorId) cargarListaEnvios(Estado.repartidorId);
+    refrescarPanelRepartidor();
   } catch (err) {
     manejarError(err, `${accion} el envío`);
     card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
