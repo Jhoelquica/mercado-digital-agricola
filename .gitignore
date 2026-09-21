@@ -6,3 +6,6 @@
 .idea/
 k8s/secret.yaml
 backups/
+
+# Despliegue en Google Cloud: lo que genera deploy/gcp (manifiestos con tu dominio y credenciales del admin)
+deploy/gcp/salida/
