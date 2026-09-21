@@ -240,6 +240,8 @@ const Api = {
     obtener: (id) => request('pedidos', `/pedidos/${id}`, { auth: true }),
     // Costo de envío según la distancia del destino al almacén (público): permite mostrar el total
     // real antes de crear el pedido.
+    // Lo que hay que saber antes de armar el pedido (hoy: { monto_minimo }).
+    condiciones: () => request('pedidos', '/pedidos/condiciones'),
     cotizarEnvio: (latitud, longitud) => request('pedidos', `/pedidos/costo-envio?latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`),
   },
   transporte: {

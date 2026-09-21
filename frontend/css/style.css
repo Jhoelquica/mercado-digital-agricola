@@ -4650,3 +4650,12 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .perfil-verificador-credencial[data-estado="faltante"] small, .perfil-verificador-credencial[data-estado="error"] small {
   color: var(--acento-cosecha-texto); font-weight: 600;
 }
+
+/* ---------- Compra mínima (paso 1 del checkout) ----------
+   Aviso ámbar con ícono y el motivo en palabras (no solo el botón apagado): cuánto falta para la compra mínima. */
+.checkout-minimo {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto);
+  font-size: 0.85rem; font-weight: 600; line-height: 1.4;
+}
+.checkout-minimo > i { flex: none; font-size: 1.1rem; margin-top: 1px; }

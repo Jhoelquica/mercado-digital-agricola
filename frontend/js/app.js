@@ -2592,6 +2592,40 @@ function productoDeLinea(item) {
   return Estado.productos.find((p) => p.id === item.producto_id) || { nombre: item.nombre };
 }
 
+// Compra mínima que exige el servidor (GET /pedidos/condiciones). Se pide una vez; si no responde no se bloquea nada
+// (el servidor igual la exige al crear el pedido).
+let montoMinimoPedido = null;
+let cargandoMontoMinimo = false;
+
+async function cargarMontoMinimoPedido() {
+  if (cargandoMontoMinimo) return;
+  cargandoMontoMinimo = true;
+  try {
+    const condiciones = await Api.pedidos.condiciones();
+    if (Number.isFinite(condiciones?.monto_minimo)) montoMinimoPedido = condiciones.monto_minimo;
+  } catch { /* sin el dato no se bloquea: el servidor lo exige igual */ }
+  cargandoMontoMinimo = false;
+  if (montoMinimoPedido !== null) renderCarrito();
+}
+
+// Avisa cuánto falta para la compra mínima y no deja seguir hasta llegar (con el motivo a la vista, no solo un botón apagado).
+function actualizarAvisoMinimo(subtotal) {
+  const aviso = document.getElementById('checkout-minimo-aviso');
+  const boton = document.getElementById('btn-checkout-paso1-siguiente');
+  if (montoMinimoPedido === null) {
+    aviso.classList.add('hidden');
+    cargarMontoMinimoPedido();
+    return;
+  }
+  const falta = Math.round((montoMinimoPedido - subtotal) * 100) / 100;
+  aviso.classList.toggle('hidden', falta <= 0);
+  if (falta > 0) {
+    document.getElementById('checkout-minimo-texto').textContent =
+      `La compra mínima es de ${formatearMoneda(montoMinimoPedido)}: te faltan ${formatearMoneda(falta)}. Agrega más productos para continuar.`;
+    boton.disabled = true;
+  }
+}
+
 function renderCarrito() {
   const cantidadTotal = Estado.carrito.reduce((acc, i) => acc + i.cantidad, 0);
   const badge = document.getElementById('cart-count');
@@ -2617,6 +2651,7 @@ function renderCarrito() {
     vacio.classList.remove('hidden');
     totalEl.textContent = formatearMoneda(0);
     btnConfirmar.disabled = true;
+    document.getElementById('checkout-minimo-aviso').classList.add('hidden');
     return;
   }
   vacio.classList.add('hidden');
@@ -2644,6 +2679,7 @@ function renderCarrito() {
 
   const total = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
   totalEl.textContent = formatearMoneda(total);
+  actualizarAvisoMinimo(total);
 }
 
 // ============ CHECKOUT POR PASOS ============
