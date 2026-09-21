@@ -499,6 +499,15 @@ def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(g
     distancia_km, costo_envio = calcular_envio_a_destino(db, latitud, longitud)
     return {"costo_envio": costo_envio, "distancia_km": distancia_km}
 
+
+# Lo que el comprador necesita saber ANTES de armar su pedido (hoy, el monto mínimo de compra): el carrito lo muestra y
+# no deja seguir hasta llegar, en vez de que se entere al pulsar "Confirmar y pagar". Pública, y declarada antes de
+# /pedidos/{pedido_id} por la misma razón que /pedidos/costo-envio. La regla real se sigue exigiendo al crear el pedido.
+@app.get("/pedidos/condiciones")
+def condiciones_de_compra():
+    return {"monto_minimo": float(MONTO_MINIMO_PEDIDO)}
+
+
 def _pedido_o_404(db: Session, pedido_id: uuid.UUID):
     pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
     if not pedido:

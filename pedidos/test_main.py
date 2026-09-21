@@ -936,3 +936,29 @@ def test_el_resumen_de_entrega_de_un_pedido_que_no_existe_falla_404_y_un_id_mal_
 
     assert client.get(f"/pedidos/interno/{uuid.uuid4()}/resumen-entrega", headers=cabeceras).status_code == 404
     assert client.get("/pedidos/interno/no-es-uuid/resumen-entrega", headers=cabeceras).status_code == 422
+
+
+# ============ Condiciones de compra (GET /pedidos/condiciones): el mínimo que muestra el carrito ============
+
+def test_las_condiciones_de_compra_son_publicas_y_dicen_el_monto_minimo():
+    sesion = main.app.dependency_overrides.pop(verificar_token, None)  # sin sesión: es pública
+    try:
+        resp = client.get("/pedidos/condiciones")
+    finally:
+        if sesion is not None:
+            main.app.dependency_overrides[verificar_token] = sesion
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"monto_minimo": main.MONTO_MINIMO_PEDIDO}
+
+
+def test_el_minimo_que_se_muestra_es_el_mismo_que_se_exige_al_pedir(monkeypatch):
+    """Lo que dice /pedidos/condiciones y lo que rechaza POST /pedidos salen de la misma constante."""
+    monkeypatch.setattr(main, "MONTO_MINIMO_PEDIDO", 77.0)
+
+    assert client.get("/pedidos/condiciones").json() == {"monto_minimo": 77.0}
+
+
+def test_condiciones_no_se_confunde_con_un_id_de_pedido():
+    """Se declaró antes de /pedidos/{pedido_id}: si no, "condiciones" se leería como un id (422) en vez de responder."""
+    assert client.get("/pedidos/condiciones").status_code == 200
