@@ -38,6 +38,13 @@ class ApiError extends Error {
 
 // FastAPI devuelve los errores de validación (422) como una lista de {loc, msg}: se convierte en un
 // texto legible ("costo_semillas: debe estar entre 0 y 9999999.99") en vez de mostrar el JSON crudo.
+// Mismo tope que el servidor (imagenes.py): se avisa antes de subir un archivo que igual sería rechazado.
+const TAMANO_MAXIMO_IMAGEN = 5 * 1024 * 1024;
+
+function exigirImagenLiviana(archivo) {
+  if (archivo && archivo.size > TAMANO_MAXIMO_IMAGEN) throw new ApiError('La imagen no puede pesar más de 5 MB.', 413);
+}
+
 const ETIQUETAS_DE_CAMPO = { password: 'Contraseña', email: 'Correo', nombre: 'Nombre' };
 
 function mensajeDeDetalle(detail) {
@@ -192,6 +199,7 @@ const Api = {
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
     subirImagen: (id, archivo, orden = 0) => {
+      exigirImagenLiviana(archivo);
       const formData = new FormData();
       formData.append('archivo', archivo);
       return requestFormData('productos', `/productos/${id}/imagenes/subir?orden=${orden}`, formData);
@@ -231,6 +239,7 @@ const Api = {
     // Evidencia de entrega (repartidor): PIN que le dictó el comprador + foto del paquete. El
     // backend copia el GPS del repartidor a ese instante — no hace falta mandarlo desde acá.
     confirmarEntrega: (envioId, pin, archivoFoto) => {
+      exigirImagenLiviana(archivoFoto);
       const formData = new FormData();
       formData.append('pin', pin);
       formData.append('foto', archivoFoto);

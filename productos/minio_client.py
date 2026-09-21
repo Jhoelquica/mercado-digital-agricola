@@ -16,8 +16,11 @@ client = Minio(
 )
 
 
+EXTENSIONES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
 def subir_imagen(archivo, content_type: str) -> str:
-    nombre_archivo = f"{uuid.uuid4()}.jpg"
+    nombre_archivo = f"{uuid.uuid4()}{EXTENSIONES.get(content_type, '.jpg')}"
     client.put_object(
         MINIO_BUCKET,
         nombre_archivo,

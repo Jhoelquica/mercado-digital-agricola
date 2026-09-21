@@ -1417,3 +1417,124 @@ def test_las_unidades_alternativas_de_un_borrador_solo_las_ve_su_productor(monke
     _mockear_productores_me(monkeypatch, str(uuid.uuid4()))
     ajenas = client.get(f"/productos/{borrador.id}/unidades", headers=_con_sesion(uuid.uuid4(), "productor"))
     assert ajenas.json() == []
+
+
+# ============ POST /productos/{id}/imagenes/subir: tamaño y contenido reales ============
+
+import imagenes
+
+PNG_VALIDO = b"\x89PNG\r\n\x1a\n" + bytes(64)
+JPEG_VALIDO = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(64)
+WEBP_VALIDO = b"RIFF\x24\x00\x00\x00WEBPVP8 " + bytes(32)
+
+
+def _subir(producto, contenido, nombre="foto.png", tipo="image/png", extra=None):
+    return client.post(
+        f"/productos/{producto.id}/imagenes/subir?orden=0",
+        files={"archivo": (nombre, contenido, tipo)},
+        headers={**HEADERS_AUTH, **(extra or {})},
+    )
+
+
+def _preparar_subida(monkeypatch):
+    producto = _crear_producto_directo(estado="borrador", precio=None, categoria=None)
+    _auth(str(uuid.uuid4()), "productor")
+    _mockear_productores_me(monkeypatch, str(producto.productor_id))
+    subidas = []
+
+    def subir_falso(archivo, content_type):
+        subidas.append((archivo.read(), content_type))
+        return "http://minio.test/productos-imagenes/falsa.png"
+
+    monkeypatch.setattr(main, "subir_imagen", subir_falso)
+    return producto, subidas
+
+
+def _imagenes_de(producto):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.ProductoImagen).filter(main.models.ProductoImagen.producto_id == producto.id).count()
+    finally:
+        db.close()
+
+
+def test_la_firma_del_contenido_distingue_jpeg_png_webp_y_nada_mas():
+    assert imagenes.tipo_segun_el_contenido(JPEG_VALIDO) == "image/jpeg"
+    assert imagenes.tipo_segun_el_contenido(PNG_VALIDO) == "image/png"
+    assert imagenes.tipo_segun_el_contenido(WEBP_VALIDO) == "image/webp"
+    for no_es_imagen in (b"", b"GIF89a....", b"%PDF-1.7", b"<svg xmlns='http://www.w3.org/2000/svg'/>", b"RIFF\x24\x00\x00\x00WAVEfmt ", b"\xff\xd8"):
+        assert imagenes.tipo_segun_el_contenido(no_es_imagen) is None, no_es_imagen
+
+
+def test_una_imagen_valida_se_sube_con_el_tipo_detectado(monkeypatch):
+    producto, subidas = _preparar_subida(monkeypatch)
+
+    for contenido, tipo in ((PNG_VALIDO, "image/png"), (JPEG_VALIDO, "image/jpeg"), (WEBP_VALIDO, "image/webp")):
+        resp = _subir(producto, contenido, tipo=tipo)
+        assert resp.status_code == 200, (tipo, resp.text)
+
+    assert subidas == [(PNG_VALIDO, "image/png"), (JPEG_VALIDO, "image/jpeg"), (WEBP_VALIDO, "image/webp")]
+    assert _imagenes_de(producto) == 3
+
+
+def test_lo_que_se_guarda_lleva_el_tipo_real_no_el_que_declara_el_cliente(monkeypatch):
+    producto, subidas = _preparar_subida(monkeypatch)
+
+    resp = _subir(producto, PNG_VALIDO, nombre="foto.jpg", tipo="image/jpeg")  # un PNG que dice ser JPEG
+
+    assert resp.status_code == 200, resp.text
+    assert subidas == [(PNG_VALIDO, "image/png")]
+
+
+def test_un_archivo_que_no_es_una_imagen_se_rechaza_aunque_diga_ser_png(monkeypatch):
+    """Antes bastaba ponerle "image/png": se podía subir un HTML, un SVG con scripts o un PDF."""
+    producto, subidas = _preparar_subida(monkeypatch)
+    intentos = (
+        b"<html><script>alert(1)</script></html>",
+        b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+        b"%PDF-1.7 ...",
+        b"GIF89a.....",
+        b"",
+    )
+
+    for contenido in intentos:
+        resp = _subir(producto, contenido)
+        assert resp.status_code == 422, (contenido[:20], resp.text)
+        assert "JPEG, PNG o WEBP" in resp.json()["detail"]
+
+    assert subidas == [] and _imagenes_de(producto) == 0
+
+
+def test_una_imagen_de_mas_de_5_mb_se_rechaza_con_413(monkeypatch):
+    producto, subidas = _preparar_subida(monkeypatch)
+    justo = PNG_VALIDO + bytes(imagenes.TAMANO_MAXIMO_BYTES - len(PNG_VALIDO))  # exactamente 5 MB: pasa
+    de_mas = justo + b"\x00"  # 5 MB y un byte: lo rechaza el endpoint
+    enorme = PNG_VALIDO + bytes(imagenes.LIMITE_CUERPO_BYTES)  # más que el tope del cuerpo: lo rechaza el middleware
+
+    assert _subir(producto, justo).status_code == 200
+    for contenido in (de_mas, enorme):
+        resp = _subir(producto, contenido)
+        assert resp.status_code == 413, resp.status_code
+        assert "5 MB" in resp.json()["detail"]
+
+    assert len(subidas) == 1 and _imagenes_de(producto) == 1
+
+
+def test_el_413_por_tamano_lleva_las_cabeceras_cors_para_que_el_navegador_muestre_el_mensaje(monkeypatch):
+    producto, _ = _preparar_subida(monkeypatch)
+    enorme = PNG_VALIDO + bytes(imagenes.LIMITE_CUERPO_BYTES)
+
+    resp = _subir(producto, enorme, extra={"Origin": "http://localhost:5500"})
+
+    assert resp.status_code == 413
+    assert resp.headers.get("access-control-allow-origin") == "*"
+
+
+def test_subir_una_imagen_sigue_pidiendo_ser_el_productor_dueno(monkeypatch):
+    producto = _crear_producto_directo(estado="borrador", precio=None, categoria=None)
+    _auth(str(uuid.uuid4()), "productor")
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # otro productor
+    monkeypatch.setattr(main, "subir_imagen", lambda *a: "http://x")
+
+    assert _subir(producto, PNG_VALIDO).status_code == 403
+    assert _subir(producto, b"no soy una imagen").status_code == 403  # la propiedad se comprueba antes que el contenido

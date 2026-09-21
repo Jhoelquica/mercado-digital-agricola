@@ -24,9 +24,12 @@ def _asegurar_bucket():
         client.make_bucket(MINIO_BUCKET)
 
 
+EXTENSIONES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
 def subir_foto_entrega(archivo, content_type: str) -> str:
     _asegurar_bucket()
-    nombre_archivo = f"{uuid.uuid4()}.jpg"
+    nombre_archivo = f"{uuid.uuid4()}{EXTENSIONES.get(content_type, '.jpg')}"
     client.put_object(
         MINIO_BUCKET,
         nombre_archivo,

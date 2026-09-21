@@ -1,4 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+import io
 import os
 import hmac
 import uuid
@@ -21,6 +22,8 @@ from pydantic import BaseModel, ConfigDict
 from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
 from pedidos_interno import cabecera_pedidos
+from fastapi.responses import JSONResponse
+from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
 from database import Base, engine, SessionLocal
 import models
@@ -46,6 +49,18 @@ agregar_columnas_faltantes(engine, Base)
 app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
+
+@app.middleware("http")
+async def limitar_el_tamano_de_las_subidas(request, call_next):
+    """Rechaza por su Content-Length una subida demasiado grande ANTES de leer el cuerpo: sin esto el servidor
+    recibía entero un archivo de cualquier tamaño y recién después decidía. Va antes del middleware de CORS a
+    propósito (queda por dentro), para que el 413 también lleve las cabeceras CORS y el navegador muestre el
+    mensaje en vez de un error de red."""
+    if request.method == "POST" and request.url.path.endswith("/entregar"):
+        longitud = request.headers.get("content-length", "")
+        if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_BYTES:
+            return JSONResponse(status_code=413, content={"detail": MENSAJE_MUY_GRANDE})
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -491,6 +506,9 @@ def confirmar_entrega(
     copiada a entrega_latitud/longitud ANTES de que siga cambiando con el siguiente envío."""
     if foto.content_type not in ["image/jpeg", "image/png", "image/webp"]:
         raise HTTPException(status_code=422, detail="Solo se permiten imágenes JPEG, PNG o WEBP")
+    # Tamaño y contenido reales (ver imagenes.py), antes de tocar la base: una foto inválida no gasta un intento
+    # del código ni cambia nada.
+    datos_foto, tipo_foto = leer_imagen_validada(foto)
 
     repartidor = db.query(models.Repartidor).filter(
         models.Repartidor.usuario_id == usuario.get("sub")
@@ -536,7 +554,7 @@ def confirmar_entrega(
         )
 
     try:
-        url_foto = subir_foto_entrega(foto.file, foto.content_type)
+        url_foto = subir_foto_entrega(io.BytesIO(datos_foto), tipo_foto)
     except Exception:
         raise HTTPException(status_code=502, detail="No se pudo subir la foto al almacenamiento")
 

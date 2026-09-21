@@ -1,4 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+import io
 import math
 import os
 import unicodedata
@@ -26,6 +27,7 @@ from minio_client import subir_imagen
 import pybreaker
 import cache
 from rabbitmq_publisher import publicar_evento
+from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
 
 Base.metadata.create_all(bind=engine)
@@ -43,6 +45,18 @@ async def _errores_de_validacion(request, exc):
     como un error 500."""
     detalle = [{clave: valor for clave, valor in error.items() if clave != "input"} for error in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": jsonable_encoder(detalle)})
+
+@app.middleware("http")
+async def limitar_el_tamano_de_las_subidas(request, call_next):
+    """Rechaza por su Content-Length una subida demasiado grande ANTES de leer el cuerpo: sin esto el servidor
+    recibía entero un archivo de cualquier tamaño y recién después decidía. Va antes del middleware de CORS a
+    propósito (queda por dentro), para que el 413 también lleve las cabeceras CORS y el navegador muestre el
+    mensaje en vez de un error de red."""
+    if request.method == "POST" and request.url.path.endswith("/imagenes/subir"):
+        longitud = request.headers.get("content-length", "")
+        if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_BYTES:
+            return JSONResponse(status_code=413, content={"detail": MENSAJE_MUY_GRANDE})
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -371,8 +385,10 @@ def subir_imagen_producto(
     if total_imagenes >= 5:
         raise HTTPException(status_code=409, detail="Este producto ya tiene el máximo de 5 imágenes")
 
+    # Tamaño y contenido reales (ver imagenes.py): el content-type de arriba solo lo declara el cliente.
+    datos_imagen, tipo_imagen = leer_imagen_validada(archivo)
     try:
-        url_publica = subir_imagen(archivo.file, archivo.content_type)
+        url_publica = subir_imagen(io.BytesIO(datos_imagen), tipo_imagen)
     except Exception:
         raise HTTPException(status_code=502, detail="No se pudo subir la imagen al almacenamiento")
 

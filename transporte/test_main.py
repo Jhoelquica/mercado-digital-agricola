@@ -182,6 +182,11 @@ def _envio_recargado(envio_id):
         db.close()
 
 
+# Los primeros bytes de un JPEG de verdad: la entrega ahora comprueba el contenido real de la foto, no solo
+# el content-type que declara el cliente (ver imagenes.py).
+FOTO_JPEG_VALIDA = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(40)
+
+
 def _confirmar_entrega(envio_id, pin="1234"):
     """POST /envios/{id}/entregar con una foto falsa — subir_foto_entrega se mockea en cada test
     que llama a esto, así que el content_type/bytes reales no importan, solo pasar la validación
@@ -189,7 +194,7 @@ def _confirmar_entrega(envio_id, pin="1234"):
     return client.post(
         f"/envios/{envio_id}/entregar",
         data={"pin": pin},
-        files={"foto": ("foto.jpg", b"contenido-falso", "image/jpeg")},
+        files={"foto": ("foto.jpg", FOTO_JPEG_VALIDA, "image/jpeg")},
     )
 
 
@@ -1217,3 +1222,68 @@ def test_cada_codigo_incorrecto_dice_cuantos_intentos_quedan(monkeypatch):
     assert "Te quedan 4 intentos" in detalles[0]
     assert "Te quedan 1 intento antes" in detalles[-1]  # singular en el último
     assert all("no coincide" in d for d in detalles)
+
+
+# ============ POST /envios/{id}/entregar: la foto se valida por su contenido y su tamaño ============
+
+import imagenes
+
+FOTO_PNG_VALIDA = b"\x89PNG\r\n\x1a\n" + bytes(64)
+
+
+def _entrega_con_foto(envio_id, contenido, tipo="image/jpeg", pin="7391"):
+    return client.post(
+        f"/envios/{envio_id}/entregar",
+        data={"pin": pin},
+        files={"foto": ("foto.jpg", contenido, tipo)},
+    )
+
+
+def test_una_foto_que_no_es_una_imagen_no_entrega_ni_gasta_un_intento_del_codigo(monkeypatch):
+    """Antes bastaba ponerle "image/jpeg": se podía subir un HTML, un SVG con scripts o un PDF como evidencia."""
+    envio = _preparar_entrega_con_pin(monkeypatch)
+    subidas = []
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda archivo, tipo: subidas.append(tipo) or "http://fake/foto")
+
+    for contenido in (b"<html>no soy una foto</html>", b'<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>', b"GIF89a.....", b""):
+        resp = _entrega_con_foto(envio.id, contenido)
+        assert resp.status_code == 422, (contenido[:20], resp.text)
+        assert "JPEG, PNG o WEBP" in resp.json()["detail"]
+
+    recargado = _envio_recargado(envio.id)
+    assert recargado.estado == "en_camino"
+    assert not recargado.pin_intentos_fallidos  # el código correcto no se "quemó" por una foto mala
+    assert subidas == []
+
+
+def test_una_foto_de_mas_de_5_mb_se_rechaza_con_413_sin_entregar(monkeypatch):
+    envio = _preparar_entrega_con_pin(monkeypatch)
+    subidas = []
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda archivo, tipo: subidas.append(tipo) or "http://fake/foto")
+    de_mas = FOTO_JPEG_VALIDA + bytes(imagenes.TAMANO_MAXIMO_BYTES)  # 5 MB y unos bytes: lo rechaza el endpoint
+    enorme = FOTO_JPEG_VALIDA + bytes(imagenes.LIMITE_CUERPO_BYTES)  # más que el tope del cuerpo: el middleware
+
+    for contenido in (de_mas, enorme):
+        resp = _entrega_con_foto(envio.id, contenido)
+        assert resp.status_code == 413, resp.status_code
+        assert "5 MB" in resp.json()["detail"]
+
+    assert _envio_recargado(envio.id).estado == "en_camino"
+    assert subidas == []
+
+
+def test_una_foto_valida_se_sube_con_el_tipo_detectado_y_entrega(monkeypatch):
+    envio = _preparar_entrega_con_pin(monkeypatch)
+    subidas = []
+
+    def subir(archivo, tipo):
+        subidas.append((archivo.read(), tipo))
+        return "http://fake/foto-entrega.png"
+
+    monkeypatch.setattr(main, "subir_foto_entrega", subir)
+
+    resp = _entrega_con_foto(envio.id, FOTO_PNG_VALIDA, tipo="image/jpeg")  # un PNG que dice ser JPEG
+
+    assert resp.status_code == 200, resp.text
+    assert subidas == [(FOTO_PNG_VALIDA, "image/png")]
+    assert _envio_recargado(envio.id).estado == "entregado"
