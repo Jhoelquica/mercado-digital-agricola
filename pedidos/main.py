@@ -452,6 +452,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 raise HTTPException(status_code=resp_stock.status_code, detail=detalle)
             raise HTTPException(status_code=503, detail="No se pudo reservar el stock de los productos")
 
+        filas_con_base = []  # (fila del pedido, cantidad en unidad base) para el evento de más abajo
         for item, producto, precio_unitario, cantidad_base, peso_kg in items_validados:
             nuevo_item = models.PedidoItem(
                 pedido_id=nuevo_pedido.id,
@@ -462,22 +463,29 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 peso_kg=peso_kg,
             )
             db.add(nuevo_item)
+            filas_con_base.append((nuevo_item, cantidad_base))
 
     db.commit()
     db.refresh(nuevo_pedido)
+    nuevo_pedido.items  # fuerza la carga de la relación: sin esto la respuesta sale sin "items" (antes la cargaba, de paso, el armado del evento)
     publicar_evento({
         "evento": "pedido_creado",
         "pedido_id": str(nuevo_pedido.id),
         "usuario_id": str(usuario.get("sub")),
         "comprador_nombre": nuevo_pedido.comprador_nombre,
         "costo_envio": float(nuevo_pedido.costo_envio),
+        # cantidad_base es lo que se descontó del stock (ya convertido a la unidad base del producto: 3 sacos de
+        # 10 kg = 30) mientras que cantidad es lo que compró el comprador. Pagos lo necesita para devolver o
+        # volver a reservar exactamente ese stock si el pago se rechaza o se reintenta.
         "items": [
             {
-                "producto_id": str(i.producto_id),
-                "cantidad": i.cantidad,
-                "precio_unitario": float(i.precio_unitario),
+                "producto_id": str(fila.producto_id),
+                "cantidad": fila.cantidad,
+                "unidad": fila.unidad,
+                "cantidad_base": cantidad_base,
+                "precio_unitario": float(fila.precio_unitario),
             }
-            for i in nuevo_pedido.items
+            for fila, cantidad_base in filas_con_base
         ],
     })
     return nuevo_pedido

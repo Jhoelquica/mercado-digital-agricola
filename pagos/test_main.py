@@ -26,6 +26,8 @@ import uuid
 from datetime import timedelta
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
@@ -36,6 +38,15 @@ from auth import verificar_token
 client = TestClient(main.app)
 
 main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": "comprador"}
+
+# POST /pagos/procesar le pregunta a Pedidos si el pedido es de quien paga (y reenvía su token). En casi todos
+# los tests esa pregunta se da por respondida que sí; los que prueban la propiedad restauran la función real.
+ORIGINAL_EXIGIR_DUENO = main._exigir_dueno_para_pagar
+
+
+@pytest.fixture(autouse=True)
+def _el_pedido_es_de_quien_paga(monkeypatch):
+    monkeypatch.setattr(main, "_exigir_dueno_para_pagar", lambda *args, **kwargs: None)
 
 
 class _RespuestaProductoFalsa:
@@ -105,11 +116,12 @@ def _liquidaciones_de(pedido_id):
 
 
 def _procesar(pago):
+    # con un header Authorization real: procesar_pago reenvía el token del usuario a Pedidos (ver CON_TOKEN)
     return client.post("/pagos/procesar", json={
         "pedido_id": str(pago.pedido_id),
         "token_culqi": "tkn_test",
         "email": "cliente@test.com",
-    })
+    }, headers=CON_TOKEN)
 
 
 def test_pedido_un_solo_productor_crea_una_liquidacion(monkeypatch):
@@ -576,13 +588,37 @@ def _mockear_cargo_rechazado(monkeypatch):
     monkeypatch.setattr(main, "crear_cargo", lambda **kwargs: {"status_code": 400, "data": {"user_message": "Tarjeta rechazada"}})
 
 
-def test_reintentar_un_pago_rechazado_no_repone_el_stock_otra_vez(monkeypatch):
+def _crear_pago_con_estado(estado, items) -> "main.models.Pago":
+    db = main.SessionLocal()
+    try:
+        monto = sum(i["cantidad"] * i["precio_unitario"] for i in items)
+        pago = main.models.Pago(pedido_id=uuid.uuid4(), monto=monto, estado=estado, items=json.dumps(items))
+        db.add(pago)
+        db.commit()
+        db.refresh(pago)
+        db.expunge(pago)
+        return pago
+    finally:
+        db.close()
+
+
+def _estado_del_pago(pago):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).first().estado
+    finally:
+        db.close()
+
+
+def test_el_primer_rechazo_devuelve_el_stock_y_cada_reintento_fallido_lo_deja_como_estaba(monkeypatch):
     """La interfaz deja reintentar el pago de un pedido rechazado. Antes cada intento fallido volvía a reponer
-    las cantidades en Productos: con una tarjeta mala repetida, el stock del producto subía sin límite."""
+    las cantidades en Productos: con una tarjeta mala repetida, el stock del producto subía sin límite. Ahora el
+    primer rechazo devuelve el stock; cada reintento lo reserva antes de cobrar y, si falla, libera solo eso."""
     pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 20.0}])
     _mockear_cargo_rechazado(monkeypatch)
-    compensar = MagicMock()
+    compensar, reservar = MagicMock(), MagicMock()
     monkeypatch.setattr(main, "compensar_stock", compensar)
+    monkeypatch.setattr(main, "reservar_stock", reservar)
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     primero = _procesar(pago)
@@ -590,9 +626,239 @@ def test_reintentar_un_pago_rechazado_no_repone_el_stock_otra_vez(monkeypatch):
     tercero = _procesar(pago)
 
     assert (primero.status_code, segundo.status_code, tercero.status_code) == (402, 402, 402)
-    compensar.assert_called_once()
-    db = main.SessionLocal()
+    # 1 devolución por el primer rechazo + 1 liberación por cada reintento (que antes había reservado): el
+    # stock neto devuelto es el de UNA sola vez.
+    assert reservar.call_count == 2
+    assert compensar.call_count == 3
+    assert _estado_del_pago(pago) == "rechazado"
+
+
+def test_reintentar_un_pago_rechazado_reserva_el_stock_antes_de_cobrar_y_al_aprobar_lo_conserva(monkeypatch):
+    """Antes un reintento que salía bien cobraba un pedido cuyo stock ya se había devuelto (y quizá vendido a otro)."""
+    producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_con_estado("rechazado", [{"producto_id": producto, "cantidad": 3, "unidad": "saco", "cantidad_base": 30, "precio_unitario": 20.0}])
+    orden = []
+    monkeypatch.setattr(main, "reservar_stock", lambda items: orden.append(("reservar", items)))
+    compensar = MagicMock()
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (orden.append(("cobrar", None)) or {"status_code": 201, "data": {"id": "chr_reintento"}}))
+    _mockear_productos(monkeypatch, {producto: productor})
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    resp = _procesar(pago)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "aprobado"
+    assert [paso for paso, _ in orden] == ["reservar", "cobrar"]  # reserva ANTES de cobrar
+    assert orden[0][1] == pago.items
+    compensar.assert_not_called()  # el stock reservado se queda reservado
+    assert _estado_del_pago(pago) == "aprobado"
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+
+
+def test_si_ya_no_hay_stock_el_reintento_no_cobra_nada_y_el_pago_sigue_rechazado(monkeypatch):
+    pago = _crear_pago_con_estado("rechazado", [{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 20.0}])
+    monkeypatch.setattr(main, "reservar_stock", MagicMock(side_effect=HTTPException(
+        status_code=409, detail="No se puede reintentar el pago: Stock insuficiente para Papa. Crea un nuevo pedido.")))
+    cargo, compensar = MagicMock(), MagicMock()
+    monkeypatch.setattr(main, "crear_cargo", cargo)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+
+    resp = _procesar(pago)
+
+    assert resp.status_code == 409, resp.text
+    assert "Stock insuficiente para Papa" in resp.json()["detail"]
+    cargo.assert_not_called()
+    compensar.assert_not_called()
+    assert _estado_del_pago(pago) == "rechazado"
+
+
+def test_si_la_pasarela_no_responde_no_se_cobra_ni_cambia_el_pago(monkeypatch):
+    def pasarela_caida(**kwargs):
+        raise main.httpx.RequestError("boom")
+
+    monkeypatch.setattr(main, "crear_cargo", pasarela_caida)
+    reservar, compensar = MagicMock(), MagicMock()
+    monkeypatch.setattr(main, "reservar_stock", reservar)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+
+    primer_intento = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    resp = _procesar(primer_intento)
+    assert resp.status_code == 502, resp.text
+    assert _estado_del_pago(primer_intento) == "pendiente"
+    reservar.assert_not_called()
+    compensar.assert_not_called()
+
+    # en un reintento se había reservado stock para este intento: se libera
+    reintento = _crear_pago_con_estado("rechazado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    resp = _procesar(reintento)
+    assert resp.status_code == 502, resp.text
+    assert _estado_del_pago(reintento) == "rechazado"
+    reservar.assert_called_once_with(reintento.items)
+    compensar.assert_called_once_with(reintento.items)
+
+
+def test_un_segundo_intento_sobre_un_pago_ya_aprobado_falla_409_sin_cobrar_otra_vez(monkeypatch):
+    producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 1, "precio_unitario": 50.0}])
+    cobros = []
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (cobros.append(1) or {"status_code": 201, "data": {"id": "chr_1"}}))
+    _mockear_productos(monkeypatch, {producto: productor})
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    assert _procesar(pago).status_code == 200
+    segundo = _procesar(pago)
+
+    assert segundo.status_code == 409, segundo.text
+    assert len(cobros) == 1
+
+
+def test_el_id_de_pedido_de_procesar_debe_ser_un_uuid():
+    resp = client.post("/pagos/procesar", json={"pedido_id": "no-es-uuid", "token_culqi": "t", "email": "a@b.co"}, headers=CON_TOKEN)
+    assert resp.status_code == 422
+
+
+# ---- solo el comprador dueño del pedido lo paga
+
+def test_solo_el_comprador_dueno_puede_pagar_su_pedido(monkeypatch):
+    """Antes cualquier usuario con sesión que conociera el id de un pedido podía cobrar con su tarjeta o, con
+    una tarjeta mala, dejar rechazado el pedido de otro (y devolverle el stock)."""
+    dueno = uuid.uuid4()
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    monkeypatch.setattr(main, "_exigir_dueno_para_pagar", ORIGINAL_EXIGIR_DUENO)  # estos tests SÍ prueban la propiedad
+    cargo = MagicMock(return_value={"status_code": 400, "data": {"user_message": "Tarjeta rechazada"}})
+    monkeypatch.setattr(main, "crear_cargo", cargo)
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    llamadas = _mockear_pedidos(monkeypatch, usuario_id=str(dueno))  # el pedido es de `dueno`
     try:
-        assert db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).first().estado == "rechazado"
+        # otro comprador y el admin: 403, sin cobrar y sin tocar el pago
+        for rol in ("comprador", "admin", "repartidor"):
+            _como(uuid.uuid4(), rol)
+            resp = _procesar(pago)
+            assert resp.status_code == 403, (rol, resp.text)
+            assert "pagar este pedido" in resp.json()["detail"]
+        cargo.assert_not_called()
+        assert _estado_del_pago(pago) == "pendiente"
+
+        # el dueño pasa la comprobación (y aquí su tarjeta es rechazada: 402)
+        _como(dueno, "comprador")
+        assert _procesar(pago).status_code == 402
+        cargo.assert_called_once()
+        # a Pedidos se le pregunta con el mismo token del usuario
+        assert llamadas[-1][1]["headers"] == {"Authorization": "Bearer token-de-prueba"}
     finally:
-        db.close()
+        _restaurar_sesion_por_defecto()
+
+
+def test_pagar_un_pedido_que_no_existe_o_con_pedidos_caido(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    monkeypatch.setattr(main, "_exigir_dueno_para_pagar", ORIGINAL_EXIGIR_DUENO)
+    cargo = MagicMock()
+    monkeypatch.setattr(main, "crear_cargo", cargo)
+    try:
+        _mockear_pedidos(monkeypatch, status=404)
+        assert _procesar(pago).status_code == 404
+        _mockear_pedidos(monkeypatch, roto=True)
+        assert _procesar(pago).status_code == 503
+        cargo.assert_not_called()
+    finally:
+        _restaurar_sesion_por_defecto()
+
+
+# ---- cuánto stock se devuelve y se reserva
+
+class _ClienteStockFalso:
+    """Reemplaza httpx.Client() para las llamadas a Productos (reponer y descontar en lote): guarda cada
+    (url, kwargs) y responde lo que se le indique, sin tocar la red."""
+    def __init__(self, llamadas, status=200, cuerpo=None, roto=False):
+        self._llamadas, self._status, self._cuerpo, self._roto = llamadas, status, cuerpo, roto
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, url, **kwargs):
+        self._llamadas.append((url, kwargs))
+        if self._roto:
+            raise main.httpx.RequestError("boom")
+        respuesta = MagicMock()
+        respuesta.status_code = self._status
+        respuesta.json.return_value = self._cuerpo or {}
+        return respuesta
+
+
+def _mockear_stock(monkeypatch, **kwargs):
+    llamadas = []
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClienteStockFalso(llamadas, **kwargs))
+    monkeypatch.setattr(main, "PAGOS_A_PRODUCTOS_SECRETO", "secreto-de-prueba-pagos")
+    return llamadas
+
+
+def _items_de_prueba():
+    a, b, c = (str(uuid.uuid4()) for _ in range(3))
+    items = [
+        {"producto_id": a, "cantidad": 3, "unidad": "saco", "cantidad_base": 30, "precio_unitario": 20.0},
+        {"producto_id": a, "cantidad": 1, "unidad": "saco", "cantidad_base": 10, "precio_unitario": 20.0},
+        {"producto_id": b, "cantidad": 1, "unidad": "arroba", "cantidad_base": 11.5, "precio_unitario": 30.0},
+        {"producto_id": c, "cantidad": 4, "precio_unitario": 5.0},  # pedido anterior: sin cantidad_base
+    ]
+    return a, b, c, items
+
+
+def test_compensar_stock_repone_en_unidad_base_suma_las_lineas_y_redondea_hacia_arriba(monkeypatch):
+    """3 sacos de 10 kg descontaban 30 kg y devolvían 3."""
+    a, b, c, items = _items_de_prueba()
+    llamadas = _mockear_stock(monkeypatch)
+
+    main.compensar_stock(json.dumps(items))
+
+    repuesto = {url.split("/")[-3]: kwargs["json"]["cantidad"] for url, kwargs in llamadas}
+    assert repuesto == {a: 40, b: 12, c: 4}  # 30+10 / 11,5 hacia arriba / sin cantidad_base: la cantidad tal cual
+    assert all(kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-pagos"} for _, kwargs in llamadas)
+
+
+def test_compensar_stock_sin_items_no_llama_a_nadie(monkeypatch):
+    llamadas = _mockear_stock(monkeypatch)
+    main.compensar_stock(None)
+    main.compensar_stock("")
+    assert llamadas == []
+
+
+def test_reservar_stock_descuenta_en_lote_lo_mismo_que_compensar_stock_repone(monkeypatch):
+    a, b, c, items = _items_de_prueba()
+    llamadas = _mockear_stock(monkeypatch)
+
+    main.reservar_stock(json.dumps(items))
+
+    assert len(llamadas) == 1
+    url, kwargs = llamadas[0]
+    assert url.endswith("/productos/interno/descontar-stock-lote")
+    assert kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba-pagos"}
+    assert {l["producto_id"]: l["cantidad"] for l in kwargs["json"]["lineas"]} == {a: 40, b: 11.5, c: 4}
+
+
+def test_reservar_stock_traduce_los_rechazos_de_productos():
+    _, _, _, items = _items_de_prueba()
+    casos = [
+        (dict(status=409, cuerpo={"detail": "Stock insuficiente para Papa"}), 409, "Stock insuficiente para Papa"),
+        (dict(status=409, cuerpo={"detail": "Papa aún no está disponible para comprar."}), 409, "aún no está disponible"),
+        (dict(status=404, cuerpo={"detail": "Producto x no existe"}), 409, "no existe"),
+        (dict(status=500, cuerpo={}), 503, "No se pudo reservar"),
+        (dict(roto=True), 503, "no disponible"),
+    ]
+    for kwargs, esperado, texto in casos:
+        with pytest.MonkeyPatch.context() as mp:
+            _mockear_stock(mp, **kwargs)
+            with pytest.raises(HTTPException) as error:
+                main.reservar_stock(json.dumps(items))
+        assert error.value.status_code == esperado, kwargs
+        assert texto in error.value.detail, (kwargs, error.value.detail)
+        if esperado == 409:
+            assert "Crea un nuevo pedido" in error.value.detail
+
+    with pytest.raises(HTTPException) as error:
+        main.reservar_stock(None)  # un pago viejo sin detalle de productos: no se puede reservar
+    assert error.value.status_code == 409

@@ -687,7 +687,12 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
 # traban entre sí, y las líneas repetidas de un mismo producto se suman antes de comparar con el stock.
 @app.post("/productos/interno/descontar-stock-lote")
 def descontar_stock_lote(datos: DescontarLote, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
-    if not secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO):
+    # Lo llaman dos servicios, cada uno con su propia clave: Pedidos al crear un pedido y Pagos al reintentar
+    # el pago de uno rechazado (cuyo stock ya se había devuelto). Cada comparación falla cerrado por separado.
+    if not (
+        secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO)
+        or secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PRODUCTOS_SECRETO)
+    ):
         raise HTTPException(status_code=403, detail="No autorizado")
 
     pedido_por_producto = {}

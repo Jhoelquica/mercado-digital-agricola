@@ -14,7 +14,10 @@ class Pago(Base):
     metodo = Column(String, default="tarjeta")     # tarjeta, yape
     culqi_charge_id = Column(String, nullable=True)  # el id que devuelve Culqi
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
-    items = Column(String, nullable=True)  # JSON serializado: [{"producto_id": ..., "cantidad": ...}]
+    # JSON serializado: [{"producto_id", "cantidad", "unidad", "cantidad_base", "precio_unitario"}]. cantidad es lo
+    # que compró el comprador (3 sacos) y cantidad_base lo que se descontó del stock (30 kg); los pagos creados
+    # antes de que el evento trajera cantidad_base solo tienen cantidad.
+    items = Column(String, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

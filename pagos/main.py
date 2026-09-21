@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 import os
 import json
+import math
 import uuid
 import httpx
 import logging
@@ -63,27 +64,78 @@ def get_db():
     finally:
         db.close()
 
-def compensar_stock(items_json: str):
+def _cantidades_base_por_producto(items_json) -> dict:
+    """Cuánto stock (en la unidad base de cada producto) reserva un pedido: la suma de sus líneas por producto.
+    Los pedidos nuevos traen cantidad_base (lo que Pedidos descontó, ya convertido: 3 sacos de 10 kg = 30); los
+    anteriores solo traen cantidad, que coincide con la base cuando se compró en la unidad base."""
     if not items_json:
+        return {}
+    totales = {}
+    for item in json.loads(items_json):
+        cantidad = item.get("cantidad_base", item.get("cantidad"))
+        totales[item["producto_id"]] = totales.get(item["producto_id"], 0) + float(cantidad)
+    return totales
+
+
+def compensar_stock(items_json: str):
+    """Devuelve a Productos el stock reservado por un pedido, en la MISMA unidad y con el mismo redondeo con que
+    se descontó (suma por producto, redondeada hacia arriba). Antes se devolvía la cantidad en la unidad que
+    eligió el comprador: 3 sacos de 10 kg descontaban 30 kg y devolvían 3."""
+    cantidades = _cantidades_base_por_producto(items_json)
+    if not cantidades:
         print("[Pagos] No hay items guardados para este pago, no se puede compensar stock")
         return
 
-    items = json.loads(items_json)
     with httpx.Client() as client:
-        for item in items:
+        for producto_id, cantidad in cantidades.items():
+            reponer = math.ceil(cantidad)
             try:
-                client.post(
-                    f"{PRODUCTOS_URL}/productos/{item['producto_id']}/stock/reponer",
-                    json={"cantidad": item["cantidad"]},
-                    headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO},
+                resp = client.post(
+                    f"{PRODUCTOS_URL}/productos/{producto_id}/stock/reponer",
+                    json={"cantidad": reponer},
+                    headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
                     timeout=5,
                 )
-                print(f"[Pagos] Stock repuesto: {item['cantidad']} unidades de {item['producto_id']}")
+                if resp.status_code == 200:
+                    print(f"[Pagos] Stock repuesto: {reponer} de {producto_id}")
+                else:
+                    logger.error("Productos rechazó reponer %s de %s (HTTP %s)", reponer, producto_id, resp.status_code)
             except httpx.RequestError as e:
-                print(f"[Pagos] ERROR al compensar stock de {item['producto_id']}: {e}")
+                print(f"[Pagos] ERROR al compensar stock de {producto_id}: {e}")
+
+
+def reservar_stock(items_json: str):
+    """Vuelve a descontar el stock de un pedido cuyo pago se rechazó (al rechazarse se devolvió) justo antes de
+    reintentar el cobro: sin esto, un reintento que sale bien cobra un pedido cuyo stock ya se devolvió y quizá se
+    vendió a otro. Todo o nada, en una sola llamada a Productos (que exige que los productos sigan disponibles)."""
+    cantidades = _cantidades_base_por_producto(items_json)
+    if not cantidades:
+        raise HTTPException(
+            status_code=409,
+            detail="Este pedido no guarda el detalle de sus productos, así que no se puede reintentar el pago. Crea un nuevo pedido.",
+        )
+    try:
+        with httpx.Client() as client:
+            resp = client.post(
+                f"{PRODUCTOS_URL}/productos/interno/descontar-stock-lote",
+                json={"lineas": [{"producto_id": producto_id, "cantidad": cantidad} for producto_id, cantidad in cantidades.items()]},
+                headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
+                timeout=5,
+            )
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Servicio de Productos no disponible")
+    if resp.status_code == 200:
+        return
+    try:
+        detalle = resp.json().get("detail")
+    except ValueError:
+        detalle = None
+    if resp.status_code in (404, 409) and isinstance(detalle, str):
+        raise HTTPException(status_code=409, detail=f"No se puede reintentar el pago: {detalle.rstrip('.')}. Crea un nuevo pedido.")
+    raise HTTPException(status_code=503, detail="No se pudo reservar el stock de los productos")
 
 class ProcesarPago(BaseModel):
-    pedido_id: str
+    pedido_id: uuid.UUID
     token_culqi: str
     email: str
 
@@ -109,7 +161,7 @@ def listar_pagos_sin_liquidaciones(db: Session = Depends(get_db), usuario: dict 
     antes de /productos/{producto_id} en Productos)."""
     return pagos_sin_liquidaciones(db)
 
-def _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario: dict, token: str):
+def _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario: dict, token: str, accion: str = "ver este pago"):
     """Solo el comprador dueño del pedido (y el admin, que ni llega acá) puede ver su pago. Se le pregunta
     a Pedidos con el mismo token del usuario: si responde 200 se compara el usuario_id del pedido con el del
     token (un repartidor o un productor también reciben 200 ahí, pero no son el comprador)."""
@@ -125,7 +177,13 @@ def _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario: dict, token: str):
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if resp.status_code != 200 or str(resp.json().get("usuario_id")) != str(usuario.get("sub")):
-        raise HTTPException(status_code=403, detail="No tienes permiso para ver este pago")
+        raise HTTPException(status_code=403, detail=f"No tienes permiso para {accion}")
+
+
+def _exigir_dueno_para_pagar(pedido_id, usuario: dict, token: str):
+    """Solo el comprador dueño del pedido lo paga (ni siquiera el admin). Antes cualquier usuario con sesión que
+    conociera el id podía cobrar con su tarjeta o, con una tarjeta mala, dejar rechazado el pedido de otro."""
+    _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario, token, accion="pagar este pedido")
 
 
 # Antes era público: bastaba conocer el id de un pedido para leer el monto y el cargo de Culqi de su pago.
@@ -174,20 +232,44 @@ def liquidar_repartidor(
     return {"mensaje": "Liquidación de repartidor registrada"}
 
 @app.post("/pagos/procesar")
-def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
-    pago = db.query(models.Pago).filter(models.Pago.pedido_id == datos.pedido_id).first()
+def procesar_pago(
+    datos: ProcesarPago,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(verificar_token),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    _exigir_dueno_para_pagar(datos.pedido_id, usuario, credenciales.credentials)
+
+    # La fila del pago se bloquea durante TODO el intento, llamada a Culqi incluida: dos intentos simultáneos
+    # (doble clic, dos pestañas) se turnan y el segundo ve el resultado del primero. Antes los dos veían
+    # "pendiente" y los dos cobraban.
+    pago = db.query(models.Pago).filter(models.Pago.pedido_id == datos.pedido_id).with_for_update().first()
     if not pago:
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
-    estaba_pendiente = pago.estado == "pendiente"
 
-    resultado = crear_cargo(
-        token=datos.token_culqi,
-        monto_soles=float(pago.monto),
-        email=datos.email,
-        descripcion=f"Pedido {pago.pedido_id}",
-    )
+    # Un pago "rechazado" ya devolvió su stock (compensar_stock). Reintentarlo vuelve a reservarlo ANTES de
+    # cobrar: si ya no alcanza, 409 y no se cobra nada. Si el reintento vuelve a fallar, se libera solo lo
+    # reservado para este intento y el pago sigue rechazado (el stock se devuelve una sola vez, no una por
+    # intento fallido: con una tarjeta mala repetida el stock del producto subía sin límite).
+    es_reintento = pago.estado == "rechazado"
+    if es_reintento:
+        reservar_stock(pago.items)
+
+    try:
+        resultado = crear_cargo(
+            token=datos.token_culqi,
+            monto_soles=float(pago.monto),
+            email=datos.email,
+            descripcion=f"Pedido {pago.pedido_id}",
+        )
+    except (httpx.RequestError, ValueError):
+        # La pasarela no respondió (o respondió algo ilegible): no se cobró nada, el pago queda como estaba.
+        if es_reintento:
+            compensar_stock(pago.items)
+        logger.error("La pasarela de pagos no respondió al cobrar el pedido %s", pago.pedido_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo comunicar con la pasarela de pagos. Inténtalo de nuevo en unos momentos.")
 
     if resultado["status_code"] == 201:
         pago.estado = "aprobado"
@@ -215,13 +297,10 @@ def procesar_pago(datos: ProcesarPago, db: Session = Depends(get_db), usuario: d
 
         return {"estado": "aprobado", "detalle": resultado["data"]}
     else:
-        pago.estado = "rechazado"
-        db.commit()
-        # El stock se devuelve UNA sola vez, al pasar de "pendiente" a "rechazado". La interfaz deja reintentar
-        # el pago de un pedido rechazado, y antes cada intento fallido volvía a reponer las cantidades: con
-        # una tarjeta mala repetida, el stock del producto subía sin límite.
-        if estaba_pendiente:
-            compensar_stock(pago.items)
+        if not es_reintento:
+            pago.estado = "rechazado"
+            db.commit()
+        compensar_stock(pago.items)
         publicar_evento({
             "evento": "pago_rechazado",
             "pedido_id": str(pago.pedido_id),

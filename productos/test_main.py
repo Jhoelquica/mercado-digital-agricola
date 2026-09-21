@@ -1256,3 +1256,24 @@ def test_el_detalle_publico_del_producto_incluye_su_estado():
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["estado"] == "en_transito"
+
+
+def test_descontar_lote_tambien_lo_acepta_del_secreto_de_pagos(monkeypatch):
+    """Pagos vuelve a reservar el stock al reintentar el pago de un pedido rechazado; cada servicio usa su
+    propia clave y cada comparación falla cerrada por separado."""
+    producto = _crear_producto_directo(stock=10)
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", "secreto-de-prueba-pedidos")
+    monkeypatch.setattr(main, "PAGOS_A_PRODUCTOS_SECRETO", "secreto-de-prueba-pagos")
+    cuerpo = {"lineas": [{"producto_id": str(producto.id), "cantidad": 1}]}
+
+    for secreto, esperado in (("secreto-de-prueba-pagos", 200), ("secreto-de-prueba-pedidos", 200), ("otro", 403)):
+        resp = client.post("/productos/interno/descontar-stock-lote", json=cuerpo, headers={"X-Servicio-Secreto": secreto})
+        assert resp.status_code == esperado, (secreto, resp.text)
+    assert _stock_de(producto.id) == 8
+
+    # sin ninguna de las dos claves configuradas no pasa nadie
+    monkeypatch.setattr(main, "PEDIDOS_A_PRODUCTOS_SECRETO", None)
+    monkeypatch.setattr(main, "PAGOS_A_PRODUCTOS_SECRETO", None)
+    for cabeceras in ({}, {"X-Servicio-Secreto": ""}):
+        assert client.post("/productos/interno/descontar-stock-lote", json=cuerpo, headers=cabeceras).status_code == 403
+    assert _stock_de(producto.id) == 8

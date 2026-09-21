@@ -862,3 +862,25 @@ def test_si_productos_no_responde_al_descontar_el_pedido_no_se_crea_y_da_503():
     assert resp.status_code == 503, resp.text
     publicar.assert_not_called()
     assert _pedidos_de(sub) == 0
+
+
+def test_el_evento_pedido_creado_lleva_la_cantidad_en_unidad_base_de_cada_linea():
+    """Pagos devuelve o vuelve a reservar el stock a partir de este evento: necesita lo que se DESCONTÓ (3 sacos de
+    10 kg = 30), no lo que compró el comprador (3)."""
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=3, unidad="saco")
+    payload["items"].append({"producto_id": str(uuid.uuid4()), "cantidad": 2})  # una línea en la unidad base
+    unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
+    cliente = _mock_httpx_client(precio=5.0, stock=100, unidades_alternativas=unidades_alt)
+
+    with patch("main.httpx.Client", return_value=cliente), patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    evento = mock_publicar.call_args[0][0]
+    assert evento["evento"] == "pedido_creado"
+    por_producto = {i["producto_id"]: i for i in evento["items"]}
+    en_sacos = por_producto[payload["items"][0]["producto_id"]]
+    en_base = por_producto[payload["items"][1]["producto_id"]]
+    assert (en_sacos["cantidad"], en_sacos["unidad"], en_sacos["cantidad_base"]) == (3, "saco", 30.0)
+    assert (en_base["cantidad"], en_base["unidad"], en_base["cantidad_base"]) == (2, None, 2)
+    assert en_sacos["precio_unitario"] == 45.0
