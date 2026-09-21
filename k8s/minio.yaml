@@ -15,6 +15,12 @@ metadata:
   name: minio
 spec:
   replicas: 1
+  # Recreate (no RollingUpdate): el volumen es de un solo nodo y con RollingUpdate Kubernetes levanta el pod NUEVO mientras el
+  # viejo sigue vivo. Dos procesos sobre los mismos datos (en un solo nodo el volumen se monta en ambos) pueden corromperlos, y
+  # en varios nodos la actualización se queda colgada esperando el volumen. Con Recreate se apaga primero el viejo (un corte de
+  # unos segundos en cada actualización, aceptable). Igual que rabbitmq.yaml y redis.yaml.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: minio
@@ -30,6 +36,21 @@ spec:
           ports:
             - containerPort: 9000
             - containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
           env:
             - name: MINIO_ROOT_USER
               valueFrom:

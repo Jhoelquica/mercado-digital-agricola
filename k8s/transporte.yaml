@@ -18,6 +18,36 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8004
+          # Sin sondas Kubernetes manda tráfico al pod en cuanto arranca el contenedor (antes de que uvicorn escuche) y da
+          # 502/504 en cada arranque o actualización. /salud responde sin tocar la base de datos. startupProbe: hasta 3 min
+          # para arrancar (esperando a su base); después, readiness saca al pod del reparto si deja de responder y liveness
+          # lo reinicia solo si lleva ~100 s sin responder.
+          # Al apagarse (una actualización) espera 5 s antes de parar: da tiempo a que el gateway deje de mandarle peticiones
+          # (se saca de los destinos a la vez que se le pide terminar) y así no se cortan las que van en camino.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          startupProbe:
+            httpGet:
+              path: /salud
+              port: 8004
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /salud
+              port: 8004
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /salud
+              port: 8004
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
           env:
             - name: DB_HOST
               value: db-transporte

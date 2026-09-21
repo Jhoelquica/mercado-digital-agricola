@@ -15,6 +15,12 @@ metadata:
   name: db-productos
 spec:
   replicas: 1
+  # Recreate (no RollingUpdate): el volumen es de un solo nodo y con RollingUpdate Kubernetes levanta el pod NUEVO mientras el
+  # viejo sigue vivo. Dos procesos sobre los mismos datos (en un solo nodo el volumen se monta en ambos) pueden corromperlos, y
+  # en varios nodos la actualización se queda colgada esperando el volumen. Con Recreate se apaga primero el viejo (un corte de
+  # unos segundos en cada actualización, aceptable). Igual que rabbitmq.yaml y redis.yaml.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: db-productos
@@ -28,6 +34,14 @@ spec:
           image: postgres:16
           ports:
             - containerPort: 5432
+          # La base "está lista" cuando acepta conexiones. Sin liveness a propósito: reiniciar una base por un mal rato es peor.
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           env:
             - name: POSTGRES_USER
               valueFrom:
