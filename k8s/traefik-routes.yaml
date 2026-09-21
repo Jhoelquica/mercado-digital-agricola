@@ -519,3 +519,36 @@ spec:
       services:
         - name: minio
           port: 9000
+
+---
+# ================= BLOQUEADOS: lo que NO debe alcanzarse desde Internet =================
+# Nada de esto lo usa el frontend, y los servicios se hablan entre sí por dentro del clúster (sin pasar por el gateway),
+# así que bloquearlo aquí no rompe ningún flujo:
+#   - /docs, /redoc, /openapi.json y /metrics de cada servicio (el explorador de la API y la telemetría interna).
+#   - Las rutas internas entre servicios (`.../interno/...`, reponer/ajustar stock, eventos y certificados internos de
+#     Certificación): las protege un secreto de servicio, pero no tienen por qué ser alcanzables desde afuera.
+#   - Los DELETE de limpieza de pruebas (QA_LIMPIEZA_SECRETO). Los DELETE con sesión que sí usa el frontend
+#     (/admin/invitaciones/{id}, /productos/imagenes/{id}, /productos/unidades/{id}) tienen otra forma de ruta y pasan.
+# Prioridad 200: le gana a todas las demás rutas.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: bloqueados
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 200
+      match: >-
+        PathRegexp(`^/api/[a-z]+/(docs|redoc|openapi\.json|metrics)$`)
+        || PathRegexp(`^/api/[a-z]+/[a-z]+/interno/`)
+        || (Method(`POST`) && PathRegexp(`^/api/productos/productos/[^/]+/stock/reponer$`))
+        || (Method(`PATCH`) && PathRegexp(`^/api/productos/productos/[^/]+/stock$`))
+        || (Method(`POST`) && PathRegexp(`^/api/certificacion/certificacion/([^/]+/(eventos-internos|cosecha-aprobada|llegada-almacen)|pedido/[^/]+/certificado)$`))
+        || (Method(`DELETE`) && PathRegexp(`^/api/(usuarios/usuarios|productores/productores|productores/productores/produccion|productos/productos|pedidos/pedidos|transporte/envios|transporte/repartidores|notificaciones/notificaciones|pagos/pagos|certificacion/verificadores)/[^/]+$`))
+      middlewares:
+        - name: denegar-todo
+      services:
+        - name: frontend
+          port: 80

@@ -107,3 +107,15 @@ spec:
   stripPrefix:
     prefixes:
       - /media
+
+---
+# Rechaza TODO con 403: solo deja pasar a una IP de documentación (192.0.2.1, reservada para ejemplos: nadie la tiene),
+# es decir, a nadie. Se usa en la ruta `bloqueados` de traefik-routes.yaml.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: denegar-todo
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.0.2.1/32
