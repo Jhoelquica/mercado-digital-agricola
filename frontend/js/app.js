@@ -5108,6 +5108,7 @@ async function iniciarPanelVerificador() {
 
   // Al entrar al panel siempre se muestra la primera sección (por si quedó otra activa de antes).
   seleccionarSeccionVerificador('cosechas');
+  perfilVerificador = undefined; // se averigua abajo: el panel lo puede abrir otro verificador en la misma pestaña
   cargarCosechasPendientes();
 
   const nombreEl = document.getElementById('verificador-cuenta-nombre');
@@ -5116,17 +5117,75 @@ async function iniciarPanelVerificador() {
   detalleEl.textContent = 'Cargando tu perfil de verificador…';
 
   try {
-    const perfil = await Api.verificadores.miPerfil();
-    nombreEl.textContent = perfil.nombre || Estado.nombre || 'Verificador';
-    detalleEl.textContent = perfil.credencial
-      ? `Credencial: ${perfil.credencial}`
-      : 'Verificador de Chakra Shop';
+    perfilVerificador = await Api.verificadores.miPerfil();
   } catch (err) {
-    // 404 = tiene el rol pero aún no creó su perfil de verificador (POST /verificadores).
-    // El alta de ese perfil es una entrega aparte; acá solo se informa.
-    detalleEl.textContent = err.status === 404
-      ? 'Todavía no completaste tu perfil de verificador.'
-      : 'No se pudo cargar tu perfil de verificador.';
+    // 404 = tiene el rol pero aún no creó su perfil de verificador: lo crea en "Mi cuenta" (POST /verificadores).
+    if (err.status === 404) perfilVerificador = null;
+    else detalleEl.textContent = 'No se pudo cargar tu perfil de verificador.';
+  }
+  pintarPerfilVerificador();
+}
+
+// Perfil del verificador (nombre + credencial). undefined = aún no se sabe (o no se pudo cargar), null = no lo tiene,
+// objeto = lo tiene. Sin perfil, lo que apruebe sale en el certificado sin "Certificado por" y esa cadena no se puede
+// corregir después: por eso no se le deja APROBAR hasta completarlo (rechazar sí).
+let perfilVerificador;
+
+function pintarPerfilVerificador() {
+  const sinPerfil = perfilVerificador === null;
+  document.getElementById('form-perfil-verificador').classList.toggle('hidden', !sinPerfil);
+  document.getElementById('verificador-aviso-perfil').classList.toggle('hidden', !sinPerfil);
+  document.querySelectorAll('#verificador-cosechas-lista .btn-aprobar-cosecha').forEach((boton) => {
+    boton.disabled = sinPerfil;
+    if (sinPerfil) boton.title = 'Completa tu perfil de verificador para aprobar'; else boton.removeAttribute('title');
+  });
+
+  const nombreEl = document.getElementById('verificador-cuenta-nombre');
+  const detalleEl = document.getElementById('verificador-cuenta-detalle');
+  if (perfilVerificador) {
+    nombreEl.textContent = perfilVerificador.nombre || Estado.nombre || 'Verificador';
+    detalleEl.textContent = perfilVerificador.credencial ? `Credencial: ${perfilVerificador.credencial}` : 'Verificador de Chakra Shop';
+  } else if (sinPerfil) {
+    detalleEl.textContent = 'Todavía no completaste tu perfil de verificador.';
+  }
+}
+
+async function crearPerfilVerificador(e) {
+  e.preventDefault();
+  const form = e.target;
+  const nombre = form.elements.nombre.value.trim();
+  const credencial = form.elements.credencial.value.trim();
+  const errores = {
+    nombre: nombre.length < 2 ? 'Escribe tu nombre completo (mínimo 2 letras).' : '',
+    credencial: credencial ? '' : 'Escribe tu credencial, por ejemplo tu N.º de colegiatura.',
+  };
+  let primerInvalido = null;
+  ['nombre', 'credencial'].forEach((campo) => {
+    const input = form.elements[campo];
+    document.getElementById(`perfil-verificador-${campo}-error`).textContent = errores[campo];
+    input.setAttribute('aria-invalid', errores[campo] ? 'true' : 'false');
+    if (errores[campo] && !primerInvalido) primerInvalido = input;
+  });
+  if (primerInvalido) { primerInvalido.focus(); return; }
+
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    perfilVerificador = await Api.verificadores.crear({ nombre, credencial });
+    form.reset();
+    pintarPerfilVerificador();
+    toast('Perfil guardado: tu nombre aparecerá en el certificado de lo que apruebes ✅');
+  } catch (err) {
+    if (err.status === 409) { // ya tenía perfil (lo creó desde otra pestaña): se muestra el que existe
+      try {
+        perfilVerificador = await Api.verificadores.miPerfil();
+        pintarPerfilVerificador();
+        return;
+      } catch { /* sigue al aviso de error de abajo */ }
+    }
+    manejarError(err, 'guardar tu perfil de verificador');
+  } finally {
+    boton.disabled = false;
   }
 }
 
@@ -5184,6 +5243,7 @@ async function cargarCosechasPendientes() {
       return;
     }
     cont.innerHTML = registros.map(renderTarjetaCosechaPendiente).join('');
+    pintarPerfilVerificador(); // sin perfil, "Aprobar" queda bloqueado en las tarjetas recién pintadas
   } catch (err) {
     manejarError(err, 'cargar las cosechas pendientes');
   }
@@ -5201,6 +5261,11 @@ function quitarTarjetaCosechaPendiente(registroId) {
 }
 
 async function aprobarCosecha(registroId) {
+  if (perfilVerificador === null) {
+    toast('Completa tu perfil de verificador para aprobar cosechas.', 'error');
+    seleccionarSeccionVerificador('cuenta');
+    return;
+  }
   const card = document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`);
   card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
   try {
@@ -7564,6 +7629,16 @@ function inicializarEventos() {
     if (tab) seleccionarSeccionVerificador(tab.dataset.vseccion);
   });
   document.getElementById('btn-verificador-logout').addEventListener('click', cerrarSesion);
+  document.getElementById('form-perfil-verificador').addEventListener('submit', crearPerfilVerificador);
+  document.getElementById('form-perfil-verificador').addEventListener('input', (e) => { // al corregir un campo se quita su error
+    e.target.setAttribute('aria-invalid', 'false');
+    const error = document.getElementById(`${e.target.id}-error`);
+    if (error) error.textContent = '';
+  });
+  document.getElementById('btn-verificador-completar-perfil').addEventListener('click', () => {
+    seleccionarSeccionVerificador('cuenta');
+    document.getElementById('perfil-verificador-nombre').focus();
+  });
 
   document.getElementById('verificador-cosechas-lista').addEventListener('click', (e) => {
     const aprobar = e.target.closest('.btn-aprobar-cosecha');

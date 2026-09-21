@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=c4cdec93">
+<link rel="stylesheet" href="css/style.css?v=74bcf258">
 </head>
 <body>
 
@@ -666,6 +666,14 @@
     </nav>
 
     <div class="verificador-seccion" data-vseccion="cosechas">
+      <div id="verificador-aviso-perfil" class="verificador-aviso hidden" role="status">
+        <i class="ti ti-alert-triangle" aria-hidden="true"></i>
+        <div class="verificador-aviso-texto">
+          <strong>Completa tu perfil para aprobar cosechas</strong>
+          <span>Tu nombre y tu credencial quedan en el certificado que ve quien escanea el QR del producto. Rechazar sí puedes.</span>
+        </div>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-verificador-completar-perfil">Completar perfil</button>
+      </div>
       <div id="verificador-cosechas-lista" class="grid-verificador"></div>
       <div id="verificador-cosechas-empty" class="empty-state hidden">
         <span class="empty-state-icon"><i class="ti ti-plant-2"></i></span>
@@ -684,9 +692,22 @@
     </div>
 
     <div class="verificador-seccion hidden" data-vseccion="cuenta">
-      <div class="card-panel">
+      <div class="card-panel verificador-cuenta">
         <h3 id="verificador-cuenta-nombre">Mi cuenta</h3>
         <p class="muted" id="verificador-cuenta-detalle">—</p>
+        <form id="form-perfil-verificador" class="form-grid form-perfil-verificador hidden" novalidate>
+          <p class="form-perfil-verificador-intro">Tu nombre y tu credencial aparecen en el certificado de cada cosecha que apruebes: quien escanee el QR del producto verá quién la verificó. Sin este perfil no puedes aprobar cosechas.</p>
+          <label for="perfil-verificador-nombre"><span>Nombre completo <span class="campo-requerido" aria-hidden="true">*</span></span>
+            <input type="text" id="perfil-verificador-nombre" name="nombre" maxlength="120" autocomplete="name" required aria-describedby="perfil-verificador-nombre-error">
+            <span class="campo-error" id="perfil-verificador-nombre-error" role="alert"></span>
+          </label>
+          <label for="perfil-verificador-credencial"><span>Credencial <span class="campo-requerido" aria-hidden="true">*</span></span>
+            <input type="text" id="perfil-verificador-credencial" name="credencial" maxlength="60" autocomplete="off" required placeholder="Ej. N.º de colegiatura o código interno" aria-describedby="perfil-verificador-credencial-ayuda perfil-verificador-credencial-error">
+            <small class="muted" id="perfil-verificador-credencial-ayuda">Con ella se te reconoce como verificador de Chakra Shop.</small>
+            <span class="campo-error" id="perfil-verificador-credencial-error" role="alert"></span>
+          </label>
+          <button type="submit" class="btn btn-primary">Guardar perfil</button>
+        </form>
         <button type="button" class="btn btn-outline" id="btn-verificador-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
       </div>
     </div>
@@ -1125,7 +1146,7 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=90ba14ba"></script>
-<script src="js/app.js?v=2106cf27"></script>
+<script src="js/api.js?v=70225635"></script>
+<script src="js/app.js?v=383a2f55"></script>
 </body>
 </html>
