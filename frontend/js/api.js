@@ -1,14 +1,31 @@
-// Configuración de endpoints de los microservicios
-const API_BASE = {
-  usuarios: 'http://localhost:8006',
-  productores: 'http://localhost:8001',
-  productos: 'http://localhost:8002',
-  pedidos: 'http://localhost:8003',
-  transporte: 'http://localhost:8004',
-  notificaciones: 'http://localhost:8005',
-  pagos: 'http://localhost:8007',
-  certificacion: 'http://localhost:8008',
+// Configuración de endpoints de los microservicios, según dónde se abra la página:
+//  - En tu máquina (localhost / 127.0.0.1) cada servicio se llama directo, en su puerto.
+//  - En cualquier otro sitio (producción) todo pasa por el gateway (Traefik) del MISMO origen, en /api/<servicio> (ver
+//    k8s/traefik-routes.yaml): un solo dominio, sin CORS y sin exponer los puertos de los servicios.
+//  - Para probar el modo producción en local: abrir la página servida por el gateway (localhost:8000) o añadir
+//    `?api=gateway` a la URL.
+//  - Para forzar otra cosa sin tocar este archivo: `window.APP_CONFIG = { apiBase: { usuarios: '…', … } }` antes de cargarlo.
+const PUERTOS_LOCALES = {
+  usuarios: 8006,
+  productores: 8001,
+  productos: 8002,
+  pedidos: 8003,
+  transporte: 8004,
+  notificaciones: 8005,
+  pagos: 8007,
+  certificacion: 8008,
 };
+const PUERTO_DEL_GATEWAY_LOCAL = '8000';
+const ES_LOCALHOST = ['localhost', '127.0.0.1'].includes(location.hostname);
+const USA_EL_GATEWAY = !ES_LOCALHOST
+  || location.port === PUERTO_DEL_GATEWAY_LOCAL
+  || new URLSearchParams(location.search).get('api') === 'gateway';
+const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.apiBase) || Object.fromEntries(
+  Object.entries(PUERTOS_LOCALES).map(([servicio, puerto]) => [
+    servicio,
+    USA_EL_GATEWAY ? `${location.origin}/api/${servicio}` : `http://localhost:${puerto}`,
+  ]),
+);
 
 // Llave pública de Culqi (modo test, segura de exponer en frontend)
 const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
