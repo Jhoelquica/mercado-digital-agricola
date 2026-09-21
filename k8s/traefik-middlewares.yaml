@@ -95,3 +95,15 @@ spec:
       - /api/notificaciones
       - /api/pagos
       - /api/certificacion
+
+---
+# Quita /media antes de mandar la petición a MinIO: la URL pública de una foto es https://<dominio>/media/<bucket>/<archivo>
+# y MinIO la espera como /<bucket>/<archivo>. (Ruta en k8s/traefik-routes.yaml.)
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-media-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - /media

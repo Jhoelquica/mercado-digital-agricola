@@ -497,3 +497,25 @@ spec:
       services:
         - name: frontend
           port: 80
+
+---
+# ================= MEDIA (fotos públicas de productos, en MinIO) =================
+# https://<dominio>/media/productos-imagenes/<archivo> -> MinIO. Solo GET/HEAD y solo ese bucket: la consola de MinIO y el
+# bucket privado de fotos de entrega (transporte-entregas) NO se exponen. En un despliegue, MINIO_PUBLIC_URL de Productos
+# tiene que apuntar a https://<dominio>/media para que las fotos que se suban salgan con una URL que el navegador alcance.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: media
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      priority: 100
+      match: (Method(`GET`) || Method(`HEAD`)) && PathPrefix(`/media/productos-imagenes/`)
+      middlewares:
+        - name: strip-media-prefix
+      services:
+        - name: minio
+          port: 9000
