@@ -466,3 +466,34 @@ spec:
       services:
         - name: certificacion
           port: 8008
+    # GET /verificadores/credencial-asignada exige rol "verificador": la credencial que le asignó el admin al invitarlo
+    - kind: Rule
+      priority: 100
+      match: Method(`GET`) && Path(`/api/certificacion/verificadores/credencial-asignada`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: certificacion
+          port: 8008
+
+---
+# ================= FRONTEND (sitio estático servido por nginx, ver k8s/frontend.yaml) =================
+# Todo lo que NO es /api/... llega al sitio: la SPA (index.html) y verificar.html, la página que abre quien escanea el
+# QR. Sin prioridad explícita a propósito: las rutas de las APIs (priority 1 y 100) solo compiten con esta bajo /api/,
+# y ahí esta regla no aplica (por eso el `!PathPrefix`). Sin rate-limit ni auth: son archivos públicos.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: frontend
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: "!PathPrefix(`/api/`)"
+      services:
+        - name: frontend
+          port: 80
