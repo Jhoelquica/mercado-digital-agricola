@@ -88,7 +88,7 @@ def _admin_autenticado() -> str:
 
 
 def _insertar_invitacion(*, creado_por, codigo=None, usado=False, usado_por=None,
-                         fecha_expiracion=None, rol_destino="verificador"):
+                         fecha_expiracion=None, rol_destino="verificador", credencial=None):
     """Inserta una Invitacion directo en la BD — para estados que el flujo normal aún no
     puede producir (usada, expirada)."""
     db = main.SessionLocal()
@@ -96,6 +96,7 @@ def _insertar_invitacion(*, creado_por, codigo=None, usado=False, usado_por=None
         inv = main.models.Invitacion(
             codigo=codigo or f"cod-{uuid.uuid4().hex[:14]}",
             rol_destino=rol_destino,
+            credencial=credencial,
             usado=usado,
             usado_por=usado_por,
             creado_por=creado_por,
@@ -111,11 +112,12 @@ def _insertar_invitacion(*, creado_por, codigo=None, usado=False, usado_por=None
 
 def test_crear_invitacion_por_admin():
     _admin_autenticado()
-    resp = client.post("/admin/invitaciones", json={"rol_destino": "verificador"})
+    resp = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
 
     assert resp.status_code == 200, resp.text
     cuerpo = resp.json()
     assert cuerpo["rol_destino"] == "verificador"
+    assert cuerpo["credencial"] == "COL-1"
     assert cuerpo["usado"] is False
     assert cuerpo["usado_por"] is None
     assert cuerpo["codigo"]
@@ -132,7 +134,7 @@ def test_crear_invitacion_no_admin_falla_403():
 
 def test_revocar_invitacion_no_usada():
     _admin_autenticado()
-    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador"})
+    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
     inv_id = creada.json()["id"]
 
     resp = client.delete(f"/admin/invitaciones/{inv_id}")
@@ -179,7 +181,7 @@ def test_validar_codigo_inexistente():
 
 def test_validar_codigo_valido():
     _admin_autenticado()
-    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador"})
+    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
     codigo = creada.json()["codigo"]
 
     resp = client.get(f"/admin/invitaciones/validar/{codigo}")
@@ -834,3 +836,106 @@ def test_siempre_se_compara_una_contrasena_exista_o_no_la_cuenta(monkeypatch):
     _login(solo_google, "mala")  # cuenta sin contraseña propia
 
     assert comparaciones == [seguridad.HASH_DE_RELLENO, seguridad.HASH_DE_RELLENO]
+
+
+
+# ============ La credencial la asigna el admin al invitar (y Certificación se la pide a Usuarios) ============
+# El verificador no la escribe: sale del código de invitación con el que se registró, así que nadie puede inventarla.
+
+def test_la_invitacion_de_un_verificador_exige_la_credencial_y_la_guarda_sin_espacios_de_sobra():
+    _admin_autenticado()
+
+    for cuerpo in (
+        {"rol_destino": "verificador"},
+        {"rol_destino": "verificador", "credencial": ""},
+        {"rol_destino": "verificador", "credencial": "   "},
+        {"rol_destino": "verificador", "credencial": "x" * (main.CREDENCIAL_MAXIMA + 1)},
+        {"rol_destino": "verificador", "credencial": "COL\u00001"},
+    ):
+        assert client.post("/admin/invitaciones", json=cuerpo).status_code == 422, cuerpo
+
+    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "  COL-123  "})
+    assert creada.status_code == 200, creada.text
+    assert creada.json()["credencial"] == "COL-123"
+    justo = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "c" * main.CREDENCIAL_MAXIMA})
+    assert justo.status_code == 200  # el largo máximo exacto pasa
+
+    en_la_lista = next(i for i in client.get("/admin/invitaciones").json() if i["id"] == creada.json()["id"])
+    assert en_la_lista["credencial"] == "COL-123"
+
+
+def test_un_rol_que_no_lleva_credencial_descarta_la_que_llegue():
+    _admin_autenticado()
+    resp = client.post("/admin/invitaciones", json={"rol_destino": "admin", "credencial": "COL-9"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["credencial"] is None
+
+
+def _cabecera_de_certificacion(monkeypatch):
+    monkeypatch.setattr(main, "CERTIFICACION_A_USUARIOS_SECRETO", "secreto-de-certificacion")
+    return {"X-Servicio-Secreto": "secreto-de-certificacion"}
+
+
+def _verificador_que_uso_una_invitacion(credencial="COL-77", **extra):
+    admin_id = _crear_usuario("admin")
+    verificador_id = _crear_usuario("verificador")
+    _insertar_invitacion(creado_por=admin_id, usado=True, usado_por=verificador_id, credencial=credencial, **extra)
+    return verificador_id
+
+
+def test_certificacion_obtiene_la_credencial_que_el_admin_le_asigno_al_verificador(monkeypatch):
+    verificador_id = _verificador_que_uso_una_invitacion("COL-77")
+
+    resp = client.get(f"/usuarios/interno/{verificador_id}/credencial", headers=_cabecera_de_certificacion(monkeypatch))
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"credencial": "COL-77"}
+
+
+def test_la_credencial_interna_solo_se_da_con_el_secreto_de_servicio(monkeypatch):
+    verificador_id = _verificador_que_uso_una_invitacion()
+    ruta = f"/usuarios/interno/{verificador_id}/credencial"
+    cabecera = _cabecera_de_certificacion(monkeypatch)
+
+    assert client.get(ruta).status_code == 403
+    assert client.get(ruta, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
+    _admin_autenticado()  # una sesión de usuario, aunque sea admin, no reemplaza al secreto de servicio
+    assert client.get(ruta).status_code == 403
+    monkeypatch.setattr(main, "CERTIFICACION_A_USUARIOS_SECRETO", None)  # sin configurar, falla cerrado
+    assert client.get(ruta, headers=cabecera).status_code == 403
+
+
+def test_sin_credencial_asignada_la_ruta_interna_responde_404(monkeypatch):
+    cabecera = _cabecera_de_certificacion(monkeypatch)
+    admin_id = _crear_usuario("admin")
+
+    sin_invitacion = _crear_usuario("verificador")
+    invitacion_vieja_sin_credencial = _verificador_que_uso_una_invitacion(credencial=None)
+    invitacion_sin_usar = _crear_usuario("verificador")
+    _insertar_invitacion(creado_por=admin_id, usado=False, usado_por=None, credencial="COL-1")
+    de_otro_rol = _crear_usuario("verificador")
+    _insertar_invitacion(creado_por=admin_id, usado=True, usado_por=de_otro_rol, credencial="COL-2", rol_destino="admin")
+
+    for usuario_id in (sin_invitacion, invitacion_vieja_sin_credencial, invitacion_sin_usar, de_otro_rol, str(uuid.uuid4())):
+        resp = client.get(f"/usuarios/interno/{usuario_id}/credencial", headers=cabecera)
+        assert resp.status_code == 404, (usuario_id, resp.text)
+
+
+def test_la_credencial_interna_con_un_id_mal_formado_falla_422_no_500(monkeypatch):
+    assert client.get("/usuarios/interno/no-es-uuid/credencial", headers=_cabecera_de_certificacion(monkeypatch)).status_code == 422
+
+
+def test_la_migracion_agrega_la_columna_credencial_y_se_puede_repetir():
+    """En una base que ya tenía la tabla `invitaciones` sin la columna, arrancar la agrega; y repetir no falla."""
+    from sqlalchemy import text
+    from migraciones import asegurar_columna_credencial_en_invitaciones
+
+    with main.engine.begin() as conexion:
+        conexion.execute(text("ALTER TABLE invitaciones DROP COLUMN IF EXISTS credencial"))
+    asegurar_columna_credencial_en_invitaciones(main.engine)
+    asegurar_columna_credencial_en_invitaciones(main.engine)
+
+    with main.engine.connect() as conexion:
+        columnas = {fila[0] for fila in conexion.execute(text(
+            "select column_name from information_schema.columns where table_name = 'invitaciones'"))}
+    assert "credencial" in columnas

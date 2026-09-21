@@ -50,6 +50,10 @@ class Invitacion(Base):
     creado_por = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=False)
     fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
     fecha_expiracion = Column(DateTime, nullable=False, default=_expiracion_default)
+    # Solo para roles que la llevan (hoy "verificador"): la escribe el admin al invitar (N.º de colegiatura, código
+    # interno…) y Certificación la toma de aquí para el perfil del verificador, así que él no la escribe ni la inventa.
+    # Columna posterior a la tabla: ver migraciones.py.
+    credencial = Column(String, nullable=True)
 
 
 class IntentoLogin(Base):

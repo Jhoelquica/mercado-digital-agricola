@@ -18,6 +18,7 @@ from database import Base, engine, SessionLocal
 import models
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
+from migraciones import asegurar_columna_credencial_en_invitaciones
 
 # No es secreta (el Client ID de Google es público por diseño — viaja en el propio id_token como
 # audience), pero igual se maneja como env var y no hardcodeada, mismo criterio que cualquier
@@ -25,6 +26,8 @@ import acceso
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 Base.metadata.create_all(bind=engine)
+# create_all() no agrega columnas a una tabla que ya existe: ver migraciones.py.
+asegurar_columna_credencial_en_invitaciones(engine)
 
 app = FastAPI()
 
@@ -115,6 +118,7 @@ class UsuarioOAuthGoogle(BaseModel):
 
 class InvitacionCrear(BaseModel):
     rol_destino: str
+    credencial: str | None = None  # obligatoria para los roles de ROLES_CON_CREDENCIAL (hoy, verificador)
 
 # Roles de registro ABIERTO: cualquier persona puede auto-registrarse con estos.
 # Deny-by-default: TODO lo que no esté acá (verificador, admin, y cualquier rol futuro)
@@ -122,11 +126,19 @@ class InvitacionCrear(BaseModel):
 # sensible sin acordarse de esta lista NO abre un agujero: por defecto queda restringido.
 ROLES_DE_REGISTRO_ABIERTO = frozenset({"comprador", "productor", "repartidor"})
 
+# Roles cuya invitación lleva una credencial escrita por el admin (aparece en el certificado público de lo que el
+# verificador apruebe). Para los demás roles la credencial que llegue se descarta.
+ROLES_CON_CREDENCIAL = frozenset({"verificador"})
+CREDENCIAL_MAXIMA = 60
+
 # Sin fallback hardcodeado a propósito: si el Deployment se olvida de wirear esta env var, el
 # endpoint queda inutilizable (rechaza todo) en vez de aceptar en silencio un valor conocido.
 # Usada SOLO por los DELETE de limpieza QA (ningún otro servicio llama a este endpoint) — ver
 # inventario completo de X-Servicio-Secreto en el resumen de esta tarea.
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
+# Sin fallback hardcodeado a propósito (mismo criterio). Lo envía Certificación para preguntar qué credencial le asignó
+# el admin a un verificador (GET /usuarios/interno/{id}/credencial): falla cerrado si no está configurado.
+CERTIFICACION_A_USUARIOS_SECRETO = os.getenv("CERTIFICACION_A_USUARIOS_SECRETO")
 
 @app.get("/salud")
 def salud():
@@ -323,6 +335,7 @@ def _serializar_invitacion(inv: models.Invitacion) -> dict:
         "id": inv.id,
         "codigo": inv.codigo,
         "rol_destino": inv.rol_destino,
+        "credencial": inv.credencial,
         "usado": inv.usado,
         "usado_por": inv.usado_por,
         "creado_por": inv.creado_por,
@@ -354,11 +367,26 @@ def crear_invitacion(
     db: Session = Depends(get_db),
     admin: dict = Depends(requiere_rol("admin")),
 ):
-    if not datos.rol_destino.strip():
+    rol_destino = datos.rol_destino.strip()
+    if not rol_destino:
         raise HTTPException(status_code=422, detail="rol_destino no puede estar vacío")
 
+    # La credencial la escribe el admin al invitar y es la que aparece en el certificado público de lo que el
+    # verificador apruebe: él no la escribe, así que no puede inventarla (ver Invitacion.credencial).
+    credencial = (datos.credencial or "").strip()
+    if rol_destino in ROLES_CON_CREDENCIAL:
+        if not credencial:
+            raise HTTPException(status_code=422, detail=f"Indica la credencial que se le asigna al {rol_destino}")
+        if len(credencial) > CREDENCIAL_MAXIMA:
+            raise HTTPException(status_code=422, detail=f"La credencial no puede superar {CREDENCIAL_MAXIMA} caracteres")
+        if "\x00" in credencial:
+            raise HTTPException(status_code=422, detail="La credencial tiene caracteres no válidos")
+    else:
+        credencial = ""  # los demás roles no llevan credencial: lo que llegue se descarta
+
     invitacion = models.Invitacion(
-        rol_destino=datos.rol_destino.strip(),
+        rol_destino=rol_destino,
+        credencial=credencial or None,
         creado_por=admin.get("sub"),
     )
     db.add(invitacion)
@@ -388,6 +416,27 @@ def validar_invitacion(
     admin: dict = Depends(requiere_rol("admin")),
 ):
     return validar_codigo_invitacion(db, codigo)
+
+
+# Certificación le pregunta a Usuarios qué credencial le asignó el admin a un verificador (la del código de invitación
+# con el que se registró) para poner ESA en su perfil: así el verificador no la escribe ni puede inventarla. Ruta
+# interna con el secreto de servicio de ese par; una sesión de usuario, aunque sea admin, no la reemplaza.
+@app.get("/usuarios/interno/{usuario_id}/credencial")
+def credencial_asignada_a_un_verificador(
+    usuario_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    x_servicio_secreto: str = Header(None),
+):
+    if not secreto_de_servicio_valido(x_servicio_secreto, CERTIFICACION_A_USUARIOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    invitacion = db.query(models.Invitacion).filter(
+        models.Invitacion.usado_por == usuario_id,
+        models.Invitacion.usado.is_(True),
+        models.Invitacion.rol_destino == "verificador",
+    ).order_by(models.Invitacion.fecha_creacion.desc()).first()
+    if invitacion is None or not (invitacion.credencial or "").strip():
+        raise HTTPException(status_code=404, detail="Este usuario no tiene una credencial asignada")
+    return {"credencial": invitacion.credencial}
 
 
 @app.delete("/admin/invitaciones/{invitacion_id}")
