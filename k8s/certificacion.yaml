@@ -63,6 +63,15 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            # Certificación -> Usuarios: GET /usuarios/interno/{id}/credencial (la credencial que el admin le asignó al
+            # verificador al invitarlo; va en su perfil). Certificación envía, no recibe.
+            - name: USUARIOS_URL
+              value: http://usuarios:8006
+            - name: CERTIFICACION_A_USUARIOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: CERTIFICACION_A_USUARIOS_SECRETO
 
 ---
 apiVersion: v1

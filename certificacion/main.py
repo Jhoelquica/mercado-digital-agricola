@@ -2,6 +2,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import os
 import uuid
 
+import httpx
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -47,6 +48,8 @@ TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRE
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_verificador (DELETE de limpieza QA)
 PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")  # registrar_cosecha_aprobada (lo llama Productores)
 PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO")  # registrar_llegada_almacen (lo llama Productos)
+USUARIOS_URL = os.getenv("USUARIOS_URL", "http://localhost:8006")
+CERTIFICACION_A_USUARIOS_SECRETO = os.getenv("CERTIFICACION_A_USUARIOS_SECRETO")  # _credencial_asignada_por_el_admin (Certificación envía, Usuarios recibe)
 
 class EventoInterno(BaseModel):
     evento: str
@@ -224,11 +227,13 @@ def historial(producto_id: str, db: Session = Depends(get_db)):
 
     verificador_ids = {b.verificador_id for b in bloques if b.verificador_id}
     nombres_por_id = {}
+    credenciales_por_id = {}
     if verificador_ids:
         verificadores = db.query(models.Verificador).filter(
             models.Verificador.id.in_(verificador_ids)
         ).all()
         nombres_por_id = {str(v.id): v.nombre for v in verificadores}
+        credenciales_por_id = {str(v.id): v.credencial for v in verificadores}
 
     return [
         {
@@ -242,6 +247,7 @@ def historial(producto_id: str, db: Session = Depends(get_db)):
             "hash_actual": b.hash_actual,
             "verificador_id": b.verificador_id,
             "verificador_nombre": nombres_por_id.get(str(b.verificador_id)) if b.verificador_id else None,
+            "verificador_credencial": credenciales_por_id.get(str(b.verificador_id)) if b.verificador_id else None,
         }
         for b in bloques
     ]
@@ -268,30 +274,60 @@ def generar_qr(producto_id: str):
     return StreamingResponse(buffer, media_type="image/png")
 
 
-# El nombre y la credencial salen tal cual en el certificado que ve quien escanea el QR del producto.
+# El nombre sale en el certificado que ve quien escanea el QR del producto, junto con la credencial.
 VERIFICADOR_NOMBRE_MINIMO = 2
 VERIFICADOR_NOMBRE_MAXIMO = 120
-VERIFICADOR_CREDENCIAL_MAXIMA = 60
 
 
 class VerificadorCrear(BaseModel):
+    # La credencial NO viene en el cuerpo: la asignó el admin al invitarlo (ver _credencial_asignada_por_el_admin);
+    # si un cliente la manda, se ignora.
     nombre: str
-    credencial: str
+
+
+def _credencial_asignada_por_el_admin(usuario_id: str) -> str:
+    """La credencial del verificador la escribe el admin al invitarlo (Usuarios la guarda en la invitación con la que se
+    registró) y nadie puede inventarla: se le pide a Usuarios por su ruta interna, con el secreto de servicio. Sin
+    credencial asignada no hay perfil; si Usuarios no responde tampoco (mejor reintentar que dejar un perfil sin ella)."""
+    no_se_pudo = HTTPException(status_code=503, detail="No se pudo comprobar tu credencial. Intenta de nuevo en un momento.")
+    sin_credencial = HTTPException(
+        status_code=409,
+        detail="El administrador todavía no te asignó una credencial. Pídesela para poder completar tu perfil.",
+    )
+    try:
+        resp = httpx.get(
+            f"{USUARIOS_URL}/usuarios/interno/{usuario_id}/credencial",
+            headers={"X-Servicio-Secreto": CERTIFICACION_A_USUARIOS_SECRETO or ""},
+            timeout=5,
+        )
+    except httpx.RequestError:
+        raise no_se_pudo
+    if resp.status_code == 404:
+        raise sin_credencial
+    if resp.status_code != 200:
+        raise no_se_pudo
+    credencial = str((resp.json() or {}).get("credencial") or "").strip()
+    if not credencial:
+        raise sin_credencial
+    return credencial
+
+
+@app.get("/verificadores/credencial-asignada")
+def mi_credencial_asignada(usuario: dict = Depends(requiere_rol("verificador"))):
+    """La credencial que el admin le asignó al verificador autenticado: la pantalla de su perfil se la muestra (solo
+    de lectura) antes de que cree el perfil."""
+    return {"credencial": _credencial_asignada_por_el_admin(usuario.get("sub"))}
+
 
 @app.post("/verificadores")
 def crear_verificador(datos: VerificadorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("verificador"))):
     nombre = (datos.nombre or "").strip()
-    credencial = (datos.credencial or "").strip()
     if len(nombre) < VERIFICADOR_NOMBRE_MINIMO:
         raise HTTPException(status_code=422, detail=f"El nombre debe tener al menos {VERIFICADOR_NOMBRE_MINIMO} caracteres")
     if len(nombre) > VERIFICADOR_NOMBRE_MAXIMO:
         raise HTTPException(status_code=422, detail=f"El nombre no puede superar {VERIFICADOR_NOMBRE_MAXIMO} caracteres")
-    if not credencial:
-        raise HTTPException(status_code=422, detail="La credencial no puede estar vacía")
-    if len(credencial) > VERIFICADOR_CREDENCIAL_MAXIMA:
-        raise HTTPException(status_code=422, detail=f"La credencial no puede superar {VERIFICADOR_CREDENCIAL_MAXIMA} caracteres")
-    if "\x00" in nombre or "\x00" in credencial:
-        raise HTTPException(status_code=422, detail="El nombre y la credencial no pueden tener caracteres no válidos")
+    if "\x00" in nombre:
+        raise HTTPException(status_code=422, detail="El nombre contiene caracteres no válidos")
 
     usuario_id = usuario.get("sub")
     existente = db.query(models.Verificador).filter(models.Verificador.usuario_id == usuario_id).first()
@@ -301,7 +337,7 @@ def crear_verificador(datos: VerificadorCrear, db: Session = Depends(get_db), us
     nuevo = models.Verificador(
         usuario_id=usuario_id,
         nombre=nombre,
-        credencial=credencial,
+        credencial=_credencial_asignada_por_el_admin(usuario_id),
     )
     db.add(nuevo)
     db.commit()
