@@ -3568,7 +3568,13 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 .admin-buscador:focus-within { border-color: var(--color-primario); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primario) 15%, transparent); }
 .admin-buscador i { color: var(--color-secundario); font-size: 1.2rem; }
 .admin-buscador input { flex: 1; border: none; outline: none; background: transparent; padding: 12px 0; font-size: 1rem; font-family: inherit; }
-.productor-admin-card .chacra-card-mapa-mini { margin-top: 12px; }
+/* Las tarjetas de una fila miden lo mismo (un nombre largo baja la insignia y las dejaba desiguales) y el mapa queda
+   alineado al pie de todas. */
+#admin-productores-lista { align-items: stretch; }
+.productor-admin-card { display: flex; flex-direction: column; }
+.productor-admin-card .perfil-datos-grid { margin-bottom: 12px; }
+.productor-admin-card .chacra-card-mapa-mini,
+.productor-admin-card .mapa-bloque-neutro { margin-top: auto; }
 .productor-admin-tel { color: var(--color-primario); font-weight: 700; text-decoration: none; }
 .productor-admin-tel:hover { text-decoration: underline; }
 #admin-productores-lista .pedido-card { transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1); }

@@ -105,6 +105,12 @@ function formatearFechaServidor(fechaStr) {
   return isNaN(d) ? fechaStr : formatearFecha(d.toISOString());
 }
 
+// Solo el día de un timestamp del servidor, para listas donde la hora no aporta y parte la línea en dos.
+function formatearFechaCortaServidor(fechaStr) {
+  const d = parsearFechaServidor(fechaStr);
+  return isNaN(d) ? '—' : formatearFechaCorta(d.toISOString());
+}
+
 function formatearMoneda(valor) {
   const n = Number(valor) || 0;
   const monto = Math.abs(n).toFixed(2);
@@ -5329,6 +5335,10 @@ async function iniciarPanelAdmin() {
 // No hay endpoint de "productos por productor" para el Admin, y para una demo alcanza con agrupar
 // acá (mismo criterio que cargarProductosEnTransito con las reservas).
 let productoresAdmin = [];
+// Los mapas de esta pestaña se crean al abrir el panel, con la pestaña "Productores" oculta (tamaño 0): sin
+// avisarles al mostrarla, Leaflet dibuja una sola tesela. Se guardan para recalcularlos al activar la pestaña
+// (mismo problema y mismo arreglo que `mapasChacras` en el panel del productor) y para destruirlos al repintar.
+let mapasProductoresAdmin = [];
 
 function renderTarjetaProductorAdmin(p, totalProductos, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
@@ -5342,7 +5352,7 @@ function renderTarjetaProductorAdmin(p, totalProductos, indice = 0) {
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Comunidad / Región</span><span class="perfil-dato-valor">${escapeAttr(p.comunidad || '—')}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Contacto</span><span class="perfil-dato-valor">${tel ? `<a class="productor-admin-tel" href="tel:${tel}">${escapeAttr(p.contacto)}</a>` : '—'}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Registrado</span><span class="perfil-dato-valor">${formatearFechaServidor(p.fecha_registro)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Registrado</span><span class="perfil-dato-valor">${formatearFechaCortaServidor(p.fecha_registro)}</span></div>
       </div>
       ${hayCoordenadas(p.latitud, p.longitud)
         ? `<div id="mapa-productor-admin-${escapeAttr(p.id)}" class="chacra-card-mapa-mini"></div>`
@@ -5356,11 +5366,14 @@ function pintarProductoresAdmin() {
     !termino || [item.p.nombre, item.p.comunidad, item.p.contacto].some((v) => String(v || '').toLowerCase().includes(termino)));
   const cont = document.getElementById('admin-productores-lista');
   document.getElementById('admin-productores-empty').classList.toggle('hidden', filtrados.length > 0);
+  mapasProductoresAdmin.forEach((m) => { try { m.remove(); } catch { /* ya estaba destruido */ } });
+  mapasProductoresAdmin = [];
   cont.innerHTML = filtrados.map((item, i) => renderTarjetaProductorAdmin(item.p, item.total, i)).join('');
   filtrados.forEach((item) => {
     const p = item.p;
     if (hayCoordenadas(p.latitud, p.longitud)) {
-      crearMapaSoloLectura(`mapa-productor-admin-${p.id}`, p.latitud, p.longitud, '<i class="ti ti-tractor"></i>', '#2d6a4f', escapeAttr(p.nombre));
+      const mini = crearMapaSoloLectura(`mapa-productor-admin-${p.id}`, p.latitud, p.longitud, '<i class="ti ti-tractor"></i>', '#2d6a4f', escapeAttr(p.nombre));
+      if (mini) mapasProductoresAdmin.push(mini);
     }
   });
 }
@@ -5394,6 +5407,7 @@ async function cargarProductoresAdmin() {
 function activarTabAdmin(nombreTab) {
   document.querySelectorAll('.admin-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.admintab === nombreTab));
   document.querySelectorAll('.admin-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.adminPanel === nombreTab));
+  if (nombreTab === 'productores') requestAnimationFrame(() => mapasProductoresAdmin.forEach((m) => m.invalidateSize()));
 }
 
 // El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
