@@ -22,6 +22,8 @@ Los manifiestos de `k8s/` **no se tocan**: los scripts de esta carpeta generan l
    en *Orígenes autorizados de JavaScript*. Si la pantalla de consentimiento está en modo *Prueba*, agrega como
    usuarios de prueba a quienes vayan a entrar con Google (o publícala).
 5. Las **llaves de Culqi** reales, si quieres cobrar de verdad. Sin ellas se usan las de prueba y los pagos son simulados.
+   La llave *secreta* va al Secret (paso 6); la *pública* está escrita en `frontend/js/api.js` (`CULQI_PUBLIC_KEY`): si usas
+   llaves reales, cámbiala ahí y vuelve a construir la imagen del frontend (paso 7 con `--solo frontend`).
 
 Costo aproximado con un nodo `e2-standard-4`: unos US$4 al día (nodo + discos + balanceador). **Bórralo al terminar** (paso 12).
 
