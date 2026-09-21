@@ -1564,13 +1564,13 @@ input, select { font-family: inherit; }
    El mensaje de diferencia va pegado al campo (role=status, se anuncia sin mover el foco) y no depende solo
    del color: cada estado dice qué pasa con palabras. */
 .form-llegada { --llegada-error: #b3401f; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--borde); }
+/* Siempre en columna: la tarjeta vive en una rejilla de hasta 3 columnas y, en fila, el mensaje de diferencia
+   ("Faltan 300 kg de los 800 declarados…") quedaba en una columna de ~140px y el campo de observaciones se salía
+   de la tarjeta. */
 .form-llegada-campos { display: flex; flex-direction: column; gap: 14px; }
-@media (min-width: 640px) {
-  .form-llegada-campos { flex-direction: row; align-items: flex-start; }
-  .form-llegada-campos label:first-child { flex: 0 0 min(320px, 40%); }
-}
-.form-llegada-campos label { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.form-llegada-campos label { min-width: 0; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
 .form-llegada-campos input {
+  width: 100%; min-width: 0; box-sizing: border-box;
   min-height: 44px; padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--borde);
   font: inherit; font-size: 1rem; font-weight: 500; color: var(--texto); background: white;
 }
