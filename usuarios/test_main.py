@@ -35,10 +35,11 @@ def _decodificar_jwt(token: str) -> dict:
     return jose_jwt.decode(token, seguridad.JWT_SECRET, algorithms=[seguridad.JWT_ALGORITHM])
 
 
-def _mockear_google(monkeypatch, *, sub=None, email=None, nombre="Usuario Google"):
+def _mockear_google(monkeypatch, *, sub=None, email=None, nombre="Usuario Google", verificado=True):
     """Reemplaza main.google_id_token.verify_oauth2_token: nunca golpea la red de Google de
     verdad. Devuelve el payload usado, para que el test pueda referenciar el mismo sub/email."""
-    payload = {"sub": sub or f"google-{uuid.uuid4().hex}", "email": email or _email(), "name": nombre}
+    payload = {"sub": sub or f"google-{uuid.uuid4().hex}", "email": email or _email(), "name": nombre,
+               "email_verified": verificado}
     monkeypatch.setattr(main.google_id_token, "verify_oauth2_token", lambda *a, **kw: payload)
     return payload
 
@@ -395,6 +396,65 @@ def test_oauth_google_rol_restringido_con_codigo_valido_funciona_y_marca_usada(m
         assert str(row.usado_por) == payload["sub"]
     finally:
         db.close()
+
+
+def test_oauth_google_con_correo_sin_verificar_no_vincula_una_cuenta_existente(monkeypatch):
+    """Una cuenta de Google que declara el correo de otra persona sin haberlo verificado no debe entrar a la cuenta
+    de esa persona (la vinculación automática por email era una toma de cuenta, la del admin incluida)."""
+    usuario_id = _crear_usuario("admin")
+    db = main.SessionLocal()
+    try:
+        email = db.query(main.models.Usuario).filter(main.models.Usuario.id == usuario_id).one().email
+    finally:
+        db.close()
+
+    _mockear_google(monkeypatch, email=email, verificado=False)
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+
+    assert resp.status_code == 401, resp.text
+    assert "verificado" in resp.json()["detail"]
+    assert "access_token" not in resp.text
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Usuario).filter(main.models.Usuario.id == usuario_id).one().google_id is None
+    finally:
+        db.close()
+
+
+def test_oauth_google_con_correo_sin_verificar_tampoco_registra_una_cuenta_nueva(monkeypatch):
+    email = _email()
+    for payload_extra in ({"email_verified": False}, {"email_verified": None}, {"email_verified": "false"}):
+        payload = {"sub": f"google-{uuid.uuid4().hex}", "email": email, "name": "Sin verificar", **payload_extra}
+        monkeypatch.setattr(main.google_id_token, "verify_oauth2_token", lambda *a, _p=payload, **kw: _p)
+        resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token", "rol": "comprador"})
+        assert resp.status_code == 401, (payload_extra, resp.text)
+
+    # sin la afirmación `email_verified` o sin correo en el token tampoco se confía
+    for payload in ({"sub": "g-1", "email": email, "name": "x"}, {"sub": "g-2", "name": "x", "email_verified": True}):
+        monkeypatch.setattr(main.google_id_token, "verify_oauth2_token", lambda *a, _p=payload, **kw: _p)
+        resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token", "rol": "comprador"})
+        assert resp.status_code == 401, (payload, resp.text)
+
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Usuario).filter(main.models.Usuario.email == email).count() == 0
+    finally:
+        db.close()
+
+
+def test_oauth_google_una_cuenta_ya_vinculada_sigue_entrando_aunque_el_token_no_traiga_el_correo_verificado(monkeypatch):
+    """La regla es solo para vincular o crear por correo: quien ya está vinculado por google_id entra igual."""
+    google_sub = f"google-{uuid.uuid4().hex}"
+    db = main.SessionLocal()
+    try:
+        u = main.models.Usuario(nombre="Ya Vinculado", email=_email(), password_hash=None, google_id=google_sub, rol="comprador")
+        db.add(u)
+        db.commit()
+    finally:
+        db.close()
+
+    _mockear_google(monkeypatch, sub=google_sub, verificado=False)
+    assert client.post("/usuarios/oauth/google", json={"id_token": "fake-token"}).status_code == 200
 
 
 def test_oauth_google_id_token_invalido_falla_401(monkeypatch):

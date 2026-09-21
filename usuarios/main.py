@@ -225,6 +225,15 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
     if usuario:
         return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
 
+    # Desde acá el correo decide a quién se vincula esta cuenta de Google (o con qué correo se crea una nueva): solo
+    # vale si Google lo tiene VERIFICADO. Sin esto, una cuenta de Google que declare el correo de otra persona sin
+    # haberlo verificado entraría a la cuenta de esa persona —la del admin incluida— por la vinculación de abajo.
+    if not email or payload.get("email_verified") not in (True, "true"):
+        raise HTTPException(
+            status_code=401,
+            detail="Google no tiene verificado el correo de esta cuenta. Verifícalo en Google o usa correo y contraseña.",
+        )
+
     usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
     if usuario:
         usuario.google_id = google_id
