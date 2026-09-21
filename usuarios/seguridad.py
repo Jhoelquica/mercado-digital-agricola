@@ -9,6 +9,11 @@ JWT_EXPIRACION_MINUTOS = 60
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# Hash de una contraseña que nadie tiene: el login lo compara cuando el correo no existe (o la cuenta es solo de
+# Google) para gastar el mismo tiempo que con una cuenta real. Sin esto, responder más rápido a un correo
+# desconocido delataba qué correos están registrados.
+HASH_DE_RELLENO = pwd_context.hash("esta-contrasena-no-es-de-nadie")
+
 
 def hashear_password(password: str) -> str:
     return pwd_context.hash(password)

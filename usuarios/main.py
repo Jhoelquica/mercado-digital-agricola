@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, model_validator
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
@@ -16,7 +16,8 @@ from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
-from seguridad import hashear_password, verificar_password, crear_token
+from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
+import acceso
 
 # No es secreta (el Client ID de Google es público por diseño — viaja en el propio id_token como
 # audience), pero igual se maneja como env var y no hardcodeada, mismo criterio que cualquier
@@ -97,9 +98,15 @@ class UsuarioRegistro(BaseModel):
     rol: str = "comprador"
     codigo_invitacion: str | None = None  # obligatorio solo para roles restringidos
 
+    @model_validator(mode="after")
+    def _password_valida(self):
+        # mínimo 8 caracteres, máximo 72 bytes, no común ni igual al correo (ver acceso.py)
+        acceso.validar_password_nueva(self.password, str(self.email))
+        return self
+
 class UsuarioLogin(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=200)
 
 class UsuarioOAuthGoogle(BaseModel):
     id_token: str
@@ -174,10 +181,23 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
 
 @app.post("/usuarios/login")
 def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
-    usuario = db.query(models.Usuario).filter(models.Usuario.email == datos.email).first()
-    if not usuario or not verificar_password(datos.password, usuario.password_hash):
-        raise HTTPException(status_code=401, detail="Email o contraseña incorrectos")
+    # Tras demasiados fallos seguidos el correo queda bloqueado un rato, incluso con la contraseña correcta
+    # (y también si el correo no existe: ver acceso.py).
+    acceso.comprobar_que_no_esta_bloqueado(db, datos.email)
 
+    usuario = db.query(models.Usuario).filter(models.Usuario.email == datos.email).first()
+    # Siempre se compara UNA contraseña con bcrypt, exista o no la cuenta (o si es solo de Google), para que el
+    # tiempo de respuesta no delate qué correos están registrados.
+    hash_real = usuario.password_hash if usuario else None
+    coincide = verificar_password(datos.password, hash_real or HASH_DE_RELLENO) and hash_real is not None
+    if not coincide:
+        restantes = acceso.registrar_fallo(db, datos.email)  # responde 429 si este fallo agota el tope
+        detalle = "Email o contraseña incorrectos"
+        if restantes <= acceso.AVISAR_CUANDO_QUEDEN:
+            detalle += f". Te quedan {restantes} intento{'s' if restantes != 1 else ''} antes de un bloqueo temporal."
+        raise HTTPException(status_code=401, detail=detalle)
+
+    acceso.limpiar_fallos(db, datos.email)
     token = crear_token(str(usuario.id), usuario.rol)
     return {"access_token": token, "token_type": "bearer"}
 

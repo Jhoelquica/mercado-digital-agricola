@@ -38,13 +38,15 @@ class ApiError extends Error {
 
 // FastAPI devuelve los errores de validación (422) como una lista de {loc, msg}: se convierte en un
 // texto legible ("costo_semillas: debe estar entre 0 y 9999999.99") en vez de mostrar el JSON crudo.
+const ETIQUETAS_DE_CAMPO = { password: 'Contraseña', email: 'Correo', nombre: 'Nombre' };
+
 function mensajeDeDetalle(detail) {
   if (typeof detail === 'string') return detail;
   if (Array.isArray(detail)) {
     return detail.map((e) => {
       const campo = Array.isArray(e.loc) ? e.loc.filter((parte) => parte !== 'body').join(' › ') : '';
       const mensaje = String(e.msg || '').replace(/^Value error, /, '');
-      return campo ? `${campo}: ${mensaje}` : mensaje;
+      return campo ? `${ETIQUETAS_DE_CAMPO[campo] || campo}: ${mensaje}` : mensaje;
     }).join(' · ');
   }
   return JSON.stringify(detail);

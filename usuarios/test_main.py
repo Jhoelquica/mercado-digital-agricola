@@ -558,3 +558,219 @@ def test_un_admin_puede_ver_cualquier_perfil():
 def test_un_id_de_usuario_mal_formado_falla_422_no_500():
     _auth(str(uuid.uuid4()), "comprador")
     assert client.get("/usuarios/no-es-un-uuid").status_code == 422
+
+
+# ============ Contraseña mínima al registrarse y bloqueo del login ============
+
+import acceso
+
+
+def _usuario_con_password(password, email=None, rol="comprador", password_hash="calcular"):
+    email = email or _email()
+    hash_ = seguridad.hashear_password(password) if password_hash == "calcular" else password_hash
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.Usuario(nombre="QA Login", email=email, password_hash=hash_, rol=rol))
+        db.commit()
+    finally:
+        db.close()
+    return email
+
+
+def _login(email, password):
+    return client.post("/usuarios/login", json={"email": email, "password": password})
+
+
+def _fila_de_intentos(email):
+    db = main.SessionLocal()
+    try:
+        fila = db.get(main.models.IntentoLogin, acceso.normalizar_email(email))
+        if fila is not None:
+            db.expunge(fila)
+        return fila
+    finally:
+        db.close()
+
+
+def _editar_intentos(email, **cambios):
+    db = main.SessionLocal()
+    try:
+        fila = db.get(main.models.IntentoLogin, acceso.normalizar_email(email))
+        for campo, valor in cambios.items():
+            setattr(fila, campo, valor)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _registrar(email, password):
+    return client.post("/usuarios/registro", json={"nombre": "QA Registro", "email": email, "password": password, "rol": "comprador"})
+
+
+def _existe_usuario(email):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Usuario).filter(main.models.Usuario.email == email).first() is not None
+    finally:
+        db.close()
+
+
+def test_el_registro_rechaza_contrasenas_cortas_largas_comunes_o_iguales_al_correo():
+    email = _email()
+    casos = [
+        ("abc1234", "al menos 8 caracteres"),
+        ("        ", "solo espacios"),
+        ("x" * 73, "demasiado larga"),
+        ("ñ" * 40, "demasiado larga"),  # 40 caracteres pero 80 bytes: bcrypt solo mira los 72 primeros
+        ("12345678", "demasiado común"),
+        ("PassWord", "demasiado común"),
+        (email, "igual a tu correo"),
+    ]
+    for password, motivo in casos:
+        resp = _registrar(email, password)
+        assert resp.status_code == 422, (password, resp.text)
+        assert motivo in resp.text, (password, resp.text)
+        assert not _existe_usuario(email)
+
+    for password in ("clave-larga-y-buena", "a" * 72, "abcd1234x"):
+        correo = _email()
+        assert _registrar(correo, password).status_code == 200, password
+        assert _login(correo, password).status_code == 200
+
+
+def test_una_cuenta_anterior_con_contrasena_corta_sigue_entrando():
+    """La regla de la contraseña se aplica solo al registrarse: no deja fuera a quien ya tenía cuenta."""
+    email = _usuario_con_password("abc")
+    assert _login(email, "abc").status_code == 200
+
+
+def test_el_login_rechaza_una_contrasena_enorme_con_422():
+    assert _login(_email(), "x" * 201).status_code == 422
+
+
+def test_el_primer_fallo_no_avisa_del_bloqueo_y_los_ultimos_si(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 8)
+    email = _usuario_con_password("la-buena-123")
+
+    primero = _login(email, "mala")
+    assert primero.status_code == 401
+    assert primero.json()["detail"] == "Email o contraseña incorrectos"
+
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 4)  # ahora faltan 4 - 1 = 3 intentos
+    segundo = _login(email, "mala")
+    assert segundo.status_code == 401
+    assert "Te quedan 2 intentos antes de un bloqueo temporal" in segundo.json()["detail"]
+
+
+def test_tras_los_fallos_seguidos_el_correo_se_bloquea_incluso_con_la_contrasena_correcta(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 4)
+    email = _usuario_con_password("la-buena-123")
+
+    detalles = [_login(email, "mala").json()["detail"] for _ in range(3)]
+    assert "Te quedan 3 intentos" in detalles[0] and "Te quedan 1 intento antes" in detalles[2]
+
+    ultimo = _login(email, "mala")  # el que agota el tope ya responde 429
+    assert ultimo.status_code == 429, ultimo.text
+    assert f"se bloqueó {acceso.BLOQUEO_LOGIN_MINUTOS} minutos" in ultimo.json()["detail"]
+    assert ultimo.headers["Retry-After"] == str(acceso.BLOQUEO_LOGIN_MINUTOS * 60)
+
+    correcta = _login(email, "la-buena-123")
+    assert correcta.status_code == 429, correcta.text
+    assert "access_token" not in correcta.text
+    assert "minuto(s)" in correcta.json()["detail"]
+
+
+def test_pasado_el_bloqueo_se_puede_entrar_y_se_reinicia_la_cuenta(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 3)
+    email = _usuario_con_password("la-buena-123")
+    for _ in range(3):
+        _login(email, "mala")
+    assert _login(email, "la-buena-123").status_code == 429
+
+    _editar_intentos(email, bloqueado_hasta=datetime.utcnow() - timedelta(seconds=1))  # pasó el tiempo
+
+    ok = _login(email, "la-buena-123")
+    assert ok.status_code == 200, ok.text
+    assert _fila_de_intentos(email) is None
+
+
+def test_un_correo_que_no_existe_se_bloquea_igual_y_con_los_mismos_mensajes(monkeypatch):
+    """Si solo se bloquearan las cuentas que existen, el bloqueo delataría qué correos están registrados."""
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 3)
+    real = _usuario_con_password("la-buena-123")
+    fantasma = _email()
+
+    respuestas_reales = [_login(real, "mala") for _ in range(3)]
+    respuestas_fantasma = [_login(fantasma, "mala") for _ in range(3)]
+
+    assert [r.status_code for r in respuestas_reales] == [r.status_code for r in respuestas_fantasma] == [401, 401, 429]
+    assert [r.json()["detail"] for r in respuestas_reales] == [r.json()["detail"] for r in respuestas_fantasma]
+
+
+def test_un_inicio_de_sesion_correcto_reinicia_la_cuenta(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 4)
+    email = _usuario_con_password("la-buena-123")
+
+    for _ in range(2):
+        assert _login(email, "mala").status_code == 401
+    assert _login(email, "la-buena-123").status_code == 200
+    for _ in range(2):
+        assert _login(email, "mala").status_code == 401  # 2 + 2 fallos, pero separados por un acierto: sin bloqueo
+    assert _fila_de_intentos(email).fallos == 2
+
+
+def test_los_fallos_de_hace_mas_de_una_hora_ya_no_cuentan(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 4)
+    email = _usuario_con_password("la-buena-123")
+    for _ in range(3):
+        _login(email, "mala")
+    _editar_intentos(email, ultimo_fallo=datetime.utcnow() - timedelta(minutes=acceso.OLVIDO_DE_FALLOS_MINUTOS + 5))
+
+    resp = _login(email, "mala")  # sin el olvido sería el 4º y bloquearía
+
+    assert resp.status_code == 401, resp.text
+    assert _fila_de_intentos(email).fallos == 1
+
+
+def test_el_correo_cuenta_igual_con_mayusculas_o_espacios_y_no_afecta_a_otras_cuentas(monkeypatch):
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 3)
+    email = _usuario_con_password("la-buena-123")
+    otra = _usuario_con_password("otra-buena-123")
+
+    assert _login(email.upper(), "mala").status_code == 401
+    assert _login(email, "mala").status_code == 401
+    assert _login(email.upper(), "mala").status_code == 429  # los tres intentos contaron para la misma cuenta
+
+    assert _login(otra, "otra-buena-123").status_code == 200  # otra cuenta no se enteró
+
+
+def test_los_correos_que_no_existen_no_llenan_la_tabla_para_siempre(monkeypatch):
+    viejo = _email()
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.IntentoLogin(email=viejo, fallos=2, ultimo_fallo=datetime.utcnow() - timedelta(hours=3)))
+        db.commit()
+    finally:
+        db.close()
+
+    _login(_email(), "mala")  # un fallo cualquiera limpia las filas viejas sin bloqueo vigente
+
+    assert _fila_de_intentos(viejo) is None
+
+
+def test_siempre_se_compara_una_contrasena_exista_o_no_la_cuenta(monkeypatch):
+    """Sin esto, responder más rápido a un correo desconocido delataba qué correos están registrados."""
+    comparaciones = []
+    original = main.verificar_password
+
+    def espia(password, hash_):
+        comparaciones.append(hash_)
+        return original(password, hash_)
+
+    monkeypatch.setattr(main, "verificar_password", espia)
+    solo_google = _usuario_con_password("no-importa", password_hash=None)
+
+    _login(_email(), "mala")  # el correo no existe
+    _login(solo_google, "mala")  # cuenta sin contraseña propia
+
+    assert comparaciones == [seguridad.HASH_DE_RELLENO, seguridad.HASH_DE_RELLENO]

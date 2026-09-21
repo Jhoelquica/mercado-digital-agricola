@@ -1,7 +1,7 @@
 import uuid
 import secrets
 from datetime import datetime, timedelta
-from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey
+from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -50,3 +50,14 @@ class Invitacion(Base):
     creado_por = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=False)
     fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
     fecha_expiracion = Column(DateTime, nullable=False, default=_expiracion_default)
+
+
+class IntentoLogin(Base):
+    """Fallos seguidos de login por correo (exista o no la cuenta) y, si se agotó el tope, hasta cuándo está
+    bloqueado — ver acceso.py. Tabla nueva: la crea Base.metadata.create_all() al arrancar."""
+    __tablename__ = "intentos_login"
+
+    email = Column(String, primary_key=True)  # normalizado: sin espacios y en minúsculas
+    fallos = Column(Integer, nullable=False, default=0)
+    ultimo_fallo = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    bloqueado_hasta = Column(DateTime, nullable=True)

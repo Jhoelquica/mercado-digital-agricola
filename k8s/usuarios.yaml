@@ -36,6 +36,13 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
+            # Bloqueo del login: tras MAX_INTENTOS_LOGIN contraseñas incorrectas seguidas para un mismo correo
+            # (exista o no) ese correo no puede iniciar sesión durante BLOQUEO_LOGIN_MINUTOS. Ajustables sin
+            # tocar código (ver usuarios/acceso.py).
+            - name: MAX_INTENTOS_LOGIN
+              value: "8"
+            - name: BLOQUEO_LOGIN_MINUTOS
+              value: "10"
             # Antes dependía del fallback hardcodeado "clave-interna-servicios" en el código
             # (nunca estuvo wireada acá) — ahora requerida explícitamente, sin fallback.
             - name: QA_LIMPIEZA_SECRETO
