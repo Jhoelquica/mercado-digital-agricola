@@ -903,7 +903,8 @@ def test_crear_desde_cosecha_con_equivalencia_kg_se_propaga_y_aparece_en_get():
     producto_id = resp.json()["id"]
     assert float(resp.json()["equivalencia_kg"]) == 1.03
 
-    detalle = client.get(f"/productos/{producto_id}")
+    # nace como borrador: el detalle de un borrador solo lo ve su productor o el admin (aquí, un admin)
+    detalle = client.get(f"/productos/{producto_id}", headers=_con_sesion(uuid.uuid4(), "admin"))
     assert detalle.status_code == 200, detalle.text
     assert float(detalle.json()["equivalencia_kg"]) == 1.03
 
@@ -1277,3 +1278,142 @@ def test_descontar_lote_tambien_lo_acepta_del_secreto_de_pagos(monkeypatch):
     for cabeceras in ({}, {"X-Servicio-Secreto": ""}):
         assert client.post("/productos/interno/descontar-stock-lote", json=cuerpo, headers=cabeceras).status_code == 403
     assert _stock_de(producto.id) == 8
+
+
+# ============ GET /productos/{id}: un borrador solo lo ve su productor (o el admin) ============
+
+def _token_real(sub, rol, segundos=3600):
+    """usuario_opcional decodifica el token por su cuenta (no pasa por verificar_token), así que estos tests
+    firman uno de verdad con el mismo secreto del servicio."""
+    import time
+
+    import auth
+    from jose import jwt
+    return jwt.encode({"sub": str(sub), "rol": rol, "exp": int(time.time()) + segundos}, auth.JWT_SECRET, algorithm="HS256")
+
+
+def _con_sesion(sub, rol, **kwargs):
+    return {"Authorization": f"Bearer {_token_real(sub, rol, **kwargs)}"}
+
+
+def _borrador_de_prueba():
+    return _crear_producto_directo(nombre="Borrador Privado", estado="borrador", precio=None, categoria=None)
+
+
+def test_un_visitante_no_ve_un_borrador_pero_si_los_productos_publicados():
+    """Antes cualquiera que conociera el id leía un borrador (productor, stock, precio) sin sesión."""
+    borrador = _borrador_de_prueba()
+    en_transito = _crear_producto_directo(estado="en_transito")
+    disponible = _crear_producto_directo(estado="disponible")
+
+    resp = client.get(f"/productos/{borrador.id}")
+    assert resp.status_code == 404, resp.text
+    assert "Borrador Privado" not in resp.text
+    assert client.get(f"/productos/{en_transito.id}").status_code == 200
+    assert client.get(f"/productos/{disponible.id}").status_code == 200
+
+
+def test_el_productor_dueno_y_el_admin_ven_el_borrador(monkeypatch):
+    borrador = _borrador_de_prueba()
+    _mockear_productores_me(monkeypatch, str(borrador.productor_id))
+
+    dueno = client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), "productor"))
+    assert dueno.status_code == 200, dueno.text
+    assert dueno.json()["estado"] == "borrador" and dueno.json()["nombre"] == "Borrador Privado"
+
+    admin = client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), "admin"))
+    assert admin.status_code == 200, admin.text
+
+
+def test_otro_productor_un_comprador_y_un_verificador_no_ven_el_borrador(monkeypatch):
+    borrador = _borrador_de_prueba()
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))  # el perfil del productor que pregunta NO es el dueño
+
+    for rol in ("productor", "comprador", "verificador", "repartidor"):
+        resp = client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), rol))
+        assert resp.status_code == 404, (rol, resp.text)
+        assert "Borrador Privado" not in resp.text
+
+
+def test_un_token_vencido_o_invalido_se_trata_como_visitante_sin_dar_401():
+    """Mirar un producto público no exige sesión: un token vencido no debe romper la página (ni cerrar la sesión)."""
+    borrador = _borrador_de_prueba()
+    disponible = _crear_producto_directo(estado="disponible")
+    vencido = _con_sesion(uuid.uuid4(), "productor", segundos=-60)
+    basura = {"Authorization": "Bearer esto-no-es-un-token"}
+
+    for cabeceras in (vencido, basura):
+        assert client.get(f"/productos/{disponible.id}", headers=cabeceras).status_code == 200
+        assert client.get(f"/productos/{borrador.id}", headers=cabeceras).status_code == 404
+
+
+def test_si_productores_no_responde_un_productor_que_pide_un_borrador_recibe_503(monkeypatch):
+    borrador = _borrador_de_prueba()
+    _mockear_productores_me(monkeypatch, "", status_code=503)  # /productores/me responde con error
+
+    resp = client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), "productor"))
+
+    assert resp.status_code == 404  # sin perfil de productor no es el dueño
+    # y si el servicio ni siquiera contesta:
+    class _Caido:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def get(self, *a, **kw):
+            raise main.httpx.RequestError("boom")
+
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _Caido())
+    resp = client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), "productor"))
+    assert resp.status_code == 503, resp.text
+
+
+def test_un_borrador_no_se_guarda_ni_se_sirve_desde_la_cache(monkeypatch):
+    borrador = _borrador_de_prueba()
+    publicado = _crear_producto_directo(estado="disponible")
+    _mockear_productores_me(monkeypatch, str(borrador.productor_id))
+    guardar = MagicMock()
+    monkeypatch.setattr(main.cache, "guardar", guardar)
+
+    assert client.get(f"/productos/{publicado.id}").status_code == 200
+    assert guardar.call_count == 1  # lo publicado sí se cachea
+
+    assert client.get(f"/productos/{borrador.id}", headers=_con_sesion(uuid.uuid4(), "productor")).status_code == 200
+    assert guardar.call_count == 1  # el borrador no
+
+    # una entrada de la caché que era de un borrador (o sin "estado", de antes) no se sirve a un visitante
+    for entrada in ({"estado": "borrador", "nombre": "Borrador Privado"}, {"nombre": "Borrador Privado"}):
+        monkeypatch.setattr(main.cache, "obtener", lambda clave, entrada=entrada: entrada)
+        resp = client.get(f"/productos/{borrador.id}")
+        assert resp.status_code == 404, (entrada, resp.text)
+
+    # y una entrada publicada sí se sirve tal cual
+    monkeypatch.setattr(main.cache, "obtener", lambda clave: {"estado": "disponible", "nombre": "Desde caché"})
+    assert client.get(f"/productos/{publicado.id}").json()["nombre"] == "Desde caché"
+
+
+def test_un_id_de_producto_mal_formado_falla_422():
+    assert client.get("/productos/no-es-un-uuid").status_code == 422
+    assert client.get("/productos/no-es-un-uuid/unidades").status_code == 422
+
+
+def test_las_unidades_alternativas_de_un_borrador_solo_las_ve_su_productor(monkeypatch):
+    borrador = _borrador_de_prueba()
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.UnidadAlternativa(producto_id=borrador.id, unidad="saco", precio=45, factor_a_base=10))
+        db.commit()
+    finally:
+        db.close()
+
+    assert client.get(f"/productos/{borrador.id}/unidades").json() == []  # visitante: como si no hubiera ninguna
+
+    _mockear_productores_me(monkeypatch, str(borrador.productor_id))
+    propias = client.get(f"/productos/{borrador.id}/unidades", headers=_con_sesion(uuid.uuid4(), "productor"))
+    assert propias.status_code == 200 and [u["unidad"] for u in propias.json()] == ["saco"]
+
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()))
+    ajenas = client.get(f"/productos/{borrador.id}/unidades", headers=_con_sesion(uuid.uuid4(), "productor"))
+    assert ajenas.json() == []

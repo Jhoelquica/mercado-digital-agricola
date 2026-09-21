@@ -9,6 +9,20 @@ JWT_ALGORITHM = "HS256"
 
 security = HTTPBearer()
 
+# Para rutas públicas que muestran algo distinto según quién mira (un borrador solo lo ve su productor): trae
+# al usuario si el token es válido y, si no hay token o está vencido, sigue como visitante en vez de dar 401
+# (mirar un producto público no exige sesión).
+security_opcional = HTTPBearer(auto_error=False)
+
+
+def usuario_opcional(credentials: HTTPAuthorizationCredentials | None = Depends(security_opcional)):
+    if credentials is None:
+        return None
+    try:
+        return jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+
 def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
     try:

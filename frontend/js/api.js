@@ -53,7 +53,11 @@ function mensajeDeDetalle(detail) {
 async function request(baseKey, path, { method = 'GET', body, auth = false } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   let tokenUsado = null;
-  if (auth) {
+  if (auth === 'opcional') {
+    // Ruta pública que muestra más a su dueño (un borrador): si hay sesión se manda el token, si no se pide como
+    // visitante. Un token vencido no cierra la sesión aquí (el servidor lo trata como visitante, sin 401).
+    if (Estado.token) headers['Authorization'] = `Bearer ${Estado.token}`;
+  } else if (auth) {
     const token = Estado.token;
     if (!token) throw new ApiError('Debes iniciar sesión para continuar.', 401);
     headers['Authorization'] = `Bearer ${token}`;
@@ -174,7 +178,8 @@ const Api = {
   productos: {
     listar: () => request('productos', '/productos'),
     mios: () => request('productos', '/productos/mios', { auth: true }),
-    obtener: (id) => request('productos', `/productos/${id}`),
+    // Con sesión si la hay: el detalle de un borrador solo lo devuelve a su productor (y al admin).
+    obtener: (id) => request('productos', `/productos/${id}`, { auth: 'opcional' }),
     precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
     actualizar: (id, datos) => request('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
     publicar: (id) => request('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),
@@ -192,7 +197,7 @@ const Api = {
     eliminarImagen: (imagenId) => request('productos', `/productos/imagenes/${imagenId}`, { method: 'DELETE', auth: true }),
     actualizarOrdenImagen: (imagenId, orden) => request('productos', `/productos/imagenes/${imagenId}/orden`, { method: 'PATCH', body: { orden }, auth: true }),
     unidades: {
-      listar: (id) => request('productos', `/productos/${id}/unidades`),
+      listar: (id) => request('productos', `/productos/${id}/unidades`, { auth: 'opcional' }),
       crear: (id, datos) => request('productos', `/productos/${id}/unidades`, { method: 'POST', body: datos, auth: true }),
       editar: (unidadId, datos) => request('productos', `/productos/unidades/${unidadId}`, { method: 'PATCH', body: datos, auth: true }),
       eliminar: (unidadId) => request('productos', `/productos/unidades/${unidadId}`, { method: 'DELETE', auth: true }),

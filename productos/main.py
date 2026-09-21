@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from auth import verificar_token, requiere_rol, security
+from auth import verificar_token, requiere_rol, security, security_opcional, usuario_opcional
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
@@ -627,15 +627,47 @@ def busquedas_populares(db: Session = Depends(get_db)):
     )
     return [{"termino": termino, "total": total} for termino, total in resultados]
 
+def _puede_ver_el_borrador(producto, usuario, credenciales) -> bool:
+    """Un borrador (todavía sin publicar: sin precio confirmado, sin imagen, sin revisión del productor) lo ven
+    solo su productor y el admin. Antes GET /productos/{id} lo devolvía a cualquiera que conociera el id."""
+    if usuario is None:
+        return False
+    if usuario.get("rol") == "admin":
+        return True
+    if usuario.get("rol") != "productor" or credenciales is None:
+        return False
+    with httpx.Client() as client:
+        try:
+            resp = client.get(
+                f"{PRODUCTORES_URL}/productores/me",
+                headers={"Authorization": f"Bearer {credenciales.credentials}"},
+                timeout=5,
+            )
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    return resp.status_code == 200 and str(producto.productor_id) == str(resp.json().get("id"))
+
+
 @app.get("/productos/{producto_id}")
-def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
+def obtener_producto(
+        producto_id: uuid.UUID,
+        db: Session = Depends(get_db),
+        usuario: dict | None = Depends(usuario_opcional),
+        credenciales: HTTPAuthorizationCredentials | None = Depends(security_opcional),
+):
+    producto_id = str(producto_id)
     clave = cache.clave_detalle(producto_id)
     cacheado = cache.obtener(clave)
-    if cacheado is not None:
+    # Un borrador nunca se sirve desde la caché (ni se guarda en ella): esa respuesta la comparten todos los
+    # visitantes. Una entrada sin "estado" es de antes de que el detalle lo trajera: se ignora por si era un borrador.
+    if cacheado is not None and cacheado.get("estado") not in (None, "borrador"):
         return cacheado
 
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
+        raise HTTPException(status_code=404, detail="Producto no encontrado")
+    if producto.estado == "borrador" and not _puede_ver_el_borrador(producto, usuario, credenciales):
+        # 404 y no 403: a quien no es el dueño no se le confirma ni que existe
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     imagenes = db.query(models.ProductoImagen).filter(
@@ -675,7 +707,8 @@ def obtener_producto(producto_id: str, db: Session = Depends(get_db)):
             for u in unidades_alt
         ],
     }
-    cache.guardar(clave, resultado)
+    if producto.estado != "borrador":
+        cache.guardar(clave, resultado)
     return resultado
 
 # Descuenta el stock de TODAS las líneas de un pedido en una sola transacción: o se descuentan todas o no
@@ -785,11 +818,20 @@ def actualizar_producto(
     return producto
 
 @app.get("/productos/{producto_id}/unidades")
-def listar_unidades_alternativas(producto_id: str, db: Session = Depends(get_db)):
-    # Público, sin auth: el comprador necesita verlas en el catálogo/detalle (aunque en la
+def listar_unidades_alternativas(
+        producto_id: uuid.UUID,
+        db: Session = Depends(get_db),
+        usuario: dict | None = Depends(usuario_opcional),
+        credenciales: HTTPAuthorizationCredentials | None = Depends(security_opcional),
+):
+    # Público: el comprador necesita verlas en el catálogo/detalle (aunque en la
     # práctica el frontend las trae embebidas en GET /productos y GET /productos/{id} — este
     # endpoint queda para consultarlas sueltas si hace falta). Mismo criterio que listar_resenas:
-    # sin 404 si el producto no existe, simplemente no hay filas que devolver.
+    # sin 404 si el producto no existe, simplemente no hay filas que devolver. Las de un borrador solo las
+    # ve su productor (o el admin): para el resto, como si no hubiera ninguna.
+    producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
+    if producto is not None and producto.estado == "borrador" and not _puede_ver_el_borrador(producto, usuario, credenciales):
+        return []
     return db.query(models.UnidadAlternativa).filter(
         models.UnidadAlternativa.producto_id == producto_id
     ).order_by(models.UnidadAlternativa.unidad).all()
