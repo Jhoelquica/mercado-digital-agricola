@@ -521,6 +521,28 @@ def obtener_pedido_interno(
     return _pedido_o_404(db, pedido_id)
 
 
+# Lo que un repartidor necesita para decidir si acepta un envío que se le PROPONE: cuánto hay que recorrer, cuánto
+# pesa y cuánto se paga. Sin nombre, teléfono ni coordenadas del comprador: el pedido completo solo se ve una vez
+# aceptado el envío (ver más abajo). Ruta interna, con el secreto de Transporte, que la pide para armar la lista de
+# propuestas. distancia_km es la del almacén al destino (la misma con la que se calculó la tarifa).
+@app.get("/pedidos/interno/{pedido_id}/resumen-entrega")
+def resumen_de_entrega_interno(
+    pedido_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    x_servicio_secreto: str = Header(None),
+):
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_PEDIDOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    pedido = _pedido_o_404(db, pedido_id)
+    distancia_km, _ = calcular_envio_a_destino(db, pedido.destino_latitud, pedido.destino_longitud)
+    return {
+        "distancia_km": distancia_km,
+        "peso_total_kg": float(pedido.peso_total_kg) if pedido.peso_total_kg is not None else None,
+        "costo_envio": float(pedido.costo_envio),
+        "requiere_vehiculo_grande": bool(pedido.requiere_vehiculo_grande),
+    }
+
+
 # El repartidor solo ve el pedido (nombre, teléfono y dirección del comprador) cuando ya aceptó el envío: una
 # propuesta que todavía no aceptó, o que rechazó, no cuenta.
 ESTADOS_DE_ENVIO_CON_ACCESO_AL_PEDIDO = ("asignado", "en_camino", "entregado")

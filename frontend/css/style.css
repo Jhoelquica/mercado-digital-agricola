@@ -1738,6 +1738,24 @@ input, select { font-family: inherit; }
   box-shadow: var(--sombra-hover);
 }
 .propuesta-actions { display: flex; gap: 10px; margin-top: 14px; }
+
+/* Datos para decidir (distancia, peso, tarifa): tres cifras grandes y comparables de un vistazo, con la etiqueta
+   debajo; el ícono en dorado cosecha como el resto de acentos del panel. Cifras tabulares para que no salten. */
+.propuesta-metricas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.propuesta-metrica {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  padding: 10px 12px; border-radius: 12px; background: #fff; border: 1px solid var(--borde);
+}
+.propuesta-metrica i { color: var(--acento-cosecha); font-size: 1.15rem; line-height: 1; margin-bottom: 4px; }
+.propuesta-metrica strong {
+  font-family: var(--font-titulo); font-size: 1.05rem; line-height: 1.2; color: var(--texto);
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.propuesta-metrica span { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--texto-suave); }
+.propuesta-aviso {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 0; padding: 8px 12px; border-radius: 10px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.82rem; font-weight: 600;
+}
 .propuesta-actions .btn { flex: 1; padding: 12px 16px; font-size: 0.92rem; }
 
 .pedido-card-activo {

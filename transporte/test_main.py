@@ -1287,3 +1287,68 @@ def test_una_foto_valida_se_sube_con_el_tipo_detectado_y_entrega(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert subidas == [(FOTO_PNG_VALIDA, "image/png")]
     assert _envio_recargado(envio.id).estado == "entregado"
+
+
+# ============ GET /envios/propuestas: cada propuesta trae distancia, peso y tarifa del pedido ============
+
+RESUMEN_DE_PRUEBA = {"distancia_km": 12.4, "peso_total_kg": 30.0, "costo_envio": 8.0, "requiere_vehiculo_grande": False}
+
+
+def test_una_propuesta_trae_el_resumen_del_pedido_para_decidir(monkeypatch):
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    propuesto = _crear_envio_directo(repartidor.id, estado="propuesto", pin_entrega="7391")
+    llamadas = _mockear_pedidos(monkeypatch, RESUMEN_DE_PRUEBA)
+
+    _auth(usuario)
+    resp = client.get("/envios/propuestas")
+
+    assert resp.status_code == 200, resp.text
+    [propuesta] = resp.json()
+    assert propuesta["id"] == str(propuesto.id)
+    assert propuesta["resumen"] == RESUMEN_DE_PRUEBA
+    assert "7391" not in resp.text  # el PIN sigue sin salir
+    # se le pide a Pedidos por la ruta interna y con el secreto de servicio
+    url, kwargs = llamadas[0]
+    assert url.endswith(f"/pedidos/interno/{propuesto.pedido_id}/resumen-entrega")
+    assert "X-Servicio-Secreto" in kwargs["headers"]
+
+
+def test_si_pedidos_no_responde_la_propuesta_se_muestra_igual_sin_resumen_y_no_se_insiste(monkeypatch):
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    _crear_envio_directo(repartidor.id, estado="propuesto")
+    _crear_envio_directo(repartidor.id, estado="propuesto")
+    llamadas = _mockear_pedidos(monkeypatch, None, roto=True)
+
+    _auth(usuario)
+    resp = client.get("/envios/propuestas")
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()) == 2 and all(p["resumen"] is None for p in resp.json())
+    assert len(llamadas) == 1  # tras el primer fallo de conexión no se le pregunta por las demás
+
+
+def test_un_pedido_sin_resumen_o_con_respuesta_rara_deja_esa_propuesta_sin_datos(monkeypatch):
+    usuario = str(uuid.uuid4())
+    repartidor = _crear_repartidor_directo(usuario_id=usuario)
+    _crear_envio_directo(repartidor.id, estado="propuesto")
+
+    for status, cuerpo in ((404, {"detail": "Pedido no encontrado"}), (503, {}), (200, {"distancia_km": "no-es-un-numero"})):
+        _mockear_pedidos(monkeypatch, cuerpo, status=status)
+        _auth(usuario)
+        resp = client.get("/envios/propuestas")
+        assert resp.status_code == 200, (status, resp.text)
+        assert resp.json()[0]["resumen"] is None, status
+
+
+def test_sin_propuestas_no_se_le_pregunta_nada_a_pedidos(monkeypatch):
+    usuario = str(uuid.uuid4())
+    _crear_repartidor_directo(usuario_id=usuario)
+    llamadas = _mockear_pedidos(monkeypatch, RESUMEN_DE_PRUEBA)
+
+    _auth(usuario)
+    resp = client.get("/envios/propuestas")
+
+    assert resp.status_code == 200 and resp.json() == []
+    assert llamadas == []

@@ -5780,6 +5780,30 @@ async function crearPerfilRepartidor(e) {
   }
 }
 
+// Lo que el repartidor necesita para decidir si acepta: cuánto hay que recorrer, cuánto pesa y cuánto se paga
+// (Pedidos → Transporte, sin datos del comprador: nombre y teléfono solo se ven una vez aceptado el envío). Si
+// Pedidos no respondió, `resumen` viene null y la propuesta se muestra sin esta franja.
+function renderMetricasPropuesta(resumen) {
+  if (!resumen) return '';
+  const numero = (valor) => Number(valor).toLocaleString('es-PE', { maximumFractionDigits: 1 });
+  const dato = (icono, valor, etiqueta) => `
+    <div class="propuesta-metrica">
+      <i class="ti ti-${icono}" aria-hidden="true"></i>
+      <strong>${valor}</strong>
+      <span>${etiqueta}</span>
+    </div>`;
+  const distancia = resumen.distancia_km != null ? `${numero(resumen.distancia_km)} km` : '—';
+  const peso = resumen.peso_total_kg != null ? `${numero(resumen.peso_total_kg)} kg` : 'Sin dato';
+  const tarifa = resumen.costo_envio != null ? formatearMoneda(resumen.costo_envio) : '—';
+  return `
+    <div class="propuesta-metricas" role="group" aria-label="Datos del envío">
+      ${dato('route', distancia, 'Desde el almacén')}
+      ${dato('weight', peso, 'Peso')}
+      ${dato('cash', tarifa, 'Tarifa')}
+    </div>
+    ${resumen.requiere_vehiculo_grande ? '<p class="propuesta-aviso"><i class="ti ti-truck" aria-hidden="true"></i> Pedido grande: pide un vehículo con más capacidad.</p>' : ''}`;
+}
+
 function renderTarjetaPropuesta(envio, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   return `
@@ -5791,6 +5815,7 @@ function renderTarjetaPropuesta(envio, indice = 0) {
         </div>
         ${badgeEstadoEnvio(envio.estado || 'propuesto')}
       </div>
+      ${renderMetricasPropuesta(envio.resumen)}
       <div class="propuesta-actions">
         <button type="button" class="btn btn-outline btn-rechazar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-x"></i> Rechazar</button>
         <button type="button" class="btn btn-primary btn-aceptar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-check"></i> Aceptar envío</button>

@@ -144,6 +144,19 @@ class EnvioConPin(EnvioSalida):
     pin_entrega: str | None = None
 
 
+class ResumenEntrega(BaseModel):
+    """Lo que el repartidor ve de un pedido para decidir si acepta la propuesta (sin datos del comprador)."""
+    distancia_km: float | None = None
+    peso_total_kg: float | None = None
+    costo_envio: float | None = None
+    requiere_vehiculo_grande: bool | None = None
+
+
+class PropuestaSalida(EnvioSalida):
+    # None si Pedidos no respondió: la propuesta se muestra igual, solo sin estos datos.
+    resumen: ResumenEntrega | None = None
+
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "transporte"}
@@ -159,8 +172,31 @@ def listar_envios(db: Session = Depends(get_db), usuario: dict = Depends(requier
         return []
     return db.query(models.Envio).filter(models.Envio.repartidor_id == repartidor.id).all()
 
+def _resumenes_de_entrega(pedidos_ids) -> dict:
+    """pedido_id -> ResumenEntrega, pidiéndoselo a Pedidos por su ruta interna (con el secreto de servicio). Lo que
+    no se pueda obtener queda fuera (la propuesta se muestra sin esos datos): si Pedidos no responde no se insiste
+    con las demás, para no sumar un tiempo de espera por cada propuesta."""
+    resumenes = {}
+    try:
+        with httpx.Client() as client:
+            for pedido_id in pedidos_ids:
+                resp = client.get(
+                    f"{PEDIDOS_URL}/pedidos/interno/{pedido_id}/resumen-entrega",
+                    headers=cabecera_pedidos(),
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    try:
+                        resumenes[pedido_id] = ResumenEntrega(**resp.json())
+                    except (ValueError, TypeError):
+                        pass
+    except httpx.RequestError:
+        pass
+    return resumenes
+
+
 #ENDPOINT PARA VER PROPUESTAS PENDIENTES
-@app.get("/envios/propuestas", response_model=list[EnvioSalida])
+@app.get("/envios/propuestas", response_model=list[PropuestaSalida])
 def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
     repartidor = db.query(models.Repartidor).filter(
         models.Repartidor.usuario_id == usuario.get("sub")
@@ -168,10 +204,17 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
 
-    return db.query(models.Envio).filter(
+    envios = db.query(models.Envio).filter(
         models.Envio.repartidor_id == repartidor.id,
         models.Envio.estado == "propuesto"
     ).all()
+    resumenes = _resumenes_de_entrega([e.pedido_id for e in envios])
+    propuestas = []
+    for envio in envios:
+        propuesta = PropuestaSalida.model_validate(envio)
+        propuesta.resumen = resumenes.get(envio.pedido_id)
+        propuestas.append(propuesta)
+    return propuestas
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")

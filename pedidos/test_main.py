@@ -577,6 +577,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     protegidos = [
         ("DELETE", f"/pedidos/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
         ("GET", f"/pedidos/interno/{_uuid.uuid4()}", None, "TRANSPORTE_A_PEDIDOS_SECRETO"),
+        ("GET", f"/pedidos/interno/{_uuid.uuid4()}/resumen-entrega", None, "TRANSPORTE_A_PEDIDOS_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
         for valor in (None, ""):
@@ -884,3 +885,54 @@ def test_el_evento_pedido_creado_lleva_la_cantidad_en_unidad_base_de_cada_linea(
     assert (en_sacos["cantidad"], en_sacos["unidad"], en_sacos["cantidad_base"]) == (3, "saco", 30.0)
     assert (en_base["cantidad"], en_base["unidad"], en_base["cantidad_base"]) == (2, None, 2)
     assert en_sacos["precio_unitario"] == 45.0
+
+
+# ============ GET /pedidos/interno/{id}/resumen-entrega: lo que ve un repartidor antes de aceptar ============
+
+def test_el_resumen_de_entrega_trae_distancia_peso_y_tarifa_sin_datos_del_comprador(monkeypatch):
+    """El repartidor decide si acepta una propuesta con esto; el pedido completo (nombre, teléfono, coordenadas) solo
+    se ve una vez aceptado el envío."""
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-transporte")
+
+    resp = client.get(f"/pedidos/interno/{pedido_id}/resumen-entrega", headers={"X-Servicio-Secreto": "secreto-transporte"})
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert set(cuerpo) == {"distancia_km", "peso_total_kg", "costo_envio", "requiere_vehiculo_grande"}
+    db = main.SessionLocal()
+    try:
+        pedido = db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).first()
+        distancia, _ = main.calcular_envio_a_destino(db, pedido.destino_latitud, pedido.destino_longitud)
+        assert cuerpo["distancia_km"] == distancia
+        assert cuerpo["costo_envio"] == float(pedido.costo_envio)
+        assert cuerpo["peso_total_kg"] == (float(pedido.peso_total_kg) if pedido.peso_total_kg is not None else None)
+        assert cuerpo["requiere_vehiculo_grande"] == bool(pedido.requiere_vehiculo_grande)
+    finally:
+        db.close()
+    # nada del comprador: ni su nombre, ni su teléfono, ni las coordenadas exactas del destino
+    assert "Cliente de prueba" not in resp.text and "987654321" not in resp.text
+    assert str(DESTINO_DENTRO_AYACUCHO["destino_latitud"]) not in resp.text
+
+
+def test_el_resumen_de_entrega_solo_lo_da_a_transporte_con_su_secreto(monkeypatch):
+    pedido_id = _crear_pedido_de(str(uuid.uuid4()))
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-transporte")
+    ruta = f"/pedidos/interno/{pedido_id}/resumen-entrega"
+
+    assert client.get(ruta).status_code == 403
+    assert client.get(ruta, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
+    # una sesión de usuario (aunque sea admin) no reemplaza al secreto de servicio
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        assert client.get(ruta, headers=CON_TOKEN).status_code == 403
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_el_resumen_de_entrega_de_un_pedido_que_no_existe_falla_404_y_un_id_mal_formado_422(monkeypatch):
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-transporte")
+    cabeceras = {"X-Servicio-Secreto": "secreto-transporte"}
+
+    assert client.get(f"/pedidos/interno/{uuid.uuid4()}/resumen-entrega", headers=cabeceras).status_code == 404
+    assert client.get("/pedidos/interno/no-es-uuid/resumen-entrega", headers=cabeceras).status_code == 422
