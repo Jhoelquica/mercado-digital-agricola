@@ -16,6 +16,7 @@ Los manifiestos de `k8s/` **no se tocan**: los scripts de esta carpeta generan l
 | Reiniciar una base de datos: solo hay error mientras está caída; al volver, todo responde bien (`pool_pre_ping`) | |
 | Las bases y MinIO se actualizan con `Recreate` (antes `RollingUpdate`, con riesgo de dos bases sobre el mismo volumen) | |
 | La semilla de datos demo por el gateway | Google Sign-In con el dominio nuevo |
+| Las 8 imágenes con versiones fijas (`pip freeze`) y usuario no-root (uid 10001): 379 tests dentro de cada imagen, paridad de 384 llamadas sin diferencias, subida de fotos a MinIO y consumidores de RabbitMQ conectados | |
 
 ## Lo que necesitas de tu lado
 
@@ -145,9 +146,8 @@ kubectl apply -f deploy/gcp/salida/manifiestos.yaml
 - **Sin monitoreo** (Prometheus/Grafana traen `admin/admin123`). Si lo quieres, ponle contraseña y déjalo en ClusterIP.
 - Los endpoints internos entre servicios (con `X-Servicio-Secreto`) son alcanzables por el gateway y solo los protege ese secreto de 64 caracteres al azar.
 - **Culqi en modo de prueba** salvo que pases las llaves reales.
-- **Las imágenes de los servicios corren como root y sus dependencias no tienen versión fija** (cada construcción instala lo último de
-  PyPI; ya se vio SQLAlchemy y uvicorn de versiones distintas entre servicios). Hay un cambio listo que lo arregla (versiones fijas con
-  `pip freeze` y usuario no-root), guardado en el `git stash` con el nombre "PENDIENTE": no se pudo probar porque construir las
-  imágenes exige red. Para retomarlo: `git stash pop`, construir las 8 imágenes, correr sus tests y hacer commit.
+- **Las dependencias de los servicios quedan fijas en cada `requirements.txt`** (salida de `pip freeze`, con las versiones que se probaron):
+  una construcción nueva instala exactamente eso. Para actualizar algo hay que cambiar su versión, reconstruir la imagen y correr los tests
+  del servicio. Los servicios corren como usuario no-root (uid 10001), pero **los paquetes de prueba (pytest) siguen dentro de la imagen**.
 - Las cuentas de un mismo correo se **bloquean 10 minutos tras 8 fallos** (por correo, existan o no): protege de la fuerza bruta, pero
   alguien podría bloquear a propósito la cuenta de otra persona. Es una decisión deliberada para una demo.
