@@ -5866,9 +5866,32 @@ function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
           <label>Código del comprador
             <input type="text" name="pin" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required placeholder="0000">
           </label>
-          <label>Foto de la entrega
-            <input type="file" name="foto" accept="image/jpeg,image/png,image/webp" required>
-          </label>
+          <div class="foto-entrega" data-estado="vacia">
+            <span class="foto-entrega-titulo" id="foto-titulo-${envio.id}">Foto de la entrega</span>
+            <!-- El input nativo queda oculto pero operable con teclado (el foco se ve en la zona, ver :focus-within);
+                 en el celular "capture" abre la cámara directamente. Sin "required": la falta de foto se avisa en
+                 el propio formulario (confirmarEntregaConPin), no con la burbuja del navegador. -->
+            <input class="foto-entrega-input" id="foto-${envio.id}" type="file" name="foto" accept="image/jpeg,image/png,image/webp" capture="environment" aria-labelledby="foto-titulo-${envio.id}" aria-describedby="foto-ayuda-${envio.id}">
+            <label class="foto-entrega-zona" for="foto-${envio.id}">
+              <span class="foto-entrega-icono"><i class="ti ti-camera" aria-hidden="true"></i></span>
+              <span class="foto-entrega-texto">
+                <strong>Tomar o elegir foto</strong>
+                <small>Del paquete entregado · JPG, PNG o WEBP · máx. 5 MB</small>
+              </span>
+            </label>
+            <div class="foto-entrega-previa">
+              <img alt="Vista previa de la foto de la entrega">
+              <div class="foto-entrega-datos">
+                <strong class="foto-nombre"></strong>
+                <small class="foto-peso"></small>
+              </div>
+              <div class="foto-entrega-botones">
+                <button type="button" class="btn btn-ghost btn-sm foto-cambiar"><i class="ti ti-refresh" aria-hidden="true"></i> Cambiar</button>
+                <button type="button" class="btn btn-ghost btn-sm foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
+              </div>
+            </div>
+            <p class="foto-entrega-ayuda" id="foto-ayuda-${envio.id}" role="status" aria-live="polite"></p>
+          </div>
         </div>
         <p class="form-entrega-mensaje hidden" role="alert"></p>
         <div class="form-confirmar-entrega-acciones">
@@ -5964,7 +5987,11 @@ async function confirmarEntregaConPin(form) {
   const envioId = form.dataset.envioId;
   const pin = form.pin.value.trim();
   const archivoFoto = form.foto.files[0];
-  if (!archivoFoto) return;
+  if (!archivoFoto) {
+    mostrarMensajeEntrega(form, 'Agrega la foto de la entrega antes de confirmar.', 'error');
+    form.foto.focus();
+    return;
+  }
 
   const btnConfirmar = form.querySelector('button[type="submit"]');
   form.querySelector('.form-entrega-mensaje')?.classList.add('hidden');
@@ -5996,6 +6023,58 @@ async function confirmarEntregaConPin(form) {
       }
     }
   }
+}
+
+// ---- Selector de la foto de entrega: vista previa, nombre y peso, y validación al momento (mismo tope y tipos que
+// el servidor, ver imagenes.py; el servidor vuelve a comprobarlo todo). ----
+const FOTO_TIPOS_VALIDOS = ['image/jpeg', 'image/png', 'image/webp'];
+const FOTO_TAMANO_MAXIMO = 5 * 1024 * 1024;
+
+function formatearTamanoArchivo(bytes) {
+  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// estado: 'vacia' (zona para elegir), 'lista' (vista previa con Cambiar/Quitar) o 'error' (la zona con el motivo)
+function pintarFotoEntrega(contenedor, estado, { archivo = null, mensaje = '' } = {}) {
+  contenedor.dataset.estado = estado;
+  const ayuda = contenedor.querySelector('.foto-entrega-ayuda');
+  ayuda.className = `foto-entrega-ayuda${estado === 'error' ? ' error' : estado === 'lista' ? ' ok' : ''}`;
+  ayuda.setAttribute('role', estado === 'error' ? 'alert' : 'status');
+  ayuda.textContent = mensaje;
+
+  const imagen = contenedor.querySelector('.foto-entrega-previa img');
+  if (imagen.dataset.url) URL.revokeObjectURL(imagen.dataset.url);
+  if (archivo) {
+    imagen.dataset.url = URL.createObjectURL(archivo);
+    imagen.src = imagen.dataset.url;
+    contenedor.querySelector('.foto-nombre').textContent = archivo.name;
+    contenedor.querySelector('.foto-peso').textContent = formatearTamanoArchivo(archivo.size);
+  } else {
+    delete imagen.dataset.url;
+    imagen.removeAttribute('src');
+  }
+}
+
+function alElegirFotoEntrega(input) {
+  const contenedor = input.closest('.foto-entrega');
+  const archivo = input.files[0];
+  if (!archivo) return pintarFotoEntrega(contenedor, 'vacia');
+  if (!FOTO_TIPOS_VALIDOS.includes(archivo.type)) {
+    input.value = '';
+    return pintarFotoEntrega(contenedor, 'error', { mensaje: 'Ese archivo no es una imagen JPG, PNG o WEBP. Elige otra foto.' });
+  }
+  if (archivo.size > FOTO_TAMANO_MAXIMO) {
+    input.value = '';
+    return pintarFotoEntrega(contenedor, 'error', { mensaje: `La foto pesa ${formatearTamanoArchivo(archivo.size)} y el máximo es 5 MB. Toma otra más liviana.` });
+  }
+  pintarFotoEntrega(contenedor, 'lista', { archivo, mensaje: 'Foto lista para enviar.' });
+  contenedor.querySelector('.foto-cambiar').focus({ preventScroll: true }); // el foco no se pierde con la zona oculta
+}
+
+function quitarFotoEntrega(contenedor) {
+  contenedor.querySelector('.foto-entrega-input').value = '';
+  pintarFotoEntrega(contenedor, 'vacia');
+  contenedor.querySelector('.foto-entrega-input').focus({ preventScroll: true });
 }
 
 // Mensaje de error fijo dentro del formulario de confirmar entrega (role="alert": se anuncia solo).
@@ -7516,7 +7595,15 @@ function inicializarEventos() {
     e.preventDefault();
     confirmarLlegadaAlmacen(form);
   });
+  document.getElementById('envios-list').addEventListener('change', (e) => {
+    if (e.target.matches('.foto-entrega-input')) alElegirFotoEntrega(e.target);
+  });
   document.getElementById('envios-list').addEventListener('click', (e) => {
+    const btnQuitarFoto = e.target.closest('.foto-quitar');
+    if (btnQuitarFoto) { quitarFotoEntrega(btnQuitarFoto.closest('.foto-entrega')); return; }
+    const btnCambiarFoto = e.target.closest('.foto-cambiar');
+    if (btnCambiarFoto) { btnCambiarFoto.closest('.foto-entrega').querySelector('.foto-entrega-input').click(); return; }
+
     const btnCancelar = e.target.closest('.btn-cancelar-entrega');
     if (btnCancelar) { btnCancelar.closest('.form-confirmar-entrega').classList.add('hidden'); return; }
 

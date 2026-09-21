@@ -1506,6 +1506,51 @@ input, select { font-family: inherit; }
 }
 .form-confirmar-entrega-campos input[type="file"] { font-size: 0.82rem; }
 .form-confirmar-entrega-acciones { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+/* ---------- Selector de la foto de entrega ----------
+   Zona grande y táctil (mínimo 64px de alto, ícono de cámara en dorado cosecha) en vez del botón nativo del navegador.
+   Con foto elegida se muestra la vista previa con su nombre y peso, y los botones Cambiar/Quitar (44px). El input
+   nativo queda oculto pero operable con teclado: el foco se dibuja en la zona con :focus-within. Los errores llevan
+   texto además del color y se anuncian (role="alert"). */
+.foto-entrega { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1.7; }
+.foto-entrega-titulo { font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.foto-entrega-input {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.form-confirmar-entrega .foto-entrega-zona {
+  display: flex; flex-direction: row; align-items: center; gap: 14px; min-height: 64px; padding: 12px 16px;
+  border: 2px dashed #b9c8bd; border-radius: 14px; background: #fff; cursor: pointer;
+  font-size: inherit; font-weight: inherit; color: inherit; flex: none;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.form-confirmar-entrega .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
+.foto-entrega:focus-within .foto-entrega-zona { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.foto-entrega-icono {
+  flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 1.4rem;
+}
+.foto-entrega-texto { min-width: 0; }
+.foto-entrega-texto strong { display: block; font-size: 0.95rem; color: var(--texto); }
+.foto-entrega-texto small, .foto-entrega-datos small { display: block; font-size: 0.78rem; font-weight: 500; color: var(--texto-suave); }
+
+.foto-entrega-previa {
+  display: none; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px;
+  border: 1.5px solid var(--verde-claro); border-radius: 14px; background: var(--verde-pastel);
+}
+.foto-entrega-previa img { flex: none; width: 64px; height: 64px; object-fit: cover; border-radius: 10px; background: #fff; }
+.foto-entrega-datos { flex: 1; min-width: 120px; }
+.foto-nombre { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; color: var(--texto); }
+.foto-entrega-botones { display: flex; gap: 8px; }
+
+.foto-entrega[data-estado="lista"] .foto-entrega-zona { display: none; }
+.foto-entrega[data-estado="lista"] .foto-entrega-previa { display: flex; }
+.foto-entrega[data-estado="error"] .foto-entrega-zona { border-color: #b3401f; background: #fdf1ec; }
+
+.foto-entrega-ayuda { margin: 0; min-height: 1.1em; font-size: 0.8rem; font-weight: 600; line-height: 1.4; }
+.foto-entrega-ayuda.ok { color: var(--color-primario); }
+.foto-entrega-ayuda.error { color: #b3401f; }
+@media (prefers-reduced-motion: reduce) { .form-confirmar-entrega .foto-entrega-zona { transition: none; } }
+
 .form-entrega-mensaje {
   display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
   font-size: 0.85rem; font-weight: 600; line-height: 1.4;
