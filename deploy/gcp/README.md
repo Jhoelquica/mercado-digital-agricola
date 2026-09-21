@@ -11,6 +11,10 @@ Los manifiestos de `k8s/` **no se tocan**: los scripts de esta carpeta generan l
 | Las fotos de productos por `/media/...` | El balanceador con IP estática y `externalTrafficPolicy: Local` |
 | Que el bucket de imágenes se cree solo | Extraer las imágenes de Artifact Registry |
 | Los manifiestos generados: render, esquema válido, solo Traefik con IP pública | Que un nodo pequeño aguante todo (los límites están puestos) |
+| El gateway bloquea `/docs`, `/openapi.json`, `/metrics`, las rutas internas entre servicios y los DELETE de limpieza (403) | Cómo se comporta bajo carga real de muchos usuarios |
+| Actualizar un servicio bajo carga continua por el gateway: 61 de 61 respuestas correctas (sondas + apagado ordenado) | |
+| Reiniciar una base de datos: solo hay error mientras está caída; al volver, todo responde bien (`pool_pre_ping`) | |
+| Las bases y MinIO se actualizan con `Recreate` (antes `RollingUpdate`, con riesgo de dos bases sobre el mismo volumen) | |
 | La semilla de datos demo por el gateway | Google Sign-In con el dominio nuevo |
 
 ## Lo que necesitas de tu lado
@@ -141,3 +145,9 @@ kubectl apply -f deploy/gcp/salida/manifiestos.yaml
 - **Sin monitoreo** (Prometheus/Grafana traen `admin/admin123`). Si lo quieres, ponle contraseña y déjalo en ClusterIP.
 - Los endpoints internos entre servicios (con `X-Servicio-Secreto`) son alcanzables por el gateway y solo los protege ese secreto de 64 caracteres al azar.
 - **Culqi en modo de prueba** salvo que pases las llaves reales.
+- **Las imágenes de los servicios corren como root y sus dependencias no tienen versión fija** (cada construcción instala lo último de
+  PyPI; ya se vio SQLAlchemy y uvicorn de versiones distintas entre servicios). Hay un cambio listo que lo arregla (versiones fijas con
+  `pip freeze` y usuario no-root), guardado en el `git stash` con el nombre "PENDIENTE": no se pudo probar porque construir las
+  imágenes exige red. Para retomarlo: `git stash pop`, construir las 8 imágenes, correr sus tests y hacer commit.
+- Las cuentas de un mismo correo se **bloquean 10 minutos tras 8 fallos** (por correo, existan o no): protege de la fuerza bruta, pero
+  alguien podría bloquear a propósito la cuenta de otra persona. Es una decisión deliberada para una demo.
