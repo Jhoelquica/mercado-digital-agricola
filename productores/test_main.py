@@ -65,6 +65,17 @@ def _sin_certificacion_real(monkeypatch):
     monkeypatch.setattr(main, "_registrar_certificacion_cosecha", MagicMock(return_value=True))
 
 
+# Referencia a la comprobación real ANTES de que el fixture de abajo la reemplace: los tests de esa exigencia la usan.
+_exigir_perfil_real = main._exigir_perfil_de_verificador
+
+
+@pytest.fixture(autouse=True)
+def _verificador_con_perfil(monkeypatch):
+    """aprobar_cosecha exige que el verificador tenga perfil (se lo pregunta a Certificación): ningún test de acá
+    levanta ese servicio, así que por defecto se da por hecho que lo tiene."""
+    monkeypatch.setattr(main, "_exigir_perfil_de_verificador", MagicMock(return_value=None))
+
+
 def _auth(sub: str, rol: str = "productor"):
     """Simula al usuario autenticado. Se sobreescribe `verificar_token` (dependencia estable),
     no `requiere_rol(...)` que genera un closure nuevo por llamada."""
@@ -980,3 +991,114 @@ def test_el_admin_ve_la_lista_completa_y_los_demas_roles_no():
 def test_un_id_de_productor_mal_formado_falla_422_no_500():
     assert client.get("/productores/no-es-un-uuid").status_code == 422
     assert client.get(f"/productores/{uuid.uuid4()}").status_code == 404
+
+
+
+# ============ Aprobar exige que el verificador tenga perfil (nombre + credencial) ============
+# Sin perfil, el certificado_productor se guardaba con verificador_id nulo: el QR público no decía quién verificó la
+# cosecha y esa cadena no se puede corregir después. Productores se lo pregunta a Certificación con el token del propio
+# verificador (GET /verificadores/me).
+
+class _RespuestaPerfil:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+
+def _perfil_segun_certificacion(monkeypatch, status_code=None, error=None):
+    """Usa la comprobación real y simula lo que responde Certificación. Devuelve la lista de llamadas que se hicieron."""
+    monkeypatch.setattr(main, "_exigir_perfil_de_verificador", _exigir_perfil_real)
+    llamadas = []
+
+    def _get(url, **kwargs):
+        llamadas.append((url, kwargs))
+        if error:
+            raise error
+        return _RespuestaPerfil(status_code)
+
+    monkeypatch.setattr(main.httpx, "get", _get)
+    return llamadas
+
+
+def _estado_y_decisiones(registro_id):
+    db = main.SessionLocal()
+    try:
+        registro = db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro_id).one()
+        decisiones = db.query(main.models.HistorialVerificacionCosecha).filter(
+            main.models.HistorialVerificacionCosecha.registro_produccion_id == registro_id
+        ).count()
+        return registro.estado, decisiones
+    finally:
+        db.close()
+
+
+def _crear_producto_que_no_debe_llamarse(monkeypatch):
+    crear = MagicMock()
+    main.breaker_crear_producto.close()
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", crear)
+    return crear
+
+
+def test_aprobar_sin_perfil_de_verificador_falla_409_y_no_crea_nada(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    crear = _crear_producto_que_no_debe_llamarse(monkeypatch)
+    llamadas = _perfil_segun_certificacion(monkeypatch, status_code=404)
+    _como_verificador()
+
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar", headers={"Authorization": "Bearer token-del-verificador"})
+
+    assert resp.status_code == 409, resp.text
+    assert "perfil de verificador" in resp.json()["detail"]
+    crear.assert_not_called()  # ni se creó el producto en el catálogo
+    assert _estado_y_decisiones(registro_id) == ("pendiente_verificacion", 0)
+    url, kwargs = llamadas[0]
+    assert url.endswith("/verificadores/me")
+    assert kwargs["headers"]["Authorization"] == "Bearer token-del-verificador"  # con el token del propio verificador
+
+
+def test_aprobar_con_perfil_de_verificador_se_completa_normalmente(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    _mockear_crear_producto_desde_cosecha(monkeypatch, producto_id="producto-con-perfil")
+    _perfil_segun_certificacion(monkeypatch, status_code=200)
+    _como_verificador()
+
+    resp = client.post(f"/productores/produccion/{registro_id}/aprobar", headers={"Authorization": "Bearer token-del-verificador"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "aprobado" and resp.json()["producto_id"] == "producto-con-perfil"
+    assert _estado_y_decisiones(registro_id) == ("aprobado", 1)
+
+
+def test_aprobar_si_no_se_puede_comprobar_el_perfil_falla_503_y_no_aprueba(monkeypatch):
+    for falla in ({"error": main.httpx.RequestError("sin red")}, {"status_code": 500}, {"status_code": 401}):
+        registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+        crear = _crear_producto_que_no_debe_llamarse(monkeypatch)
+        _perfil_segun_certificacion(monkeypatch, **falla)
+        _como_verificador()
+
+        resp = client.post(f"/productores/produccion/{registro_id}/aprobar", headers={"Authorization": "Bearer token-del-verificador"})
+
+        assert resp.status_code == 503, (falla, resp.text)
+        crear.assert_not_called()
+        assert _estado_y_decisiones(registro_id) == ("pendiente_verificacion", 0)
+
+
+def test_aprobar_sin_token_falla_401_no_500(monkeypatch):
+    """Sin cabecera Authorization no hay a quién preguntarle por el perfil (solo pasa si la dependencia se simula)."""
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    monkeypatch.setattr(main, "_exigir_perfil_de_verificador", _exigir_perfil_real)
+    _como_verificador()
+
+    assert client.post(f"/productores/produccion/{registro_id}/aprobar").status_code == 401
+    assert _estado_y_decisiones(registro_id) == ("pendiente_verificacion", 0)
+
+
+def test_rechazar_no_exige_perfil_de_verificador(monkeypatch):
+    registro_id, _ = _crear_registro_pendiente_verificacion(monkeypatch)
+    llamadas = _perfil_segun_certificacion(monkeypatch, status_code=404)
+    _como_verificador()
+
+    resp = client.post(f"/productores/produccion/{registro_id}/rechazar", json={"motivo": "No coincide la cantidad"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "rechazado"
+    assert llamadas == []  # rechazar no consulta el perfil

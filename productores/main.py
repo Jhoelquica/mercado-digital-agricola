@@ -433,6 +433,31 @@ def _registrar_certificacion_cosecha(registro, productor, chacra, verificador_us
     return True
 
 
+def _exigir_perfil_de_verificador(authorization: str | None) -> None:
+    """Sin perfil de verificador (nombre + credencial, que vive en Certificación) no se aprueba: el certificado que ve
+    quien escanea el QR dice quién verificó la cosecha y ese dato no se puede corregir después en la cadena. Se le
+    pregunta a Certificación con el token del propio verificador (GET /verificadores/me, el mismo patrón con el que
+    Productos consulta /productores/me). Si no se puede comprobar tampoco se aprueba: el certificado no se podría
+    registrar de todos modos."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Falta el token de autenticación")
+    no_se_pudo = HTTPException(
+        status_code=503,
+        detail="No se pudo comprobar tu perfil de verificador. Intenta de nuevo en un momento.",
+    )
+    try:
+        resp = httpx.get(f"{CERTIFICACION_URL}/verificadores/me", headers={"Authorization": authorization}, timeout=5)
+    except httpx.RequestError:
+        raise no_se_pudo
+    if resp.status_code == 404:
+        raise HTTPException(
+            status_code=409,
+            detail="Completa tu perfil de verificador (nombre y credencial) en «Mi cuenta» antes de aprobar cosechas.",
+        )
+    if resp.status_code != 200:
+        raise no_se_pudo
+
+
 def _consultar_precio_referencia(cultivo: str):
     """Devuelve (precio_por_kg_o_None, motivo_de_fallo_o_None)."""
     try:
@@ -789,8 +814,11 @@ def aprobar_cosecha(
     registro_id: str,
     db: Session = Depends(get_db),
     usuario: dict = Depends(requiere_rol("verificador")),
+    authorization: str = Header(None),
 ):
     registro = _obtener_registro_pendiente_verificacion(registro_id, db)
+    # Antes de crear nada (producto, estado, historial): sin perfil no hay aprobación, ni siquiera por la API.
+    _exigir_perfil_de_verificador(authorization)
 
     productor = db.query(models.Productor).filter(models.Productor.id == registro.productor_id).first()
 
