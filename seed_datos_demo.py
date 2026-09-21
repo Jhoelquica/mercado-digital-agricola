@@ -25,6 +25,10 @@ Windows), en PowerShell se le pasa por variable de entorno, sin que quede en el 
     python seed_datos_demo.py
     Remove-Item Env:SEED_ADMIN_PASSWORD
 
+Contra un despliegue (Google Cloud, etc.): SEED_HOST=https://mi-dominio SEED_PASSWORD_DEMO=<clave privada> (llama por
+el gateway, en /api/<servicio>; exige SEED_PASSWORD_DEMO porque la clave por defecto es pública). Las imágenes se suben
+por la API, así que quedan con la URL pública de MinIO del despliegue.
+
 Uso (desde la carpeta del proyecto, con los servicios corriendo):
     python seed_datos_demo.py                     # completo
     python seed_datos_demo.py --dry-run           # solo muestra el plan y revisa las imagenes
@@ -53,6 +57,13 @@ except ImportError:  # las fotos originales pesan ~2-4 MB; sin Pillow se suben t
 HOST = os.getenv("SEED_HOST", "http://localhost")
 PUERTOS = {"usuarios": 8006, "productores": 8001, "productos": 8002, "certificacion": 8008}
 PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO", "Demo12345!")
+# En local se llama a cada servicio por su puerto; contra un despliegue (cualquier otro host) se llama por el gateway del
+# mismo origen, en /api/<servicio> (SEED_HOST=https://mi-dominio). SEED_GATEWAY=1 lo fuerza también en local
+# (SEED_HOST=http://localhost:8000).
+ES_LOCAL = any(h in HOST for h in ("localhost", "127.0.0.1"))
+USA_GATEWAY = os.getenv("SEED_GATEWAY", "").lower() in ("1", "true", "si") or not ES_LOCAL
+# La credencial del verificador la asigna el admin al invitarlo (ya no la escribe el verificador).
+CREDENCIAL_VERIFICADOR_DEMO = "COL-DEMO-001"
 DOMINIO = "chakrashop-demo.pe"
 EMAIL_VERIFICADOR = f"verificador.demo@{DOMINIO}"
 IMAGENES_DIR = Path(os.getenv("SEED_IMAGENES_DIR", Path(__file__).resolve().parent.parent / "imagenes-productos"))
@@ -133,6 +144,8 @@ class Api:
         self.cliente = httpx.Client(timeout=60)
 
     def url(self, servicio, ruta):
+        if USA_GATEWAY:
+            return f"{HOST}/api/{servicio}{ruta}"
         return f"{HOST}:{PUERTOS[servicio]}{ruta}"
 
     def pedir(self, metodo, servicio, ruta, token=None, **kwargs):
@@ -263,13 +276,14 @@ def asegurar_verificador(api, token_admin):
     if r.status_code == 200:
         token = r.json()["access_token"]
     else:
-        r = api.pedir("POST", "usuarios", "/admin/invitaciones", token_admin, json={"rol_destino": "verificador"})
+        r = api.pedir("POST", "usuarios", "/admin/invitaciones", token_admin, json={
+            "rol_destino": "verificador", "credencial": CREDENCIAL_VERIFICADOR_DEMO})
         codigo = exigir(r, "crear invitacion de verificador").json()["codigo"]
         token = asegurar_sesion(api, "Ana Verificadora (demo)", EMAIL_VERIFICADOR, "verificador", codigo)
     r = api.pedir("GET", "certificacion", "/verificadores/me", token)
     if r.status_code == 404:
-        r = api.pedir("POST", "certificacion", "/verificadores", token, json={
-            "nombre": "Ana Verificadora (demo)", "credencial": "COL-DEMO-001"})
+        # Solo el nombre: la credencial la pone el servidor (la que el admin escribió en la invitación).
+        r = api.pedir("POST", "certificacion", "/verificadores", token, json={"nombre": "Ana Verificadora (demo)"})
         exigir(r, "perfil de verificador")
     return token
 
@@ -390,6 +404,9 @@ def main():
     ap.add_argument("--limite", type=int, default=len(AGRICULTORES), help="cantidad de agricultores a procesar")
     args = ap.parse_args()
 
+    if not ES_LOCAL and "SEED_PASSWORD_DEMO" not in os.environ and not args.dry_run:
+        sys.exit("Contra un despliegue real define SEED_PASSWORD_DEMO: la clave por defecto está en el repositorio y "
+                 "cualquiera podría entrar a las cuentas demo.")
     if args.dry_run:
         sys.exit(0 if plan(args.limite) else 1)
     if not IMAGENES_DIR.exists():
