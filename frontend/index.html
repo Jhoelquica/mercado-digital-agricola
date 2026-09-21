@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=b6a9da3f">
+<link rel="stylesheet" href="css/style.css?v=89bae0cf">
 </head>
 <body>
 
@@ -619,16 +619,17 @@
 
     <div id="repartidor-panel" class="hidden repartidor-shell">
       <div class="repartidor-resumen-layout">
-        <div id="repartidor-resumen"></div>
+        <div class="repartidor-col-principal">
+          <div id="repartidor-resumen"></div>
+          <div class="repartidor-estado-row">
+            <div id="disponibilidad-banner"></div>
+            <div id="ubicacion-estado" class="ubicacion-estado"></div>
+          </div>
+        </div>
         <div class="card-panel grafico-card">
           <h4><i class="ti ti-chart-pie"></i> Tus envíos por estado</h4>
           <canvas id="grafico-envios-estado"></canvas>
         </div>
-      </div>
-
-      <div class="repartidor-estado-row">
-        <div id="disponibilidad-banner"></div>
-        <div id="ubicacion-estado" class="ubicacion-estado"></div>
       </div>
 
       <div id="propuestas-section" class="propuestas-section hidden">
