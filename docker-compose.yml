@@ -1,3 +1,23 @@
+# Entorno de DESARROLLO sin Kubernetes: los 8 microservicios, sus 8 bases, Redis, RabbitMQ, MinIO y el frontend.
+#
+# Uso:   docker compose up -d --build          (necesita un archivo .env junto a este, ver abajo)
+#        Sitio: http://localhost:8090      APIs: http://localhost:8001..8008      MinIO (consola): http://localhost:9001
+#        Comprobación: python scripts/verificar_despliegue.py --directo --compose
+#
+# .env (no se sube a git) debe definir: DB_USER, DB_PASSWORD (mínimo 8 caracteres: también son las de MinIO), JWT_SECRET y
+# CULQI_SECRET_KEY (la de PRUEBA, sk_test_...).
+#
+# Qué es igual que en Kubernetes (k8s/): las mismas imágenes, variables de entorno, URLs entre servicios y bases.
+# Qué cambia a propósito:
+#   - NO hay Traefik, Prometheus ni Grafana: existen solo en Kubernetes. Sin gateway, el navegador llama a cada servicio por
+#     su puerto (el frontend lo detecta solo: en localhost, salvo el puerto 8000, usa los puertos directos), y no hay validación
+#     de JWT previa, límite de peticiones ni rutas bloqueadas.
+#   - Una sola instancia de cada cosa (en k8s/ los microservicios van con 3 réplicas).
+#   - Los secretos entre servicios son valores de desarrollo escritos aquí (dev-...); en Kubernetes salen del Secret
+#     credenciales-app y, en Google Cloud, son aleatorios.
+#   - Las imágenes se construyen desde el código (build:) en vez de bajarse de un registro.
+#   - Los healthcheck de abajo hacen el papel de las sondas de Kubernetes (GET /salud en cada servicio).
+
 services:
 
   redis:
@@ -8,10 +28,18 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
+    # Nombre fijo: RabbitMQ guarda sus datos según el nombre del nodo; con el aleatorio de Docker las colas y los mensajes
+    # pendientes no sobrevivirían a recrear el contenedor (en k8s/rabbitmq.yaml es RABBITMQ_NODENAME).
+    hostname: rabbitmq
     restart: unless-stopped
     ports:
       - "5672:5672"
@@ -19,6 +47,36 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: admin
       RABBITMQ_DEFAULT_PASS: admin123
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+
+  # Fotos de los productos (bucket público productos-imagenes, lo crea Productos al arrancar) y fotos de entrega (bucket
+  # privado, lo crea Transporte). Mismas credenciales que las bases, como en k8s/minio.yaml.
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: ${DB_USER}
+      MINIO_ROOT_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   db-productores:
     image: postgres:16
@@ -32,6 +90,11 @@ services:
       - "5433:5432"
     volumes:
       - productores_data:/var/lib/postgresql/data
+    healthcheck: &salud-postgres
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   productores:
     build: ./productores
@@ -46,10 +109,18 @@ services:
       DB_HOST: db-productores
       PRODUCTOS_URL: http://productos:8002
       CERTIFICACION_URL: http://certificacion:8008
+      PRODUCTORES_A_PRODUCTOS_SECRETO: dev-productores-a-productos-secreto
       PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
-      - db-productores
+      db-productores:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8001/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-productos:
     image: postgres:16
@@ -63,6 +134,7 @@ services:
       - "5434:5432"
     volumes:
       - productos_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   productos:
     build: ./productos
@@ -77,22 +149,38 @@ services:
       DB_HOST: db-productos
       PRODUCTORES_URL: http://productores:8001
       USUARIOS_URL: http://usuarios:8006
+      CERTIFICACION_URL: http://certificacion:8008
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${DB_USER}
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
       PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
       PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
+      PRODUCTORES_A_PRODUCTOS_SECRETO: dev-productores-a-productos-secreto
+      PRODUCTOS_A_CERTIFICACION_SECRETO: dev-productos-a-certificacion-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       REDIS_HOST: redis
+      REDIS_CACHE_PORT: "6379"
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
     depends_on:
-      - db-productos
-      - productores
-      - redis
-      - rabbitmq
+      db-productos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      productores:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8002/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-pedidos:
     image: postgres:16
@@ -106,6 +194,7 @@ services:
       - "5435:5432"
     volumes:
       - pedidos_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   pedidos:
     build: ./pedidos
@@ -119,15 +208,26 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-pedidos
       PRODUCTOS_URL: http://productos:8002
+      TRANSPORTE_URL: http://transporte:8004
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
       PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
+      TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
-    - db-pedidos
-    - productos
-    - rabbitmq
+      db-pedidos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      productos:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8003/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-transporte:
     image: postgres:16
@@ -141,6 +241,7 @@ services:
       - "5436:5432"
     volumes:
       - transporte_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   transporte:
     build: ./transporte
@@ -156,19 +257,32 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
+      PRODUCTORES_URL: http://productores:8001
+      PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
       PAGOS_URL: http://pagos:8007
       TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
       TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
+      TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${DB_USER}
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
     depends_on:
-      - db-transporte
-      - rabbitmq
+      db-transporte:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8004/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-notificaciones:
     image: postgres:16
@@ -182,6 +296,7 @@ services:
       - "5437:5432"
     volumes:
       - notificaciones_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   notificaciones:
     build: ./notificaciones
@@ -199,8 +314,16 @@ services:
       RABBITMQ_PASSWORD: admin123
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
-      - db-notificaciones
-      - rabbitmq
+      db-notificaciones:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8005/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-usuarios:
     image: postgres:16
@@ -214,6 +337,7 @@ services:
       - "5438:5432"
     volumes:
       - usuarios_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   usuarios:
     build: ./usuarios
@@ -227,14 +351,24 @@ services:
       DB_HOST: db-usuarios
       JWT_SECRET: ${JWT_SECRET}
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
-      # Bootstrap del primer admin (ver comentario junto a sembrar_admin_inicial() en
-      # usuarios/main.py). Solo corre si la BD todavía no tiene ningún admin.
+      CERTIFICACION_A_USUARIOS_SECRETO: dev-certificacion-a-usuarios-secreto
+      # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
+      MAX_INTENTOS_LOGIN: "8"
+      BLOQUEO_LOGIN_MINUTOS: "10"
+      # Bootstrap del primer admin (ver sembrar_admin_inicial() en usuarios/main.py). Solo corre si la BD todavía no tiene
+      # ningún admin. Valores de DESARROLLO.
       ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
       ADMIN_BOOTSTRAP_PASSWORD: dev-admin-12345
-      # En docker-compose.yml, bajo el servicio usuarios:
       GOOGLE_CLIENT_ID: 546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com
     depends_on:
-      - db-usuarios
+      db-usuarios:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8006/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
 
   db-pagos:
     image: postgres:16
@@ -248,29 +382,40 @@ services:
       - "5439:5432"
     volumes:
       - pagos_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   pagos:
-      build: ./pagos
-      container_name: pagos
-      restart: unless-stopped
-      ports:
-        - "8007:8007"
-      environment:
-        DB_USER: ${DB_USER}
-        DB_PASSWORD: ${DB_PASSWORD}
-        DB_HOST: db-pagos
-        RABBITMQ_HOST: rabbitmq
-        RABBITMQ_USER: admin
-        RABBITMQ_PASSWORD: admin123
-        JWT_SECRET: ${JWT_SECRET}
-        CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
-        PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
-        TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
-        QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
-        PRODUCTOS_URL: http://productos:8002
-      depends_on:
-        - db-pagos
-        - rabbitmq
+    build: ./pagos
+    container_name: pagos
+    restart: unless-stopped
+    ports:
+      - "8007:8007"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-pagos
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: admin
+      RABBITMQ_PASSWORD: admin123
+      JWT_SECRET: ${JWT_SECRET}
+      CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
+      PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
+      TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      PRODUCTOS_URL: http://productos:8002
+      PEDIDOS_URL: http://pedidos:8003
+    depends_on:
+      db-pagos:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8007/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   db-certificacion:
     image: postgres:16
     container_name: db-certificacion
@@ -283,27 +428,57 @@ services:
       - "5440:5432"
     volumes:
       - certificacion_data:/var/lib/postgresql/data
+    healthcheck: *salud-postgres
 
   certificacion:
-      build: ./certificacion
-      container_name: certificacion
-      restart: unless-stopped
-      ports:
-        - "8008:8008"
-      environment:
-        DB_USER: ${DB_USER}
-        DB_PASSWORD: ${DB_PASSWORD}
-        DB_HOST: db-certificacion
-        JWT_SECRET: ${JWT_SECRET}
-        FRONTEND_URL: http://localhost:63342/mercado_agricola/frontend
-        PRODUCTORES_URL: http://productores:8001
-        TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
-        PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
-        QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
-      depends_on:
-        - db-certificacion
+    build: ./certificacion
+    container_name: certificacion
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    environment:
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_HOST: db-certificacion
+      JWT_SECRET: ${JWT_SECRET}
+      # A dónde apunta el QR de cada producto (verificar.html lo sirve el contenedor frontend de abajo).
+      FRONTEND_URL: http://localhost:8090
+      PRODUCTORES_URL: http://productores:8001
+      USUARIOS_URL: http://usuarios:8006
+      TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
+      PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
+      PRODUCTOS_A_CERTIFICACION_SECRETO: dev-productos-a-certificacion-secreto
+      CERTIFICACION_A_USUARIOS_SECRETO: dev-certificacion-a-usuarios-secreto
+      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+    depends_on:
+      db-certificacion:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8008/salud', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  # La SPA servida por nginx (frontend/Dockerfile). En localhost y con un puerto distinto de 8000 llama a cada servicio por su
+  # puerto (8001..8008), que es lo que publica este compose; en Kubernetes va detrás del gateway, en /api/<servicio>.
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    healthcheck:
+      # 127.0.0.1 y no localhost: en la imagen de nginx (alpine) localhost se resuelve primero a IPv6 y nginx escucha solo en IPv4.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   redis_data:
+  rabbitmq_data:
+  minio_data:
   productores_data:
   productos_data:
   pedidos_data:
