@@ -5,6 +5,12 @@ Los manifiestos de `k8s/` **no se tocan**: los scripts de esta carpeta generan l
 
 ## Qué quedó probado y qué no
 
+> **Actualización 2026-09-23: ya se desplegó de verdad en GKE** (proyecto `mecadoagricoladigital`, `us-central1-a`, un nodo `e2-standard-4`,
+> `https://35-225-121-28.sslip.io`). Quedaron probados el HTTPS con Let's Encrypt (real), el balanceador con IP fija, la descarga de
+> imágenes desde Artifact Registry, el nodo pequeño con los 21 pods, la semilla demo por el gateway (30 productos, 12 productores) y las
+> fotos, el mapa y el QR por HTTPS. Sigue sin probarse: la carga real de muchos usuarios y Google Sign-In con el dominio nuevo (exige agregar
+> el origen autorizado). Lo que falló en el primer intento está en "Lo aprendido en el primer despliegue real", al final del documento.
+
 | Probado en el clúster local | NO probado (solo se puede en Google Cloud) |
 |---|---|
 | El frontend servido por nginx detrás del gateway, con las APIs bajo `/api/<servicio>` (mismo origen) | HTTPS con Let's Encrypt (Traefik) y la redirección http → https |
@@ -53,6 +59,13 @@ gcloud services enable container.googleapis.com artifactregistry.googleapis.com 
 ```bash
 gcloud artifacts repositories create chakrashop --repository-format=docker --location=$REGION
 gcloud auth configure-docker $REGION-docker.pkg.dev
+```
+**Permiso para que los nodos descarguen las imágenes** (sin esto los pods quedan en `ErrImagePull` con `403 Forbidden`; en proyectos
+dentro de una organización la cuenta de servicio de Compute ya no tiene permisos por defecto). Solo lectura y solo sobre este repositorio:
+```bash
+NUMERO=$(gcloud projects describe $PROYECTO --format='value(projectNumber)')
+gcloud artifacts repositories add-iam-policy-binding chakrashop --location=$REGION \
+    --member="serviceAccount:$NUMERO-compute@developer.gserviceaccount.com" --role=roles/artifactregistry.reader
 ```
 
 **3. Clúster** (un nodo; sube `--num-nodes` o el tipo de máquina si lo necesitas)
@@ -108,6 +121,12 @@ kubectl delete pvc traefik-acme                       # borra el certificado de 
 python deploy/gcp/generar_manifiestos.py --registro $REGISTRO --dominio $DOMINIO --email tu@correo.com --etiqueta v1 --ip-estatica $IP
 kubectl apply -f deploy/gcp/salida/manifiestos.yaml
 ```
+Si el certificado real no llega (en el log de Traefik: `Unable to obtain ACME certificate ... Connection refused`), es que Traefik lo pidió en el
+mismo segundo de arrancar, antes de que el balanceador de Google enviara tráfico al pod nuevo. **No reinicies** Traefik (repite la carrera):
+provoca un cambio real de su configuración con el pod ya sano, por ejemplo
+`kubectl patch middleware rate-limit-global --type=merge -p '{"spec":{"rateLimit":{"burst":201}}}'`, espera medio minuto a que
+`openssl s_client -connect $IP:443 -servername $DOMINIO` muestre "Let's Encrypt" y devuelve el valor a 200. (Solo anotar un IngressRoute
+no basta: no cambia la configuración.) Let's Encrypt limita a 5 validaciones fallidas por hora.
 
 **10. Datos de demostración** (12 agricultores, 30 productos con fotos y certificados). Necesita el admin del paso 6 y la carpeta
 `imagenes-productos` (junto a este repositorio, o `SEED_IMAGENES_DIR`). Define una clave PRIVADA para las cuentas demo:
@@ -151,3 +170,19 @@ kubectl apply -f deploy/gcp/salida/manifiestos.yaml
   del servicio. Los servicios corren como usuario no-root (uid 10001), pero **los paquetes de prueba (pytest) siguen dentro de la imagen**.
 - Las cuentas de un mismo correo se **bloquean 10 minutos tras 8 fallos** (por correo, existan o no): protege de la fuerza bruta, pero
   alguien podría bloquear a propósito la cuenta de otra persona. Es una decisión deliberada para una demo.
+
+## Lo aprendido en el primer despliegue real (2026-09-23)
+- **Facturación:** GKE no se puede crear sin una cuenta de facturación *abierta*. Una cuenta que Google crea "cerrada" (aviso rojo "está cerrada",
+  botón de reabrir atenuado) casi siempre es una verificación de la tarjeta sin completar (autenticación 3-D Secure del banco). Se comprueba desde
+  la terminal con `gcloud billing accounts list` (columna `OPEN`) y `gcloud billing projects describe $PROYECTO` (`billingEnabled: true`).
+- **Windows / PowerShell:** si bloquea `gcloud.ps1` ("la ejecución de scripts está deshabilitada"), usa `gcloud.cmd` en vez de cambiar la política de
+  ejecución. Para instalar componentes sin interfaz (`gcloud components install gke-gcloud-auth-plugin --quiet`) hace falta antes
+  `gcloud components copy-bundled-python` y apuntar `CLOUDSDK_PYTHON` a lo que devuelve.
+- **Bases de datos:** los discos de Google traen `lost+found` y Postgres se negaba a arrancar; `generar_manifiestos.py` ya pone `PGDATA` en una
+  subcarpeta del volumen. Ver `db-*` en el manifiesto generado.
+- **Descarga de imágenes:** falta el permiso de lectura del repositorio para la cuenta de servicio de los nodos (paso 2).
+- **Subida de imágenes:** con una red inestable `docker push` puede dar timeouts; se reintenta solo lo que falló con `--solo servicio1 servicio2`.
+- **Contexto de kubectl:** `gcloud container clusters get-credentials` cambia el contexto actual al del clúster de Google Cloud. Vuelve al local con
+  `kubectl config use-context docker-desktop` y usa `--context gke_<proyecto>_<zona>_chakrashop` para operar el de Google Cloud.
+- **`credenciales-generadas.txt`** (correo y contraseña del admin y clave de las cuentas demo) queda en `deploy/gcp/salida/`, ignorado por git, pero
+  si el repositorio vive en una carpeta sincronizada (OneDrive) se sube a la nube: guárdalo en un gestor de contraseñas y bórralo.
