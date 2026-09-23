@@ -83,7 +83,9 @@ def construir(args):
 
     # --- HTTPS (Let's Encrypt por HTTP-01 en el puerto 80) y un volumen para guardar el certificado
     argumentos_tls = [
-        "--entrypoints.web.http.redirections.entrypoint.to=websecure",
+        # ":443" y no "websecure": Traefik redirige al puerto REAL del entrypoint (8443 dentro del contenedor), que el balanceador no
+        # expone (solo 80 y 443), así que http://dominio llevaba a https://dominio:8443/, inaccesible.
+        "--entrypoints.web.http.redirections.entrypoint.to=:443",
         "--entrypoints.web.http.redirections.entrypoint.scheme=https",
         "--entrypoints.websecure.address=:8443",
         f"--certificatesresolvers.le.acme.email={args.email}",
