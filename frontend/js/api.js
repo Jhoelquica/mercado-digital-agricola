@@ -27,6 +27,30 @@ const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.apiBase) || Object.from
   ]),
 );
 
+// Las fotos de producto se guardan en la base con la URL completa que tenía MinIO al subirlas
+// (por defecto http://localhost:9000/productos-imagenes/...): sirve en tu propia máquina ("localhost" te
+// apunta a ti), pero no en la de nadie más (a esa persona "localhost" le apunta a SU máquina), ni detrás
+// de un túnel/dominio distinto. Por el gateway existe la ruta /media/productos-imagenes/... (ver
+// k8s/traefik-routes.yaml) que sirve las mismas fotos por EL MISMO origen de la página: basta con
+// reescribir cualquier URL que reconozcamos como de ese bucket para que apunte ahí en vez de al host que
+// tenía guardado. En modo "puertos directos" (ES_LOCALHOST sin gateway) se deja tal cual: ahí MinIO ya
+// responde directo en localhost:9000.
+function normalizarUrlImagen(url) {
+  if (!url || !USA_EL_GATEWAY) return url;
+  try {
+    const u = new URL(url, location.origin);
+    if (u.pathname.startsWith('/productos-imagenes/')) return `${location.origin}/media${u.pathname}`;
+  } catch { /* url rara o relativa: se deja tal cual */ }
+  return url;
+}
+function normalizarImagenesDeProducto(p) {
+  if (!p) return p;
+  if (p.imagen_url) p.imagen_url = normalizarUrlImagen(p.imagen_url);
+  if (p.imagen_principal) p.imagen_principal = normalizarUrlImagen(p.imagen_principal);
+  if (Array.isArray(p.imagenes)) p.imagenes.forEach((img) => { if (img.url) img.url = normalizarUrlImagen(img.url); });
+  return p;
+}
+
 // Llave pública de Culqi (modo test, segura de exponer en frontend)
 const CULQI_PUBLIC_KEY = 'pk_test_gGgpDDFDAt5HjYwI';
 
@@ -205,10 +229,10 @@ const Api = {
     crear: (datos) => request('productores', '/chacras', { method: 'POST', body: datos, auth: true }),
   },
   productos: {
-    listar: () => request('productos', '/productos'),
-    mios: () => request('productos', '/productos/mios', { auth: true }),
+    listar: () => request('productos', '/productos').then((lista) => lista.map(normalizarImagenesDeProducto)),
+    mios: () => request('productos', '/productos/mios', { auth: true }).then((lista) => lista.map(normalizarImagenesDeProducto)),
     // Con sesión si la hay: el detalle de un borrador solo lo devuelve a su productor (y al admin).
-    obtener: (id) => request('productos', `/productos/${id}`, { auth: 'opcional' }),
+    obtener: (id) => request('productos', `/productos/${id}`, { auth: 'opcional' }).then(normalizarImagenesDeProducto),
     precioReferencia: (nombre) => request('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
     actualizar: (id, datos) => request('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
     publicar: (id) => request('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),
@@ -222,7 +246,10 @@ const Api = {
       exigirImagenLiviana(archivo);
       const formData = new FormData();
       formData.append('archivo', archivo);
-      return requestFormData('productos', `/productos/${id}/imagenes/subir?orden=${orden}`, formData);
+      return requestFormData('productos', `/productos/${id}/imagenes/subir?orden=${orden}`, formData).then((img) => {
+        if (img.url) img.url = normalizarUrlImagen(img.url);
+        return img;
+      });
     },
     eliminarImagen: (imagenId) => request('productos', `/productos/imagenes/${imagenId}`, { method: 'DELETE', auth: true }),
     actualizarOrdenImagen: (imagenId, orden) => request('productos', `/productos/imagenes/${imagenId}/orden`, { method: 'PATCH', body: { orden }, auth: true }),
