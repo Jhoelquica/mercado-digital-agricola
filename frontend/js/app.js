@@ -667,8 +667,12 @@ function animarContadoresResumen(contenedor) {
 }
 
 // ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
-const MAPA_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+// El servidor gratuito tile.openstreetmap.org bloquea (403) tráfico que no cumple su política de uso
+// (operations.osmfoundation.org/policies/tiles): pasa fácil con muchas pruebas automatizadas seguidas
+// desde la misma IP, o desde IPs de nube/túneles. Se usan en su lugar los tiles de CARTO (mismos datos de
+// OpenStreetMap, sin llave de API, sí pensados para este uso).
+const MAPA_TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
 const MAPA_CENTRO_PERU = [-9.19, -75.015];
 
 function hayCoordenadas(lat, lng) {
