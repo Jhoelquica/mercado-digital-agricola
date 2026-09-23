@@ -114,6 +114,13 @@ def construir(args):
     # --- límites de recursos
     partes.append(parche(f'{{kind: Deployment, name: "^({servicios_re})$"}}', recursos("500m", "512Mi", "50m", "128Mi")))
     partes.append(parche('{kind: Deployment, name: "^db-.*"}', recursos("500m", "512Mi", "50m", "192Mi")))
+    # Los discos de Google (ext4) traen una carpeta lost+found en la raíz del volumen y Postgres se niega a usar como datos
+    # un directorio que no está vacío ("initdb: directory ... exists but is not empty"): en Docker Desktop no pasa. Se le
+    # dice que guarde los datos en una subcarpeta del volumen.
+    partes.append(parche(
+        '{kind: Deployment, name: "^db-.*"}',
+        "- op: add\n  path: /spec/template/spec/containers/0/env/-\n  value: {name: PGDATA, value: /var/lib/postgresql/data/pgdata}",
+    ))
     partes.append(parche('{kind: Deployment, name: "^rabbitmq$"}', recursos("500m", "768Mi", "100m", "256Mi")))
     partes.append(parche('{kind: Deployment, name: "^minio$"}', recursos("500m", "512Mi", "50m", "128Mi")))
     partes.append(parche('{kind: Deployment, name: "^redis$"}', recursos("200m", "128Mi", "20m", "32Mi")))
