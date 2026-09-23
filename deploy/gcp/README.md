@@ -137,6 +137,16 @@ python seed_datos_demo.py
 ```
 
 **11. Comprobaciones**
+
+Lo automático (solo lee, no cambia datos; sale con código 1 si algo falla):
+```bash
+python scripts/verificar_despliegue.py --base https://$DOMINIO --contexto gke_$PROYECTO"_"$ZONA"_chakrashop"
+# con el certificado de PRUEBA (paso 8) añade --sin-verificar-tls
+```
+Comprueba el frontend, los 8 servicios, el catálogo, una foto y el QR, que las rutas protegidas y `/docs` `/metrics` se rechazan, el
+certificado (avisa si es el de prueba o vence pronto), la redirección http → https, que los puertos internos NO responden desde fuera, y
+con `--contexto` los pods, las réplicas y los consumidores de RabbitMQ. Lo que sigue es lo que no se puede automatizar:
+
 - `https://$DOMINIO/` carga y muestra el catálogo con fotos; `https://$DOMINIO/api/productos/salud` → `{"estado":"ok",...}`.
 - Registro e inicio de sesión (correo y Google), y el panel de admin con el correo del paso 6.
 - Escanear/abrir el QR de un producto (`https://$DOMINIO/verificar.html?producto_id=...`) muestra la cadena y "Certificado por".
