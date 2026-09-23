@@ -667,12 +667,12 @@ function animarContadoresResumen(contenedor) {
 }
 
 // ============ MAPAS (LEAFLET + OPENSTREETMAP) ============
-// El servidor gratuito tile.openstreetmap.org bloquea (403) tráfico que no cumple su política de uso
-// (operations.osmfoundation.org/policies/tiles): pasa fácil con muchas pruebas automatizadas seguidas
-// desde la misma IP, o desde IPs de nube/túneles. Se usan en su lugar los tiles de CARTO (mismos datos de
-// OpenStreetMap, sin llave de API, sí pensados para este uso).
-const MAPA_TILE_URL = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>';
+// Teselas del servidor comunitario de OpenStreetMap. Su política (operations.osmfoundation.org/policies/tiles) exige
+// identificar la aplicación con la cabecera Referer; a quien no la cumple le devuelve una tesela con el texto
+// "403 Access blocked" (con estado HTTP 200: el mapa "carga", pero con ese aviso encima). Otros proveedores gratuitos
+// no sirven: CARTO (basemaps.cartocdn.com) ya exige llave de API y pinta "API KEY REQUIRED" sobre el mapa.
+const MAPA_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
 const MAPA_CENTRO_PERU = [-9.19, -75.015];
 
 function hayCoordenadas(lat, lng) {
@@ -690,7 +690,9 @@ function crearIconoMarcador(emoji, color) {
 }
 
 function agregarCapaBase(mapa) {
-  L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19 }).addTo(mapa);
+  // referrerPolicy 'origin': cada tesela lleva "Referer: <origen de la página>" aunque la política de la página (o la de un
+  // proxy/túnel por el que se sirva) sea más estricta: sin ese Referer el navegador no identifica a la aplicación ante OSM.
+  L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19, referrerPolicy: 'origin' }).addTo(mapa);
 }
 
 function crearMapaSoloLectura(contenedorId, lat, lng, emoji, color, popupTexto) {
