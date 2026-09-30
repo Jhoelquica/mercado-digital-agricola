@@ -248,7 +248,12 @@ def main():
         destino = cab.get("Location", "") if cab else ""
         comprobar("HTTP redirige a HTTPS", estado in (301, 302, 307, 308) and destino.startswith("https://"),
                   f"HTTP {estado} → {destino[:40]}", f"HTTP {estado} sin redirección a https")
-        if partes.hostname not in ("localhost", "127.0.0.1"):
+        # Solo tiene sentido cuando el dominio es la IP real del servidor (Google Cloud): ahí, si otro puerto conecta, es
+        # ese mismo servidor respondiendo. Con un túnel de terceros (VS Code Dev Tunnels, ngrok, Cloudflare Tunnel…) el
+        # nombre resuelve a la infraestructura del proveedor, que puede responder en cualquier puerto sin que eso exponga
+        # nada tuyo — se vio con un túnel real: el "puerto 8080 abierto" era Microsoft devolviendo un 404, no Traefik.
+        DOMINIOS_TUNEL = (".devtunnels.ms", ".ngrok-free.app", ".ngrok.io", ".ngrok.app", ".trycloudflare.com", ".loca.lt")
+        if partes.hostname not in ("localhost", "127.0.0.1") and not partes.hostname.endswith(DOMINIOS_TUNEL):
             abiertos = []
             for puerto in (9000, 8006, 8080, 5432):
                 try:
@@ -258,6 +263,8 @@ def main():
                     pass
             comprobar("Puertos internos cerrados desde fuera (9000, 8006, 8080, 5432)", not abiertos, "ninguno responde",
                       f"RESPONDEN: {abiertos}")
+        elif partes.hostname.endswith(DOMINIOS_TUNEL):
+            registrar("OK", "Puertos internos", "omitido: dominio de túnel de terceros, no aplica (ver comentario en el código)")
 
     # ---- 6. Kubernetes
     if args.contexto is not None:
