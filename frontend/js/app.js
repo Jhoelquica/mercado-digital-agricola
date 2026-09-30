@@ -550,6 +550,13 @@ function unidadCorta(codigo) {
   return infoUnidad(codigo).singular;
 }
 
+// Redondea a la misma precisión con la que se guarda en la base (factor_a_base es Numeric(10,4)) y quita ceros
+// sobrantes. Sin esto, un valor "limpio" como 2 podía llegar mostrándose como 1.9999999999999998 (ruido de punto
+// flotante al pasar por JSON) en vez de "2" — se vio en la conversión de unidades del panel del productor.
+function formatearFactor(valor) {
+  return parseFloat(Number(valor).toFixed(4));
+}
+
 function unidadEtiqueta(codigo) {
   return infoUnidad(codigo).etiqueta;
 }
@@ -4345,6 +4352,7 @@ async function alternarFotosProductor(id) {
 // hoy no tiene ninguno, se agrega acá por primera vez). ----
 
 function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
+  const factorLimpio = formatearFactor(u.factor_a_base);
   if (modoEdicion) {
     return `
       <div class="unidades-alt-fila unidades-alt-fila-edicion" data-unidad-id="${u.id}">
@@ -4354,7 +4362,7 @@ function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
             <input type="number" class="unidad-alt-editar-precio" min="0.01" step="0.01" value="${u.precio}">
           </label>
           <label>Factor (1 ${unidadCorta(u.unidad)} = X ${unidadPlural(unidadBase, 2)})
-            <input type="number" class="unidad-alt-editar-factor" min="0.0001" step="0.0001" value="${u.factor_a_base}">
+            <input type="number" class="unidad-alt-editar-factor" min="0.0001" step="0.0001" value="${factorLimpio}">
           </label>
         </div>
         <div class="unidades-alt-acciones">
@@ -4368,7 +4376,7 @@ function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
       <div class="unidades-alt-info">
         <strong>${escapeAttr(infoUnidad(u.unidad).label)}</strong>
         <span>${formatearMoneda(u.precio)} / ${unidadCorta(u.unidad)}</span>
-        <span class="muted">1 ${unidadCorta(u.unidad)} = ${Number(u.factor_a_base)} ${unidadPlural(unidadBase, Number(u.factor_a_base))}</span>
+        <span class="muted">1 ${unidadCorta(u.unidad)} = ${factorLimpio} ${unidadPlural(unidadBase, factorLimpio)}</span>
       </div>
       <div class="unidades-alt-acciones">
         <button type="button" class="btn btn-outline btn-sm btn-editar-unidad-alt" data-unidad-id="${u.id}" aria-label="Editar"><i class="ti ti-pencil"></i></button>
