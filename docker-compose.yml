@@ -357,7 +357,6 @@ services:
       DB_HOST: db-usuarios
       JWT_SECRET: ${JWT_SECRET}
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
-      CERTIFICACION_A_USUARIOS_SECRETO: dev-certificacion-a-usuarios-secreto
       # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
       MAX_INTENTOS_LOGIN: "8"
       BLOQUEO_LOGIN_MINUTOS: "10"
@@ -450,12 +449,9 @@ services:
       # A dónde apunta el QR de cada producto (verificar.html lo sirve el contenedor frontend de abajo).
       FRONTEND_URL: http://localhost:8090
       PRODUCTORES_URL: http://productores:8001
-      USUARIOS_URL: http://usuarios:8006
       TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
       PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
       PRODUCTOS_A_CERTIFICACION_SECRETO: dev-productos-a-certificacion-secreto
-      CERTIFICACION_A_USUARIOS_SECRETO: dev-certificacion-a-usuarios-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
     depends_on:
       db-certificacion:
         condition: service_healthy

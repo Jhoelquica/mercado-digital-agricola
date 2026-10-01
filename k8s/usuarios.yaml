@@ -80,13 +80,6 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
-            # Certificación -> Usuarios: GET /usuarios/interno/{id}/credencial (qué credencial le asignó el admin a un
-            # verificador). Usuarios recibe, no envía.
-            - name: CERTIFICACION_A_USUARIOS_SECRETO
-              valueFrom:
-                secretKeyRef:
-                  name: credenciales-app
-                  key: CERTIFICACION_A_USUARIOS_SECRETO
             # Bootstrap del primer admin — ver sembrar_admin_inicial() en usuarios/main.py.
             # Idempotente: solo crea el admin si la tabla usuarios todavía no tiene ninguno.
             - name: ADMIN_BOOTSTRAP_EMAIL

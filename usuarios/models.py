@@ -1,7 +1,6 @@
 import uuid
-import secrets
-from datetime import datetime, timedelta
-from sqlalchemy import Column, String, DateTime, Boolean, ForeignKey, Integer
+from datetime import datetime
+from sqlalchemy import Column, String, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -15,7 +14,7 @@ class Usuario(Base):
     # tiene contraseña propia — ver verificar_password en seguridad.py, ajustada para no
     # explotar contra un hash None en vez de simplemente rechazar el login normal.
     password_hash = Column(String, nullable=True)
-    rol = Column(String, default="comprador")  # productor, comprador, admin, verificador
+    rol = Column(String, default="comprador")  # comprador, productor, repartidor, admin ("verificador" en cuentas de antes)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     # "sub" del id_token de Google ya verificado — único por cuenta de Google, nunca compartido.
     # Null hasta que la cuenta se vincule (login/registro con Google, ver
@@ -24,36 +23,9 @@ class Usuario(Base):
     google_id = Column(String, unique=True, nullable=True)
 
 
-def _codigo_invitacion() -> str:
-    # token_urlsafe(16) -> ~22 caracteres (128 bits de entropía): corto para pegar en un
-    # WhatsApp/email, pero imposible de adivinar. No uuid4 (36 chars con guiones, más largo).
-    return secrets.token_urlsafe(16)
-
-
-def _expiracion_default() -> datetime:
-    return datetime.utcnow() + timedelta(days=7)
-
-
-class Invitacion(Base):
-    """Código de un solo uso que habilita registrarse con un rol restringido. Lo genera un admin
-    (POST /admin/invitaciones) y en una sub-entrega posterior lo consumirá /usuarios/registro.
-    `rol_destino` es genérico a propósito — hoy se usará para "verificador", pero sirve para
-    cualquier rol que en el futuro requiera invitación (incluido "admin"). Tabla nueva: la crea
-    Base.metadata.create_all() al arrancar, igual que el resto de este proyecto."""
-    __tablename__ = "invitaciones"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    codigo = Column(String, unique=True, nullable=False, index=True, default=_codigo_invitacion)
-    rol_destino = Column(String, nullable=False)
-    usado = Column(Boolean, nullable=False, default=False)
-    usado_por = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=True)
-    creado_por = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=False)
-    fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
-    fecha_expiracion = Column(DateTime, nullable=False, default=_expiracion_default)
-    # Solo para roles que la llevan (hoy "verificador"): la escribe el admin al invitar (N.º de colegiatura, código
-    # interno…) y Certificación la toma de aquí para el perfil del verificador, así que él no la escribe ni la inventa.
-    # Columna posterior a la tabla: ver migraciones.py.
-    credencial = Column(String, nullable=True)
+# La tabla "invitaciones" (códigos de un solo uso para registrarse con un rol restringido) se quitó con el rol
+# Verificador, su único uso: el modelo ya no existe, pero en una base ya creada la tabla se deja como estaba (es
+# historial y nada la lee). Ver ROLES_DE_REGISTRO_ABIERTO en main.py.
 
 
 class IntentoLogin(Base):

@@ -968,7 +968,7 @@ input, select { font-family: inherit; }
 .section-header.inner { margin-top: 32px; }
 
 /* Cabecera con foto — pedido explícito de "imágenes" para los 4 paneles operativos
-   (Productor/Repartidor/Admin/Verificador). Reusa la MISMA foto que ya usa el hero de la
+   (Productor/Repartidor/Admin). Reusa la MISMA foto que ya usa el hero de la
    landing (hero-valle-andino), no una fototeca nueva — con degradado de la paleta de marca
    encima para que el texto/ícono queden legibles en blanco. */
 .panel-header-hero {
@@ -1344,23 +1344,17 @@ input, select { font-family: inherit; }
 #pedidos-list .pedido-card {
   animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-/* Mismo hover que #envios-list, sumado ahora a las listas de tarjetas de Productor/Admin/
-   Verificador (pedido explícito de más "dinamismo" en esos 4 paneles) — explícito por
+/* Mismo hover que #envios-list, sumado ahora a las listas de tarjetas de Productor/Admin
+   (pedido explícito de más "dinamismo" en esos paneles) — explícito por
    contenedor, no un .pedido-card global, para no tocar Mis Pedidos (ver comentario de arriba). */
 #entregas-directas-lista .pedido-card,
-#invitaciones-lista .pedido-card,
 #pendientes-capacidad-lista .pedido-card,
-#productos-transito-lista .pedido-card,
-#verificador-cosechas-lista .pedido-card,
-#verificador-historial-lista .pedido-card {
+#productos-transito-lista .pedido-card {
   transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 #entregas-directas-lista .pedido-card:hover,
-#invitaciones-lista .pedido-card:hover,
 #pendientes-capacidad-lista .pedido-card:hover,
-#productos-transito-lista .pedido-card:hover,
-#verificador-cosechas-lista .pedido-card:hover,
-#verificador-historial-lista .pedido-card:hover {
+#productos-transito-lista .pedido-card:hover {
   transform: translateY(-4px);
   box-shadow: var(--sombra-hover);
 }
@@ -1624,6 +1618,8 @@ input, select { font-family: inherit; }
   .admin-resumen-layout .resumen-panel .resumen-acciones { margin-top: auto; padding-top: 18px; }
 }
 .admin-resumen-layout .grafico-card canvas { max-height: 220px; }
+.grafico-resumen { margin: 10px 0 0; font-size: 0.82rem; line-height: 1.45; color: var(--texto-suave); }
+.grafico-resumen:empty { display: none; }
 .admin-resumen-layout .grafico-card h4 { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 
 .grid-admin { display: flex; flex-direction: column; gap: 14px; }
@@ -2005,7 +2001,7 @@ input, select { font-family: inherit; }
    izquierda con un vacío enorme al costado en pantallas anchas (#app-main ya tiene su propio
    tope de 1280px — no hace falta un segundo tope más angosto encima). Las vistas que sí quieren
    tarjetas angostas a propósito ya tienen su propio override más específico (ver
-   #view-panel-verificador/#view-panel-admin .card-panel más abajo), así que siguen intactas. */
+   #view-panel-admin .card-panel más abajo), así que siguen intactas. */
 .card-panel h3 { margin-bottom: 6px; }
 .muted { color: var(--texto-suave); font-size: 0.9rem; margin-bottom: 16px; }
 
@@ -2065,86 +2061,12 @@ input, select { font-family: inherit; }
   .resumen-acciones .btn { width: 100%; }
 }
 
-/* ---------- PANEL VERIFICADOR ---------- */
-/* Mismo lenguaje visual de pestañas (underline) que Productor/Repartidor/Admin — antes eran
-   "pills" sueltas; unificado acá sin tocar el mecanismo de toggle (sigue siendo
-   seleccionarSeccionVerificador() alternando .active / .hidden, solo cambió el CSS). */
-.verificador-tabs {
-  display: flex; gap: 6px; margin-bottom: 20px; overflow-x: auto;
-  border-bottom: 2px solid var(--color-borde);
-  scrollbar-width: none;
-}
-.verificador-tabs::-webkit-scrollbar { display: none; }
-.verificador-tab {
-  padding: 12px 18px; flex-shrink: 0;
-  font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
-  background: none; border: none; border-radius: 12px 12px 0 0;
-  color: var(--color-secundario);
-  cursor: pointer;
-  position: relative;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-.verificador-tab:hover {
-  background: color-mix(in srgb, var(--color-borde) 12%, transparent);
-  color: var(--color-primario);
-}
-.verificador-tab.active { color: var(--color-primario); }
-.verificador-tab.active::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
-  background: var(--color-primario); border-radius: 3px 3px 0 0;
-}
-.verificador-seccion { animation: fadeIn 0.25s ease; }
-#view-panel-verificador .card-panel { border-color: var(--color-borde); max-width: 480px; }
-#verificador-cuenta-nombre { color: var(--color-primario); }
-#btn-verificador-logout { margin-top: 4px; }
-
-.grid-verificador { display: flex; flex-direction: column; gap: 14px; }
-@media (min-width: 760px) { .grid-verificador { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
-@media (min-width: 1150px) { .grid-verificador { grid-template-columns: repeat(3, 1fr); } }
-
-.verificador-cosecha-acciones { display: flex; gap: 10px; margin-top: 14px; }
-.verificador-cosecha-acciones .btn-sm { margin-left: 0; flex: 1; } /* .btn-sm trae margin-left:auto pensado para un botón solo — acá van dos en fila, repartiendo el ancho */
-
-/* Reusa .pill-estado (ver PANEL ADMIN) — solo suma el tono propio de "reenviado", que no es ni
-   un estado positivo (vigente) ni uno negativo (expirada), es un aviso. Mismo ámbar que
-   .disponibilidad-ambar / .ubicacion-espera en Gestionar Envíos, no un color inventado. */
-.pill-reenviado { background: #fff3cd; color: #8a6d1a; }
-
-.verificador-historial-motivo {
-  margin-top: 12px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: var(--color-superficie);
-  font-size: 0.85rem;
-  color: var(--texto-suave);
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
+/* Acciones al pie de una tarjeta (p. ej. "Marcar como entregado" en Entregas directas). */
+.tarjeta-acciones { display: flex; gap: 10px; margin-top: 14px; }
+.tarjeta-acciones .btn-sm { margin-left: 0; flex: 1; } /* .btn-sm trae margin-left:auto pensado para un botón solo */
 
 /* ---------- PANEL ADMIN ---------- */
 #view-panel-admin .card-panel { border-color: var(--color-borde); max-width: 560px; }
-.invitacion-resultado {
-  margin-top: 18px;
-  padding: 16px 20px;
-  border-radius: var(--radio);
-  background: var(--color-fondo-secundario);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.invitacion-codigo-caja { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.invitacion-codigo-caja code {
-  font-family: monospace;
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--color-primario);
-  background: white;
-  padding: 8px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--color-borde);
-  word-break: break-all;
-}
 /* Mismo esquema que .pill-estado del resto del sitio (pedidos/envíos), con los tokens nuevos
    para vigente/usada — "expirada" reusa el rojo ya establecido para estados fallidos/inactivos
    (.pill-cancelado/.pill-rechazado/.pill-error), no es --verde-* así que no aplica la migración. */
@@ -3221,7 +3143,7 @@ input, select { font-family: inherit; }
 
 /* ---------- VERIFICAR (PÁGINA PÚBLICA DE CERTIFICACIÓN) ---------- */
 /* ---------- VERIFICAR.HTML — página pública del QR, paleta y tipografía de marca. A
-   diferencia de los paneles (Productor/Repartidor/Admin/Verificador), esto es una sola
+   diferencia de los paneles (Productor/Repartidor/Admin), esto es una sola
    columna de lectura centrada a propósito — no un dashboard: la mayoría la abre desde el
    celular al escanear el QR, y un ancho completo no ayuda a leer un timeline lineal. ---------- */
 .verificar-topbar { background: var(--color-primario); padding: 16px 20px; }
@@ -4229,6 +4151,8 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .auth-roles { border: none; margin: 0; padding: 0; min-width: 0; }
 .auth-roles legend { padding: 0; margin-bottom: 10px; font-size: 0.9rem; font-weight: 700; color: var(--texto); }
 .auth-roles-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* Con un número impar de roles, el último ocupa la fila entera en vez de dejar un hueco al lado. */
+.auth-roles-grid > .auth-rol:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .auth-rol { position: relative; display: block; cursor: pointer; }
 .auth-rol input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .auth-rol-caja {
@@ -4691,42 +4615,9 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
   .detalle-visor-img.cambio { animation: none; }
 }
 
-/* ---------- Panel verificador: perfil (nombre + credencial) ----------
-   Aviso ámbar sobre las cosechas mientras falte el perfil (con el botón para completarlo) y formulario en "Mi cuenta".
-   Etiquetas visibles con asterisco, error en línea bajo cada campo (role="alert", además del borde rojo) y campos de 44px. */
-.verificador-aviso {
-  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; padding: 14px 18px;
-  border-radius: 14px; background: var(--acento-cosecha-suave); border: 1px solid #e6d3a3; color: var(--acento-cosecha-texto);
-}
-.verificador-aviso > i { flex: none; font-size: 1.5rem; }
-.verificador-aviso-texto { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.verificador-aviso-texto strong { font-size: 0.95rem; }
-.verificador-aviso-texto span { font-size: 0.85rem; line-height: 1.4; }
-.verificador-aviso .btn { flex: none; margin-left: 0; } /* .btn-sm trae margin-left:auto pensado para un header */
-.form-perfil-verificador { max-width: 460px; margin-top: 16px; }
-.form-perfil-verificador-intro { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--texto-suave); }
-.form-perfil-verificador input { min-height: 44px; }
-.form-perfil-verificador input[aria-invalid="true"] { border-color: #b3401f; }
+/* Campos obligatorios y error en línea bajo un campo (role="alert", además del borde rojo). */
 .campo-requerido { color: #b3401f; }
 .campo-error { min-height: 1.1em; font-size: 0.8rem; font-weight: 600; line-height: 1.4; color: #b3401f; }
-.verificador-cuenta #btn-verificador-logout { margin-top: 18px; }
-
-/* ---------- Credencial asignada por el admin (solo lectura) ----------
-   Un dato, no un campo: no se parece a un input (no se puede editar) y explica por qué. Cuando falta, el aviso ámbar lo
-   dice con palabras además del color. */
-.perfil-verificador-credencial {
-  display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 12px;
-  background: var(--verde-pastel); border: 1px solid var(--verde-claro);
-}
-.perfil-verificador-credencial-etiqueta { font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
-.perfil-verificador-credencial strong { font-family: var(--font-titulo); font-size: 1.1rem; color: var(--texto); overflow-wrap: anywhere; }
-.perfil-verificador-credencial small { font-size: 0.8rem; line-height: 1.4; }
-.perfil-verificador-credencial[data-estado="faltante"], .perfil-verificador-credencial[data-estado="error"] {
-  background: var(--acento-cosecha-suave); border-color: #e6d3a3;
-}
-.perfil-verificador-credencial[data-estado="faltante"] small, .perfil-verificador-credencial[data-estado="error"] small {
-  color: var(--acento-cosecha-texto); font-weight: 600;
-}
 
 /* ---------- Compra mínima (paso 1 del checkout) ----------
    Aviso ámbar con ícono y el motivo en palabras (no solo el botón apagado): cuánto falta para la compra mínima. */

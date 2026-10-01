@@ -33,7 +33,6 @@ let sesionVencidaAlIniciar = false; // había una sesión guardada, pero su toke
 const VISTA_INICIAL_POR_ROL = {
   productor: 'panel-productor',
   repartidor: 'gestion-envios',
-  verificador: 'panel-verificador',
   admin: 'panel-admin',
 };
 
@@ -541,7 +540,7 @@ function badgeEstadoEnvio(estado) {
 // (catálogo, carrito, detalle, vía infoUnidad/unidadCorta/unidadPlural/unidadEtiqueta) como los
 // dos <select> que la consumen (opcionesUnidadMedidaHtml): unidad_medida de una cosecha
 // (RegistroProduccion, "Registrar nueva siembra") y unidad alternativa de un producto ya
-// publicado. Mismo criterio que ROLES_INVITABLES: agregar una unidad nueva es sumarla acá, no
+// publicado. Única fuente de verdad: agregar una unidad nueva es sumarla acá, no
 // tocar el HTML ni duplicar la lista en otro lado. "label" es el texto que ve el productor en
 // esos <select>; singular/plural/etiqueta son para los textos de catálogo/carrito ("S/ X / kg",
 // "3 sacos", etc.). "esBase": true = unidad chica/granular válida como unidad_medida de una
@@ -853,7 +852,7 @@ function cargarSesionGuardada() {
 
 // Vistas que necesitan sesión: si esta vence mientras el usuario está en una, se le saca de ahí. En las
 // públicas (inicio, detalle de producto) se queda donde estaba.
-const VISTAS_CON_SESION = ['mis-pedidos', 'notificaciones', 'panel-productor', 'gestion-envios', 'panel-verificador', 'panel-admin', 'perfil'];
+const VISTAS_CON_SESION = ['mis-pedidos', 'notificaciones', 'panel-productor', 'gestion-envios', 'panel-admin', 'perfil'];
 
 // Un servicio respondió 401 a una petición con sesión (api.js): el token venció o ya no vale. Se cierra la
 // sesión local y se abre el acceso con el motivo a la vista. Varias peticiones en vuelo responden 401 a la
@@ -900,7 +899,6 @@ function actualizarUIAuth() {
   document.getElementById('nav-account-user').classList.toggle('hidden', !logueado);
   document.querySelector('.nav-productor').classList.toggle('hidden', !(logueado && Estado.rol === 'productor'));
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
-  document.querySelector('.nav-verificador').classList.toggle('hidden', !(logueado && Estado.rol === 'verificador'));
   document.querySelector('.nav-admin').classList.toggle('hidden', !(logueado && Estado.rol === 'admin'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
 
@@ -1045,7 +1043,6 @@ function cambiarVista(nombre, parametro) {
   if (nombre === 'notificaciones') cargarNotificaciones();
   if (nombre === 'panel-productor') iniciarPanelProductor();
   if (nombre === 'gestion-envios') cargarGestionEnvios();
-  if (nombre === 'panel-verificador') iniciarPanelVerificador();
   if (nombre === 'panel-admin') iniciarPanelAdmin();
   if (nombre === 'perfil') cargarPerfil();
   if (nombre === 'detalle-producto') cargarDetalleProducto(parametro);
@@ -1055,22 +1052,8 @@ function abrirRegistroConRol(rol) {
   cambiarTabAuth('registro');
   const select = document.getElementById('registro-rol');
   if (rol) select.value = rol;
-  actualizarCampoCodigoInvitacion();
-  abrirModal('modal-auth');
-}
-
-// Muestra/oculta el campo "Código de invitación" del formulario de registro según el rol
-// elegido. ROLES_INVITABLES (definido más abajo, junto al Panel Admin) es la única fuente de
-// verdad de qué roles lo requieren — nada de repetir "verificador" hardcodeado acá.
-function actualizarCampoCodigoInvitacion() {
-  const rol = document.getElementById('registro-rol').value;
-  const wrap = document.getElementById('registro-codigo-invitacion-wrap');
-  const input = document.getElementById('registro-codigo-invitacion');
-  const requiere = rolRequiereInvitacion(rol);
-  wrap.classList.toggle('hidden', !requiere);
-  input.required = requiere;
-  if (!requiere) input.value = ''; // no arrastrar un código viejo si el usuario cambia de rol
   sincronizarTarjetasRol();
+  abrirModal('modal-auth');
 }
 
 // Las tarjetas de rol del modal de acceso son radios; el <select id="registro-rol"> (oculto) sigue
@@ -4728,7 +4711,7 @@ async function eliminarUnidadAlternativa(productoId, unidadId) {
   }
 }
 
-// ---- Borradores (nacen de una cosecha aprobada por el Verificador — ver
+// ---- Borradores (nacen al completar una cosecha con su foto — ver
 // crear_producto_desde_cosecha en productos/main.py) ----
 function renderTarjetaBorrador(p, indice, imagenes) {
   const retraso = Math.min(indice, 12) * 35;
@@ -4837,8 +4820,7 @@ async function publicarBorrador(productoId) {
     await Api.productos.actualizar(productoId, { categoria, precio: Number.isFinite(precio) ? precio : null });
     await Api.productos.publicar(productoId);
     toast('Producto publicado — ya está visible en el catálogo 🎉');
-    // Recarga la sección completa (no toda la vista) — mismo criterio que cargarInvitaciones()
-    // en Panel Admin: más simple y correcto que mover la tarjeta a mano, porque "publicados"
+    // Recarga la sección completa (no toda la vista): más simple y correcto que mover la tarjeta a mano, porque "publicados"
     // necesita datos que este borrador no tenía (imagen_principal calculada del lado del
     // backend, por ejemplo).
     cargarMisProductos();
@@ -5143,7 +5125,7 @@ function renderTarjetaEntregaDirecta(envio, indice = 0) {
         <div class="perfil-dato"><span class="perfil-dato-label">Envío creado</span><span class="perfil-dato-valor">${formatearFechaServidor(envio.fecha_creacion)}</span></div>
       </div>
       <p class="muted">No se encontró un repartidor con capacidad suficiente para este pedido — te toca entregarlo directamente.</p>
-      <div class="verificador-cosecha-acciones">
+      <div class="tarjeta-acciones">
         <button type="button" class="btn btn-primary btn-sm btn-marcar-entregado" data-envio-id="${escapeAttr(envio.id)}"><i class="ti ti-check"></i> Marcar como entregado</button>
       </div>
     </div>`;
@@ -5172,8 +5154,7 @@ async function cargarEntregasDirectasPendientes() {
   }
 }
 
-// Saca la tarjeta ya entregada de la lista sin recargar toda la vista — mismo criterio que
-// quitarTarjetaCosechaPendiente() en Panel Verificador.
+// Saca la tarjeta ya entregada de la lista sin recargar toda la vista.
 function quitarTarjetaEntregaDirecta(envioId) {
   document.querySelector(`.pedido-card[data-envio-id="${envioId}"]`)?.remove();
   Estado.entregasDirectasPendientes = Estado.entregasDirectasPendientes.filter((e) => String(e.id) !== String(envioId));
@@ -5346,350 +5327,19 @@ function renderResumenRepartidor() {
     </div>`;
 }
 
-// ============ PANEL VERIFICADOR ============
-// Scaffolding: guard de rol + "Mi cuenta" (nombre del verificador). Las secciones "Cosechas
-// pendientes" e "Historial" son placeholders — su contenido va en entregas separadas.
-// Mismo guard que iniciarPanelProductor / cargarGestionEnvios: sin token o rol != verificador
-// -> se manda a inicio (no hay pantalla 403 propia en esta SPA, redirigir es el patrón).
-async function iniciarPanelVerificador() {
-  if (!Estado.token || Estado.rol !== 'verificador') {
-    cambiarVista('inicio');
-    return;
-  }
-
-  // Al entrar al panel siempre se muestra la primera sección (por si quedó otra activa de antes).
-  seleccionarSeccionVerificador('cosechas');
-  perfilVerificador = undefined; // se averigua abajo: el panel lo puede abrir otro verificador en la misma pestaña
-  cargarCosechasPendientes();
-
-  const nombreEl = document.getElementById('verificador-cuenta-nombre');
-  const detalleEl = document.getElementById('verificador-cuenta-detalle');
-  nombreEl.textContent = Estado.nombre || 'Mi cuenta';
-  detalleEl.textContent = 'Cargando tu perfil de verificador…';
-
-  try {
-    perfilVerificador = await Api.verificadores.miPerfil();
-  } catch (err) {
-    // 404 = tiene el rol pero aún no creó su perfil de verificador: lo crea en "Mi cuenta" (POST /verificadores).
-    if (err.status === 404) perfilVerificador = null;
-    else detalleEl.textContent = 'No se pudo cargar tu perfil de verificador.';
-  }
-  pintarPerfilVerificador();
-  if (perfilVerificador === null) cargarCredencialAsignada(); // sin perfil: se le muestra la credencial que le asignó el admin
-}
-
-// Credencial que el admin le asignó al verificador al invitarlo (Certificación se la pide a Usuarios). Él no la escribe: se
-// le muestra solo de lectura. undefined = consultando, texto = asignada, null = todavía no tiene, false = no se pudo consultar.
-let credencialAsignadaVerificador;
-
-function pintarCredencialAsignada() {
-  const estado = typeof credencialAsignadaVerificador === 'string' ? 'asignada'
-    : credencialAsignadaVerificador === null ? 'faltante'
-      : credencialAsignadaVerificador === false ? 'error' : 'consultando';
-  document.getElementById('perfil-verificador-credencial-bloque').dataset.estado = estado;
-  document.getElementById('perfil-verificador-credencial-valor').textContent = {
-    asignada: credencialAsignadaVerificador,
-    faltante: 'Todavía sin asignar',
-    error: 'No se pudo consultar',
-    consultando: 'Consultando…',
-  }[estado];
-  document.getElementById('perfil-verificador-credencial-ayuda').textContent = {
-    asignada: 'Aparece junto a tu nombre en el certificado de cada cosecha que apruebes. No puedes cambiarla.',
-    faltante: 'El administrador todavía no te asignó una credencial. Pídesela para poder completar tu perfil.',
-    error: 'No se pudo consultar tu credencial. Recarga la página en un momento.',
-    consultando: '',
-  }[estado];
-  document.querySelector('#form-perfil-verificador button[type="submit"]').disabled = estado === 'faltante';
-}
-
-async function cargarCredencialAsignada() {
-  credencialAsignadaVerificador = undefined;
-  pintarCredencialAsignada();
-  try {
-    credencialAsignadaVerificador = (await Api.verificadores.credencialAsignada()).credencial;
-  } catch (err) {
-    credencialAsignadaVerificador = err.status === 409 ? null : false; // 409 = el admin aún no se la asignó
-  }
-  pintarCredencialAsignada();
-}
-
-// Perfil del verificador (nombre + credencial). undefined = aún no se sabe (o no se pudo cargar), null = no lo tiene,
-// objeto = lo tiene. Sin perfil, lo que apruebe sale en el certificado sin "Certificado por" y esa cadena no se puede
-// corregir después: por eso no se le deja APROBAR hasta completarlo (rechazar sí).
-let perfilVerificador;
-
-function pintarPerfilVerificador() {
-  const sinPerfil = perfilVerificador === null;
-  document.getElementById('form-perfil-verificador').classList.toggle('hidden', !sinPerfil);
-  document.getElementById('verificador-aviso-perfil').classList.toggle('hidden', !sinPerfil);
-  document.querySelectorAll('#verificador-cosechas-lista .btn-aprobar-cosecha').forEach((boton) => {
-    boton.disabled = sinPerfil;
-    if (sinPerfil) boton.title = 'Completa tu perfil de verificador para aprobar'; else boton.removeAttribute('title');
-  });
-
-  const nombreEl = document.getElementById('verificador-cuenta-nombre');
-  const detalleEl = document.getElementById('verificador-cuenta-detalle');
-  if (perfilVerificador) {
-    nombreEl.textContent = perfilVerificador.nombre || Estado.nombre || 'Verificador';
-    detalleEl.textContent = perfilVerificador.credencial ? `Credencial: ${perfilVerificador.credencial}` : 'Verificador de Chakra Shop';
-  } else if (sinPerfil) {
-    detalleEl.textContent = 'Todavía no completaste tu perfil de verificador.';
-  }
-}
-
-async function crearPerfilVerificador(e) {
-  e.preventDefault();
-  const form = e.target;
-  const nombre = form.elements.nombre.value.trim();
-  const error = nombre.length < 2 ? 'Escribe tu nombre completo (mínimo 2 letras).' : '';
-  document.getElementById('perfil-verificador-nombre-error').textContent = error;
-  form.elements.nombre.setAttribute('aria-invalid', error ? 'true' : 'false');
-  if (error) { form.elements.nombre.focus(); return; }
-
-  const boton = form.querySelector('button[type="submit"]');
-  boton.disabled = true;
-  try {
-    perfilVerificador = await Api.verificadores.crear({ nombre }); // la credencial la pone el servidor: es la que asignó el admin
-    form.reset();
-    pintarPerfilVerificador();
-    toast('Perfil guardado: tu nombre aparecerá en el certificado de lo que apruebes ✅');
-  } catch (err) {
-    if (err.status === 409) { // ya tenía perfil (lo creó desde otra pestaña): se muestra el que existe
-      try {
-        perfilVerificador = await Api.verificadores.miPerfil();
-        pintarPerfilVerificador();
-        return;
-      } catch { /* sigue al aviso de error de abajo */ }
-    }
-    manejarError(err, 'guardar tu perfil de verificador');
-  } finally {
-    boton.disabled = false;
-  }
-}
-
-// Botón de sección (pestañas de los paneles) activo o no: la clase pinta el estado y aria-current se lo
-// dice a los lectores de pantalla.
-function marcarBotonActivo(boton, activo) {
-  boton.classList.toggle('active', activo);
-  if (activo) boton.setAttribute('aria-current', 'true'); else boton.removeAttribute('aria-current');
-}
-
-function seleccionarSeccionVerificador(seccion) {
-  document.querySelectorAll('#view-panel-verificador .verificador-tab').forEach((t) => {
-    marcarBotonActivo(t, t.dataset.vseccion === seccion);
-  });
-  document.querySelectorAll('#view-panel-verificador .verificador-seccion').forEach((s) => {
-    s.classList.toggle('hidden', s.dataset.vseccion !== seccion);
-  });
-  // El historial se recarga cada vez que se entra a la pestaña (no solo la primera vez): una
-  // aprobación/rechazo hecha en "Cosechas pendientes" en la misma sesión agrega una fila nueva.
-  if (seccion === 'historial') cargarHistorialVerificacion();
-}
-
-// ---- Cosechas pendientes ----
-function renderTarjetaCosechaPendiente(r, indice = 0) {
-  const retraso = Math.min(indice, 12) * 35;
-  return `
-    <div class="pedido-card" style="animation-delay:${retraso}ms" data-registro-id="${escapeAttr(r.id)}">
-      <div class="pedido-card-header">
-        <h4>${escapeAttr(r.cultivo)}</h4>
-        ${r.fue_rechazado_antes ? '<span class="pill pill-estado pill-reenviado"><i class="ti ti-recycle"></i> Reenviado</span>' : ''}
-      </div>
-      <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(r.productor_nombre || '—')}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(r.chacra_codigo || '—')}${r.chacra_nombre ? ' — ' + escapeAttr(r.chacra_nombre) : ''}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Cosecha real</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_cosecha_real)}</span></div>
-      </div>
-      <div class="verificador-cosecha-acciones">
-        <button type="button" class="btn btn-primary btn-sm btn-aprobar-cosecha" data-registro-id="${escapeAttr(r.id)}"><i class="ti ti-check"></i> Aprobar</button>
-        <button type="button" class="btn btn-danger btn-sm btn-rechazar-cosecha" data-registro-id="${escapeAttr(r.id)}"><i class="ti ti-x"></i> Rechazar</button>
-      </div>
-    </div>`;
-}
-
-async function cargarCosechasPendientes() {
-  const cont = document.getElementById('verificador-cosechas-lista');
-  const vacio = document.getElementById('verificador-cosechas-empty');
-  vacio.classList.add('hidden');
-  cont.innerHTML = renderSkeletonFilas(2);
-  try {
-    const registros = await Api.productores.produccion.verificacion.pendientes();
-    if (!registros.length) {
-      cont.innerHTML = '';
-      vacio.classList.remove('hidden');
-      return;
-    }
-    cont.innerHTML = registros.map(renderTarjetaCosechaPendiente).join('');
-    pintarPerfilVerificador(); // sin perfil, "Aprobar" queda bloqueado en las tarjetas recién pintadas
-  } catch (err) {
-    manejarError(err, 'cargar las cosechas pendientes');
-  }
-}
-
-// Saca la tarjeta ya resuelta de la lista sin recargar toda la vista — mismo criterio que
-// cargarInvitaciones() en Panel Admin, pero acá alcanza con quitar un nodo del DOM (no hace
-// falta volver a pedir la lista completa, la tarjeta resuelta ya no pertenece a "pendientes").
-function quitarTarjetaCosechaPendiente(registroId) {
-  document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`)?.remove();
-  const cont = document.getElementById('verificador-cosechas-lista');
-  if (cont && !cont.children.length) {
-    document.getElementById('verificador-cosechas-empty').classList.remove('hidden');
-  }
-}
-
-async function aprobarCosecha(registroId) {
-  if (perfilVerificador === null) {
-    toast('Completa tu perfil de verificador para aprobar cosechas.', 'error');
-    seleccionarSeccionVerificador('cuenta');
-    return;
-  }
-  const card = document.querySelector(`.pedido-card[data-registro-id="${registroId}"]`);
-  card?.querySelectorAll('button').forEach((b) => { b.disabled = true; });
-  try {
-    const aprobada = await Api.productores.produccion.verificacion.aprobar(registroId);
-    // certificacion_registrada: el backend deja en la cadena del producto los eventos
-    // cosecha_registrada + certificado_productor (lo que ve quien escanea el QR). Si esa llamada
-    // falló, la aprobación igual se completó — se avisa para que no pase desapercibido.
-    if (aprobada?.certificacion_registrada === false) {
-      toast('Cosecha aprobada, pero el certificado de trazabilidad no se pudo registrar todavía. Avisa a un administrador.', 'error');
-    } else {
-      toast('Cosecha aprobada y certificada — el producto ya está en el catálogo del productor, en borrador 🌱');
-    }
-    quitarTarjetaCosechaPendiente(registroId);
-  } catch (err) {
-    // Acá cae, entre otros, el 502 del circuit breaker si Productos no pudo crear el producto
-    // (ver aprobar_cosecha en productores/main.py) — manejarError muestra err.message tal cual
-    // vino del backend, y la tarjeta queda en la lista (no se llama a quitarTarjetaCosechaPendiente)
-    // para que el Verificador pueda simplemente tocar "Aprobar" de nuevo.
-    manejarError(err, 'aprobar la cosecha');
-    card?.querySelectorAll('button').forEach((b) => { b.disabled = false; });
-  }
-}
-
-let registroIdParaRechazar = null;
-
-function abrirModalRechazarCosecha(registroId) {
-  registroIdParaRechazar = registroId;
-  document.getElementById('form-rechazar-cosecha').reset();
-  abrirModal('modal-rechazar-cosecha');
-}
-
-async function confirmarRechazoCosecha(e) {
-  e.preventDefault();
-  const motivo = document.getElementById('rechazar-cosecha-motivo').value.trim();
-  if (!motivo) {
-    toast('Indica el motivo del rechazo', 'error');
-    return;
-  }
-  const btn = e.target.querySelector('button[type="submit"]');
-  btn.disabled = true;
-  try {
-    await Api.productores.produccion.verificacion.rechazar(registroIdParaRechazar, motivo);
-    toast('Cosecha rechazada.');
-    cerrarModal('modal-rechazar-cosecha');
-    quitarTarjetaCosechaPendiente(registroIdParaRechazar);
-    registroIdParaRechazar = null;
-  } catch (err) {
-    manejarError(err, 'rechazar la cosecha');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// ---- Historial ----
-function renderTarjetaHistorialVerificacion(h, indice = 0) {
-  const retraso = Math.min(indice, 12) * 35;
-  const aprobado = h.accion === 'aprobado';
-  const badge = aprobado
-    ? '<span class="pill pill-estado pill-vigente"><i class="ti ti-circle-check"></i> Aprobado</span>'
-    : '<span class="pill pill-estado pill-expirada"><i class="ti ti-circle-x"></i> Rechazado</span>';
-  return `
-    <div class="pedido-card" style="animation-delay:${retraso}ms">
-      <div class="pedido-card-header">
-        <h4>${escapeAttr(h.cultivo || 'Cultivo no disponible')}</h4>
-        ${badge}
-      </div>
-      <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Productor</span><span class="perfil-dato-valor">${escapeAttr(h.productor_nombre || '—')}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Chacra</span><span class="perfil-dato-valor">${escapeAttr(h.chacra_codigo || '—')}${h.chacra_nombre ? ' — ' + escapeAttr(h.chacra_nombre) : ''}</span></div>
-        <div class="perfil-dato"><span class="perfil-dato-label">Fecha</span><span class="perfil-dato-valor">${formatearFechaServidor(h.fecha)}</span></div>
-      </div>
-      ${!aprobado && h.motivo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(h.motivo)}</p>` : ''}
-    </div>`;
-}
-
-async function cargarHistorialVerificacion() {
-  const cont = document.getElementById('verificador-historial-lista');
-  const vacio = document.getElementById('verificador-historial-empty');
-  vacio.classList.add('hidden');
-  cont.innerHTML = renderSkeletonFilas(2);
-  try {
-    const historial = await Api.productores.produccion.verificacion.historial();
-    if (!historial.length) {
-      cont.innerHTML = '';
-      vacio.classList.remove('hidden');
-      return;
-    }
-    cont.innerHTML = historial.map(renderTarjetaHistorialVerificacion).join('');
-  } catch (err) {
-    manejarError(err, 'cargar tu historial de verificación');
-  }
-}
-
 // ============ PANEL ADMIN ============
-// Generación y gestión de códigos de invitación. Mismo guard que el resto de paneles por rol.
-
-// Roles restringidos que un admin puede invitar — agregar uno acá habilita la opción en el
-// <select> del formulario (poblarSelectRolDestino) sin tocar el HTML ni el resto de esta lógica.
-const ROLES_INVITABLES = [
-  { value: 'verificador', label: 'Verificador', pideCredencial: true },
-];
-
-// Única fuente de verdad de "¿este rol necesita código de invitación?" — la usan tanto el
-// formulario de registro (actualizarCampoCodigoInvitacion, más arriba) como este panel.
-function rolRequiereInvitacion(rol) {
-  return ROLES_INVITABLES.some((r) => r.value === rol);
-}
-
-// ¿La invitación de este rol lleva una credencial escrita por el admin? (el servidor también lo exige)
-function rolPideCredencial(rol) {
-  return ROLES_INVITABLES.some((r) => r.value === rol && r.pideCredencial);
-}
-
-// El campo de la credencial se muestra (y es obligatorio) solo para los roles que la llevan.
-function actualizarCampoCredencialInvitacion() {
-  const pide = rolPideCredencial(document.getElementById('invitacion-rol-destino').value);
-  const campo = document.getElementById('invitacion-credencial-campo');
-  campo.classList.toggle('hidden', !pide);
-  document.getElementById('invitacion-credencial').required = pide;
-}
-
-function marcarErrorCredencialInvitacion(mensaje) {
-  document.getElementById('invitacion-credencial-error').textContent = mensaje;
-  document.getElementById('invitacion-credencial').setAttribute('aria-invalid', mensaje ? 'true' : 'false');
-}
-
-function poblarSelectRolDestino() {
-  const select = document.getElementById('invitacion-rol-destino');
-  if (!select || select.dataset.poblado) return;
-  select.innerHTML = ROLES_INVITABLES.map((r) => `<option value="${escapeAttr(r.value)}">${escapeAttr(r.label)}</option>`).join('');
-  select.dataset.poblado = '1';
-}
+// Productores, pedidos esperando un vehículo más grande y llegada de productos al almacén. Mismo guard que el resto
+// de paneles por rol. (Antes también generaba códigos de invitación: su único uso era el rol Verificador y se quitaron
+// con él en la presentación del 2026-10-01.)
 
 async function iniciarPanelAdmin() {
   if (!Estado.token || Estado.rol !== 'admin') {
     cambiarVista('inicio');
     return;
   }
-  poblarSelectRolDestino();
-  document.getElementById('invitacion-resultado').classList.add('hidden');
-  document.getElementById('form-invitacion').reset();
-  marcarErrorCredencialInvitacion('');
-  actualizarCampoCredencialInvitacion();
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
-  await Promise.all([cargarInvitaciones(), cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin()]);
+  await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -5759,13 +5409,49 @@ async function cargarProductoresAdmin() {
     badge.textContent = productores.length;
     badge.classList.toggle('hidden', !productores.length);
     pintarProductoresAdmin();
+    dibujarGraficoProductoresAdmin();
+    refrescarResumenAdmin();
   } catch (err) {
     cont.innerHTML = '';
     manejarError(err, 'cargar los productores');
   }
 }
 
-// Secciones dedicadas del Panel Admin (Inicio / Invitaciones / Pendientes por Capacidad /
+let chartProductoresAdmin = null;
+
+// Top 5 de productores por productos publicados, en barras horizontales de mayor a menor (comparar magnitudes es lo
+// que importa acá). El valor va escrito en cada etiqueta y el resumen en texto lo lee un lector de pantalla: nada
+// depende del color. Mismo canvas fijo en index.html: se destruye la instancia anterior antes de redibujar.
+function dibujarGraficoProductoresAdmin() {
+  const canvas = document.getElementById('grafico-productores-admin');
+  if (!canvas || typeof Chart === 'undefined') return;
+  const top = productoresAdmin.filter((item) => item.total > 0).slice(0, 5);
+  const vacio = document.getElementById('grafico-productores-admin-vacio');
+  const resumen = document.getElementById('grafico-productores-admin-resumen');
+  chartProductoresAdmin?.destroy();
+  chartProductoresAdmin = null;
+  canvas.classList.toggle('hidden', !top.length);
+  vacio.classList.toggle('hidden', top.length > 0);
+  if (!top.length) { resumen.textContent = ''; return; }
+
+  const plural = (n) => `${n} producto${n === 1 ? '' : 's'}`;
+  resumen.textContent = `Con más productos publicados: ${top.map((item) => `${item.p.nombre} (${plural(item.total)})`).join(', ')}.`;
+  canvas.setAttribute('aria-label', 'Productos publicados por productor, de mayor a menor');
+  chartProductoresAdmin = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: top.map((item) => `${item.p.nombre} · ${item.total}`),
+      datasets: [{ data: top.map((item) => item.total), backgroundColor: '#2D3B2A', borderRadius: 6, maxBarThickness: 26 }],
+    },
+    options: {
+      indexAxis: 'y',
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => plural(c.raw) } } },
+      scales: { x: { beginAtZero: true, ticks: { precision: 0 } }, y: { ticks: { font: { size: 12 } } } },
+    },
+  });
+}
+
+// Secciones dedicadas del Panel Admin (Inicio / Productores / Pendientes por Capacidad /
 // Productos en Tránsito) — mismo patrón que activarTabProductor.
 function activarTabAdmin(nombreTab) {
   document.querySelectorAll('.admin-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.admintab === nombreTab));
@@ -5773,200 +5459,63 @@ function activarTabAdmin(nombreTab) {
   if (nombreTab === 'productores') requestAnimationFrame(() => mapasProductoresAdmin.forEach((m) => m.invalidateSize()));
 }
 
-// El backend solo manda `usado` (bool) y `fecha_expiracion` — "Expirada" no viaja ya resuelta
-// desde /admin/invitaciones (a diferencia de /admin/invitaciones/validar/{codigo}, que sí la
-// calcula), así que se deriva acá comparando contra la hora actual del navegador.
-function estadoInvitacion(inv) {
-  if (inv.usado) return { clave: 'usada', etiqueta: 'Usada' };
-  if (parsearFechaServidor(inv.fecha_expiracion) < new Date()) return { clave: 'expirada', etiqueta: 'Expirada' };
-  return { clave: 'vigente', etiqueta: 'Vigente' };
-}
-
-function renderInvitacionCard(inv) {
-  const estado = estadoInvitacion(inv);
-  return `
-    <div class="pedido-card" data-invitacion-id="${escapeAttr(inv.id)}">
-      <div class="pedido-card-header">
-        <code class="pedido-id">${escapeAttr(inv.codigo)}</code>
-        <span class="pill pill-estado pill-${estado.clave}">${estado.etiqueta}</span>
-      </div>
-      <p><strong>Rol:</strong> ${escapeAttr(inv.rol_destino)}</p>
-      ${inv.credencial ? `<p><strong>Credencial:</strong> ${escapeAttr(inv.credencial)}</p>` : ''}
-      <p class="pedido-fecha">Creada: ${formatearFechaServidor(inv.fecha_creacion)} · Vence: ${formatearFechaServidor(inv.fecha_expiracion)}</p>
-      ${estado.clave === 'vigente'
-        ? `<button type="button" class="btn btn-outline btn-sm btn-revocar-invitacion" data-invitacion-id="${escapeAttr(inv.id)}">Revocar</button>`
-        : ''}
-    </div>`;
-}
-
-// cargarInvitaciones(), cargarProductosEnTransito() y cargarEnviosPendientesPorCapacidad() corren
-// en paralelo (ver iniciarPanelAdmin) y las tres alimentan el mismo resumen — cada una guarda acá
-// lo último que trajo y dispara un re-render con los tres datos, sin importar cuál termine primero.
-let invitacionesActualesAdmin = [];
+// cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad() y cargarProductoresAdmin() corren en paralelo
+// (ver iniciarPanelAdmin) y las tres alimentan el mismo resumen — cada una guarda lo último que trajo y dispara un
+// re-render con todos los datos, sin importar cuál termine primero.
 let productosTransitoActualesAdmin = [];
 let enviosPorCapacidadActualesAdmin = [];
 
 function refrescarResumenAdmin() {
   document.getElementById('admin-resumen').innerHTML = renderResumenAdmin(
-    invitacionesActualesAdmin,
     productosTransitoActualesAdmin.length,
     enviosPorCapacidadActualesAdmin.length,
+    productoresAdmin.length,
   );
   animarContadoresResumen(document.getElementById('admin-resumen'));
 }
 
-async function cargarInvitaciones() {
-  const cont = document.getElementById('invitaciones-lista');
-  const vacio = document.getElementById('invitaciones-empty');
-  try {
-    const invitaciones = await Api.admin.listarInvitaciones();
-    invitacionesActualesAdmin = invitaciones;
-    vacio.classList.toggle('hidden', invitaciones.length > 0);
-    cont.innerHTML = invitaciones.map(renderInvitacionCard).join('');
-    refrescarResumenAdmin();
-    dibujarGraficoInvitacionesEstado(invitaciones);
-  } catch (err) {
-    manejarError(err, 'cargar las invitaciones');
-  }
-}
-
-let chartInvitacionesEstado = null;
-
-// Mismo canvas fijo en index.html (nunca se recrea por innerHTML) que ya obligó a este patrón
-// en Panel Productor/Repartidor — destruir la instancia anterior antes de redibujar.
-function dibujarGraficoInvitacionesEstado(invitaciones) {
-  const canvas = document.getElementById('grafico-invitaciones-estado');
-  if (!canvas || typeof Chart === 'undefined') return;
-
-  const porEstado = { vigente: 0, usada: 0, expirada: 0 };
-  invitaciones.forEach((inv) => { porEstado[estadoInvitacion(inv).clave]++; });
-
-  chartInvitacionesEstado?.destroy();
-  chartInvitacionesEstado = new Chart(canvas, {
-    type: 'doughnut',
-    data: {
-      labels: ['Vigentes', 'Usadas', 'Expiradas'],
-      datasets: [{ data: [porEstado.vigente, porEstado.usada, porEstado.expirada], backgroundColor: ['#2D3B2A', '#82907A', '#A23B22'] }],
-    },
-    options: { plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } },
-  });
-}
-
-// ---- Resumen / dashboard de "Panel Admin" — reusa estadoInvitacion() (la misma función que ya
-// clasifica cada tarjeta de la lista) sobre el array que acaba de traer cargarInvitaciones(). ----
-function renderResumenAdmin(invitaciones, totalProductosTransito = 0, totalPendientesPorCapacidad = 0) {
-  const porEstado = { vigente: 0, usada: 0, expirada: 0 };
-  let masProximaAVencer = null;
-  invitaciones.forEach((inv) => {
-    const estado = estadoInvitacion(inv);
-    porEstado[estado.clave]++;
-    if (estado.clave === 'vigente' && (!masProximaAVencer || parsearFechaServidor(inv.fecha_expiracion) < parsearFechaServidor(masProximaAVencer.fecha_expiracion))) {
-      masProximaAVencer = inv;
-    }
-  });
-
-  let avisoVencimiento = '';
-  if (masProximaAVencer) {
-    const diasRestantes = Math.max(0, Math.ceil((parsearFechaServidor(masProximaAVencer.fecha_expiracion) - new Date()) / 86400000));
-    const texto = diasRestantes === 0 ? 'vence hoy' : `vence en ${diasRestantes} día${diasRestantes === 1 ? '' : 's'}`;
-    avisoVencimiento = `<i class="ti ti-alert-triangle"></i> El código <code>${escapeAttr(masProximaAVencer.codigo)}</code> ${texto}`;
-  }
-
+// ---- Resumen / dashboard de "Panel Admin": lo que espera una acción del admin, primero. ----
+function renderResumenAdmin(totalProductosTransito = 0, totalPendientesPorCapacidad = 0, totalProductores = 0) {
+  const plural = (n, singular, varios) => `${n === 1 ? singular : varios}`;
   return `
     <div class="card-panel resumen-panel">
       <div class="resumen-stats">
         <div class="resumen-stat resumen-stat-destacado">
-          <span class="resumen-stat-icono"><i class="ti ti-ticket"></i></span>
-          <div>
-            <span class="resumen-stat-valor">${porEstado.vigente}</span>
-            <span class="resumen-stat-label">Vigente${porEstado.vigente === 1 ? '' : 's'}</span>
-          </div>
-        </div>
-        <div class="resumen-stat">
-          <span class="resumen-stat-icono"><i class="ti ti-user-check"></i></span>
-          <div>
-            <span class="resumen-stat-valor">${porEstado.usada}</span>
-            <span class="resumen-stat-label">Usada${porEstado.usada === 1 ? '' : 's'}</span>
-          </div>
-        </div>
-        <div class="resumen-stat">
-          <span class="resumen-stat-icono"><i class="ti ti-clock-x"></i></span>
-          <div>
-            <span class="resumen-stat-valor">${porEstado.expirada}</span>
-            <span class="resumen-stat-label">Expirada${porEstado.expirada === 1 ? '' : 's'}</span>
-          </div>
-        </div>
-        <div class="resumen-stat">
           <span class="resumen-stat-icono"><i class="ti ti-building-warehouse"></i></span>
           <div>
             <span class="resumen-stat-valor">${totalProductosTransito}</span>
-            <span class="resumen-stat-label">Producto${totalProductosTransito === 1 ? '' : 's'} en tránsito</span>
+            <span class="resumen-stat-label">${plural(totalProductosTransito, 'Producto en tránsito', 'Productos en tránsito')}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-truck"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${totalPendientesPorCapacidad}</span>
+            <span class="resumen-stat-label">${plural(totalPendientesPorCapacidad, 'Pedido esperando vehículo', 'Pedidos esperando vehículo')}</span>
+          </div>
+        </div>
+        <div class="resumen-stat">
+          <span class="resumen-stat-icono"><i class="ti ti-tractor"></i></span>
+          <div>
+            <span class="resumen-stat-valor">${totalProductores}</span>
+            <span class="resumen-stat-label">${plural(totalProductores, 'Productor', 'Productores')}</span>
           </div>
         </div>
       </div>
-      ${avisoVencimiento ? `<div class="resumen-destacado resumen-destacado-urgente">${avisoVencimiento}</div>` : ''}
+      ${totalProductosTransito ? `
+      <div class="resumen-destacado resumen-destacado-clicable" id="btn-resumen-transito" role="button" tabindex="0">
+        <i class="ti ti-scale"></i>
+        ${totalProductosTransito} ${plural(totalProductosTransito, 'producto espera', 'productos esperan')} que confirmes su llegada y su peso en el almacén
+      </div>` : ''}
       ${totalPendientesPorCapacidad ? `
-      <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-pendientes-capacidad">
+      <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-pendientes-capacidad" role="button" tabindex="0">
         <i class="ti ti-truck"></i>
         ${totalPendientesPorCapacidad} pedido${totalPendientesPorCapacidad === 1 ? '' : 's'} esperando un vehículo con más capacidad
       </div>` : ''}
       <div class="resumen-acciones">
-        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-generar-codigo"><i class="ti ti-plus"></i> Generar nuevo código</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-ir-transito"><i class="ti ti-building-warehouse"></i> Confirmar llegadas al almacén</button>
       </div>
     </div>`;
-}
-
-function mostrarInvitacionGenerada(inv) {
-  document.getElementById('invitacion-codigo-texto').textContent = inv.codigo;
-  document.getElementById('invitacion-expira-texto').textContent = `Vence: ${formatearFechaServidor(inv.fecha_expiracion)}`;
-  document.getElementById('invitacion-credencial-texto').textContent = inv.credencial ? `Credencial asignada: ${inv.credencial}` : '';
-  document.getElementById('invitacion-resultado').classList.remove('hidden');
-}
-
-async function generarInvitacion(e) {
-  e.preventDefault();
-  const btn = e.target.querySelector('button[type="submit"]');
-  const rolDestino = document.getElementById('invitacion-rol-destino').value;
-  const campoCredencial = document.getElementById('invitacion-credencial');
-  const credencial = campoCredencial.value.trim();
-  if (rolPideCredencial(rolDestino) && !credencial) {
-    marcarErrorCredencialInvitacion('Escribe la credencial que se le asigna a esta persona.');
-    campoCredencial.focus();
-    return;
-  }
-  btn.disabled = true;
-  try {
-    const invitacion = await Api.admin.crearInvitacion(rolDestino, rolPideCredencial(rolDestino) ? credencial : undefined);
-    campoCredencial.value = '';
-    mostrarInvitacionGenerada(invitacion);
-    await cargarInvitaciones(); // la nueva invitación aparece en la lista sin recargar la página
-    toast('Código de invitación generado');
-  } catch (err) {
-    manejarError(err, 'generar la invitación');
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-async function copiarCodigoInvitacion() {
-  const codigo = document.getElementById('invitacion-codigo-texto').textContent;
-  if (!codigo) return;
-  try {
-    await navigator.clipboard.writeText(codigo);
-    toast('Código copiado al portapapeles');
-  } catch {
-    toast('No se pudo copiar. Selecciona el código manualmente.', 'error');
-  }
-}
-
-async function revocarInvitacionDesdeLista(invitacionId) {
-  try {
-    await Api.admin.revocarInvitacion(invitacionId);
-    toast('Invitación revocada');
-    await cargarInvitaciones(); // saca la fila revocada sin recargar toda la página
-  } catch (err) {
-    manejarError(err, 'revocar la invitación');
-  }
 }
 
 // ---- Pedidos esperando vehículo con más capacidad (caso poco frecuente: motivo_pendiente ==
@@ -6000,7 +5549,7 @@ async function cargarEnviosPendientesPorCapacidad() {
   } catch (err) {
     // Silencioso a propósito, mismo criterio que cargarEntregasDirectasPendientes() en
     // panel-productor: es una sección discreta y poco frecuente — un error acá no debería
-    // interrumpir el resto del panel (invitaciones, productos en tránsito siguen cargando igual).
+    // interrumpir el resto del panel (productores y productos en tránsito siguen cargando igual).
     enviosPorCapacidadActualesAdmin = [];
     cont.innerHTML = '';
     vacio.classList.remove('hidden');
@@ -6075,8 +5624,7 @@ async function cargarProductosEnTransito() {
   }
 }
 
-// Saca la tarjeta ya confirmada de la lista sin recargar toda la vista — mismo criterio que
-// quitarTarjetaCosechaPendiente() en Panel Verificador.
+// Saca la tarjeta ya confirmada de la lista sin recargar toda la vista.
 function quitarTarjetaProductoTransito(productoId) {
   document.querySelector(`.pedido-card[data-producto-id="${productoId}"]`)?.remove();
   productosTransitoActualesAdmin = productosTransitoActualesAdmin.filter((p) => String(p.id) !== String(productoId));
@@ -6556,7 +6104,6 @@ const ROL_INFO_PERFIL = {
   comprador: { icono: '<i class="ti ti-shopping-cart"></i>', texto: 'Comprador', descripcion: 'Explora el catálogo y haz seguimiento de tus compras.' },
   productor: { icono: '<i class="ti ti-tractor"></i>', texto: 'Productor', descripcion: 'Publica tus productos sin intermediarios y lleva tu gestión económica.' },
   repartidor: { icono: '<i class="ti ti-truck"></i>', texto: 'Repartidor', descripcion: 'Recibe propuestas de envío y entrega los pedidos.' },
-  verificador: { icono: '<i class="ti ti-shield-check"></i>', texto: 'Verificador', descripcion: 'Revisa y certifica las cosechas de los productores.' },
   admin: { icono: '<i class="ti ti-settings"></i>', texto: 'Administrador', descripcion: 'Administra la plataforma.' },
 };
 
@@ -6564,7 +6111,6 @@ const ROL_INFO_PERFIL = {
 const ACCESO_PANEL_POR_ROL = {
   productor: { icono: 'tractor', etiqueta: 'Panel de productor' },
   repartidor: { icono: 'truck', etiqueta: 'Gestionar envíos' },
-  verificador: { icono: 'shield-check', etiqueta: 'Panel de verificación' },
   admin: { icono: 'settings', etiqueta: 'Panel de administración' },
 };
 
@@ -6597,7 +6143,7 @@ function renderSkeletonPerfil() {
     </div>`;
 }
 
-// Cuenta de quien no tiene datos propios de rol (comprador, verificador, administrador): lo que sabemos de
+// Cuenta de quien no tiene datos propios de rol (comprador, administrador): lo que sabemos de
 // ella y qué hace ese rol. Productor y repartidor muestran en su lugar sus datos de rol.
 function renderPerfilCuenta(usuario, rolInfo) {
   return `
@@ -6926,6 +6472,13 @@ function renderTablaUltimasSiembras(registros) {
 // vez que se abre esa pestaña (si se dibujaran de entrada, mientras el panel está con
 // display:none, Chart.js los mediría con 0x0 y quedarían rotos).
 let graficosEconomiaProductorListos = false;
+// Botón de sección (pestañas de los paneles) activo o no: la clase pinta el estado y aria-current se lo
+// dice a los lectores de pantalla.
+function marcarBotonActivo(boton, activo) {
+  boton.classList.toggle('active', activo);
+  if (activo) boton.setAttribute('aria-current', 'true'); else boton.removeAttribute('aria-current');
+}
+
 function activarTabProductor(nombreTab) {
   document.querySelectorAll('.productor-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.tab === nombreTab));
   document.querySelectorAll('.productor-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.tabPanel === nombreTab));
@@ -7349,18 +6902,13 @@ async function manejarRegistro(e) {
     const password = document.getElementById('registro-password').value;
     const rol = document.getElementById('registro-rol').value;
 
-    const datos = { nombre, email, password, rol };
-    if (rolRequiereInvitacion(rol)) {
-      datos.codigo_invitacion = document.getElementById('registro-codigo-invitacion').value.trim();
-    }
-
-    await Api.usuarios.registrar(datos);
+    await Api.usuarios.registrar({ nombre, email, password, rol });
     const resp = await Api.usuarios.login({ email, password });
     Estado.nombre = nombre;
     await iniciarSesionConToken(resp.access_token);
 
     document.getElementById('form-registro').reset();
-    actualizarCampoCodigoInvitacion(); // el reset vuelve el <select> a "comprador" — resincroniza el campo
+    sincronizarTarjetasRol(); // el reset vuelve el <select> a "comprador" — resincroniza las tarjetas
     cerrarModal('modal-auth');
     cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
@@ -7444,15 +6992,12 @@ async function manejarLoginGoogle(credential) {
 async function manejarRegistroGoogle(credential) {
   const rol = document.getElementById('registro-rol').value;
   const datos = { id_token: credential, rol };
-  if (rolRequiereInvitacion(rol)) {
-    datos.codigo_invitacion = document.getElementById('registro-codigo-invitacion').value.trim();
-  }
 
   try {
     const resp = await Api.usuarios.oauthGoogle(datos);
     await iniciarSesionConToken(resp.access_token);
     document.getElementById('form-registro').reset();
-    actualizarCampoCodigoInvitacion(); // el reset vuelve el <select> a "comprador" — resincroniza el campo
+    sincronizarTarjetasRol(); // el reset vuelve el <select> a "comprador" — resincroniza las tarjetas
     cerrarModal('modal-auth');
     cambiarVista(vistaInicialPara(Estado.rol));
     toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${Estado.nombre} 🎉`);
@@ -7573,7 +7118,7 @@ function inicializarEventos() {
 
   document.getElementById('form-login').addEventListener('submit', manejarLogin);
   document.getElementById('form-registro').addEventListener('submit', manejarRegistro);
-  document.getElementById('registro-rol').addEventListener('change', actualizarCampoCodigoInvitacion);
+  document.getElementById('registro-rol').addEventListener('change', sincronizarTarjetasRol);
 
   // Modal de acceso: mostrar/ocultar contraseña, enlaces entre pestañas, tarjetas de rol y teclado.
   const modalAuth = document.getElementById('modal-auth');
@@ -7597,7 +7142,6 @@ function inicializarEventos() {
   document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       document.getElementById('registro-rol').value = radio.value;
-      actualizarCampoCodigoInvitacion();
     });
   });
   modalAuth.addEventListener('input', limpiarErroresAuth);
@@ -7988,55 +7532,25 @@ function inicializarEventos() {
     }
   });
 
-  // ---- Panel Verificador: navegación entre secciones + logout ----
-  document.getElementById('verificador-tabs').addEventListener('click', (e) => {
-    const tab = e.target.closest('.verificador-tab');
-    if (tab) seleccionarSeccionVerificador(tab.dataset.vseccion);
-  });
-  document.getElementById('btn-verificador-logout').addEventListener('click', cerrarSesion);
-  document.getElementById('form-perfil-verificador').addEventListener('submit', crearPerfilVerificador);
-  document.getElementById('form-perfil-verificador').addEventListener('input', (e) => { // al corregir un campo se quita su error
-    e.target.setAttribute('aria-invalid', 'false');
-    const error = document.getElementById(`${e.target.id}-error`);
-    if (error) error.textContent = '';
-  });
-  document.getElementById('btn-verificador-completar-perfil').addEventListener('click', () => {
-    seleccionarSeccionVerificador('cuenta');
-    document.getElementById('perfil-verificador-nombre').focus();
-  });
-
-  document.getElementById('verificador-cosechas-lista').addEventListener('click', (e) => {
-    const aprobar = e.target.closest('.btn-aprobar-cosecha');
-    if (aprobar) { aprobarCosecha(aprobar.dataset.registroId); return; }
-    const rechazar = e.target.closest('.btn-rechazar-cosecha');
-    if (rechazar) { abrirModalRechazarCosecha(rechazar.dataset.registroId); return; }
-  });
-  document.getElementById('form-rechazar-cosecha').addEventListener('submit', confirmarRechazoCosecha);
-
-  // ---- Panel Admin: nav de secciones dedicadas + generar invitación, copiar código, refrescar, revocar ----
+  // ---- Panel Admin: nav de secciones dedicadas + accesos del resumen ----
   document.querySelector('.admin-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.admin-tab-btn');
     if (btn) activarTabAdmin(btn.dataset.admintab);
   });
-  document.getElementById('form-invitacion').addEventListener('submit', generarInvitacion);
-  document.getElementById('invitacion-rol-destino').addEventListener('change', actualizarCampoCredencialInvitacion);
-  document.getElementById('invitacion-credencial').addEventListener('input', () => marcarErrorCredencialInvitacion(''));
-  document.getElementById('btn-copiar-codigo').addEventListener('click', copiarCodigoInvitacion);
-  document.getElementById('btn-refrescar-invitaciones').addEventListener('click', cargarInvitaciones);
-  document.getElementById('admin-resumen').addEventListener('click', (e) => {
-    if (e.target.closest('#btn-resumen-generar-codigo')) {
-      activarTabAdmin('invitaciones');
-      document.getElementById('invitacion-rol-destino')?.focus({ preventScroll: true });
+  const irDesdeResumenAdmin = (e) => {
+    if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') return;
+    if (e.target.closest('#btn-resumen-ir-transito, #btn-resumen-transito')) {
+      if (e.type === 'keydown') e.preventDefault();
+      activarTabAdmin('transito');
       return;
     }
     if (e.target.closest('#btn-resumen-pendientes-capacidad')) {
+      if (e.type === 'keydown') e.preventDefault();
       activarTabAdmin('capacidad');
     }
-  });
-  document.getElementById('invitaciones-lista').addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn-revocar-invitacion');
-    if (btn) revocarInvitacionDesdeLista(btn.dataset.invitacionId);
-  });
+  };
+  document.getElementById('admin-resumen').addEventListener('click', irDesdeResumenAdmin);
+  document.getElementById('admin-resumen').addEventListener('keydown', irDesdeResumenAdmin);
   document.getElementById('btn-refrescar-productores').addEventListener('click', cargarProductoresAdmin);
   document.getElementById('admin-productores-buscar').addEventListener('input', pintarProductoresAdmin);
   document.getElementById('btn-refrescar-productos-transito').addEventListener('click', cargarProductosEnTransito);

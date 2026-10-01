@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=6d92884a">
+<link rel="stylesheet" href="css/style.css?v=4dd873e2">
 </head>
 <body>
 
@@ -30,7 +30,6 @@
       <div class="nav-categorias" id="nav-categorias"></div>
       <button class="nav-link nav-productor hidden" data-nav="panel-productor">Panel Productor</button>
       <button class="nav-link nav-repartidor hidden" data-nav="gestion-envios">Gestionar Envíos</button>
-      <button class="nav-link nav-verificador hidden" data-nav="panel-verificador">Panel Verificador</button>
       <button class="nav-link nav-admin hidden" data-nav="panel-admin">Panel Admin</button>
     </nav>
 
@@ -540,7 +539,7 @@
         <div id="productor-borradores-empty" class="empty-state hidden">
           <span class="empty-state-icon"><i class="ti ti-pencil"></i></span>
           <p><strong>No tienes borradores pendientes</strong></p>
-          <p class="muted">Cuando el Verificador apruebe una de tus cosechas, el producto nace acá como borrador — completa categoría, precio y fotos para publicarlo.</p>
+          <p class="muted">Cuando completes una cosecha (con su foto, desde tu chacra), el producto nace acá como borrador — completa categoría, precio y fotos para publicarlo.</p>
         </div>
       </div>
 
@@ -651,71 +650,8 @@
     </div>
   </section>
 
-  <!-- PANEL VERIFICADOR — scaffolding: layout + navegación + auth. Las pantallas de contenido
-       (cosechas pendientes, aprobar/rechazar, historial real) van en entregas separadas.
-       Vista SPA como panel-productor / gestion-envios; guard en iniciarPanelVerificador(). -->
-  <section id="view-panel-verificador" class="view">
-    <div class="section-header panel-header-hero">
-      <h2><i class="ti ti-shield-check"></i> Panel Verificador</h2>
-    </div>
-
-    <nav class="verificador-tabs" id="verificador-tabs" aria-label="Secciones del panel">
-      <button type="button" class="verificador-tab active" data-vseccion="cosechas" aria-current="true">Cosechas pendientes</button>
-      <button type="button" class="verificador-tab" data-vseccion="historial">Historial</button>
-      <button type="button" class="verificador-tab" data-vseccion="cuenta">Mi cuenta</button>
-    </nav>
-
-    <div class="verificador-seccion" data-vseccion="cosechas">
-      <div id="verificador-aviso-perfil" class="verificador-aviso hidden" role="status">
-        <i class="ti ti-alert-triangle" aria-hidden="true"></i>
-        <div class="verificador-aviso-texto">
-          <strong>Completa tu perfil para aprobar cosechas</strong>
-          <span>Tu nombre y tu credencial quedan en el certificado que ve quien escanea el QR del producto. Rechazar sí puedes.</span>
-        </div>
-        <button type="button" class="btn btn-primary btn-sm" id="btn-verificador-completar-perfil">Completar perfil</button>
-      </div>
-      <div id="verificador-cosechas-lista" class="grid-verificador"></div>
-      <div id="verificador-cosechas-empty" class="empty-state hidden">
-        <span class="empty-state-icon"><i class="ti ti-plant-2"></i></span>
-        <p><strong>No hay cosechas pendientes</strong></p>
-        <p class="muted">Cuando un productor complete una cosecha, aparece acá para tu revisión.</p>
-      </div>
-    </div>
-
-    <div class="verificador-seccion hidden" data-vseccion="historial">
-      <div id="verificador-historial-lista" class="grid-verificador"></div>
-      <div id="verificador-historial-empty" class="empty-state hidden">
-        <span class="empty-state-icon"><i class="ti ti-history"></i></span>
-        <p><strong>Todavía no verificaste ninguna cosecha</strong></p>
-        <p class="muted">Tus decisiones de aprobación y rechazo van a aparecer acá.</p>
-      </div>
-    </div>
-
-    <div class="verificador-seccion hidden" data-vseccion="cuenta">
-      <div class="card-panel verificador-cuenta">
-        <h3 id="verificador-cuenta-nombre">Mi cuenta</h3>
-        <p class="muted" id="verificador-cuenta-detalle">—</p>
-        <form id="form-perfil-verificador" class="form-grid form-perfil-verificador hidden" novalidate>
-          <p class="form-perfil-verificador-intro">Tu nombre y tu credencial aparecen en el certificado de cada cosecha que apruebes: quien escanee el QR del producto verá quién la verificó. La credencial te la asigna el administrador. Sin este perfil no puedes aprobar cosechas.</p>
-          <label for="perfil-verificador-nombre"><span>Nombre completo <span class="campo-requerido" aria-hidden="true">*</span></span>
-            <input type="text" id="perfil-verificador-nombre" name="nombre" maxlength="120" autocomplete="name" required aria-describedby="perfil-verificador-nombre-error">
-            <span class="campo-error" id="perfil-verificador-nombre-error" role="alert"></span>
-          </label>
-          <div class="perfil-verificador-credencial" id="perfil-verificador-credencial-bloque" data-estado="consultando" aria-live="polite">
-            <span class="perfil-verificador-credencial-etiqueta">Credencial asignada por el administrador</span>
-            <strong id="perfil-verificador-credencial-valor">Consultando…</strong>
-            <small class="muted" id="perfil-verificador-credencial-ayuda"></small>
-          </div>
-          <button type="submit" class="btn btn-primary">Guardar perfil</button>
-        </form>
-        <button type="button" class="btn btn-outline" id="btn-verificador-logout"><i class="ti ti-logout"></i> Cerrar sesión</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- PANEL ADMIN — generación y gestión de códigos de invitación (rol admin). Vista SPA como
-       panel-verificador (mismo patrón: sección propia + nav-link condicional + guard en
-       iniciarPanelAdmin()). -->
+  <!-- PANEL ADMIN (rol admin): productores, pedidos esperando un vehículo más grande y llegada de productos al
+       almacén. Vista SPA como panel-productor (sección propia + nav-link condicional + guard en iniciarPanelAdmin()). -->
   <section id="view-panel-admin" class="view">
     <div class="section-header panel-header-hero">
       <h2><i class="ti ti-shield-lock"></i> Panel Admin</h2>
@@ -725,7 +661,6 @@
       <nav class="admin-tabs" aria-label="Secciones del panel">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
-        <button type="button" class="admin-tab-btn" data-admintab="invitaciones"><i class="ti ti-ticket"></i> Invitaciones</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
         <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
       </nav>
@@ -734,8 +669,12 @@
         <div class="admin-resumen-layout">
           <div id="admin-resumen"></div>
           <div class="card-panel grafico-card">
-            <h4><i class="ti ti-chart-pie"></i> Invitaciones por estado</h4>
-            <canvas id="grafico-invitaciones-estado"></canvas>
+            <h4><i class="ti ti-chart-bar"></i> Productos publicados por productor</h4>
+            <!-- Barras ordenadas de mayor a menor (top 5) con su resumen en texto para lectores de pantalla
+                 (dibujarGraficoProductoresAdmin). Sin datos se muestra el aviso de abajo en vez del gráfico. -->
+            <canvas id="grafico-productores-admin" role="img" aria-describedby="grafico-productores-admin-resumen"></canvas>
+            <p id="grafico-productores-admin-resumen" class="grafico-resumen"></p>
+            <div id="grafico-productores-admin-vacio" class="mapa-bloque-neutro hidden"><span class="icon"><i class="ti ti-plant-2"></i></span> Todavía ningún productor tiene productos publicados.</div>
           </div>
         </div>
       </div>
@@ -754,45 +693,6 @@
           <span class="empty-state-icon"><i class="ti ti-tractor"></i></span>
           <p><strong>No hay productores para mostrar</strong></p>
           <p class="muted">Cuando alguien complete su perfil de productor, aparece acá.</p>
-        </div>
-      </div>
-
-      <div class="admin-tab-panel" data-admin-panel="invitaciones">
-        <div class="card-panel">
-          <h3>Generar código de invitación</h3>
-          <p class="muted">El código habilita a una persona a registrarse con el rol elegido. Es de un solo uso y expira a los 7 días.</p>
-          <form id="form-invitacion" class="form-grid" novalidate>
-            <label>Rol a habilitar
-              <!-- Opciones pobladas por poblarSelectRolDestino() desde ROLES_INVITABLES en app.js —
-                   agregar un rol restringido nuevo es sumarlo ahí, no tocar este HTML. -->
-              <select id="invitacion-rol-destino"></select>
-            </label>
-            <label id="invitacion-credencial-campo" for="invitacion-credencial"><span>Credencial de la persona invitada <span class="campo-requerido" aria-hidden="true">*</span></span>
-              <input type="text" id="invitacion-credencial" maxlength="60" autocomplete="off" required placeholder="Ej. N.º de colegiatura o código interno" aria-describedby="invitacion-credencial-ayuda invitacion-credencial-error">
-              <small class="muted" id="invitacion-credencial-ayuda">La escribes tú: ella no puede inventarla ni cambiarla. Se muestra junto a su nombre, públicamente, en el certificado de cada cosecha que apruebe.</small>
-              <span class="campo-error" id="invitacion-credencial-error" role="alert"></span>
-            </label>
-            <button type="submit" class="btn btn-primary">Generar código de invitación</button>
-          </form>
-          <div id="invitacion-resultado" class="invitacion-resultado hidden">
-            <span class="muted">Código generado — compártelo con la persona invitada:</span>
-            <div class="invitacion-codigo-caja">
-              <code id="invitacion-codigo-texto"></code>
-              <button type="button" class="btn btn-sm btn-outline" id="btn-copiar-codigo"><i class="ti ti-copy"></i> Copiar</button>
-            </div>
-            <span class="muted" id="invitacion-expira-texto"></span>
-            <span class="muted" id="invitacion-credencial-texto"></span>
-          </div>
-        </div>
-
-        <div class="section-header inner">
-          <h3><i class="ti ti-ticket"></i> Invitaciones generadas</h3>
-          <button class="btn btn-outline" id="btn-refrescar-invitaciones">↻ Refrescar</button>
-        </div>
-        <div id="invitaciones-lista" class="grid-admin"></div>
-        <div id="invitaciones-empty" class="empty-state hidden">
-          <span class="empty-state-icon"><i class="ti ti-mail-off"></i></span>
-          <p><strong>Todavía no generaste ninguna invitación</strong></p>
         </div>
       </div>
 
@@ -844,8 +744,8 @@
 
 <!-- MODAL: AUTH — dos paneles: la marca a la izquierda y los formularios a la derecha (en móvil, una
      franja de marca arriba). La lógica sigue colgando de los mismos IDs de siempre (login-email,
-     registro-rol, registro-codigo-invitacion-wrap, google-btn-*…): ver cambiarTabAuth, manejarLogin,
-     manejarRegistro y actualizarCampoCodigoInvitacion en app.js. El <select id="registro-rol"> se
+     registro-rol, google-btn-*…): ver cambiarTabAuth, manejarLogin, manejarRegistro y
+     sincronizarTarjetasRol en app.js. El <select id="registro-rol"> se
      conserva oculto como fuente de verdad; las tarjetas de rol son radios que lo mantienen sincronizado. -->
 <div class="modal-overlay hidden" id="modal-auth">
   <div class="modal modal-auth" role="dialog" aria-modal="true" aria-label="Acceso a Chakra Shop" data-tab="login">
@@ -950,36 +850,18 @@
               <input type="radio" name="registro-rol-opcion" value="repartidor">
               <span class="auth-rol-caja"><i class="ti ti-truck" aria-hidden="true"></i><strong>Repartidor</strong><small>Entrega pedidos cerca de ti</small></span>
             </label>
-            <label class="auth-rol">
-              <input type="radio" name="registro-rol-opcion" value="verificador">
-              <span class="auth-rol-caja"><i class="ti ti-certificate" aria-hidden="true"></i><strong>Verificador</strong><small>Certifica cosechas · requiere invitación</small></span>
-            </label>
           </div>
         </fieldset>
         <select id="registro-rol" hidden>
           <option value="comprador">Comprador (restaurante, mercado, persona)</option>
           <option value="productor">Productor (agricultor)</option>
           <option value="repartidor">Repartidor</option>
-          <option value="verificador">Verificador (certifica el origen de las cosechas)</option>
         </select>
-
-        <!-- Oculto por defecto: solo se muestra para roles restringidos (ver ROLES_INVITABLES /
-             actualizarCampoCodigoInvitacion en app.js — mismo array que ya usa el panel admin como
-             fuente de verdad de qué roles necesitan invitación, sin repetir "verificador" acá). -->
-        <div class="auth-grupo hidden" id="registro-codigo-invitacion-wrap">
-          <label for="registro-codigo-invitacion">Código de invitación</label>
-          <div class="auth-campo">
-            <i class="ti ti-ticket" aria-hidden="true"></i>
-            <input type="text" id="registro-codigo-invitacion" placeholder="Pega el código que te compartieron" autocomplete="off">
-          </div>
-          <small class="auth-ayuda"><i class="ti ti-info-circle" aria-hidden="true"></i> Este rol requiere una invitación; te la comparte un administrador.</small>
-        </div>
 
         <button type="submit" class="btn btn-primary btn-block auth-enviar"><span class="auth-enviar-texto">Crear cuenta</span></button>
         <div class="auth-divider"><span>o continúa con</span></div>
-        <!-- Lee el rol y (si aplica) el código de invitación del formulario de arriba al hacer
-             clic — mismo <select>/campo que ya usa manejarRegistro(), ver manejarRegistroGoogle
-             en app.js. -->
+        <!-- Lee el rol del formulario de arriba al hacer clic — mismo <select> que ya usa
+             manejarRegistro(), ver manejarRegistroGoogle en app.js. -->
         <div id="google-btn-registro" class="auth-google-btn"></div>
         <p class="auth-cambio">¿Ya tienes cuenta? <button type="button" class="auth-cambio-btn" data-cambiar-tab="login">Inicia sesión</button></p>
       </form>
@@ -1137,26 +1019,11 @@
   </div>
 </div>
 
-<!-- MODAL: RECHAZAR COSECHA (Verificador) -->
-<div class="modal-overlay hidden" id="modal-rechazar-cosecha">
-  <div class="modal">
-    <button class="modal-close" data-close="modal-rechazar-cosecha"><i class="ti ti-x"></i></button>
-    <h3><i class="ti ti-circle-x"></i> Rechazar cosecha</h3>
-    <p class="muted">Explica brevemente el motivo — el productor lo va a ver y puede reenviar la cosecha después de corregirlo.</p>
-    <form id="form-rechazar-cosecha" class="form-grid">
-      <label>Motivo del rechazo
-        <textarea id="rechazar-cosecha-motivo" rows="4" required placeholder="Ej. La cantidad reportada no coincide con la ubicación registrada."></textarea>
-      </label>
-      <button type="submit" class="btn btn-danger">Confirmar rechazo</button>
-    </form>
-  </div>
-</div>
-
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=f58ca700"></script>
-<script src="js/app.js?v=9ab1abea"></script>
+<script src="js/api.js?v=8af64037"></script>
+<script src="js/app.js?v=b31de5d5"></script>
 </body>
 </html>

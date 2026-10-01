@@ -421,7 +421,7 @@ spec:
           port: 8007
 
 ---
-# ================= CERTIFICACION (puerto 8008) — rutas /certificacion y /verificadores =================
+# ================= CERTIFICACION (puerto 8008) — rutas /certificacion =================
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -440,49 +440,13 @@ spec:
       services:
         - name: certificacion
           port: 8008
-    # POST .../eventos exige rol "productor" o "verificador" (registrar_evento). Se deja
+    # POST .../eventos ya no existe (ver certificacion/main.py); la regla se deja por si algo lo llama. Se deja
     # explícitamente pública (sin JWT) GET .../verificar, GET .../historial, GET .../qr y
     # GET .../certificado — es la trazabilidad que cualquiera debe poder consultar escaneando
     # el QR de un producto, sin necesitar cuenta; así funciona hoy en el backend, no se cambió.
     - kind: Rule
       priority: 100
       match: Method(`POST`) && PathRegexp(`^/api/certificacion/certificacion/[^/]+/eventos$`)
-      middlewares:
-        - name: rate-limit-global
-        - name: cors-global
-        - name: auth-jwt
-        - name: strip-api-prefix
-      services:
-        - name: certificacion
-          port: 8008
-    # POST /verificadores exige rol "verificador" (crear perfil de verificador)
-    - kind: Rule
-      priority: 100
-      match: Method(`POST`) && Path(`/api/certificacion/verificadores`)
-      middlewares:
-        - name: rate-limit-global
-        - name: cors-global
-        - name: auth-jwt
-        - name: strip-api-prefix
-      services:
-        - name: certificacion
-          port: 8008
-    # GET /verificadores/me exige rol "verificador"
-    - kind: Rule
-      priority: 100
-      match: Method(`GET`) && Path(`/api/certificacion/verificadores/me`)
-      middlewares:
-        - name: rate-limit-global
-        - name: cors-global
-        - name: auth-jwt
-        - name: strip-api-prefix
-      services:
-        - name: certificacion
-          port: 8008
-    # GET /verificadores/credencial-asignada exige rol "verificador": la credencial que le asignó el admin al invitarlo
-    - kind: Rule
-      priority: 100
-      match: Method(`GET`) && Path(`/api/certificacion/verificadores/credencial-asignada`)
       middlewares:
         - name: rate-limit-global
         - name: cors-global
@@ -542,7 +506,7 @@ spec:
 #   - Las rutas internas entre servicios (`.../interno/...`, reponer/ajustar stock, eventos y certificados internos de
 #     Certificación): las protege un secreto de servicio, pero no tienen por qué ser alcanzables desde afuera.
 #   - Los DELETE de limpieza de pruebas (QA_LIMPIEZA_SECRETO). Los DELETE con sesión que sí usa el frontend
-#     (/admin/invitaciones/{id}, /productos/imagenes/{id}, /productos/unidades/{id}) tienen otra forma de ruta y pasan.
+#     (/productos/imagenes/{id}, /productos/unidades/{id}) tienen otra forma de ruta y pasan.
 # Prioridad 200: le gana a todas las demás rutas.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -560,7 +524,7 @@ spec:
         || (Method(`POST`) && PathRegexp(`^/api/productos/productos/[^/]+/stock/reponer$`))
         || (Method(`PATCH`) && PathRegexp(`^/api/productos/productos/[^/]+/stock$`))
         || (Method(`POST`) && PathRegexp(`^/api/certificacion/certificacion/([^/]+/(eventos-internos|cosecha-aprobada|llegada-almacen)|pedido/[^/]+/certificado)$`))
-        || (Method(`DELETE`) && PathRegexp(`^/api/(usuarios/usuarios|productores/productores|productores/productores/produccion|productos/productos|pedidos/pedidos|transporte/envios|transporte/repartidores|notificaciones/notificaciones|pagos/pagos|certificacion/verificadores)/[^/]+$`))
+        || (Method(`DELETE`) && PathRegexp(`^/api/(usuarios/usuarios|productores/productores|productores/productores/produccion|productos/productos|pedidos/pedidos|transporte/envios|transporte/repartidores|notificaciones/notificaciones|pagos/pagos)/[^/]+$`))
       middlewares:
         - name: denegar-todo
       services:

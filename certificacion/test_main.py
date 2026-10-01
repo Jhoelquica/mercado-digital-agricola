@@ -323,10 +323,9 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
     configurado, no pasa nadie; y con uno configurado solo pasa el correcto."""
     import uuid as _uuid
     protegidos = [
-        ("DELETE", f"/verificadores/{_uuid.uuid4()}", None, "QA_LIMPIEZA_SECRETO"),
+        ("POST", f"/certificacion/{_uuid.uuid4()}/llegada-almacen", {"datos": "llegaron 5 kg"}, "PRODUCTOS_A_CERTIFICACION_SECRETO"),
         ("POST", f"/certificacion/pedido/{_uuid.uuid4()}/certificado", {"productos_ids": []}, "TRANSPORTE_A_CERTIFICACION_SECRETO"),
         ("POST", f"/certificacion/{_uuid.uuid4()}/eventos-internos", {"evento": "verificado_punto_venta"}, "TRANSPORTE_A_CERTIFICACION_SECRETO"),
-        ("POST", f"/certificacion/{_uuid.uuid4()}/llegada-almacen", {"datos": "llegaron 5 kg"}, "PRODUCTOS_A_CERTIFICACION_SECRETO"),
         ("POST", f"/certificacion/{_uuid.uuid4()}/cosecha-aprobada", {"datos_cosecha": "x"}, "PRODUCTORES_A_CERTIFICACION_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
@@ -442,166 +441,18 @@ def test_la_llegada_con_un_id_de_producto_mal_formado_falla_422_no_500(monkeypat
 
 
 
-# ============ Perfil del verificador: POST /verificadores y GET /verificadores/me ============
-# Sin perfil, lo que el verificador aprueba sale en el certificado sin "Certificado por" (el bloque se crea igual, sin
-# nombre) y esa cadena no se puede corregir después. El nombre lo escribe él; la CREDENCIAL no: la asignó el admin al
-# invitarlo (Usuarios la guarda en la invitación) y Certificación se la pide por su ruta interna, así que nadie puede
-# inventarla. En estos tests esa consulta está simulada; los de más abajo prueban la consulta real.
 
-_credencial_real = main._credencial_asignada_por_el_admin
+# ============ El perfil del verificador se retiró con el rol (presentación del 2026-10-01) ============
 
-
-@pytest.fixture(autouse=True)
-def _credencial_del_admin(monkeypatch):
-    """Por defecto se da por hecho que el admin le asignó "COL-ASIGNADA" a quien pregunte."""
-    monkeypatch.setattr(main, "_credencial_asignada_por_el_admin", lambda usuario_id: "COL-ASIGNADA")
-
-
-@pytest.fixture
-def como_verificador():
-    def _como(usuario_id=None, rol="verificador"):
-        usuario_id = str(usuario_id or uuid.uuid4())
-        main.app.dependency_overrides[verificar_token] = lambda: {"sub": usuario_id, "rol": rol}
-        return usuario_id
-
-    yield _como
-    main.app.dependency_overrides.pop(verificar_token, None)
-
-
-def test_un_verificador_crea_su_perfil_y_despues_lo_consulta(como_verificador):
-    usuario_id = como_verificador()
-    assert client.get("/verificadores/me").status_code == 404
-
-    resp = client.post("/verificadores", json={"nombre": "  Ana Pérez  "})
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["nombre"] == "Ana Pérez"  # sin espacios de sobra
-    assert resp.json()["credencial"] == "COL-ASIGNADA"  # la del admin
-    mio = client.get("/verificadores/me")
-    assert mio.status_code == 200
-    assert mio.json()["usuario_id"] == usuario_id and mio.json()["credencial"] == "COL-ASIGNADA"
-
-
-def test_una_credencial_mandada_por_el_verificador_se_ignora(como_verificador):
-    como_verificador()
-
-    resp = client.post("/verificadores", json={"nombre": "Ana Pérez", "credencial": "INVENTADA-999"})
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["credencial"] == "COL-ASIGNADA"
-    assert client.get("/verificadores/me").json()["credencial"] == "COL-ASIGNADA"
-
-
-def test_no_se_puede_crear_un_segundo_perfil(como_verificador):
-    como_verificador()
-    assert client.post("/verificadores", json={"nombre": "Ana Pérez"}).status_code == 200
-
-    segundo = client.post("/verificadores", json={"nombre": "Otra Persona"})
-
-    assert segundo.status_code == 409
-    assert client.get("/verificadores/me").json()["nombre"] == "Ana Pérez"
-
-
-def test_el_perfil_rechaza_un_nombre_corto_vacio_enorme_o_con_nulos(como_verificador):
-    como_verificador()
-    invalidos = ["A", "   ", "", "x" * (main.VERIFICADOR_NOMBRE_MAXIMO + 1), "Ana\u0000Pérez"]
-
-    for nombre in invalidos:
-        resp = client.post("/verificadores", json={"nombre": nombre})
-        assert resp.status_code == 422, (nombre[:12], resp.text)
-
-    assert client.get("/verificadores/me").status_code == 404  # no quedó nada guardado
-
-
-def test_el_perfil_acepta_justo_el_largo_maximo_del_nombre(como_verificador):
-    como_verificador()
-    assert client.post("/verificadores", json={"nombre": "n" * main.VERIFICADOR_NOMBRE_MAXIMO}).status_code == 200
-
-
-def test_solo_un_verificador_crea_o_consulta_un_perfil_y_su_credencial(como_verificador):
-    for rol in ("comprador", "productor", "repartidor", "admin"):
-        como_verificador(rol=rol)
-        assert client.post("/verificadores", json={"nombre": "Ana Pérez"}).status_code == 403, rol
-        assert client.get("/verificadores/me").status_code == 403, rol
-        assert client.get("/verificadores/credencial-asignada").status_code == 403, rol
-
-
-def test_el_verificador_ve_su_credencial_asignada_antes_de_crear_el_perfil(como_verificador):
-    como_verificador()
-    resp = client.get("/verificadores/credencial-asignada")
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"credencial": "COL-ASIGNADA"}
-
-
-# ---- la consulta real a Usuarios (sin el simulacro de arriba) ----
-
-class _RespuestaDeUsuarios:
-    def __init__(self, status_code, cuerpo=None):
-        self.status_code = status_code
-        self._cuerpo = cuerpo
-
-    def json(self):
-        return self._cuerpo
-
-
-def _usuarios_responde(monkeypatch, status_code=None, cuerpo=None, error=None):
-    """Usa la consulta real y simula lo que responde Usuarios. Devuelve la lista de llamadas que se hicieron."""
-    monkeypatch.setattr(main, "_credencial_asignada_por_el_admin", _credencial_real)
-    monkeypatch.setattr(main, "USUARIOS_URL", "http://usuarios.prueba")
-    monkeypatch.setattr(main, "CERTIFICACION_A_USUARIOS_SECRETO", "secreto-de-prueba")
-    llamadas = []
-
-    def _get(url, **kwargs):
-        llamadas.append((url, kwargs))
-        if error:
-            raise error
-        return _RespuestaDeUsuarios(status_code, cuerpo)
-
-    monkeypatch.setattr(main.httpx, "get", _get)
-    return llamadas
-
-
-def test_la_credencial_se_le_pide_a_usuarios_con_el_secreto_de_servicio(monkeypatch, como_verificador):
-    usuario_id = como_verificador()
-    llamadas = _usuarios_responde(monkeypatch, 200, {"credencial": "  COL-5  "})
-
-    resp = client.post("/verificadores", json={"nombre": "Ana Pérez"})
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["credencial"] == "COL-5"  # la de Usuarios, sin espacios de sobra
-    url, kwargs = llamadas[0]
-    assert url == f"http://usuarios.prueba/usuarios/interno/{usuario_id}/credencial"
-    assert kwargs["headers"] == {"X-Servicio-Secreto": "secreto-de-prueba"}
-
-
-def test_sin_credencial_asignada_no_hay_perfil_y_se_dice_por_que(monkeypatch, como_verificador):
-    como_verificador()
-
-    for respuesta in ((404, None), (200, {"credencial": ""}), (200, {})):
-        _usuarios_responde(monkeypatch, *respuesta)
-        crear = client.post("/verificadores", json={"nombre": "Ana Pérez"})
-        ver = client.get("/verificadores/credencial-asignada")
-        assert crear.status_code == 409 and "administrador" in crear.json()["detail"], (respuesta, crear.text)
-        assert ver.status_code == 409, (respuesta, ver.text)
-
-    assert client.get("/verificadores/me").status_code == 404  # no quedó un perfil sin credencial
-
-
-def test_si_usuarios_no_responde_no_se_crea_el_perfil(monkeypatch, como_verificador):
-    como_verificador()
-
-    for falla in ({"error": main.httpx.RequestError("sin red")}, {"status_code": 500}, {"status_code": 403}):
-        _usuarios_responde(monkeypatch, **falla)
-        assert client.post("/verificadores", json={"nombre": "Ana Pérez"}).status_code == 503, falla
-        assert client.get("/verificadores/credencial-asignada").status_code == 503, falla
-
-    assert client.get("/verificadores/me").status_code == 404
-
-
-def test_un_perfil_que_ya_existe_responde_409_sin_molestar_a_usuarios(monkeypatch, como_verificador):
-    como_verificador()
-    assert client.post("/verificadores", json={"nombre": "Ana Pérez"}).status_code == 200
-    llamadas = _usuarios_responde(monkeypatch, error=main.httpx.RequestError("sin red"))
-
-    assert client.post("/verificadores", json={"nombre": "Otra"}).status_code == 409
-    assert llamadas == []
+def test_las_rutas_del_perfil_del_verificador_ya_no_existen():
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": "verificador"}
+    try:
+        for metodo, ruta, cuerpo in (
+            ("POST", "/verificadores", {"nombre": "Ana Pérez"}),
+            ("GET", "/verificadores/me", None),
+            ("GET", "/verificadores/credencial-asignada", None),
+            ("DELETE", f"/verificadores/{uuid.uuid4()}", None),
+        ):
+            assert client.request(metodo, ruta, json=cuerpo).status_code in (404, 405), ruta
+    finally:
+        main.app.dependency_overrides.pop(verificar_token, None)

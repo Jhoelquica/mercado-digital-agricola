@@ -38,9 +38,8 @@ class Producto(Base):
     estado = Column(String, nullable=False, default="borrador")  # borrador | en_transito | disponible
     # NO es un ForeignKey real a pesar del nombre: RegistroProduccion vive en la base de datos
     # del servicio Productores, una BD completamente distinta — mismo caso que
-    # HistorialVerificacionCosecha.verificador_id en ese servicio. Nulo para productos creados
-    # a mano (el flujo de siempre); solo se llena cuando el producto nace automáticamente a
-    # partir de una cosecha aprobada por un Verificador.
+    # Envio.pedido_id en Transporte. Nulo para productos creados a mano (el flujo de siempre);
+    # solo se llena cuando el producto nace automáticamente al completarse una cosecha.
     registro_produccion_id = Column(UUID(as_uuid=True), nullable=True)
     # "1 unidad de unidad_medida = equivalencia_kg kilogramos" — null si unidad_medida YA es "kg"
     # (no hace falta factor, 1 kg = 1 kg). Mismo campo/criterio que

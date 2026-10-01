@@ -1,27 +1,22 @@
 """
-Tests del sistema de invitaciones + registro gateado por rol restringido + login/registro con
-Google (POST /usuarios/oauth/google).
+Tests del registro (solo roles abiertos) y del login/registro con Google (POST /usuarios/oauth/google).
 
-Cubre: admin/invitaciones (crear, 403 no-admin, revocar, revocar-usada, validar
-existente/expirado/inexistente), POST /usuarios/registro (comprador abierto, verificador
-sin código -> 400, con código válido -> 200 + invitación usada, código de otro rol_destino
--> 400, código usado -> 400, código expirado -> 400, y todo-o-nada: si el registro falla
-por email duplicado la invitación NO queda usada), y POST /usuarios/oauth/google (login por
-google_id existente, vinculación automática por email de una cuenta con contraseña, registro
-nuevo con rol abierto/restringido reusando el mismo gating que el registro normal, id_token
-inválido -> 401, y el login normal contra una cuenta sin contraseña -> 401 sin excepción).
+Cubre: POST /usuarios/registro (comprador, productor y repartidor abiertos; admin, "verificador" —rol retirado en la
+presentación del 2026-10-01— o un rol inventado -> 400 y no se crea nada, aunque llegue un código de invitación de
+antes), las rutas de invitaciones y de la credencial del verificador ya no existen, y POST /usuarios/oauth/google
+(login por google_id existente, vinculación automática por email de una cuenta con contraseña, registro nuevo con rol
+abierto y el mismo filtro de rol que el registro normal, id_token inválido -> 401, y el login normal contra una cuenta
+sin contraseña -> 401 sin excepción).
 
-Requiere Postgres real según database.py (UUID de postgresql + FK a usuarios + create_all()
-al importar main). No se mockea nada salvo google_id_token.verify_oauth2_token (única llamada
-saliente real de este servicio) — nunca se golpea la red de Google de verdad. Los usuarios de
-rol restringido (admin/verificador) se insertan directo por SessionLocal porque
-/usuarios/registro ya no los deja auto-crearse sin invitación; los estados "usada"/"expirada"
-de invitación también se siembran directo.
+Requiere Postgres real según database.py (UUID de postgresql + create_all() al importar main). No se mockea nada
+salvo google_id_token.verify_oauth2_token (única llamada saliente real de este servicio) — nunca se golpea la red de
+Google de verdad. Los usuarios de un rol que no se registra (admin) se insertan directo por SessionLocal.
 """
 import uuid
 from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 from jose import jwt as jose_jwt
 
 import main
@@ -60,8 +55,8 @@ def _email():
 
 
 def _crear_usuario(rol: str) -> str:
-    """Roles abiertos -> vía POST /usuarios/registro. Roles restringidos (verificador/admin)
-    -> insert directo, porque ese endpoint ahora exige un código de invitación para ellos."""
+    """Roles abiertos -> vía POST /usuarios/registro. Los demás (admin) -> insert directo, porque ese endpoint no
+    deja registrarse con ellos."""
     if rol in main.ROLES_DE_REGISTRO_ABIERTO:
         resp = client.post("/usuarios/registro", json={
             "nombre": f"Usuario {rol}", "email": _email(), "password": "test1234", "rol": rol,
@@ -87,202 +82,50 @@ def _admin_autenticado() -> str:
     return admin_id
 
 
-def _insertar_invitacion(*, creado_por, codigo=None, usado=False, usado_por=None,
-                         fecha_expiracion=None, rol_destino="verificador", credencial=None):
-    """Inserta una Invitacion directo en la BD — para estados que el flujo normal aún no
-    puede producir (usada, expirada)."""
-    db = main.SessionLocal()
-    try:
-        inv = main.models.Invitacion(
-            codigo=codigo or f"cod-{uuid.uuid4().hex[:14]}",
-            rol_destino=rol_destino,
-            credencial=credencial,
-            usado=usado,
-            usado_por=usado_por,
-            creado_por=creado_por,
-            fecha_expiracion=fecha_expiracion or (datetime.utcnow() + timedelta(days=7)),
-        )
-        db.add(inv)
-        db.commit()
-        db.refresh(inv)
-        return {"id": str(inv.id), "codigo": inv.codigo}
-    finally:
-        db.close()
+# ============ Registro: solo comprador, productor o repartidor ============
 
-
-def test_crear_invitacion_por_admin():
-    _admin_autenticado()
-    resp = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
-
-    assert resp.status_code == 200, resp.text
-    cuerpo = resp.json()
-    assert cuerpo["rol_destino"] == "verificador"
-    assert cuerpo["credencial"] == "COL-1"
-    assert cuerpo["usado"] is False
-    assert cuerpo["usado_por"] is None
-    assert cuerpo["codigo"]
-    assert cuerpo["fecha_expiracion"]
-    assert cuerpo["id"]
-
-
-def test_crear_invitacion_no_admin_falla_403():
-    comprador_id = _crear_usuario("comprador")
-    _auth(comprador_id, "comprador")
-    resp = client.post("/admin/invitaciones", json={"rol_destino": "verificador"})
-    assert resp.status_code == 403
-
-
-def test_revocar_invitacion_no_usada():
-    _admin_autenticado()
-    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
-    inv_id = creada.json()["id"]
-
-    resp = client.delete(f"/admin/invitaciones/{inv_id}")
-    assert resp.status_code == 200, resp.text
-
-    listado = client.get("/admin/invitaciones").json()
-    assert all(i["id"] != inv_id for i in listado)
-
-
-def test_revocar_invitacion_usada_falla_400():
-    admin_id = _admin_autenticado()
-    consumidor_id = _crear_usuario("verificador")
-    inv = _insertar_invitacion(creado_por=admin_id, usado=True, usado_por=consumidor_id)
-
-    resp = client.delete(f"/admin/invitaciones/{inv['id']}")
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "No se puede revocar una invitación ya utilizada"
-
-
-def test_validar_codigo_expirado():
-    admin_id = _admin_autenticado()
-    inv = _insertar_invitacion(
-        creado_por=admin_id,
-        fecha_expiracion=datetime.utcnow() - timedelta(days=1),
-    )
-    resp = client.get(f"/admin/invitaciones/validar/{inv['codigo']}")
-
-    assert resp.status_code == 200, resp.text
-    cuerpo = resp.json()
-    assert cuerpo["valido"] is False
-    assert "expir" in cuerpo["motivo"].lower()
-    assert cuerpo["rol_destino"] == "verificador"
-
-
-def test_validar_codigo_inexistente():
-    _admin_autenticado()
-    resp = client.get(f"/admin/invitaciones/validar/no-existe-{uuid.uuid4().hex}")
-
-    assert resp.status_code == 200, resp.text
-    cuerpo = resp.json()
-    assert cuerpo["valido"] is False
-    assert cuerpo["rol_destino"] is None
-
-
-def test_validar_codigo_valido():
-    _admin_autenticado()
-    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "COL-1"})
-    codigo = creada.json()["codigo"]
-
-    resp = client.get(f"/admin/invitaciones/validar/{codigo}")
-    assert resp.status_code == 200, resp.text
-    cuerpo = resp.json()
-    assert cuerpo["valido"] is True
-    assert cuerpo["rol_destino"] == "verificador"
-    assert cuerpo["motivo"] is None
-
-
-# ============ Registro gateado por invitación (sub-entrega D) ============
-
-def _registro(rol, codigo=None):
-    body = {"nombre": f"Reg {rol}", "email": _email(), "password": "test1234", "rol": rol}
-    if codigo is not None:
-        body["codigo_invitacion"] = codigo
-    return client.post("/usuarios/registro", json=body)
-
-
-def _invitacion_directa(rol_destino="verificador", **kw):
-    admin_id = _crear_usuario("admin")
-    return _insertar_invitacion(creado_por=admin_id, rol_destino=rol_destino, **kw)
-
-
-def test_registro_comprador_sin_codigo_sigue_abierto():
-    resp = _registro("comprador")
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["rol"] == "comprador"
-
-
-def test_registro_verificador_sin_codigo_falla_400():
-    resp = _registro("verificador")
-    assert resp.status_code == 400
-    assert "invitación" in resp.json()["detail"].lower()
-
-
-def test_registro_verificador_con_codigo_valido_ok_y_marca_usada():
-    inv = _invitacion_directa("verificador")
-    resp = _registro("verificador", codigo=inv["codigo"])
-    assert resp.status_code == 200, resp.text
-    nuevo_id = resp.json()["id"]
-    assert resp.json()["rol"] == "verificador"
-
-    db = main.SessionLocal()
-    try:
-        row = db.query(main.models.Invitacion).filter(
-            main.models.Invitacion.codigo == inv["codigo"]
-        ).first()
-        assert row.usado is True
-        assert str(row.usado_por) == nuevo_id
-    finally:
-        db.close()
-
-
-def test_registro_verificador_con_codigo_de_otro_rol_falla_400():
-    inv = _invitacion_directa("admin")  # código emitido para "admin"
-    resp = _registro("verificador", codigo=inv["codigo"])
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Este código no habilita el rol solicitado."
-
-
-def test_registro_verificador_con_codigo_usado_falla_400():
-    consumidor_id = _crear_usuario("verificador")
-    inv = _invitacion_directa("verificador", usado=True, usado_por=consumidor_id)
-    resp = _registro("verificador", codigo=inv["codigo"])
-    assert resp.status_code == 400
-    assert "utiliz" in resp.json()["detail"].lower()
-
-
-def test_registro_con_codigo_expirado_falla_400():
-    inv = _invitacion_directa("verificador", fecha_expiracion=datetime.utcnow() - timedelta(days=1))
-    resp = _registro("verificador", codigo=inv["codigo"])
-    assert resp.status_code == 400
-    assert "expir" in resp.json()["detail"].lower()
-
-
-def test_codigo_valido_pero_email_duplicado_no_marca_invitacion_usada():
-    """Todo o nada: si la creación del usuario falla (email repetido), la invitación NO
-    debe quedar marcada como usada."""
-    email = _email()
-    primera = client.post("/usuarios/registro", json={
-        "nombre": "Primero", "email": email, "password": "test1234", "rol": "comprador",
+def _registro(rol, **extra):
+    return client.post("/usuarios/registro", json={
+        "nombre": f"Reg {rol}", "email": _email(), "password": "test1234", "rol": rol, **extra,
     })
-    assert primera.status_code == 200
 
-    inv = _invitacion_directa("verificador")
-    repetida = client.post("/usuarios/registro", json={
-        "nombre": "Segundo", "email": email, "password": "test1234",
-        "rol": "verificador", "codigo_invitacion": inv["codigo"],
-    })
-    assert repetida.status_code == 409
 
+def _total_usuarios():
     db = main.SessionLocal()
     try:
-        row = db.query(main.models.Invitacion).filter(
-            main.models.Invitacion.codigo == inv["codigo"]
-        ).first()
-        assert row.usado is False
-        assert row.usado_por is None
+        return db.query(main.models.Usuario).count()
     finally:
         db.close()
+
+
+def test_registro_con_un_rol_abierto_funciona():
+    for rol in ("comprador", "productor", "repartidor"):
+        resp = _registro(rol)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["rol"] == rol
+
+
+def test_no_se_puede_registrar_como_admin_verificador_ni_un_rol_inventado():
+    antes = _total_usuarios()
+    for rol in ("admin", "verificador", "superusuario", ""):
+        # un cliente viejo que mande un código de invitación tampoco pasa: ya no existen
+        for extra in ({}, {"codigo_invitacion": "cod-de-antes"}):
+            resp = _registro(rol, **extra)
+            assert resp.status_code == 400, (rol, extra, resp.text)
+            assert resp.json()["detail"] == "Solo puedes registrarte como comprador, productor o repartidor."
+    assert _total_usuarios() == antes  # no se creó nadie
+
+
+def test_las_rutas_de_invitaciones_y_de_la_credencial_ya_no_existen():
+    _admin_autenticado()
+    for metodo, ruta, cuerpo in (
+        ("POST", "/admin/invitaciones", {"rol_destino": "verificador", "credencial": "COL-1"}),
+        ("GET", "/admin/invitaciones", None),
+        ("GET", "/admin/invitaciones/validar/cualquier-codigo", None),
+        ("DELETE", f"/admin/invitaciones/{uuid.uuid4()}", None),
+        ("GET", f"/usuarios/interno/{uuid.uuid4()}/credencial", None),
+    ):
+        assert client.request(metodo, ruta, json=cuerpo).status_code in (404, 405), ruta
 
 
 # ============ Login/registro con Google (POST /usuarios/oauth/google) ============
@@ -370,34 +213,16 @@ def test_oauth_google_sin_rol_en_registro_nuevo_falla_400(monkeypatch):
     assert resp.json()["detail"] == "Selecciona un rol antes de continuar con Google"
 
 
-def test_oauth_google_rol_restringido_sin_codigo_falla_400_mismo_mensaje_que_registro_normal(monkeypatch):
-    _mockear_google(monkeypatch)
-    resp = client.post("/usuarios/oauth/google", json={"id_token": "fake-token", "rol": "verificador"})
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Registrarse como 'verificador' requiere un código de invitación"
-
-
-def test_oauth_google_rol_restringido_con_codigo_valido_funciona_y_marca_usada(monkeypatch):
-    inv = _invitacion_directa("verificador")
-    email = _email()
-    _mockear_google(monkeypatch, email=email)
-    resp = client.post("/usuarios/oauth/google", json={
-        "id_token": "fake-token", "rol": "verificador", "codigo_invitacion": inv["codigo"],
-    })
-
-    assert resp.status_code == 200, resp.text
-    payload = _decodificar_jwt(resp.json()["access_token"])
-    assert payload["rol"] == "verificador"
-
-    db = main.SessionLocal()
-    try:
-        row = db.query(main.models.Invitacion).filter(
-            main.models.Invitacion.codigo == inv["codigo"]
-        ).first()
-        assert row.usado is True
-        assert str(row.usado_por) == payload["sub"]
-    finally:
-        db.close()
+def test_oauth_google_no_registra_con_un_rol_que_no_es_abierto_mismo_mensaje_que_registro_normal(monkeypatch):
+    antes = _total_usuarios()
+    for rol in ("admin", "verificador"):
+        _mockear_google(monkeypatch)
+        resp = client.post("/usuarios/oauth/google", json={
+            "id_token": "fake-token", "rol": rol, "codigo_invitacion": "cod-de-antes",
+        })
+        assert resp.status_code == 400, (rol, resp.text)
+        assert resp.json()["detail"] == "Solo puedes registrarte como comprador, productor o repartidor."
+    assert _total_usuarios() == antes
 
 
 def test_oauth_google_con_correo_sin_verificar_no_vincula_una_cuenta_existente(monkeypatch):
@@ -494,20 +319,18 @@ def test_login_normal_con_password_hash_none_falla_401_sin_excepcion():
 # uno crea el suyo con email random cuando lo necesita) — por eso estos tests van al final.
 
 def _borrar_todos_los_admins():
-    """Deja la tabla usuarios sin ningún rol=admin. Primero hay que soltar las Invitacion que
-    los referencian (creado_por / usado_por) o el DELETE choca con la FK."""
+    """Deja la tabla usuarios sin ningún rol=admin. En una base de antes de quitar las invitaciones, primero hay que
+    soltar las filas de "invitaciones" que los referencian (creado_por / usado_por) o el DELETE choca con la FK; ya no
+    hay modelo para esa tabla, así que va por SQL y solo si la tabla existe."""
     db = main.SessionLocal()
     try:
         admin_ids = [a.id for a in db.query(main.models.Usuario).filter(
             main.models.Usuario.rol == "admin"
         ).all()]
         if admin_ids:
-            db.query(main.models.Invitacion).filter(
-                main.models.Invitacion.creado_por.in_(admin_ids)
-            ).delete(synchronize_session=False)
-            db.query(main.models.Invitacion).filter(
-                main.models.Invitacion.usado_por.in_(admin_ids)
-            ).delete(synchronize_session=False)
+            if db.execute(text("SELECT to_regclass('invitaciones')")).scalar():
+                db.execute(text("DELETE FROM invitaciones WHERE creado_por = ANY(:ids) OR usado_por = ANY(:ids)"),
+                           {"ids": admin_ids})
             db.query(main.models.Usuario).filter(
                 main.models.Usuario.id.in_(admin_ids)
             ).delete(synchronize_session=False)
@@ -838,104 +661,3 @@ def test_siempre_se_compara_una_contrasena_exista_o_no_la_cuenta(monkeypatch):
     assert comparaciones == [seguridad.HASH_DE_RELLENO, seguridad.HASH_DE_RELLENO]
 
 
-
-# ============ La credencial la asigna el admin al invitar (y Certificación se la pide a Usuarios) ============
-# El verificador no la escribe: sale del código de invitación con el que se registró, así que nadie puede inventarla.
-
-def test_la_invitacion_de_un_verificador_exige_la_credencial_y_la_guarda_sin_espacios_de_sobra():
-    _admin_autenticado()
-
-    for cuerpo in (
-        {"rol_destino": "verificador"},
-        {"rol_destino": "verificador", "credencial": ""},
-        {"rol_destino": "verificador", "credencial": "   "},
-        {"rol_destino": "verificador", "credencial": "x" * (main.CREDENCIAL_MAXIMA + 1)},
-        {"rol_destino": "verificador", "credencial": "COL\u00001"},
-    ):
-        assert client.post("/admin/invitaciones", json=cuerpo).status_code == 422, cuerpo
-
-    creada = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "  COL-123  "})
-    assert creada.status_code == 200, creada.text
-    assert creada.json()["credencial"] == "COL-123"
-    justo = client.post("/admin/invitaciones", json={"rol_destino": "verificador", "credencial": "c" * main.CREDENCIAL_MAXIMA})
-    assert justo.status_code == 200  # el largo máximo exacto pasa
-
-    en_la_lista = next(i for i in client.get("/admin/invitaciones").json() if i["id"] == creada.json()["id"])
-    assert en_la_lista["credencial"] == "COL-123"
-
-
-def test_un_rol_que_no_lleva_credencial_descarta_la_que_llegue():
-    _admin_autenticado()
-    resp = client.post("/admin/invitaciones", json={"rol_destino": "admin", "credencial": "COL-9"})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["credencial"] is None
-
-
-def _cabecera_de_certificacion(monkeypatch):
-    monkeypatch.setattr(main, "CERTIFICACION_A_USUARIOS_SECRETO", "secreto-de-certificacion")
-    return {"X-Servicio-Secreto": "secreto-de-certificacion"}
-
-
-def _verificador_que_uso_una_invitacion(credencial="COL-77", **extra):
-    admin_id = _crear_usuario("admin")
-    verificador_id = _crear_usuario("verificador")
-    _insertar_invitacion(creado_por=admin_id, usado=True, usado_por=verificador_id, credencial=credencial, **extra)
-    return verificador_id
-
-
-def test_certificacion_obtiene_la_credencial_que_el_admin_le_asigno_al_verificador(monkeypatch):
-    verificador_id = _verificador_que_uso_una_invitacion("COL-77")
-
-    resp = client.get(f"/usuarios/interno/{verificador_id}/credencial", headers=_cabecera_de_certificacion(monkeypatch))
-
-    assert resp.status_code == 200, resp.text
-    assert resp.json() == {"credencial": "COL-77"}
-
-
-def test_la_credencial_interna_solo_se_da_con_el_secreto_de_servicio(monkeypatch):
-    verificador_id = _verificador_que_uso_una_invitacion()
-    ruta = f"/usuarios/interno/{verificador_id}/credencial"
-    cabecera = _cabecera_de_certificacion(monkeypatch)
-
-    assert client.get(ruta).status_code == 403
-    assert client.get(ruta, headers={"X-Servicio-Secreto": "otro"}).status_code == 403
-    _admin_autenticado()  # una sesión de usuario, aunque sea admin, no reemplaza al secreto de servicio
-    assert client.get(ruta).status_code == 403
-    monkeypatch.setattr(main, "CERTIFICACION_A_USUARIOS_SECRETO", None)  # sin configurar, falla cerrado
-    assert client.get(ruta, headers=cabecera).status_code == 403
-
-
-def test_sin_credencial_asignada_la_ruta_interna_responde_404(monkeypatch):
-    cabecera = _cabecera_de_certificacion(monkeypatch)
-    admin_id = _crear_usuario("admin")
-
-    sin_invitacion = _crear_usuario("verificador")
-    invitacion_vieja_sin_credencial = _verificador_que_uso_una_invitacion(credencial=None)
-    invitacion_sin_usar = _crear_usuario("verificador")
-    _insertar_invitacion(creado_por=admin_id, usado=False, usado_por=None, credencial="COL-1")
-    de_otro_rol = _crear_usuario("verificador")
-    _insertar_invitacion(creado_por=admin_id, usado=True, usado_por=de_otro_rol, credencial="COL-2", rol_destino="admin")
-
-    for usuario_id in (sin_invitacion, invitacion_vieja_sin_credencial, invitacion_sin_usar, de_otro_rol, str(uuid.uuid4())):
-        resp = client.get(f"/usuarios/interno/{usuario_id}/credencial", headers=cabecera)
-        assert resp.status_code == 404, (usuario_id, resp.text)
-
-
-def test_la_credencial_interna_con_un_id_mal_formado_falla_422_no_500(monkeypatch):
-    assert client.get("/usuarios/interno/no-es-uuid/credencial", headers=_cabecera_de_certificacion(monkeypatch)).status_code == 422
-
-
-def test_la_migracion_agrega_la_columna_credencial_y_se_puede_repetir():
-    """En una base que ya tenía la tabla `invitaciones` sin la columna, arrancar la agrega; y repetir no falla."""
-    from sqlalchemy import text
-    from migraciones import asegurar_columna_credencial_en_invitaciones
-
-    with main.engine.begin() as conexion:
-        conexion.execute(text("ALTER TABLE invitaciones DROP COLUMN IF EXISTS credencial"))
-    asegurar_columna_credencial_en_invitaciones(main.engine)
-    asegurar_columna_credencial_en_invitaciones(main.engine)
-
-    with main.engine.connect() as conexion:
-        columnas = {fila[0] for fila in conexion.execute(text(
-            "select column_name from information_schema.columns where table_name = 'invitaciones'"))}
-    assert "credencial" in columnas

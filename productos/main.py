@@ -353,9 +353,9 @@ def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str
 
 # POST /productos se eliminó: dejaba a cualquier productor publicar un producto "disponible" con
 # nombre, precio, stock y unidad libres, sin cosecha, sin verificación y sin certificación. Un
-# producto solo nace desde una cosecha aprobada por un Verificador (crear_producto_desde_cosecha,
-# más abajo), pasa por borrador -> en_transito -> disponible y su cadena de certificación se registra
-# en ese mismo flujo.
+# producto solo nace cuando el agricultor completa su cosecha con la foto tomada en la chacra
+# (crear_producto_desde_cosecha, más abajo; antes la aprobaba un Verificador, rol retirado el 2026-10-01),
+# pasa por borrador -> en_transito -> disponible y su cadena de certificación se registra en ese mismo flujo.
 
 @app.post("/productos/{producto_id}/imagenes/subir")
 def subir_imagen_producto(
@@ -1238,8 +1238,7 @@ def crear_producto_desde_cosecha(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None),
 ):
-    """Llamado por Productores al aprobar una cosecha (sub-entrega 3 — todavía NO conectado ahí,
-    este endpoint solo existe y se prueba de forma aislada por ahora). Nace en "borrador", sin
+    """Llamado por Productores cuando el agricultor completa su cosecha (completar_cosecha). Nace en "borrador", sin
     precio ni categoría: el productor todavía tiene que completar precio + imágenes y publicar
     a mano (PATCH /productos/{id}/publicar) antes de que sea visible en el catálogo.
 

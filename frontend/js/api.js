@@ -191,18 +191,10 @@ const Api = {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
     login: (datos) => request('usuarios', '/usuarios/login', { method: 'POST', body: datos }),
     obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
-    // rol/codigo_invitacion solo aplican si el id_token no matchea ninguna cuenta existente
-    // (registro nuevo) — mismo gating de roles que Api.usuarios.registrar(), resuelto del lado
-    // del backend (ver POST /usuarios/oauth/google).
+    // rol solo aplica si el id_token no matchea ninguna cuenta existente (registro nuevo) — mismo
+    // filtro de roles que Api.usuarios.registrar(), resuelto del lado del backend (ver POST
+    // /usuarios/oauth/google).
     oauthGoogle: (datos) => request('usuarios', '/usuarios/oauth/google', { method: 'POST', body: datos }),
-  },
-  admin: {
-    // El rol Admin vive en el servicio de usuarios (mismo servicio del login/registro) —
-    // mismo caso que Api.verificadores, que apunta a un servicio propio del rol.
-    // `credencial` la escribe el admin al invitar a un verificador (sale en el certificado público de lo que apruebe).
-    crearInvitacion: (rolDestino, credencial) => request('usuarios', '/admin/invitaciones', { method: 'POST', body: { rol_destino: rolDestino, credencial }, auth: true }),
-    listarInvitaciones: () => request('usuarios', '/admin/invitaciones', { auth: true }),
-    revocarInvitacion: (id) => request('usuarios', `/admin/invitaciones/${id}`, { method: 'DELETE', auth: true }),
   },
   productores: {
     listar: () => request('productores', '/productores'),
@@ -220,15 +212,6 @@ const Api = {
         const formData = new FormData();
         formData.append('archivo', archivo);
         return requestFormData('productores', `/productores/produccion/${id}/foto-cosecha`, formData);
-      },
-      verificacion: {
-        // Mismo recurso (RegistroProduccion) que las 3 funciones de arriba, pero consumido por
-        // el Verificador en vez del Productor — de ahí el sub-namespace en vez de mezclarlas
-        // sueltas con crear/listarMe/completarCosecha.
-        pendientes: () => request('productores', '/productores/produccion/pendientes-verificacion', { auth: true }),
-        historial: () => request('productores', '/productores/produccion/historial-verificacion', { auth: true }),
-        aprobar: (id) => request('productores', `/productores/produccion/${id}/aprobar`, { method: 'POST', auth: true }),
-        rechazar: (id, motivo) => request('productores', `/productores/produccion/${id}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
       },
     },
   },
@@ -310,14 +293,6 @@ const Api = {
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),
     crear: (datos) => request('transporte', '/repartidores', { method: 'POST', body: datos, auth: true }),
-  },
-  verificadores: {
-    // El rol Verificador vive en el servicio de certificación (8008) — mismo caso que
-    // Api.repartidores, que usa el servicio de transporte y no uno propio.
-    miPerfil: () => request('certificacion', '/verificadores/me', { auth: true }),
-    // La credencial que el admin le asignó (solo lectura): el verificador no la escribe.
-    credencialAsignada: () => request('certificacion', '/verificadores/credencial-asignada', { auth: true }),
-    crear: (datos) => request('certificacion', '/verificadores', { method: 'POST', body: datos, auth: true }),
   },
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),
