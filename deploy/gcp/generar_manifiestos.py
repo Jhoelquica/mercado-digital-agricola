@@ -137,7 +137,7 @@ def construir(args):
             6,
         ) + "\n"
     )
-    for servicio in ("productos", "transporte"):
+    for servicio in ("productos", "transporte", "productores"):
         partes.append(
             f"  - target: {{kind: Deployment, name: \"^{servicio}$\"}}\n    patch: |-\n"
             + sangrar(

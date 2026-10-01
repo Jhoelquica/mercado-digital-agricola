@@ -104,6 +104,19 @@ spec:
       services:
         - name: productores
           port: 8001
+    # POST /productores/produccion/{id}/foto-cosecha exige rol "productor": una subida de hasta 5 MB, mejor rechazarla
+    # aquí sin sesión antes de que llegue al servicio.
+    - kind: Rule
+      priority: 100
+      match: Method(`POST`) && PathRegexp(`^/api/productores/productores/produccion/[^/]+/foto-cosecha$`)
+      middlewares:
+        - name: rate-limit-global
+        - name: cors-global
+        - name: auth-jwt
+        - name: strip-api-prefix
+      services:
+        - name: productores
+          port: 8001
 
 ---
 # ================= PRODUCTOS (puerto 8002) =================
@@ -499,10 +512,11 @@ spec:
           port: 80
 
 ---
-# ================= MEDIA (fotos públicas de productos, en MinIO) =================
-# https://<dominio>/media/productos-imagenes/<archivo> -> MinIO. Solo GET/HEAD y solo ese bucket: la consola de MinIO y el
-# bucket privado de fotos de entrega (transporte-entregas) NO se exponen. En un despliegue, MINIO_PUBLIC_URL de Productos
-# tiene que apuntar a https://<dominio>/media para que las fotos que se suban salgan con una URL que el navegador alcance.
+# ================= MEDIA (fotos públicas de productos y de cosechas, en MinIO) =================
+# https://<dominio>/media/productos-imagenes/<archivo> y /media/cosechas-evidencias/<archivo> -> MinIO. Solo GET/HEAD y
+# solo esos dos buckets: la consola de MinIO y el bucket privado de fotos de entrega (transporte-entregas) NO se exponen.
+# En un despliegue, MINIO_PUBLIC_URL de Productos y de Productores tiene que apuntar a https://<dominio>/media para que
+# las fotos que se suban salgan con una URL que el navegador alcance.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -513,7 +527,7 @@ spec:
   routes:
     - kind: Rule
       priority: 100
-      match: (Method(`GET`) || Method(`HEAD`)) && PathPrefix(`/media/productos-imagenes/`)
+      match: (Method(`GET`) || Method(`HEAD`)) && (PathPrefix(`/media/productos-imagenes/`) || PathPrefix(`/media/cosechas-evidencias/`))
       middlewares:
         - name: strip-media-prefix
       services:
