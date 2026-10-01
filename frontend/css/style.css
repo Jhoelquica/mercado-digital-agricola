@@ -1517,13 +1517,15 @@ input, select { font-family: inherit; }
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden;
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
-.form-confirmar-entrega .foto-entrega-zona {
+.form-confirmar-entrega .foto-entrega-zona,
+.form-completar-cosecha .foto-entrega-zona {
   display: flex; flex-direction: row; align-items: center; gap: 14px; min-height: 64px; padding: 12px 16px;
   border: 2px dashed #b9c8bd; border-radius: 14px; background: #fff; cursor: pointer;
   font-size: inherit; font-weight: inherit; color: inherit; flex: none;
   transition: border-color 0.2s, background-color 0.2s;
 }
-.form-confirmar-entrega .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
+.form-confirmar-entrega .foto-entrega-zona:hover,
+.form-completar-cosecha .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
 .foto-entrega:focus-within .foto-entrega-zona { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
 .foto-entrega-icono {
   flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
@@ -1549,7 +1551,9 @@ input, select { font-family: inherit; }
 .foto-entrega-ayuda { margin: 0; min-height: 1.1em; font-size: 0.8rem; font-weight: 600; line-height: 1.4; }
 .foto-entrega-ayuda.ok { color: var(--color-primario); }
 .foto-entrega-ayuda.error { color: #b3401f; }
-@media (prefers-reduced-motion: reduce) { .form-confirmar-entrega .foto-entrega-zona { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .form-confirmar-entrega .foto-entrega-zona, .form-completar-cosecha .foto-entrega-zona { transition: none; }
+}
 
 .form-entrega-mensaje {
   display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border-radius: 10px;
@@ -2305,6 +2309,79 @@ input, select { font-family: inherit; }
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--borde);
+}
+/* La foto ocupa todo el ancho en la tarjeta (en "confirmar entrega" comparte fila con el código). */
+.form-completar-cosecha .foto-entrega { flex: none; }
+.produccion-card .btn-completar-cosecha { min-height: 48px; font-size: 1rem; align-self: flex-start; }
+.produccion-card .produccion-sin-calculo + .btn-completar-cosecha { margin-top: 12px; }
+
+/* ---------- Evidencia en origen: siembra y cosecha desde la chacra ----------
+   Reemplaza al Verificador. Dos piezas: el aviso dorado ("hazlo dentro de tu chacra", lo primero que se lee en el
+   formulario) y el bloque de ubicación, con una píldora de estado que dice con ícono y palabras dónde está el
+   agricultor respecto de su chacra (no solo con color) y un botón de 44px. Fuera del radio o sin GPS se permite igual:
+   el estado lo dice como advertencia, no como error. */
+.aviso-en-chacra {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px;
+  background: var(--acento-cosecha-suave); border: 1px solid #ecd9ae;
+}
+.aviso-en-chacra > i {
+  flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+  background: #fff; color: var(--acento-cosecha); font-size: 1.35rem;
+}
+.aviso-en-chacra strong { display: block; font-family: var(--font-titulo); font-size: 1rem; color: var(--acento-cosecha-texto); }
+.aviso-en-chacra p { margin: 2px 0 0; font-size: 0.88rem; font-weight: 500; line-height: 1.5; color: var(--texto); }
+
+.evidencia-gps {
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 14px;
+  border: 1.5px solid var(--borde); border-radius: 14px; background: #fff;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+.evidencia-gps-cabecera { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.evidencia-gps-titulo { font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.evidencia-gps-estado {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+  font-size: 0.8rem; font-weight: 700; background: #eef0f2; color: #4a5560;
+}
+.evidencia-gps-texto { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--texto); }
+.evidencia-gps .btn-gps-tomar { min-height: 44px; align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; }
+.evidencia-gps[data-estado="dentro"], .evidencia-gps[data-estado="tomada"] { border-color: var(--verde-claro); background: var(--verde-fondo); }
+.evidencia-gps[data-estado="dentro"] .evidencia-gps-estado,
+.evidencia-gps[data-estado="tomada"] .evidencia-gps-estado { background: var(--verde-pastel); color: var(--verde-oscuro); }
+.evidencia-gps[data-estado="fuera"] { border-color: #e2c27a; background: #fffaf0; }
+.evidencia-gps[data-estado="fuera"] .evidencia-gps-estado { background: #fff3cd; color: #6f5200; }
+.evidencia-gps[data-estado="sin-gps"] { border-color: #f1c9bb; background: #fffaf7; }
+.evidencia-gps[data-estado="sin-gps"] .evidencia-gps-estado { background: #fdf1ec; color: #b3401f; }
+.evidencia-gps[data-estado="buscando"] .evidencia-gps-estado i,
+.icono-girando { display: inline-block; animation: girar 0.9s linear infinite; }
+
+/* Lo que quedó sellado: la foto y dónde estaba el agricultor (en la tarjeta de una cosecha completada). */
+.evidencia-resumen {
+  display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 10px 12px;
+  border: 1px solid var(--borde); border-radius: 14px; background: var(--verde-fondo);
+}
+.evidencia-resumen-foto { flex: none; border-radius: 10px; overflow: hidden; line-height: 0; }
+.evidencia-resumen-foto img { width: 72px; height: 72px; object-fit: cover; }
+.evidencia-resumen-foto:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.evidencia-resumen-lista, .timeline-datos-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.evidencia-resumen-lista li, .timeline-datos-lista li {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 0.85rem; line-height: 1.45; color: var(--texto);
+  overflow-wrap: anywhere;
+}
+.evidencia-resumen-lista li i, .timeline-datos-lista li i { flex: none; margin-top: 2px; color: var(--verde-principal); }
+.evidencia-resumen-lista li.es-advertencia, .timeline-datos-lista li.es-advertencia { color: #6f5200; font-weight: 600; }
+.evidencia-resumen-lista li.es-advertencia i, .timeline-datos-lista li.es-advertencia i { color: var(--acento-cosecha); }
+
+/* La foto de la cosecha en la cadena (modal del productor y página del QR). */
+.timeline-foto {
+  display: inline-flex; flex-direction: column; gap: 6px; margin-top: 10px; max-width: 240px;
+  font-size: 0.8rem; font-weight: 600; color: var(--color-primario); text-decoration: none;
+}
+.timeline-foto img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px; border: 1px solid var(--borde); }
+.timeline-foto:hover span { text-decoration: underline; }
+.timeline-foto:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 3px; border-radius: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .evidencia-gps { transition: none; }
+  .evidencia-gps[data-estado="buscando"] .evidencia-gps-estado i, .icono-girando { animation: none; }
 }
 
 .produccion-lista { display: flex; flex-direction: column; gap: 16px; }

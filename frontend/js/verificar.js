@@ -44,6 +44,31 @@ function renderVerificadorLinea(b) {
   return `<p class="timeline-verificador"><i class="ti ti-user-check"></i> Certificado por: ${escapeHtml(nombre)}${credencial}</p>`;
 }
 
+// El texto de un bloque de cosecha trae varias oraciones (cantidad y chacra; dónde estaba el agricultor al sembrar y al
+// cosechar; la huella de la foto): se muestran una por línea y las advertencias con su ícono, no solo con color.
+function renderDatosBloque(datos, escapar) {
+  const frases = String(datos).split(/(?<=\.)\s+(?=[A-ZÁÉÍÓÚÑ])/);
+  if (frases.length < 2) return `<p class="timeline-datos">${escapar(datos)}</p>`;
+  return `<ul class="timeline-datos timeline-datos-lista">${frases.map((frase) => {
+    const advertencia = frase.includes('(advertencia)');
+    const icono = advertencia ? 'alert-triangle'
+      : /^Al (registrar|completar)/.test(frase) ? 'map-pin'
+        : /^Foto de la cosecha/.test(frase) ? 'fingerprint' : 'point';
+    return `<li${advertencia ? ' class="es-advertencia"' : ''}><i class="ti ti-${icono}" aria-hidden="true"></i><span>${escapar(frase)}</span></li>`;
+  }).join('')}</ul>`;
+}
+
+// La foto de la cosecha (solo en cosecha_registrada). Su huella está en el texto del bloque, que sí entra en el hash.
+function renderFotoBloque(b, escapar) {
+  if (!b.foto_url) return '';
+  const url = normalizarUrlImagen(b.foto_url);
+  return `
+    <a class="timeline-foto" href="${escapar(url)}" target="_blank" rel="noopener">
+      <img src="${escapar(url)}" alt="Foto de la cosecha tomada en la chacra" loading="lazy">
+      <span><i class="ti ti-camera" aria-hidden="true"></i> Foto tomada en la chacra · ver en grande</span>
+    </a>`;
+}
+
 function obtenerProductoIdDeUrl() {
   const params = new URLSearchParams(window.location.search);
   return (params.get('producto_id') || '').trim();
@@ -113,7 +138,8 @@ function renderLineaTiempo(historial) {
               </div>
               <div class="timeline-fecha"><i class="ti ti-calendar-event"></i> ${formatearFecha(b.fecha)}</div>
               ${renderVerificadorLinea(b)}
-              ${b.datos ? `<p class="timeline-datos">${escapeHtml(b.datos)}</p>` : ''}
+              ${b.datos ? renderDatosBloque(b.datos, escapeHtml) : ''}
+              ${renderFotoBloque(b, escapeHtml)}
               <div class="timeline-hash"><i class="ti ti-fingerprint"></i> <code>${escapeHtml(hashCorto(b.hash_actual))}</code></div>
             </div>
           </div>`;

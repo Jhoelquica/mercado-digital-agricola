@@ -151,12 +151,38 @@ function renderLineaTiempoCertificacion(historial) {
               </div>
               <div class="timeline-fecha">${formatearFechaServidor(b.fecha)}</div>
               ${renderVerificadorLinea(b)}
-              ${b.datos ? `<p class="timeline-datos">${escapeAttr(b.datos)}</p>` : ''}
+              ${b.datos ? renderDatosBloque(b.datos, escapeAttr) : ''}
+              ${renderFotoBloque(b, escapeAttr)}
               <div class="timeline-hash">Hash: <code>${escapeAttr(hashCorto(b.hash_actual))}</code></div>
             </div>
           </div>`;
       }).join('')}
     </div>`;
+}
+
+// El texto de un bloque de cosecha trae varias oraciones (cantidad y chacra; dónde estaba el agricultor al sembrar y al
+// cosechar; la huella de la foto): se muestran una por línea y las advertencias con su ícono, no solo con color.
+function renderDatosBloque(datos, escapar) {
+  const frases = String(datos).split(/(?<=\.)\s+(?=[A-ZÁÉÍÓÚÑ])/);
+  if (frases.length < 2) return `<p class="timeline-datos">${escapar(datos)}</p>`;
+  return `<ul class="timeline-datos timeline-datos-lista">${frases.map((frase) => {
+    const advertencia = frase.includes('(advertencia)');
+    const icono = advertencia ? 'alert-triangle'
+      : /^Al (registrar|completar)/.test(frase) ? 'map-pin'
+        : /^Foto de la cosecha/.test(frase) ? 'fingerprint' : 'point';
+    return `<li${advertencia ? ' class="es-advertencia"' : ''}><i class="ti ti-${icono}" aria-hidden="true"></i><span>${escapar(frase)}</span></li>`;
+  }).join('')}</ul>`;
+}
+
+// La foto de la cosecha (solo en cosecha_registrada). Su huella está en el texto del bloque, que sí entra en el hash.
+function renderFotoBloque(b, escapar) {
+  if (!b.foto_url) return '';
+  const url = normalizarUrlImagen(b.foto_url);
+  return `
+    <a class="timeline-foto" href="${escapar(url)}" target="_blank" rel="noopener">
+      <img src="${escapar(url)}" alt="Foto de la cosecha tomada en la chacra" loading="lazy">
+      <span><i class="ti ti-camera" aria-hidden="true"></i> Foto tomada en la chacra · ver en grande</span>
+    </a>`;
 }
 
 // Solo aplica al evento certificado_productor; el backend ya resuelve el nombre en /historial
@@ -4212,7 +4238,11 @@ async function crearRegistroProduccion(e) {
   }
 
   btn.disabled = true;
+  const textoBoton = btn.innerHTML;
   try {
+    btn.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Tomando tu ubicación…';
+    const ubicacion = await asegurarUbicacion(e.target.querySelector('.evidencia-gps'));
+    btn.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Registrando…';
     const datos = {
       cultivo: document.getElementById('produccion-cultivo').value.trim(),
       chacra_id: chacraId,
@@ -4224,6 +4254,7 @@ async function crearRegistroProduccion(e) {
       equivalencia_kg: unidad !== 'kg' ? parseFloat(equivalenciaValor) : null,
       fecha_siembra: document.getElementById('produccion-fecha-siembra').value,
       fecha_cosecha_estimada: document.getElementById('produccion-fecha-cosecha-estimada').value,
+      ...(ubicacion ? { latitud: ubicacion.lat, longitud: ubicacion.lng } : {}),
     };
     await Api.productores.produccion.crear(datos);
     toast('Siembra registrada 🌱');
@@ -4232,32 +4263,203 @@ async function crearRegistroProduccion(e) {
     manejarError(err, 'registrar la siembra');
   } finally {
     btn.disabled = false;
+    btn.innerHTML = textoBoton;
   }
 }
 
 function alternarFormCompletarCosecha(registroId) {
   const form = document.querySelector(`.form-completar-cosecha[data-id="${registroId}"]`);
-  form?.classList.toggle('hidden');
+  if (!form) return;
+  const abierto = !form.classList.toggle('hidden');
+  // Al abrirlo el agricultor ya leyó que tiene que estar en su chacra: se pide la ubicación de una vez (el navegador
+  // muestra su permiso en contexto) en vez de esperar al botón.
+  const bloque = form.querySelector('.evidencia-gps');
+  if (abierto && bloque?.dataset.estado === 'espera') tomarUbicacion(bloque);
+}
+
+// ---- Evidencia en origen: dónde está el agricultor al sembrar y al cosechar ----
+// Reemplaza al Verificador (presentación del 2026-10-01). Igual que RADIO_CHACRA_KM en productores/main.py: fuera de
+// este radio se registra igual, pero queda como advertencia en la cadena (el GPS falla seguido en el campo).
+const RADIO_CHACRA_KM = 1.5;
+
+const ESTADOS_UBICACION = {
+  espera: { icono: 'map-pin', etiqueta: 'Sin tomar' },
+  buscando: { icono: 'loader-2', etiqueta: 'Buscando…' },
+  tomada: { icono: 'circle-check', etiqueta: 'Ubicación tomada' },
+  dentro: { icono: 'circle-check', etiqueta: 'En tu chacra' },
+  fuera: { icono: 'alert-triangle', etiqueta: 'Lejos de tu chacra' },
+  'sin-gps': { icono: 'map-pin-off', etiqueta: 'Sin ubicación' },
+};
+
+function distanciaKm(lat1, lon1, lat2, lon2) {
+  const rad = (g) => (g * Math.PI) / 180;
+  const a = Math.sin(rad(lat2 - lat1) / 2) ** 2
+    + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(rad(lon2 - lon1) / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatearDistancia(km) {
+  return km < 1 ? `${Math.max(10, Math.round((km * 1000) / 10) * 10)} m` : `${km.toFixed(1).replace('.', ',')} km`;
+}
+
+function pedirUbicacionGps() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation || !window.isSecureContext) { reject({ code: 'sin-soporte' }); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      reject,
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+    );
+  });
+}
+
+function mensajeSinUbicacion(err) {
+  if (err?.code === 1) {
+    return 'No diste permiso para usar tu ubicación. Se registrará igual, pero quedará como advertencia. '
+      + 'Para darlo, toca el candado junto a la dirección de la página y vuelve a intentarlo.';
+  }
+  if (err?.code === 'sin-soporte') {
+    return 'Este navegador no puede dar tu ubicación aquí. Se registrará igual, pero quedará como advertencia.';
+  }
+  return 'No se pudo obtener tu ubicación (poca señal de GPS). Se registrará igual, pero quedará como advertencia. '
+    + 'Puedes intentarlo otra vez.';
+}
+
+function pintarUbicacion(bloque, estado, mensaje) {
+  bloque.dataset.estado = estado;
+  const info = ESTADOS_UBICACION[estado];
+  bloque.querySelector('.evidencia-gps-estado').innerHTML = `<i class="ti ti-${info.icono}" aria-hidden="true"></i> ${info.etiqueta}`;
+  bloque.querySelector('.evidencia-gps-texto').textContent = mensaje;
+  const boton = bloque.querySelector('.btn-gps-tomar');
+  boton.disabled = estado === 'buscando';
+  boton.querySelector('span').textContent = estado === 'buscando' ? 'Buscando…' : bloque.dataset.lat ? 'Volver a tomar' : 'Tomar mi ubicación';
+}
+
+function chacraDelBloque(bloque) {
+  const chacraId = bloque.dataset.chacraSelect
+    ? document.getElementById(bloque.dataset.chacraSelect)?.value
+    : bloque.dataset.chacraId;
+  return (Estado.chacras || []).find((c) => String(c.id) === String(chacraId)) || null;
+}
+
+// Con la ubicación ya tomada, dice si el agricultor está dentro de su chacra (se vuelve a evaluar si cambia la chacra).
+function evaluarUbicacion(bloque) {
+  if (!bloque?.dataset.lat) return;
+  const chacra = chacraDelBloque(bloque);
+  if (!chacra) {
+    pintarUbicacion(bloque, 'tomada', 'Ubicación tomada. Elige tu chacra para ver si estás dentro de ella.');
+    return;
+  }
+  const km = distanciaKm(Number(bloque.dataset.lat), Number(bloque.dataset.lng), chacra.ubicacion_latitud, chacra.ubicacion_longitud);
+  if (km <= RADIO_CHACRA_KM) {
+    pintarUbicacion(bloque, 'dentro', `Estás dentro de tu chacra ${chacra.codigo} (a ${formatearDistancia(km)} del punto que registraste).`);
+  } else {
+    pintarUbicacion(bloque, 'fuera', `Estás a ${formatearDistancia(km)} de tu chacra ${chacra.codigo}. Se registrará igual, `
+      + 'pero quedará como advertencia en el certificado. Si puedes, hazlo desde tu chacra.');
+  }
+}
+
+async function tomarUbicacion(bloque) {
+  if (!bloque || bloque.dataset.estado === 'buscando') return null;
+  pintarUbicacion(bloque, 'buscando', 'Buscando tu ubicación… puede tardar unos segundos.');
+  try {
+    const ubicacion = await pedirUbicacionGps();
+    bloque.dataset.lat = ubicacion.lat;
+    bloque.dataset.lng = ubicacion.lng;
+    evaluarUbicacion(bloque);
+    return ubicacion;
+  } catch (err) {
+    delete bloque.dataset.lat;
+    delete bloque.dataset.lng;
+    pintarUbicacion(bloque, 'sin-gps', mensajeSinUbicacion(err));
+    return null;
+  }
+}
+
+// Al enviar: la ya tomada; si nunca se intentó, se intenta ahora. Sin ubicación se envía igual (queda la advertencia).
+async function asegurarUbicacion(bloque) {
+  if (!bloque) return null;
+  if (bloque.dataset.lat) return { lat: Number(bloque.dataset.lat), lng: Number(bloque.dataset.lng) };
+  if (bloque.dataset.estado === 'sin-gps') return null;
+  return tomarUbicacion(bloque);
+}
+
+function renderAvisoEnLaChacra(momento) {
+  const texto = momento === 'siembra'
+    ? 'Registra la siembra estando en tu chacra: tu ubicación queda como constancia en el certificado del producto.'
+    : 'Toma la foto de tu cosecha y confirma estando en tu chacra: la foto y tu ubicación quedan selladas en el '
+      + 'certificado que ve el comprador.';
+  return `
+    <div class="aviso-en-chacra">
+      <i class="ti ti-plant-2" aria-hidden="true"></i>
+      <div>
+        <strong>Hazlo dentro de tu chacra</strong>
+        <p>${texto} Si estás a más de ${String(RADIO_CHACRA_KM).replace('.', ',')} km, se registra igual, pero queda como advertencia.</p>
+      </div>
+    </div>`;
+}
+
+// atributos: data-chacra-select (siembra: la chacra se elige en el formulario) o data-chacra-id (cosecha: ya se sabe).
+function renderBloqueUbicacion(idBase, momento, atributos) {
+  const info = ESTADOS_UBICACION.espera;
+  return `
+    <div class="evidencia-gps" data-estado="espera" ${atributos}>
+      <div class="evidencia-gps-cabecera">
+        <span class="evidencia-gps-titulo" id="gps-titulo-${idBase}">Tu ubicación al ${momento}</span>
+        <span class="evidencia-gps-estado"><i class="ti ti-${info.icono}" aria-hidden="true"></i> ${info.etiqueta}</span>
+      </div>
+      <p class="evidencia-gps-texto" role="status" aria-live="polite">Toca el botón estando dentro de tu chacra. Si no lo haces, se pedirá al enviar.</p>
+      <button type="button" class="btn btn-outline btn-gps-tomar" aria-describedby="gps-titulo-${idBase}">
+        <i class="ti ti-current-location" aria-hidden="true"></i> <span>Tomar mi ubicación</span>
+      </button>
+    </div>`;
+}
+
+function firmaArchivo(archivo) {
+  return `${archivo.name}|${archivo.size}|${archivo.lastModified}`;
 }
 
 async function completarCosechaRegistro(e, registroId) {
   e.preventDefault();
   const form = e.target;
   const btn = form.querySelector('button[type="submit"]');
+  const contenedorFoto = form.querySelector('.foto-entrega');
+  const archivo = form.querySelector('.foto-entrega-input').files[0];
+  // La foto es obligatoria: se avisa en el propio campo (y se lleva el foco ahí), no solo con un toast.
+  if (!archivo && !form.dataset.fotoGuardada) {
+    pintarFotoEntrega(contenedorFoto, 'error', { mensaje: 'Falta la foto de tu cosecha: tómala aquí, en tu chacra.' });
+    contenedorFoto.querySelector('.foto-entrega-input').focus();
+    contenedorFoto.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
   btn.disabled = true;
+  const textoBoton = btn.innerHTML;
+  const enCurso = (texto) => { btn.innerHTML = `<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> ${texto}`; };
   try {
+    enCurso('Tomando tu ubicación…');
+    const ubicacion = await asegurarUbicacion(form.querySelector('.evidencia-gps'));
+    // Un reintento (por ejemplo, si falló la confirmación) no vuelve a subir la misma foto.
+    if (archivo && form.dataset.fotoSubida !== firmaArchivo(archivo)) {
+      enCurso('Subiendo la foto…');
+      await Api.productores.produccion.subirFotoCosecha(registroId, archivo);
+      form.dataset.fotoSubida = firmaArchivo(archivo);
+    }
+    enCurso('Confirmando la cosecha…');
     const datos = {
       cantidad_cosechada: parseFloat(form.cantidad_cosechada.value),
       fecha_cosecha_real: form.fecha_cosecha_real.value,
       costo_mano_obra: parseFloat(form.costo_mano_obra.value) || 0,
+      ...(ubicacion ? { latitud: ubicacion.lat, longitud: ubicacion.lng } : {}),
     };
     await Api.productores.produccion.completarCosecha(registroId, datos);
-    toast('Cosecha completada ✅');
+    toast('Cosecha completada ✅ Tu producto ya está en "Mis productos" como borrador: ponle precio y publícalo.');
     cargarPerfil();
   } catch (err) {
     manejarError(err, 'completar la cosecha');
   } finally {
     btn.disabled = false;
+    btn.innerHTML = textoBoton;
   }
 }
 
@@ -4868,9 +5070,9 @@ function renderResumenProductor() {
   const misProductosDisponibles = (Estado.misProductos || []).filter((p) => p.estado === 'disponible');
   const chacras = Estado.chacras || [];
   const registros = Estado.registrosProduccion || [];
-  // Máquina de estados de un registro (ver productores/models.py): planificado ->
-  // pendiente_verificacion -> aprobado | rechazado. "En curso" es todo lo que aún no terminó
-  // (aprobado ya está cosechado y verificado; "cosechado" es un valor legado equivalente).
+  // Máquina de estados de un registro (ver productores/models.py): planificado -> cosechado. "En curso" es todo lo
+  // que aún no terminó; "aprobado" es el equivalente a "cosechado" de antes de retirar al Verificador, y los
+  // "pendiente_verificacion"/"rechazado" de entonces siguen en curso (se completan con su foto).
   const enCurso = registros.filter((r) => r.estado !== 'aprobado' && r.estado !== 'cosechado');
 
   // La próxima cosecha solo puede ser de una siembra que todavía no se cosechó.
@@ -6470,10 +6672,8 @@ function renderPerfilProductor(extra, registrosProduccion) {
 function calcularResumenEconomico(registros) {
   const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
 
-  // "cosechado" es un valor legado (ver comentario en productores/models.py) — el flujo actual
-  // termina en "aprobado" con cantidad_cosechada ya presente; completar_cosecha() nunca deja un
-  // registro en reposo como "cosechado". Sin este OR, esta sección quedaba en "—" para casi
-  // cualquier dato real.
+  // "cosechado" es donde termina hoy una cosecha; "aprobado" es su equivalente de antes de retirar al Verificador
+  // (ver productores/models.py).
   const cosechados = registros.filter((r) => r.estado === 'aprobado' || r.estado === 'cosechado');
   const totalCosechadoKg = cosechados.reduce((suma, r) => {
     if (r.cantidad_cosechada == null) return suma;
@@ -6755,6 +6955,7 @@ function renderFormRegistroProduccion() {
     <div class="card-panel">
       <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
       <form id="form-registro-produccion" class="form-grid">
+        ${renderAvisoEnLaChacra('siembra')}
         <label>Cultivo
           <input type="text" id="produccion-cultivo" required maxlength="80" placeholder="Ej. Papa Nativa">
         </label>
@@ -6790,26 +6991,104 @@ function renderFormRegistroProduccion() {
         <label>Fecha estimada de cosecha
           <input type="date" id="produccion-fecha-cosecha-estimada" required>
         </label>
+        ${renderBloqueUbicacion('siembra', 'registrar la siembra', 'data-chacra-select="produccion-chacra"')}
         <button type="submit" class="btn btn-primary">Registrar siembra</button>
       </form>
     </div>`;
 }
 
-// Máquina de estados real de RegistroProduccion (ver productores/models.py): planificado ->
-// pendiente_verificacion -> aprobado | rechazado -> pendiente_verificacion (reenvío). "cosechado"
-// nunca debería llegar acá (completar_cosecha salta directo a pendiente_verificacion), pero
-// queda como fallback defensivo si algún dato viejo lo tuviera.
+// Máquina de estados de RegistroProduccion (ver productores/models.py): planificado -> cosechado (al completar la
+// cosecha con su foto; el producto nace como borrador). Los demás son de antes de retirar al Verificador: "aprobado"
+// equivale a cosechado, y "pendiente_verificacion"/"rechazado" quedaron a medio camino: se completan con su foto.
+const ESTADOS_POR_COMPLETAR = ['planificado', 'pendiente_verificacion', 'rechazado'];
 const BADGES_ESTADO_REGISTRO = {
   planificado: { clase: 'pill-pendiente', icono: 'seedling', etiqueta: 'Planificado' },
-  pendiente_verificacion: { clase: 'pill-pendiente', icono: 'hourglass', etiqueta: 'En revisión' },
-  aprobado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Aprobado' },
-  rechazado: { clase: 'pill-rechazado', icono: 'circle-x', etiqueta: 'Rechazado' },
+  cosechado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
+  aprobado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
+  pendiente_verificacion: { clase: 'pill-pendiente', icono: 'camera', etiqueta: 'Falta la foto' },
+  rechazado: { clase: 'pill-pendiente', icono: 'camera', etiqueta: 'Falta la foto' },
 };
+
+function textoDistanciaRegistro(km, radio) {
+  if (km == null) return { texto: 'sin ubicación', advertencia: true };
+  return km <= radio
+    ? { texto: `a ${formatearDistancia(km)} de tu chacra`, advertencia: false }
+    : { texto: `a ${formatearDistancia(km)} de tu chacra (lejos)`, advertencia: true };
+}
+
+// Lo que quedó sellado en la cadena al completar la cosecha: la foto y dónde estaba el agricultor.
+function renderEvidenciaRegistro(r) {
+  if (r.estado !== 'cosechado') return '';
+  const radio = r.radio_chacra_km || RADIO_CHACRA_KM;
+  const linea = (momento, km) => {
+    const d = textoDistanciaRegistro(km, radio);
+    return `<li class="${d.advertencia ? 'es-advertencia' : ''}"><i class="ti ti-${d.advertencia ? 'alert-triangle' : 'map-pin'}" aria-hidden="true"></i>
+      <span><strong>${momento}:</strong> ${d.texto}${d.advertencia ? ' — quedó como advertencia' : ''}</span></li>`;
+  };
+  const foto = r.foto_cosecha_url ? normalizarUrlImagen(r.foto_cosecha_url) : null;
+  return `
+    <div class="evidencia-resumen">
+      ${foto ? `<a class="evidencia-resumen-foto" href="${escapeAttr(foto)}" target="_blank" rel="noopener">
+        <img src="${escapeAttr(foto)}" alt="Foto de la cosecha de ${escapeAttr(r.cultivo)}" loading="lazy"></a>` : ''}
+      <ul class="evidencia-resumen-lista">
+        ${linea('Siembra', r.siembra_distancia_km)}
+        ${linea('Cosecha', r.cosecha_distancia_km)}
+      </ul>
+    </div>`;
+}
+
+function renderFormCompletarCosecha(r) {
+  // Precargado con lo ya guardado (una cosecha que quedó a medio camino con el Verificador ya tiene sus datos).
+  const valorCantidad = r.cantidad_cosechada != null ? Number(r.cantidad_cosechada) : '';
+  const valorFecha = r.fecha_cosecha_real ? new Date(r.fecha_cosecha_real).toISOString().slice(0, 10) : '';
+  const valorManoObra = r.costo_mano_obra != null ? Number(r.costo_mano_obra) : 0;
+  const fotoGuardada = r.foto_cosecha_url ? normalizarUrlImagen(r.foto_cosecha_url) : null;
+  const id = r.id;
+  return `
+    <form class="form-grid form-completar-cosecha hidden" data-id="${id}" ${fotoGuardada ? 'data-foto-guardada="1"' : ''}>
+      ${renderAvisoEnLaChacra('cosecha')}
+      <div class="foto-entrega" data-estado="${fotoGuardada ? 'lista' : 'vacia'}">
+        <span class="foto-entrega-titulo" id="foto-titulo-cosecha-${id}">Foto de tu cosecha (obligatoria)</span>
+        <!-- Sin "required": la falta de foto se avisa en este mismo campo (completarCosechaRegistro). En el celular
+             "capture" abre la cámara directamente. -->
+        <input class="foto-entrega-input" id="foto-cosecha-${id}" type="file" name="foto" accept="image/jpeg,image/png,image/webp" capture="environment" aria-labelledby="foto-titulo-cosecha-${id}" aria-describedby="foto-ayuda-cosecha-${id}">
+        <label class="foto-entrega-zona" for="foto-cosecha-${id}">
+          <span class="foto-entrega-icono"><i class="ti ti-camera" aria-hidden="true"></i></span>
+          <span class="foto-entrega-texto">
+            <strong>Tomar foto de la cosecha</strong>
+            <small>En tu chacra · JPG, PNG o WEBP · máx. 5 MB</small>
+          </span>
+        </label>
+        <div class="foto-entrega-previa">
+          <img alt="Vista previa de la foto de la cosecha" ${fotoGuardada ? `src="${escapeAttr(fotoGuardada)}"` : ''}>
+          <div class="foto-entrega-datos">
+            <strong class="foto-nombre">${fotoGuardada ? 'Foto ya guardada' : ''}</strong>
+            <small class="foto-peso"></small>
+          </div>
+          <div class="foto-entrega-botones">
+            <button type="button" class="btn btn-ghost btn-sm foto-cambiar"><i class="ti ti-refresh" aria-hidden="true"></i> Cambiar</button>
+            <button type="button" class="btn btn-ghost btn-sm foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
+          </div>
+        </div>
+        <p class="foto-entrega-ayuda" id="foto-ayuda-cosecha-${id}" role="status" aria-live="polite"></p>
+      </div>
+      <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
+        <input type="number" name="cantidad_cosechada" min="0.01" max="1000000" step="0.01" required value="${valorCantidad}">
+      </label>
+      <label>Fecha real de cosecha
+        <input type="date" name="fecha_cosecha_real" required min="${String(r.fecha_siembra || '').slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" value="${valorFecha}">
+      </label>
+      <label>Costo de mano de obra final (S/)
+        <input type="number" name="costo_mano_obra" min="0" max="9999999.99" step="0.01" value="${valorManoObra}" required>
+      </label>
+      ${renderBloqueUbicacion(`cosecha-${id}`, 'completar la cosecha', `data-chacra-id="${escapeAttr(r.chacra_id)}"`)}
+      <button type="submit" class="btn btn-primary">Confirmar cosecha</button>
+    </form>`;
+}
 
 function renderTarjetaRegistroProduccion(r, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
-  const esPlanificado = r.estado === 'planificado';
-  const esRechazado = r.estado === 'rechazado';
+  const porCompletar = ESTADOS_POR_COMPLETAR.includes(r.estado);
   const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
   const badge = `<span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span>`;
 
@@ -6823,30 +7102,12 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     </div>`;
 
   let bloqueEstado;
-  if (esPlanificado || esRechazado) {
-    // Reenvío tras rechazo = el MISMO mini-form y el MISMO endpoint (completar-cosecha) que ya
-    // usa "planificado" — el backend ya acepta estado in ('planificado', 'rechazado') para esta
-    // transición (ver productores/main.py). Precargado con lo ya guardado para que el productor
-    // solo corrija lo que causó el rechazo, no vuelva a escribir todo desde cero.
-    const valorCantidad = r.cantidad_cosechada != null ? Number(r.cantidad_cosechada) : '';
-    const valorFecha = r.fecha_cosecha_real ? new Date(r.fecha_cosecha_real).toISOString().slice(0, 10) : '';
-    const valorManoObra = r.costo_mano_obra != null ? Number(r.costo_mano_obra) : 0;
-
+  if (porCompletar) {
+    const aMedioCamino = r.estado !== 'planificado';
     bloqueEstado = `
-      ${esRechazado && r.motivo_rechazo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(r.motivo_rechazo)}</p>` : ''}
-      <button type="button" class="btn btn-outline btn-sm btn-toggle-completar-cosecha" data-id="${r.id}">${esRechazado ? 'Corregir y reenviar' : 'Completar cosecha'}</button>
-      <form class="form-grid form-completar-cosecha hidden" data-id="${r.id}">
-        <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
-          <input type="number" name="cantidad_cosechada" min="0.01" max="1000000" step="0.01" required value="${valorCantidad}">
-        </label>
-        <label>Fecha real de cosecha
-          <input type="date" name="fecha_cosecha_real" required min="${String(r.fecha_siembra || '').slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" value="${valorFecha}">
-        </label>
-        <label>Costo de mano de obra final (S/)
-          <input type="number" name="costo_mano_obra" min="0" max="9999999.99" step="0.01" value="${valorManoObra}" required>
-        </label>
-        <button type="submit" class="btn btn-primary btn-sm">${esRechazado ? 'Reenviar a verificación' : 'Confirmar cosecha'}</button>
-      </form>`;
+      ${aMedioCamino ? '<p class="produccion-sin-calculo"><i class="ti ti-camera"></i> Esta cosecha quedó pendiente de revisión. Ya no hace falta: complétala con la foto de tu cosecha.</p>' : ''}
+      <button type="button" class="btn btn-primary btn-completar-cosecha btn-toggle-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>
+      ${renderFormCompletarCosecha(r)}`;
   } else if (r.ingreso_estimado != null) {
     bloqueEstado = `
       <div class="perfil-datos-grid">
@@ -6854,13 +7115,15 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
         <div class="perfil-dato"><span class="perfil-dato-label">Precio de referencia</span><span class="perfil-dato-valor">${formatearMoneda(r.precio_referencia_kg)}/kg</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Ingreso estimado</span><span class="perfil-dato-valor">${formatearMoneda(r.ingreso_estimado)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Ganancia</span><span class="perfil-dato-valor ${r.ganancia_estimada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${formatearMoneda(r.ganancia_estimada)} (${r.margen_porcentaje}%)</span></div>
-      </div>`;
+      </div>
+      ${renderEvidenciaRegistro(r)}`;
   } else {
     bloqueEstado = `
       <div class="perfil-datos-grid">
         <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
       </div>
-      <p class="produccion-sin-calculo"><i class="ti ti-info-circle"></i> No se pudo calcular la ganancia: ${escapeAttr(r.motivo_sin_calculo || 'motivo desconocido')}.</p>`;
+      <p class="produccion-sin-calculo"><i class="ti ti-info-circle"></i> No se pudo calcular la ganancia: ${escapeAttr(r.motivo_sin_calculo || 'motivo desconocido')}.</p>
+      ${renderEvidenciaRegistro(r)}`;
   }
 
   return `
@@ -7842,6 +8105,18 @@ function inicializarEventos() {
     }
     const btnCompletar = e.target.closest('.btn-toggle-completar-cosecha');
     if (btnCompletar) { alternarFormCompletarCosecha(btnCompletar.dataset.id); return; }
+    const btnUbicacion = e.target.closest('.btn-gps-tomar');
+    if (btnUbicacion) { tomarUbicacion(btnUbicacion.closest('.evidencia-gps')); return; }
+    // El selector de la foto de la cosecha es el mismo de la foto de entrega del repartidor.
+    const btnQuitarFoto = e.target.closest('.foto-quitar');
+    if (btnQuitarFoto) {
+      const form = btnQuitarFoto.closest('form');
+      if (form) delete form.dataset.fotoGuardada; // quitada la foto guardada, hay que elegir otra
+      quitarFotoEntrega(btnQuitarFoto.closest('.foto-entrega'));
+      return;
+    }
+    const btnCambiarFoto = e.target.closest('.foto-cambiar');
+    if (btnCambiarFoto) { btnCambiarFoto.closest('.foto-entrega').querySelector('.foto-entrega-input').click(); return; }
   });
 
   // Gestión Económica: el formulario de siembra y las mini-formas de "completar cosecha" (una
@@ -7854,6 +8129,8 @@ function inicializarEventos() {
 
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
     if (e.target.id === 'produccion-unidad') actualizarVisibilidadEquivalenciaProduccion();
+    if (e.target.id === 'produccion-chacra') evaluarUbicacion(document.querySelector('#form-registro-produccion .evidencia-gps'));
+    if (e.target.matches('.form-completar-cosecha .foto-entrega-input')) alElegirFotoEntrega(e.target);
   });
   document.getElementById('perfil-contenido').addEventListener('blur', (e) => {
     if (e.target.id === 'produccion-cultivo') mostrarPrecioReferenciaCultivo();

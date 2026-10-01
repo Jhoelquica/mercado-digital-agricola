@@ -27,7 +27,7 @@ const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.apiBase) || Object.from
   ]),
 );
 
-// Las fotos de producto se guardan en la base con la URL completa que tenía MinIO al subirlas
+// Las fotos de producto (y las de las cosechas) se guardan en la base con la URL completa que tenía MinIO al subirlas
 // (por defecto http://localhost:9000/productos-imagenes/...): sirve en tu propia máquina ("localhost" te
 // apunta a ti), pero no en la de nadie más (a esa persona "localhost" le apunta a SU máquina), ni detrás
 // de un túnel/dominio distinto. Por el gateway existe la ruta /media/productos-imagenes/... (ver
@@ -39,7 +39,9 @@ function normalizarUrlImagen(url) {
   if (!url || !USA_EL_GATEWAY) return url;
   try {
     const u = new URL(url, location.origin);
-    if (u.pathname.startsWith('/productos-imagenes/')) return `${location.origin}/media${u.pathname}`;
+    if (u.pathname.startsWith('/productos-imagenes/') || u.pathname.startsWith('/cosechas-evidencias/')) {
+      return `${location.origin}/media${u.pathname}`;
+    }
   } catch { /* url rara o relativa: se deja tal cual */ }
   return url;
 }
@@ -213,6 +215,12 @@ const Api = {
       crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
       listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
+      // La foto de la cosecha va antes que completarCosecha (que la exige) y aparte, para que esa siga siendo JSON.
+      subirFotoCosecha: (id, archivo) => {
+        const formData = new FormData();
+        formData.append('archivo', archivo);
+        return requestFormData('productores', `/productores/produccion/${id}/foto-cosecha`, formData);
+      },
       verificacion: {
         // Mismo recurso (RegistroProduccion) que las 3 funciones de arriba, pero consumido por
         // el Verificador en vez del Productor — de ahí el sub-namespace en vez de mezclarlas
