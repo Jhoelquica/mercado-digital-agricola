@@ -235,7 +235,6 @@ def _completar_cosecha(monkeypatch, registro_id: str, cantidad: float = 50.0):
             "cantidad_cosechada": cantidad,
             "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(),
             "costo_mano_obra": 20.0,
-            "costo_envio": 10.0,
         },
     )
 
@@ -845,6 +844,35 @@ def test_fechas_con_zona_horaria_no_rompen_la_comparacion():
     assert client.post("/productores/produccion", json=payload).status_code == 200
 
 
+def test_la_ganancia_ya_no_incluye_un_costo_de_envio(monkeypatch):
+    """El "costo de envío final" se quitó del formulario de completar cosecha (presentación del 2026-10-01): si un
+    cliente viejo lo manda se ignora, y un registro antiguo que lo tenga guardado no cambia su ganancia."""
+    chacra_id = _nueva_chacra()
+    registro_id = client.post("/productores/produccion", json=_registro_payload(chacra_id)).json()["id"]
+    monkeypatch.setattr(main, "_consultar_precio_referencia", lambda cultivo: (10.0, None))
+
+    resp = client.patch(f"/productores/produccion/{registro_id}/completar-cosecha", json={
+        "cantidad_cosechada": 50.0, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(),
+        "costo_mano_obra": 20.0, "costo_envio": 999.0,  # campo retirado: se ignora
+    })
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert "costo_envio" not in cuerpo
+    # semillas 100 + insumos 50 + mano de obra 20; 50 kg x S/ 10 = 500
+    assert cuerpo["costo_total"] == 170.0 and cuerpo["ganancia_estimada"] == 330.0
+
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro_id).first()
+        assert float(fila.costo_envio) == 0  # no se guardó el 999
+        fila.costo_envio = 40  # como un registro de antes del cambio
+        db.commit()
+    finally:
+        db.close()
+    actual = next(r for r in client.get("/productores/produccion/me").json() if r["id"] == registro_id)
+    assert actual["costo_total"] == 170.0 and actual["ganancia_estimada"] == 330.0
+
+
 def test_completar_cosecha_con_datos_invalidos_falla_422_y_no_cambia_nada(monkeypatch):
     chacra_id = _nueva_chacra()
     registro = client.post("/productores/produccion", json=_registro_payload(chacra_id))
@@ -853,18 +881,18 @@ def test_completar_cosecha_con_datos_invalidos_falla_422_y_no_cambia_nada(monkey
     monkeypatch.setattr(main, "_consultar_precio_referencia", lambda cultivo: (10.0, None))
 
     url = f"/productores/produccion/{registro_id}/completar-cosecha"
-    base = {"cantidad_cosechada": 50.0, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(), "costo_mano_obra": 20.0, "costo_envio": 10.0}
+    base = {"cantidad_cosechada": 50.0, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(), "costo_mano_obra": 20.0}
     hoy = datetime.utcnow()
     invalidos = [
         {"cantidad_cosechada": 1e12}, {"cantidad_cosechada": 1_000_001}, {"cantidad_cosechada": 0}, {"cantidad_cosechada": -5},
-        {"costo_mano_obra": -1}, {"costo_envio": -0.5}, {"costo_mano_obra": 10_000_000},
+        {"costo_mano_obra": -1}, {"costo_mano_obra": 10_000_000},
         {"fecha_cosecha_real": datetime(2025, 12, 31).isoformat()},      # antes de la siembra (2026-01-01)
         {"fecha_cosecha_real": (hoy + timedelta(days=5)).isoformat()},   # en el futuro
     ]
     for cambio in invalidos:
         resp = client.patch(url, json={**base, **cambio})
         assert resp.status_code == 422, (cambio, resp.text)
-    for campo in ("cantidad_cosechada", "costo_mano_obra", "costo_envio"):
+    for campo in ("cantidad_cosechada", "costo_mano_obra"):
         for valor in ("NaN", "Infinity"):
             crudo = json.dumps(base).replace(f'"{campo}": {json.dumps(base[campo])}', f'"{campo}": {valor}')
             assert _con_json_crudo("PATCH", url, crudo).status_code == 422, (campo, valor)

@@ -4250,7 +4250,6 @@ async function completarCosechaRegistro(e, registroId) {
       cantidad_cosechada: parseFloat(form.cantidad_cosechada.value),
       fecha_cosecha_real: form.fecha_cosecha_real.value,
       costo_mano_obra: parseFloat(form.costo_mano_obra.value) || 0,
-      costo_envio: parseFloat(form.costo_envio.value) || 0,
     };
     await Api.productores.produccion.completarCosecha(registroId, datos);
     toast('Cosecha completada ✅');
@@ -6582,14 +6581,14 @@ function agruparGananciaPorCultivo(registros) {
   return { labels: [...mapa.keys()], valores: [...mapa.values()] };
 }
 
-// Suma de los 4 componentes de costo across todos los registros (independiente del estado).
+// Suma de los 3 componentes de costo de todos los registros (independiente del estado). El "costo de envío" de la
+// cosecha ya no existe: se quitó del formulario de completar cosecha y no entra en la ganancia.
 function calcularDistribucionCostos(registros) {
-  const totales = { semillas: 0, insumos: 0, manoObra: 0, envio: 0 };
+  const totales = { semillas: 0, insumos: 0, manoObra: 0 };
   registros.forEach((r) => {
     totales.semillas += Number(r.costo_semillas) || 0;
     totales.insumos += Number(r.costo_insumos) || 0;
     totales.manoObra += Number(r.costo_mano_obra) || 0;
-    totales.envio += Number(r.costo_envio) || 0;
   });
   return totales;
 }
@@ -6597,9 +6596,9 @@ function calcularDistribucionCostos(registros) {
 let chartCosechasMes = null;
 let chartGananciaCultivo = null;
 let chartCostos = null;
-// Semillas, insumos, mano de obra, envío. El beige va más oscuro que el fondo de la tarjeta para que
-// la porción se distinga.
-const COLORES_COSTOS = ['#2D3B2A', '#82907A', '#CDBF9F', '#8A6D1A'];
+// Semillas, insumos, mano de obra. El beige va más oscuro que el fondo de la tarjeta para que la porción se
+// distinga.
+const COLORES_COSTOS = ['#2D3B2A', '#82907A', '#CDBF9F'];
 
 // Cuenta registros por mes de fecha_siembra, últimos 6 meses (incluye el actual). Los canvases
 // viven fijos en index.html (no se recrean por innerHTML), así que hay que destruir la instancia
@@ -6658,8 +6657,8 @@ function dibujarGraficosEconomiaProductor(registros) {
   // Donut + lista de detalle: el color solo no dice cuánto es cada costo, así que la leyenda lleva
   // monto y porcentaje (y sirve de alternativa de texto al gráfico).
   const costos = calcularDistribucionCostos(registros);
-  const nombresCostos = ['Semillas', 'Insumos', 'Mano de obra', 'Envío'];
-  const valoresCostos = [costos.semillas, costos.insumos, costos.manoObra, costos.envio];
+  const nombresCostos = ['Semillas', 'Insumos', 'Mano de obra'];
+  const valoresCostos = [costos.semillas, costos.insumos, costos.manoObra];
   const totalCostos = valoresCostos.reduce((suma, v) => suma + v, 0);
   chartCostos?.destroy();
   chartCostos = new Chart(canvasCostos, {
@@ -6832,7 +6831,6 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     const valorCantidad = r.cantidad_cosechada != null ? Number(r.cantidad_cosechada) : '';
     const valorFecha = r.fecha_cosecha_real ? new Date(r.fecha_cosecha_real).toISOString().slice(0, 10) : '';
     const valorManoObra = r.costo_mano_obra != null ? Number(r.costo_mano_obra) : 0;
-    const valorEnvio = r.costo_envio != null ? Number(r.costo_envio) : 0;
 
     bloqueEstado = `
       ${esRechazado && r.motivo_rechazo ? `<p class="verificador-historial-motivo"><i class="ti ti-message-circle"></i> ${escapeAttr(r.motivo_rechazo)}</p>` : ''}
@@ -6846,9 +6844,6 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
         </label>
         <label>Costo de mano de obra final (S/)
           <input type="number" name="costo_mano_obra" min="0" max="9999999.99" step="0.01" value="${valorManoObra}" required>
-        </label>
-        <label>Costo de envío final (S/)
-          <input type="number" name="costo_envio" min="0" max="9999999.99" step="0.01" value="${valorEnvio}" required>
         </label>
         <button type="submit" class="btn btn-primary btn-sm">${esRechazado ? 'Reenviar a verificación' : 'Confirmar cosecha'}</button>
       </form>`;

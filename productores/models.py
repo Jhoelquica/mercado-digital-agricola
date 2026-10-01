@@ -54,12 +54,14 @@ class RegistroProduccion(Base):
     numero_parcelas = Column(Integer, nullable=False)
     ubicacion_cosecha = Column(String, nullable=True)
 
-    # Costos de siembra (semillas/insumos, conocidos de entrada) vs. costos "finales" que solo
-    # se conocen con certeza al cosechar (mano de obra acumulada, envío) — por eso mano_obra y
-    # envío arrancan en 0 y se completan recién en completar-cosecha, no en la creación.
+    # Costos de siembra (semillas/insumos, conocidos de entrada) vs. el costo "final" que solo
+    # se conoce con certeza al cosechar (mano de obra acumulada) — por eso mano_obra arranca en 0
+    # y se completa recién en completar-cosecha, no en la creación.
     costo_semillas = Column(Numeric(10, 2), nullable=False, default=0)
     costo_mano_obra = Column(Numeric(10, 2), nullable=False, default=0)
     costo_insumos = Column(Numeric(10, 2), nullable=False, default=0)
+    # Ya no se pide ni se usa (se quitó del formulario de completar cosecha): se conserva solo para no tocar las
+    # bases ya creadas. Las filas nuevas quedan en 0.
     costo_envio = Column(Numeric(10, 2), nullable=False, default=0)
 
     cantidad_cosechada = Column(Numeric(10, 2), nullable=True)

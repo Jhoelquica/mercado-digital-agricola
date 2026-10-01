@@ -150,7 +150,8 @@ class CompletarCosechaDatos(BaseModel):
     cantidad_cosechada: Cantidad
     fecha_cosecha_real: Fecha
     costo_mano_obra: Monto
-    costo_envio: Monto
+    # Ya no se pide el "costo de envío final": se confundía con el envío que paga el comprador (observación de la
+    # presentación del 2026-10-01). Si un cliente viejo lo sigue mandando, se ignora.
 
 class RechazarCosechaDatos(BaseModel):
     motivo: MotivoRechazo
@@ -479,11 +480,12 @@ def _consultar_precio_referencia(cultivo: str):
 
 
 def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict) -> dict:
+    # Sin costo_envio: ese campo ya no se pide (ver CompletarCosechaDatos) y los registros viejos que lo tengan no
+    # deben dar una ganancia distinta a la de uno nuevo.
     costo_total = (
         float(registro.costo_semillas or 0)
         + float(registro.costo_mano_obra or 0)
         + float(registro.costo_insumos or 0)
-        + float(registro.costo_envio or 0)
     )
 
     base = {
@@ -551,7 +553,6 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "costo_semillas": registro.costo_semillas,
         "costo_mano_obra": registro.costo_mano_obra,
         "costo_insumos": registro.costo_insumos,
-        "costo_envio": registro.costo_envio,
         "cantidad_cosechada": registro.cantidad_cosechada,
         "unidad_medida": registro.unidad_medida,
         "equivalencia_kg": registro.equivalencia_kg,
@@ -675,7 +676,6 @@ def completar_cosecha(
     registro.cantidad_cosechada = datos.cantidad_cosechada
     registro.fecha_cosecha_real = datos.fecha_cosecha_real
     registro.costo_mano_obra = datos.costo_mano_obra
-    registro.costo_envio = datos.costo_envio
     # Va directo a pendiente_verificacion: para el productor "marcar cosechado" es un solo paso,
     # no dos llamadas separadas (completar-cosecha + enviar-a-verificación).
     registro.estado = "pendiente_verificacion"

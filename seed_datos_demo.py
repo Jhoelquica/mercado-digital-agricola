@@ -262,7 +262,7 @@ def fase_agricultores(api, indice, ag):
         registro_id = exigir(r, f"siembra de {nombre}").json()["id"]
         r = api.pedir("PATCH", "productores", f"/productores/produccion/{registro_id}/completar-cosecha", token, json={
             "cantidad_cosechada": float(rng.randint(cmin, cmax)), "fecha_cosecha_real": iso(real),
-            "costo_mano_obra": round(rng.uniform(120, 380), 2), "costo_envio": round(rng.uniform(30, 120), 2),
+            "costo_mano_obra": round(rng.uniform(120, 380), 2),
         })
         exigir(r, f"cosecha de {nombre}")
         log(f"    + {nombre}: siembra + cosecha enviada a verificacion")
