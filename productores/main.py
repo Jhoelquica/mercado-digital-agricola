@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 import uuid
@@ -6,33 +7,59 @@ import httpx
 from datetime import datetime, timedelta
 
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from auth import verificar_token, requiere_rol
 from auth import secreto_de_servicio_valido
 import pybreaker
 from validaciones import (
     Cantidad, CodigoChacra, Comunidad, Contacto, Cultivo, Equivalencia, Fecha, Latitud, LatitudTexto,
-    Longitud, LongitudTexto, Monto, MotivoRechazo, NombreChacra, NombreProductor, Parcelas, Ubicacion,
+    Longitud, LongitudTexto, Monto, NombreChacra, NombreProductor, Parcelas, Ubicacion,
     UnidadMedida, CICLO_MAXIMO_DIAS, COSECHA_FUTURA_TOLERANCIA_DIAS, FECHA_SIEMBRA_MINIMA,
     SIEMBRA_FUTURA_MAXIMA_DIAS,
 )
+from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from minio_client import subir_foto_cosecha, asegurar_bucket_publico
+from migraciones import agregar_columnas_faltantes
 
 from database import Base, engine, SessionLocal
 import models
 
 Base.metadata.create_all(bind=engine)
+# create_all() no agrega columnas a una tabla que ya existe (p. ej. la evidencia GPS/foto de registros_produccion).
+agregar_columnas_faltantes(engine, Base)
 
 logger = logging.getLogger("productores.main")
 
 app = FastAPI()
 
 Instrumentator().instrument(app).expose(app)
+
+
+@app.middleware("http")
+async def limitar_el_tamano_de_las_subidas(request, call_next):
+    """Rechaza por su Content-Length una foto demasiado grande ANTES de leer el cuerpo (mismo criterio que
+    productos/main.py). Va antes del middleware de CORS (queda por dentro) para que el 413 lleve las cabeceras CORS."""
+    if request.method == "POST" and request.url.path.endswith("/foto-cosecha"):
+        longitud = request.headers.get("content-length", "")
+        if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_BYTES:
+            return JSONResponse(status_code=413, content={"detail": MENSAJE_MUY_GRANDE})
+    return await call_next(request)
+
+
+@app.on_event("startup")
+def preparar_almacen_de_fotos():
+    """Crea el bucket de fotos de cosechas (y su lectura pública) si no existe. Best-effort: MinIO puede tardar en
+    estar listo, y subir_foto_cosecha lo vuelve a intentar en la primera subida."""
+    try:
+        asegurar_bucket_publico()
+    except Exception:
+        logger.warning("No se pudo preparar el bucket de fotos de cosechas al arrancar", exc_info=True)
 
 
 @app.exception_handler(RequestValidationError)
@@ -130,14 +157,27 @@ class ChacraSalida(BaseModel):
 
 # ============ Gestión Económica (Módulo 1) ============
 
-class RegistroProduccionCrear(BaseModel):
+class _ConUbicacionGps(BaseModel):
+    """Dónde está el agricultor al enviar el formulario (GPS del navegador). Opcional: si el navegador no la da (sin
+    permiso, sin señal) se registra igual, con advertencia en la cadena. Si llega, tienen que llegar las dos."""
+    latitud: Latitud | None = None
+    longitud: Longitud | None = None
+
+    @model_validator(mode="after")
+    def _las_dos_o_ninguna(self):
+        if (self.latitud is None) != (self.longitud is None):
+            raise ValueError("La ubicación necesita latitud y longitud")
+        return self
+
+
+class RegistroProduccionCrear(_ConUbicacionGps):
     # Toda siembra se asocia a una chacra del productor (obligatorio). Se valida en el
     # endpoint que la chacra pertenezca a la cuenta autenticada, no solo que exista.
     chacra_id: uuid.UUID
     cultivo: Cultivo
     numero_parcelas: Parcelas
     ubicacion_cosecha: Ubicacion | None = None
-    # Solo costos "de entrada" — mano de obra y envío se completan recién al cosechar
+    # Solo costos "de entrada" — la mano de obra se completa recién al cosechar
     # (ver comentario en models.RegistroProduccion).
     costo_semillas: Monto = 0
     costo_insumos: Monto = 0
@@ -146,27 +186,24 @@ class RegistroProduccionCrear(BaseModel):
     fecha_siembra: Fecha
     fecha_cosecha_estimada: Fecha
 
-class CompletarCosechaDatos(BaseModel):
+class CompletarCosechaDatos(_ConUbicacionGps):
     cantidad_cosechada: Cantidad
     fecha_cosecha_real: Fecha
     costo_mano_obra: Monto
     # Ya no se pide el "costo de envío final": se confundía con el envío que paga el comprador (observación de la
     # presentación del 2026-10-01). Si un cliente viejo lo sigue mandando, se ignora.
 
-class RechazarCosechaDatos(BaseModel):
-    motivo: MotivoRechazo
-
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
 # produccion) — ningún otro servicio llama a estos endpoints.
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
-# Sin fallback hardcodeado a propósito (mismo criterio). La envía aprobar_cosecha al crear el
+# Sin fallback hardcodeado a propósito (mismo criterio). La envía completar_cosecha al crear el
 # producto en el catálogo — Productos valida este mismo valor en crear_producto_desde_cosecha.
 PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")
 CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://localhost:8008")
-# Sin fallback hardcodeado a propósito (mismo criterio). La envía aprobar_cosecha a Certificación
-# para dejar registrados cosecha_registrada + certificado_productor del producto recién creado.
+# Sin fallback hardcodeado a propósito (mismo criterio). La envía completar_cosecha a Certificación
+# para dejar registrada la cosecha (con su evidencia en origen) del producto recién creado.
 PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")
 
 # Solo unidades chicas/granulares como unidad_medida de una cosecha — una unidad de empaque
@@ -178,6 +215,28 @@ PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SEC
 # literalmente entre servicios (no hay librería común entre microservicios en este proyecto);
 # si se agrega una unidad chica nueva en un lado, hay que revisar si corresponde en el otro.
 UNIDADES_COSECHA_VALIDAS = ["kg", "unidad", "litro"]
+
+# Radio alrededor de la chacra dentro del cual se considera que el agricultor está en ella al registrar la siembra o la
+# cosecha. Mismo valor que RADIO_GEOFENCING_KM en certificacion/logica_cadena.py. Fuera de él se permite igual (el GPS
+# falla seguido en el campo) pero queda como advertencia en la cadena.
+RADIO_CHACRA_KM = 1.5
+
+
+def calcular_distancia_km(lat1, lon1, lat2, lon2):
+    """Haversine, en km. Copiada de pedidos/main.py: cada microservicio es autosuficiente."""
+    lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])
+    radio_tierra = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    return round(radio_tierra * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 3)
+
+
+def _distancia_a_la_chacra(chacra, latitud, longitud):
+    """None si no hay ubicación del agricultor (o no se sabe dónde está la chacra)."""
+    if latitud is None or longitud is None or chacra is None:
+        return None
+    return calcular_distancia_km(chacra.ubicacion_latitud, chacra.ubicacion_longitud, latitud, longitud)
 
 @app.get("/salud")
 def salud():
@@ -379,7 +438,7 @@ def editar_chacra(
 # (medido: 3 registros con 3 cultivos distintos tardaban 10.2s en total antes de esto).
 breaker_productos = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 
-# Dedicado a la llamada de aprobar_cosecha (POST /productos/interno/crear-desde-cosecha) — NO
+# Dedicado a la llamada de completar_cosecha (POST /productos/interno/crear-desde-cosecha) — NO
 # comparte breaker con breaker_productos (arriba): son llamadas distintas hacia el mismo
 # servicio, con causas y consecuencias de fallo propias. Que precio-referencia esté fallando no
 # debería abrir el circuito de creación de productos, ni al revés.
@@ -399,64 +458,49 @@ def _pedir_crear_producto_desde_cosecha(payload: dict):
     )
 
 
-def _registrar_certificacion_cosecha(registro, productor, chacra, verificador_usuario_id: str, producto_id: str) -> bool:
-    """Deja en la cadena de Certificación los dos primeros eventos del producto (cosecha_registrada
-    y certificado_productor) — ver POST /certificacion/{id}/cosecha-aprobada. Best-effort a
-    propósito: para este punto el producto ya existe y la cosecha ya quedó aprobada, y deshacer
-    eso porque Certificación no respondió sería peor que dejar el certificado pendiente (el
-    endpoint es idempotente, así que se puede reintentar sin duplicar). Devuelve si se registró."""
+def _texto_ubicacion(momento: str, distancia_km) -> str:
+    if distancia_km is None:
+        return f"Al {momento}: sin ubicación GPS (advertencia)."
+    if distancia_km > RADIO_CHACRA_KM:
+        return (f"Al {momento}: a {distancia_km:.2f} km de la chacra, fuera del radio de {RADIO_CHACRA_KM:g} km "
+                f"(advertencia).")
+    return f"Al {momento}: a {distancia_km:.2f} km de la chacra (dentro del radio de {RADIO_CHACRA_KM:g} km)."
+
+
+def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: str) -> bool:
+    """Deja en la cadena de Certificación el primer evento del producto (cosecha_registrada) con la evidencia en
+    origen: dónde estaba el agricultor al sembrar y al cosechar respecto de su chacra, y la huella SHA-256 de la foto
+    de la cosecha (va en el texto del bloque, así que queda sellada por el hash). Ver POST
+    /certificacion/{id}/cosecha-aprobada. Best-effort a propósito: para este punto el producto ya existe, y deshacer
+    eso porque Certificación no respondió sería peor que dejar el registro pendiente (el endpoint es idempotente, así
+    que se puede reintentar sin duplicar). Devuelve si se registró."""
     def _fecha(valor):
         return valor.strftime("%d/%m/%Y") if valor else "—"
 
     ubicacion = f"chacra {chacra.codigo}" + (f" ({chacra.nombre})" if chacra and chacra.nombre else "") if chacra else "chacra no especificada"
-    datos_cosecha = (
+    partes = [
         f"{float(registro.cantidad_cosechada):g} {registro.unidad_medida} de {registro.cultivo} cosechados en "
         f"{ubicacion} por {productor.nombre} (sembrado el {_fecha(registro.fecha_siembra)}, "
-        f"cosechado el {_fecha(registro.fecha_cosecha_real)})."
-    )
+        f"cosechado el {_fecha(registro.fecha_cosecha_real)}).",
+        _texto_ubicacion("registrar la siembra", registro.siembra_distancia_km),
+        _texto_ubicacion("completar la cosecha", registro.cosecha_distancia_km),
+    ]
+    if registro.foto_cosecha_sha256:
+        partes.append(f"Foto de la cosecha (SHA-256 {registro.foto_cosecha_sha256}).")
     try:
         resp = httpx.post(
             f"{CERTIFICACION_URL}/certificacion/{producto_id}/cosecha-aprobada",
-            json={
-                "datos_cosecha": datos_cosecha,
-                "datos_certificado": "Cosecha revisada y aprobada por un Verificador de Chakra Shop.",
-                "verificador_usuario_id": verificador_usuario_id,
-            },
+            json={"datos_cosecha": " ".join(partes), "foto_url": registro.foto_cosecha_url},
             headers={"X-Servicio-Secreto": PRODUCTORES_A_CERTIFICACION_SECRETO or ""},
             timeout=5,
         )
     except httpx.RequestError:
-        logger.error("Certificación no respondió al registrar la cosecha aprobada del producto %s", producto_id, exc_info=True)
+        logger.error("Certificación no respondió al registrar la cosecha del producto %s", producto_id, exc_info=True)
         return False
     if resp.status_code != 200:
         logger.error("Certificación rechazó registrar la cosecha del producto %s (HTTP %s)", producto_id, resp.status_code)
         return False
     return True
-
-
-def _exigir_perfil_de_verificador(authorization: str | None) -> None:
-    """Sin perfil de verificador (nombre + credencial, que vive en Certificación) no se aprueba: el certificado que ve
-    quien escanea el QR dice quién verificó la cosecha y ese dato no se puede corregir después en la cadena. Se le
-    pregunta a Certificación con el token del propio verificador (GET /verificadores/me, el mismo patrón con el que
-    Productos consulta /productores/me). Si no se puede comprobar tampoco se aprueba: el certificado no se podría
-    registrar de todos modos."""
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Falta el token de autenticación")
-    no_se_pudo = HTTPException(
-        status_code=503,
-        detail="No se pudo comprobar tu perfil de verificador. Intenta de nuevo en un momento.",
-    )
-    try:
-        resp = httpx.get(f"{CERTIFICACION_URL}/verificadores/me", headers={"Authorization": authorization}, timeout=5)
-    except httpx.RequestError:
-        raise no_se_pudo
-    if resp.status_code == 404:
-        raise HTTPException(
-            status_code=409,
-            detail="Completa tu perfil de verificador (nombre y credencial) en «Mi cuenta» antes de aprobar cosechas.",
-        )
-    if resp.status_code != 200:
-        raise no_se_pudo
 
 
 def _consultar_precio_referencia(cultivo: str):
@@ -562,6 +606,12 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "estado": registro.estado,
         "fecha_registro": registro.fecha_registro,
         "motivo_rechazo": _motivo_ultimo_rechazo(registro, db),
+        # Evidencia en origen (ver models.RegistroProduccion): la distancia sirve para avisarle al agricultor si quedó
+        # lejos de su chacra; las coordenadas no se devuelven.
+        "siembra_distancia_km": registro.siembra_distancia_km,
+        "cosecha_distancia_km": registro.cosecha_distancia_km,
+        "radio_chacra_km": RADIO_CHACRA_KM,
+        "foto_cosecha_url": registro.foto_cosecha_url,
         **_calcular_metricas(registro, cache_precios),
     }
 
@@ -617,6 +667,9 @@ def crear_registro_produccion(
         fecha_siembra=datos.fecha_siembra,
         fecha_cosecha_estimada=datos.fecha_cosecha_estimada,
         estado="planificado",
+        siembra_latitud=datos.latitud,
+        siembra_longitud=datos.longitud,
+        siembra_distancia_km=_distancia_a_la_chacra(chacra, datos.latitud, datos.longitud),
     )
     db.add(nuevo)
     db.commit()
@@ -641,187 +694,27 @@ def listar_mi_produccion(
     return [_serializar_registro(r, cache_precios, db) for r in registros]
 
 
-@app.patch("/productores/produccion/{registro_id}/completar-cosecha")
-def completar_cosecha(
-    registro_id: str,
-    datos: CompletarCosechaDatos,
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("productor")),
-):
-    productor = _obtener_productor_del_token(usuario, db)
+# "planificado": la primera vez. "pendiente_verificacion" y "rechazado" son de antes de retirar al Verificador (ver
+# models.RegistroProduccion): esas cosechas quedaron a medio camino y el agricultor las completa igual, con su foto.
+ESTADOS_QUE_SE_PUEDEN_COMPLETAR = ("planificado", "pendiente_verificacion", "rechazado")
 
-    registro = db.query(models.RegistroProduccion).filter(
-        models.RegistroProduccion.id == registro_id
-    ).first()
+
+def _registro_propio_por_completar(registro_id, productor, db: Session) -> models.RegistroProduccion:
+    registro = db.query(models.RegistroProduccion).filter(models.RegistroProduccion.id == registro_id).first()
     if not registro:
         raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
     if str(registro.productor_id) != str(productor.id):
         raise HTTPException(status_code=403, detail="Este registro de producción no te pertenece")
-    # "planificado": primera vez que se completa la cosecha. "rechazado": el productor reenvía
-    # tras un rechazo del Verificador — mismo endpoint, no uno nuevo (ver comentario del estado
-    # en models.py). Cualquier otro estado (pendiente_verificacion, aprobado, o el ya-superado
-    # "cosechado") significa que ya está en manos del Verificador o ya fue aprobada.
-    if registro.estado not in ("planificado", "rechazado"):
-        raise HTTPException(status_code=409, detail="Esta cosecha no está en un estado que permita completarla")
-
-    if datos.cantidad_cosechada <= 0:
-        raise HTTPException(status_code=422, detail="La cantidad cosechada debe ser mayor a 0")
-    # Una cosecha no puede ser anterior a su siembra ni haber ocurrido en el futuro (margen de un día
-    # por la diferencia de zona horaria con el navegador).
-    if datos.fecha_cosecha_real < registro.fecha_siembra:
-        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede ser anterior a la de siembra")
-    if datos.fecha_cosecha_real > datetime.utcnow() + timedelta(days=COSECHA_FUTURA_TOLERANCIA_DIAS):
-        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede estar en el futuro")
-
-    registro.cantidad_cosechada = datos.cantidad_cosechada
-    registro.fecha_cosecha_real = datos.fecha_cosecha_real
-    registro.costo_mano_obra = datos.costo_mano_obra
-    # Va directo a pendiente_verificacion: para el productor "marcar cosechado" es un solo paso,
-    # no dos llamadas separadas (completar-cosecha + enviar-a-verificación).
-    registro.estado = "pendiente_verificacion"
-    db.commit()
-    db.refresh(registro)
-    return _serializar_registro(registro, {}, db)
-
-
-# ============ Verificación de cosechas (rol Verificador) ============
-
-@app.get("/productores/produccion/pendientes-verificacion")
-def listar_pendientes_verificacion(
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("verificador")),
-):
-    registros = db.query(models.RegistroProduccion).filter(
-        models.RegistroProduccion.estado == "pendiente_verificacion"
-    ).order_by(models.RegistroProduccion.fecha_registro.asc()).all()  # más antigua primero
-
-    if not registros:
-        return []
-
-    # Mismo patrón que certificacion/main.py:historial() para evitar N+1: se junta el set de
-    # ids referenciados y se trae cada tabla relacionada en una sola query, no una por registro.
-    chacra_ids = {r.chacra_id for r in registros}
-    productor_ids = {r.productor_id for r in registros}
-    registro_ids = {r.id for r in registros}
-    chacras_por_id = {
-        c.id: c for c in db.query(models.Chacra).filter(models.Chacra.id.in_(chacra_ids)).all()
-    }
-    productores_por_id = {
-        p.id: p for p in db.query(models.Productor).filter(models.Productor.id.in_(productor_ids)).all()
-    }
-    # Un registro "reenviado" (rechazado y luego vuelto a completar) pasa otra vez por acá con
-    # el mismo estado pendiente_verificacion que uno nuevo — nada en RegistroProduccion lo
-    # distingue. La única fuente real es si ya tiene algún rechazo en su historial.
-    ids_con_rechazo_previo = {
-        h.registro_produccion_id
-        for h in db.query(models.HistorialVerificacionCosecha.registro_produccion_id).filter(
-            models.HistorialVerificacionCosecha.registro_produccion_id.in_(registro_ids),
-            models.HistorialVerificacionCosecha.accion == "rechazado",
-        ).all()
-    }
-
-    resultado = []
-    for r in registros:
-        chacra = chacras_por_id.get(r.chacra_id)
-        productor = productores_por_id.get(r.productor_id)
-        resultado.append({
-            "id": r.id,
-            "cultivo": r.cultivo,
-            "numero_parcelas": r.numero_parcelas,
-            "cantidad_cosechada": r.cantidad_cosechada,
-            "unidad_medida": r.unidad_medida,
-            "ubicacion_cosecha": r.ubicacion_cosecha,
-            "fecha_siembra": r.fecha_siembra,
-            "fecha_cosecha_estimada": r.fecha_cosecha_estimada,
-            "fecha_cosecha_real": r.fecha_cosecha_real,
-            "fecha_registro": r.fecha_registro,
-            "chacra_id": r.chacra_id,
-            "chacra_codigo": chacra.codigo if chacra else None,
-            "chacra_nombre": chacra.nombre if chacra else None,
-            "productor_id": r.productor_id,
-            "productor_nombre": productor.nombre if productor else None,
-            "fue_rechazado_antes": r.id in ids_con_rechazo_previo,
-        })
-    return resultado
-
-
-@app.get("/productores/produccion/historial-verificacion")
-def listar_historial_verificacion(
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("verificador")),
-):
-    """Decisiones (aprobado/rechazado) del verificador autenticado — no de todos los
-    verificadores. Sin paginación a propósito (fase de demo, volumen bajo); si el volumen real
-    crece, acá es donde habría que agregar limit/offset o cursor."""
-    historial = db.query(models.HistorialVerificacionCosecha).filter(
-        models.HistorialVerificacionCosecha.verificador_id == usuario.get("sub")
-    ).order_by(models.HistorialVerificacionCosecha.fecha.desc()).all()
-
-    if not historial:
-        return []
-
-    registro_ids = {h.registro_produccion_id for h in historial}
-    registros_por_id = {
-        r.id: r for r in db.query(models.RegistroProduccion).filter(
-            models.RegistroProduccion.id.in_(registro_ids)
-        ).all()
-    }
-    chacra_ids = {r.chacra_id for r in registros_por_id.values()}
-    productor_ids = {r.productor_id for r in registros_por_id.values()}
-    chacras_por_id = {
-        c.id: c for c in db.query(models.Chacra).filter(models.Chacra.id.in_(chacra_ids)).all()
-    } if chacra_ids else {}
-    productores_por_id = {
-        p.id: p for p in db.query(models.Productor).filter(models.Productor.id.in_(productor_ids)).all()
-    } if productor_ids else {}
-
-    resultado = []
-    for h in historial:
-        registro = registros_por_id.get(h.registro_produccion_id)
-        chacra = chacras_por_id.get(registro.chacra_id) if registro else None
-        productor = productores_por_id.get(registro.productor_id) if registro else None
-        resultado.append({
-            "id": h.id,
-            "registro_produccion_id": h.registro_produccion_id,
-            "accion": h.accion,
-            "motivo": h.motivo,
-            "fecha": h.fecha,
-            "cultivo": registro.cultivo if registro else None,
-            "cantidad_cosechada": registro.cantidad_cosechada if registro else None,
-            "unidad_medida": registro.unidad_medida if registro else None,
-            "chacra_codigo": chacra.codigo if chacra else None,
-            "chacra_nombre": chacra.nombre if chacra else None,
-            "productor_nombre": productor.nombre if productor else None,
-        })
-    return resultado
-
-
-def _obtener_registro_pendiente_verificacion(registro_id: str, db: Session) -> models.RegistroProduccion:
-    """Sin chequeo de dueño a propósito: a diferencia de los endpoints de productor, acá el
-    llamante es el Verificador — revisa cosechas de cualquier productor, no solo las propias."""
-    registro = db.query(models.RegistroProduccion).filter(
-        models.RegistroProduccion.id == registro_id
-    ).first()
-    if not registro:
-        raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
-    if registro.estado != "pendiente_verificacion":
-        raise HTTPException(status_code=409, detail="Esta cosecha no está pendiente de verificación")
+    if registro.estado not in ESTADOS_QUE_SE_PUEDEN_COMPLETAR:
+        raise HTTPException(status_code=409, detail="Esta cosecha ya fue completada")
     return registro
 
 
-@app.post("/productores/produccion/{registro_id}/aprobar")
-def aprobar_cosecha(
-    registro_id: str,
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("verificador")),
-    authorization: str = Header(None),
-):
-    registro = _obtener_registro_pendiente_verificacion(registro_id, db)
-    # Antes de crear nada (producto, estado, historial): sin perfil no hay aprobación, ni siquiera por la API.
-    _exigir_perfil_de_verificador(authorization)
-
-    productor = db.query(models.Productor).filter(models.Productor.id == registro.productor_id).first()
-
+def _crear_producto_en_catalogo(registro, productor):
+    """Crea en Productos el borrador de la cosecha y devuelve su id. None si ya existía: un intento anterior llegó a
+    crearlo pero falló después, antes de confirmar acá (UniqueConstraint sobre registro_produccion_id en
+    productos/models.py); ese 409 es el resultado esperado de un reintento, no una falla, y no trae el id. Cualquier otra
+    respuesta es un 502: la cosecha no se da por completada sin un producto real detrás."""
     payload = {
         "productor_id": str(registro.productor_id),
         "productor_nombre": productor.nombre,
@@ -832,83 +725,103 @@ def aprobar_cosecha(
         # completas por un simple recorte de decimales (45.9 -> 46, no 45).
         "stock": round(float(registro.cantidad_cosechada)),
         "registro_produccion_id": str(registro.id),
-        # Ya validado y guardado en el propio registro al crearlo (ver crear_registro_produccion)
-        # — sin esto se perdía en el camino, dejando el peso de estos productos indeterminable en
-        # Pedidos (ver Producto.equivalencia_kg en productos/models.py). float(...) por el mismo
-        # motivo que "stock" arriba: es un Numeric (Decimal en Python), y httpx no serializa
-        # Decimal a JSON directamente.
+        # Sin esto el peso de estos productos sería indeterminable en Pedidos (ver Producto.equivalencia_kg en
+        # productos/models.py). float(...) porque es un Numeric (Decimal) y httpx no serializa Decimal a JSON.
         "equivalencia_kg": float(registro.equivalencia_kg) if registro.equivalencia_kg is not None else None,
     }
-
-    # Se crea el producto ANTES de tocar el estado/historial acá abajo: si esta llamada falla,
-    # la cosecha se queda en pendiente_verificacion (nunca "aprobado" sin un producto real
-    # detrás) y el Verificador puede simplemente reintentar aprobar más tarde.
+    error = HTTPException(
+        status_code=502,
+        detail="No se pudo crear el producto en el catálogo. Intenta completar la cosecha de nuevo en unos momentos.",
+    )
     try:
         resp = breaker_crear_producto.call(_pedir_crear_producto_desde_cosecha, payload)
     except (pybreaker.CircuitBreakerError, httpx.RequestError):
-        raise HTTPException(
-            status_code=502,
-            detail="No se pudo crear el producto en el catálogo. Intenta aprobar de nuevo en unos momentos.",
-        )
-
-    producto_id_creado = None
+        raise error
     if resp.status_code == 200:
-        producto_id_creado = resp.json().get("id")
-    elif resp.status_code == 409:
-        # Reintento tras un intento anterior que sí llegó a crear el producto en Productos pero
-        # falló después de eso (antes de confirmar acá) — ver UniqueConstraint sobre
-        # registro_produccion_id en productos/models.py. Este ES el resultado esperado, no una
-        # falla: si lo tratáramos como error, un reintento nunca podría completar la aprobación
-        # (siempre volvería a chocar contra el mismo 409). No tenemos el id del producto acá —
-        # el 409 no lo devuelve — así que producto_id_creado queda en None en este caso puntual.
-        pass
-    else:
+        return resp.json().get("id")
+    if resp.status_code == 409:
+        return None
+    raise error
+
+
+@app.post("/productores/produccion/{registro_id}/foto-cosecha")
+def subir_foto_de_cosecha(
+    registro_id: uuid.UUID,
+    archivo: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """Primer paso de completar la cosecha: la foto, tomada en la chacra. Se sube aparte (y antes) para que el
+    formulario de completar siga siendo JSON, y se puede repetir: vale la última. Su huella SHA-256 se calcula acá,
+    sobre los bytes recibidos, y es la que queda sellada en la cadena de Certificación al completar."""
+    if archivo.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(status_code=422, detail="Solo se permiten fotos JPEG, PNG o WEBP")
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_por_completar(registro_id, productor, db)
+
+    # Tamaño y contenido reales (ver imagenes.py): el content-type de arriba solo lo declara el cliente.
+    datos_foto, tipo_foto = leer_imagen_validada(archivo)
+    try:
+        url = subir_foto_cosecha(datos_foto, tipo_foto)
+    except Exception:
+        logger.error("No se pudo subir la foto de la cosecha %s", registro_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo guardar la foto. Intenta de nuevo en unos momentos.")
+
+    registro.foto_cosecha_url = url
+    registro.foto_cosecha_sha256 = hashlib.sha256(datos_foto).hexdigest()
+    registro.foto_cosecha_fecha = datetime.utcnow()
+    db.commit()
+    return {"foto_cosecha_url": url, "foto_cosecha_sha256": registro.foto_cosecha_sha256}
+
+
+@app.patch("/productores/produccion/{registro_id}/completar-cosecha")
+def completar_cosecha(
+    registro_id: uuid.UUID,
+    datos: CompletarCosechaDatos,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """Cierra la cosecha y la publica como borrador en el catálogo, sin pasar por nadie: el rol Verificador se retiró
+    (presentación del 2026-10-01). Lo que respalda a la cosecha es la evidencia en origen (la foto obligatoria y dónde
+    estaba el agricultor, sellados en la cadena) y, después, la pesada del administrador al recibirla en el almacén."""
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_por_completar(registro_id, productor, db)
+
+    if datos.cantidad_cosechada <= 0:
+        raise HTTPException(status_code=422, detail="La cantidad cosechada debe ser mayor a 0")
+    # Una cosecha no puede ser anterior a su siembra ni haber ocurrido en el futuro (margen de un día
+    # por la diferencia de zona horaria con el navegador).
+    if datos.fecha_cosecha_real < registro.fecha_siembra:
+        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede ser anterior a la de siembra")
+    if datos.fecha_cosecha_real > datetime.utcnow() + timedelta(days=COSECHA_FUTURA_TOLERANCIA_DIAS):
+        raise HTTPException(status_code=422, detail="La fecha de cosecha real no puede estar en el futuro")
+    if not registro.foto_cosecha_url:
         raise HTTPException(
-            status_code=502,
-            detail="No se pudo crear el producto en el catálogo. Intenta aprobar de nuevo en unos momentos.",
+            status_code=422, detail="Falta la foto de la cosecha: tómala desde tu chacra antes de confirmar.",
         )
 
-    registro.estado = "aprobado"
-    db.add(models.HistorialVerificacionCosecha(
-        registro_produccion_id=registro.id,
-        verificador_id=usuario.get("sub"),
-        accion="aprobado",
-    ))
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first()
+    registro.cantidad_cosechada = datos.cantidad_cosechada
+    registro.fecha_cosecha_real = datos.fecha_cosecha_real
+    registro.costo_mano_obra = datos.costo_mano_obra
+    registro.cosecha_latitud = datos.latitud
+    registro.cosecha_longitud = datos.longitud
+    registro.cosecha_distancia_km = _distancia_a_la_chacra(chacra, datos.latitud, datos.longitud)
+
+    # El producto se crea ANTES de confirmar: si falla, nada de lo de arriba se guarda (la sesión se descarta) y el
+    # agricultor puede reintentar; nunca queda una cosecha "cosechada" sin su producto.
+    producto_id = _crear_producto_en_catalogo(registro, productor)
+    registro.estado = "cosechado"
     db.commit()
     db.refresh(registro)
 
     resultado = _serializar_registro(registro, {}, db)
-    resultado["producto_id"] = producto_id_creado
+    resultado["producto_id"] = producto_id
     # Solo si conocemos el producto: en el 409 idempotente (reintento) Productos no devuelve su id.
-    chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first()
-    resultado["certificacion_registrada"] = bool(producto_id_creado) and _registrar_certificacion_cosecha(
-        registro, productor, chacra, str(usuario.get("sub")), producto_id_creado
+    resultado["certificacion_registrada"] = bool(producto_id) and _registrar_certificacion_cosecha(
+        registro, productor, chacra, producto_id
     )
     return resultado
-
-
-@app.post("/productores/produccion/{registro_id}/rechazar")
-def rechazar_cosecha(
-    registro_id: str,
-    datos: RechazarCosechaDatos,
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("verificador")),
-):
-    if not datos.motivo.strip():
-        raise HTTPException(status_code=422, detail="Debes indicar un motivo de rechazo")
-
-    registro = _obtener_registro_pendiente_verificacion(registro_id, db)
-
-    registro.estado = "rechazado"
-    db.add(models.HistorialVerificacionCosecha(
-        registro_produccion_id=registro.id,
-        verificador_id=usuario.get("sub"),
-        accion="rechazado",
-        motivo=datos.motivo,
-    ))
-    db.commit()
-    db.refresh(registro)
-    return _serializar_registro(registro, {}, db)
 
 
 @app.delete("/productores/produccion/{registro_id}")

@@ -74,15 +74,27 @@ class RegistroProduccion(Base):
     fecha_cosecha_estimada = Column(DateTime, nullable=False)
     fecha_cosecha_real = Column(DateTime, nullable=True)
 
-    # Máquina de estados (ampliada — ver HistorialVerificacionCosecha):
-    #   planificado -> pendiente_verificacion -> aprobado
-    #                                          -> rechazado -> pendiente_verificacion (reenvío)
-    # "cosechado" sigue en el vocabulario (compatibilidad con datos/tests viejos) pero ya no
-    # queda como valor de reposo: completar_cosecha() en main.py transiciona directo a
-    # pendiente_verificacion en la misma llamada — desde la perspectiva del productor "marcar
-    # cosechado" es un solo paso, no dos.
-    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado | pendiente_verificacion | aprobado | rechazado
+    # Máquina de estados: planificado -> cosechado. Al completar la cosecha (con su foto) el producto nace como
+    # borrador en el catálogo, sin pasar por nadie: el rol Verificador se retiró (presentación del 2026-10-01) y su
+    # lugar lo ocupan la evidencia en origen de abajo y la pesada en el almacén. "pendiente_verificacion", "aprobado"
+    # y "rechazado" quedan solo en registros de antes: uno "aprobado" ya tiene su producto, y uno
+    # "pendiente_verificacion" o "rechazado" el agricultor lo completa con foto, igual que uno planificado.
+    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado | (antes: pendiente_verificacion | aprobado | rechazado)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+
+    # Evidencia en origen. Dónde estaba el agricultor (GPS del navegador) al registrar la siembra y al completar la
+    # cosecha, y a cuántos km quedó de su chacra: si quedó fuera del radio, se permite igual y queda como advertencia
+    # en la cadena (el GPS falla seguido en el campo). La foto de la cosecha es obligatoria y su huella SHA-256 se sella
+    # en la cadena de Certificación. Columnas opcionales: en una base ya creada las agrega migraciones.py.
+    siembra_latitud = Column(Float, nullable=True)
+    siembra_longitud = Column(Float, nullable=True)
+    siembra_distancia_km = Column(Float, nullable=True)
+    cosecha_latitud = Column(Float, nullable=True)
+    cosecha_longitud = Column(Float, nullable=True)
+    cosecha_distancia_km = Column(Float, nullable=True)
+    foto_cosecha_url = Column(String, nullable=True)
+    foto_cosecha_sha256 = Column(String, nullable=True)
+    foto_cosecha_fecha = Column(DateTime, nullable=True)
 
 
 class HistorialVerificacionCosecha(Base):

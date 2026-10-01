@@ -20,8 +20,14 @@ class Bloque(Base):
     fecha = Column(DateTime, default=datetime.utcnow)
     hash_anterior = Column(String, nullable=False)
     hash_actual = Column(String, nullable=False)
+    # Foto de la cosecha (solo en cosecha_registrada), para mostrarla en la página del QR. Fuera del hash a propósito:
+    # lo que sella la foto es su huella SHA-256, que va dentro de "datos" (y "datos" sí entra en el hash). Si alguien
+    # cambiara el archivo o este enlace, la huella dejaría de coincidir. En una base ya creada la agrega migraciones.py.
+    foto_url = Column(String, nullable=True)
 
 class Verificador(Base):
+    # Ya no se crean perfiles nuevos (el rol se retiró en la presentación del 2026-10-01): queda para que los bloques
+    # certificado_productor de antes sigan mostrando quién los certificó.
     __tablename__ = "verificadores"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

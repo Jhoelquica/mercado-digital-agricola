@@ -4,7 +4,8 @@ Este servicio no usa Alembic: Base.metadata.create_all() (main.py) crea las tabl
 no agrega restricciones a una tabla que ya existe. La restricción UNIQUE(producto_id, indice) de
 `bloques` (uq_bloque_producto_indice, ver models.py) evita que dos escrituras simultáneas dejen
 dos bloques con el mismo índice y la cadena bifurcada; en una base creada antes de que existiera,
-hay que agregarla a mano: eso hace asegurar_indice_unico_de_bloques() al arrancar.
+hay que agregarla a mano: eso hace asegurar_indice_unico_de_bloques() al arrancar. Lo mismo con la
+columna foto_url de `bloques` (asegurar_columna_foto_url()).
 """
 import logging
 
@@ -29,5 +30,17 @@ def asegurar_indice_unico_de_bloques(engine) -> bool:
             "bifurcarse ante escrituras simultáneas.",
             NOMBRE_INDICE,
         )
+        return False
+    return True
+
+
+def asegurar_columna_foto_url(engine) -> bool:
+    """Agrega bloques.foto_url si falta (idempotente). Nunca lanza: si falla, el servicio arranca igual y lo
+    registra (las escrituras de cosechas fallarían hasta resolverlo)."""
+    try:
+        with engine.begin() as conexion:
+            conexion.execute(text("ALTER TABLE bloques ADD COLUMN IF NOT EXISTS foto_url VARCHAR"))
+    except Exception:
+        logger.exception("No se pudo agregar la columna foto_url a bloques")
         return False
     return True

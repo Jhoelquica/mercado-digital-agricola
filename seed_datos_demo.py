@@ -5,18 +5,18 @@ reales, cargados POR EL PROCESO REAL de la plataforma (no insertando filas a man
 cada producto quede con su certificado de trazabilidad (lo que se ve al escanear el QR):
 
   1. registro del usuario productor + perfil de productor + 2 chacras
-  2. siembra (registro de produccion "planificado")
-  3. cosecha completada -> "pendiente_verificacion"
-  4. un Verificador aprueba la cosecha  -> nace el producto en "borrador" y se registran en la
-     cadena de Certificacion cosecha_registrada + certificado_productor
-  5. el productor completa el borrador: categoria, precio e imagenes (de la carpeta local de
+  2. siembra (registro de produccion "planificado"), con la ubicacion GPS del agricultor en su chacra
+  3. foto de la cosecha + cosecha completada (otra vez desde la chacra) -> "cosechado": nace el
+     producto en "borrador" y se registra en la cadena de Certificacion cosecha_registrada, con la
+     evidencia en origen (distancias a la chacra y huella SHA-256 de la foto). Sin Verificador: ese
+     rol se retiro (presentacion del 2026-10-01).
+  4. el productor completa el borrador: categoria, precio e imagenes (de la carpeta local de
      imagenes-productos) y lo publica -> "en_transito"
-  6. el Admin confirma la llegada al almacen -> "disponible" (ya comprable)
+  5. el Admin confirma la llegada al almacen -> "disponible" (ya comprable)
 
-Los pasos 4 y 6 necesitan credenciales de un ADMIN (el Verificador demo se crea con una invitacion
-del admin). Se piden por consola (o SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD) y nunca se guardan.
-Sin ellas, el script hace igual los pasos 1-3 y avisa como continuar: es idempotente, se puede
-volver a correr y retoma donde quedo.
+El paso 5 necesita credenciales de un ADMIN. Se piden por consola (o SEED_ADMIN_EMAIL /
+SEED_ADMIN_PASSWORD) y nunca se guardan. Sin ellas, el script hace igual los pasos 1-4 y avisa como
+continuar: es idempotente, se puede volver a correr y retoma donde quedo.
 
 Si la consola no deja escribir la contrasena (getpass falla en algunas terminales embebidas de
 Windows), en PowerShell se le pasa por variable de entorno, sin que quede en el historial:
@@ -32,10 +32,10 @@ por la API, así que quedan con la URL pública de MinIO del despliegue.
 Uso (desde la carpeta del proyecto, con los servicios corriendo):
     python seed_datos_demo.py                     # completo
     python seed_datos_demo.py --dry-run           # solo muestra el plan y revisa las imagenes
-    python seed_datos_demo.py --fases agricultores  # solo pasos 1-3 (no necesita admin)
+    python seed_datos_demo.py --fases agricultores  # solo pasos 1-3
     python seed_datos_demo.py --limite 2          # solo los 2 primeros agricultores (prueba)
 
-Solo toca cuentas @chakrashop-demo.pe y solo aprueba cosechas de esos agricultores.
+Solo toca cuentas @chakrashop-demo.pe y solo confirma llegadas de productos de esos agricultores.
 Requiere: pip install httpx pillow   (pillow es opcional: reduce las fotos antes de subirlas)
 """
 import argparse
@@ -62,10 +62,10 @@ PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO", "Demo12345!")
 # (SEED_HOST=http://localhost:8000).
 ES_LOCAL = any(h in HOST for h in ("localhost", "127.0.0.1"))
 USA_GATEWAY = os.getenv("SEED_GATEWAY", "").lower() in ("1", "true", "si") or not ES_LOCAL
-# La credencial del verificador la asigna el admin al invitarlo (ya no la escribe el verificador).
-CREDENCIAL_VERIFICADOR_DEMO = "COL-DEMO-001"
 DOMINIO = "chakrashop-demo.pe"
-EMAIL_VERIFICADOR = f"verificador.demo@{DOMINIO}"
+# Una siembra en estos estados todavia no tiene su producto: "planificado", o a medio camino con el Verificador que se
+# retiro. Se completa con su foto, igual que en la app.
+ESTADOS_POR_COMPLETAR = ("planificado", "pendiente_verificacion", "rechazado")
 IMAGENES_DIR = Path(os.getenv("SEED_IMAGENES_DIR", Path(__file__).resolve().parent.parent / "imagenes-productos"))
 MAX_IMAGENES = 3   # por producto (el limite del backend es 5)
 LADO_MAX = 1400    # px, lado mayor tras reducir
@@ -228,7 +228,7 @@ def fase_agricultores(api, indice, ag):
     rng = random.Random(indice)
     r = api.pedir("GET", "productores", "/chacras/me", token)
     exigir(r, "listar chacras")
-    chacras = {c["codigo"]: c["id"] for c in r.json()}
+    chacras = {c["codigo"]: c for c in r.json()}
     for codigo, nombre, delta in (("CH-01", "Parcela alta", 0.004), ("CH-02", "Parcela baja", -0.004)):
         if codigo in chacras:
             continue
@@ -237,83 +237,62 @@ def fase_agricultores(api, indice, ag):
             "ubicacion_latitud": round(ag["lat"] + delta, 6),
             "ubicacion_longitud": round(ag["lng"] + delta * rng.uniform(0.5, 1.5), 6),
         })
-        chacras[codigo] = exigir(r, f"chacra {codigo}").json()["id"]
+        chacras[codigo] = exigir(r, f"chacra {codigo}").json()
 
     r = api.pedir("GET", "productores", "/productores/produccion/me", token)
     exigir(r, "listar siembras")
     existentes = {reg["cultivo"].lower(): reg for reg in r.json()}
 
     for n, clave in enumerate(ag["productos"]):
-        nombre, _cat, _carpeta, unidad, equiv, _precio, (cmin, cmax) = PRODUCTOS[clave]
-        if nombre.lower() in existentes:
-            log(f"    - {nombre}: ya tiene siembra ({existentes[nombre.lower()]['estado']})")
-            continue
-        siembra = HOY - timedelta(days=rng.randint(130, 210))
-        estimada = siembra + timedelta(days=rng.randint(90, 125))
-        real = min(HOY - timedelta(days=rng.randint(2, 15)), estimada + timedelta(days=rng.randint(0, 6)))
+        nombre, _cat, carpeta, unidad, equiv, _precio, (cmin, cmax) = PRODUCTOS[clave]
         codigo_chacra = "CH-01" if n % 2 == 0 else "CH-02"
-        r = api.pedir("POST", "productores", "/productores/produccion", token, json={
-            "chacra_id": chacras[codigo_chacra], "cultivo": nombre, "numero_parcelas": rng.randint(1, 3),
-            "ubicacion_cosecha": f"{ag['comunidad']} - {codigo_chacra}",
-            "costo_semillas": round(rng.uniform(80, 260), 2), "costo_insumos": round(rng.uniform(60, 220), 2),
-            "unidad_medida": unidad, "equivalencia_kg": equiv,
-            "fecha_siembra": iso(siembra), "fecha_cosecha_estimada": iso(estimada),
-        })
-        registro_id = exigir(r, f"siembra de {nombre}").json()["id"]
-        r = api.pedir("PATCH", "productores", f"/productores/produccion/{registro_id}/completar-cosecha", token, json={
+        chacra = chacras[codigo_chacra]
+        # El agricultor esta en su chacra al sembrar y al cosechar (a unos metros del punto registrado, como un GPS real).
+        en_la_chacra = {
+            "latitud": round(chacra["ubicacion_latitud"] + rng.uniform(-0.0008, 0.0008), 6),
+            "longitud": round(chacra["ubicacion_longitud"] + rng.uniform(-0.0008, 0.0008), 6),
+        }
+        registro = existentes.get(nombre.lower())
+        if registro and registro["estado"] not in ESTADOS_POR_COMPLETAR:
+            log(f"    - {nombre}: ya cosechada ({registro['estado']})")
+            continue
+        if registro is None:
+            siembra = HOY - timedelta(days=rng.randint(130, 210))
+            estimada = siembra + timedelta(days=rng.randint(90, 125))
+            r = api.pedir("POST", "productores", "/productores/produccion", token, json={
+                "chacra_id": chacra["id"], "cultivo": nombre, "numero_parcelas": rng.randint(1, 3),
+                "ubicacion_cosecha": f"{ag['comunidad']} - {codigo_chacra}",
+                "costo_semillas": round(rng.uniform(80, 260), 2), "costo_insumos": round(rng.uniform(60, 220), 2),
+                "unidad_medida": unidad, "equivalencia_kg": equiv,
+                "fecha_siembra": iso(siembra), "fecha_cosecha_estimada": iso(estimada), **en_la_chacra,
+            })
+            registro = exigir(r, f"siembra de {nombre}").json()
+        estimada = date.fromisoformat(registro["fecha_cosecha_estimada"][:10])
+        real = min(HOY - timedelta(days=rng.randint(2, 15)), estimada + timedelta(days=rng.randint(0, 6)))
+
+        fotos = preparar_imagenes(carpeta)
+        if not fotos:
+            raise RuntimeError(f"{nombre}: no hay fotos en {carpeta} para la foto de la cosecha")
+        archivo, datos = fotos[0]
+        r = api.pedir("POST", "productores", f"/productores/produccion/{registro['id']}/foto-cosecha", token,
+                      files={"archivo": (archivo, datos, "image/jpeg")})
+        exigir(r, f"foto de la cosecha de {nombre}")
+        r = api.pedir("PATCH", "productores", f"/productores/produccion/{registro['id']}/completar-cosecha", token, json={
             "cantidad_cosechada": float(rng.randint(cmin, cmax)), "fecha_cosecha_real": iso(real),
-            "costo_mano_obra": round(rng.uniform(120, 380), 2),
+            "costo_mano_obra": round(rng.uniform(120, 380), 2), **en_la_chacra,
         })
-        exigir(r, f"cosecha de {nombre}")
-        log(f"    + {nombre}: siembra + cosecha enviada a verificacion")
-    return token, productor_id
-
-
-# ---------------------------------------------------------------- fase 2: verificador
-def asegurar_verificador(api, token_admin):
-    """Devuelve el token del Verificador demo (lo crea con una invitacion del admin si hace falta)."""
-    r = api.pedir("POST", "usuarios", "/usuarios/login", json={"email": EMAIL_VERIFICADOR, "password": PASSWORD_DEMO})
-    if r.status_code == 200:
-        token = r.json()["access_token"]
-    else:
-        r = api.pedir("POST", "usuarios", "/admin/invitaciones", token_admin, json={
-            "rol_destino": "verificador", "credencial": CREDENCIAL_VERIFICADOR_DEMO})
-        codigo = exigir(r, "crear invitacion de verificador").json()["codigo"]
-        token = asegurar_sesion(api, "Ana Verificadora (demo)", EMAIL_VERIFICADOR, "verificador", codigo)
-    r = api.pedir("GET", "certificacion", "/verificadores/me", token)
-    if r.status_code == 404:
-        # Solo el nombre: la credencial la pone el servidor (la que el admin escribió en la invitación).
-        r = api.pedir("POST", "certificacion", "/verificadores", token, json={"nombre": "Ana Verificadora (demo)"})
-        exigir(r, "perfil de verificador")
-    return token
-
-
-def certificacion_actualizada(api):
-    """Certificacion desplegada con el registro automatico del certificado? Ese endpoint interno
-    responde 403 sin el secreto de servicio; en una version anterior ni existe (404)."""
-    r = api.pedir("POST", "certificacion", "/certificacion/00000000-0000-0000-0000-000000000000/cosecha-aprobada",
-                  json={"datos_cosecha": "x", "datos_certificado": "y", "verificador_usuario_id": "z"})
-    return r.status_code != 404
-
-
-def aprobar_cosechas(api, token_verificador, ids_productores):
-    r = api.pedir("GET", "productores", "/productores/produccion/pendientes-verificacion", token_verificador)
-    pendientes = [p for p in exigir(r, "listar cosechas pendientes").json() if p["productor_id"] in ids_productores]
-    for p in pendientes:
-        r = api.pedir("POST", "productores", f"/productores/produccion/{p['id']}/aprobar", token_verificador)
-        res = exigir(r, f"aprobar {p['cultivo']}").json()
-        log(f"    + aprobada: {p['cultivo']} ({p['productor_nombre']})")
+        res = exigir(r, f"cosecha de {nombre}").json()
+        log(f"    + {nombre}: siembra + foto + cosecha -> borrador en el catalogo")
         # producto_id viene vacio solo en el reintento idempotente (409): ahi no se puede afirmar nada.
         if res.get("producto_id") and res.get("certificacion_registrada") is not True:
             raise RuntimeError(
-                f"'{p['cultivo']}' quedo aprobada pero SIN certificado: el servicio productores desplegado no lo "
-                "registra (falta redesplegarlo y agregar PRODUCTORES_A_CERTIFICACION_SECRETO al Secret). "
-                "Se detiene aqui para no dejar mas productos sin certificado.")
-    if not pendientes:
-        log("    (no habia cosechas pendientes de estos agricultores)")
+                f"'{nombre}' quedo cosechada pero SIN su registro en la cadena: revisa que certificacion este desplegado "
+                "y que PRODUCTORES_A_CERTIFICACION_SECRETO este en el Secret. Se detiene aqui para no dejar mas "
+                "productos sin certificado.")
+    return token, productor_id
 
 
-# ---------------------------------------------------------------- fase 3: borradores -> publicados
+# ---------------------------------------------------------------- fase 2: borradores -> publicados
 def fase_publicar(api, token, ag):
     r = api.pedir("GET", "productos", "/productos/mios", token)
     mios = {p["nombre"].lower(): p for p in exigir(r, "listar mis productos").json()}
@@ -321,7 +300,7 @@ def fase_publicar(api, token, ag):
         nombre, categoria, carpeta, _u, _e, precio, _rango = PRODUCTOS[clave]
         p = mios.get(nombre.lower())
         if p is None:
-            log(f"    - {nombre}: todavia no tiene producto (falta aprobar la cosecha)")
+            log(f"    - {nombre}: todavia no tiene producto (falta completar la cosecha)")
             continue
         if p["estado"] != "borrador":
             log(f"    - {nombre}: ya publicado ({p['estado']})")
@@ -339,7 +318,7 @@ def fase_publicar(api, token, ag):
         log(f"    + {nombre}: S/ {precio:.2f}, imagenes subidas y publicado")
 
 
-# ---------------------------------------------------------------- fase 4: llegada al almacen
+# ---------------------------------------------------------------- fase 3: llegada al almacen
 def confirmar_llegadas(api, token_admin, ids_productores):
     catalogo = api.pedir("GET", "productos", "/productos").json()
     en_transito = [p for p in catalogo if p.get("estado") == "en_transito" and p.get("productor_id") in ids_productores]
@@ -421,7 +400,7 @@ def main():
     agricultores = list(enumerate(AGRICULTORES, start=1))[: args.limite]
     sesiones = {}
     fallos = 0
-    log("== Fase 1: agricultores, chacras, siembras y cosechas")
+    log("== Fase 1: agricultores, chacras, siembras y cosechas (con foto y GPS)")
     for i, ag in agricultores:
         log(f"\n{i:02d}. {ag['razon']} ({ag['comunidad']})")
         try:
@@ -432,12 +411,24 @@ def main():
     ids_productores = {pid for _t, pid in sesiones.values()}
 
     if args.fases == "agricultores" or not sesiones:
-        log("\nListo (fase 1). Para continuar con verificacion y publicacion: python seed_datos_demo.py")
+        log("\nListo (pasos 1-3). Para publicar y confirmar la llegada al almacen: python seed_datos_demo.py")
         sys.exit(1 if fallos else 0)
 
-    email_admin = os.getenv("SEED_ADMIN_EMAIL") or (input("\nEmail de un ADMIN (Enter para omitir verificacion/publicacion): ").strip() if sys.stdin.isatty() else "")
+    log("\n== Fase 2: cada agricultor completa el borrador (categoria, precio, imagenes) y publica")
+    for i, ag in agricultores:
+        if i not in sesiones:
+            continue
+        log(f"\n{i:02d}. {ag['razon']}")
+        try:
+            token = login(api, f"agricultor{i:02d}@{DOMINIO}", PASSWORD_DEMO)  # token fresco
+            fase_publicar(api, token, ag)
+        except Exception as e:
+            fallos += 1
+            log(f"    ! FALLO: {e}")
+
+    email_admin = os.getenv("SEED_ADMIN_EMAIL") or (input("\nEmail de un ADMIN (Enter para omitir la llegada al almacen): ").strip() if sys.stdin.isatty() else "")
     if not email_admin:
-        log("\nSin credenciales de admin: se omiten verificacion, publicacion y llegada al almacen.")
+        log("\nSin credenciales de admin: se omite la llegada al almacen (los productos quedan en transito).")
         log("Vuelve a correr el script con SEED_ADMIN_EMAIL / SEED_ADMIN_PASSWORD (o interactivo) para completarlo.")
         sys.exit(1 if fallos else 0)
     token_admin = None
@@ -455,42 +446,14 @@ def main():
             log("   Reintenta (en la consola de Windows, Ctrl+V puede no pegar: usa clic derecho).")
     if token_admin is None:
         sys.exit("No se pudo iniciar sesion como admin.")
-    if not certificacion_actualizada(api):
-        sys.exit("\nSe detiene ANTES de aprobar: el servicio de certificacion desplegado es anterior al registro\n"
-                 "automatico del certificado, y los productos quedarian sin certificado (sin 'ver certificado').\n"
-                 "Redespliega productores, certificacion (y pedidos/transporte), agrega\n"
-                 "PRODUCTORES_A_CERTIFICACION_SECRETO al Secret y vuelve a correr el script (retoma donde quedo).")
-    try:
-        token_verificador = asegurar_verificador(api, token_admin)
-    except Exception as e:
-        sys.exit(f"No se pudo preparar el verificador: {e}")
 
-    log("\n== Fase 2: el Verificador aprueba las cosechas (nace el producto y su certificado)")
-    try:
-        aprobar_cosechas(api, token_verificador, ids_productores)
-    except Exception as e:
-        sys.exit(f"\n! {e}")
-
-    log("\n== Fase 3: cada agricultor completa el borrador (categoria, precio, imagenes) y publica")
-    for i, ag in agricultores:
-        if i not in sesiones:
-            continue
-        log(f"\n{i:02d}. {ag['razon']}")
-        try:
-            token = login(api, f"agricultor{i:02d}@{DOMINIO}", PASSWORD_DEMO)  # token fresco
-            fase_publicar(api, token, ag)
-        except Exception as e:
-            fallos += 1
-            log(f"    ! FALLO: {e}")
-
-    log("\n== Fase 4: el Admin confirma la llegada al almacen")
+    log("\n== Fase 3: el Admin confirma la llegada al almacen")
     confirmar_llegadas(api, token_admin, ids_productores)
 
     verificar_certificados(api, ids_productores)
     log("\nCuentas demo (todas con la misma contrasena): " + PASSWORD_DEMO)
     for i, ag in agricultores:
         log(f"   agricultor{i:02d}@{DOMINIO}  - {ag['razon']}")
-    log(f"   {EMAIL_VERIFICADOR}  - Verificador demo")
     sys.exit(1 if fallos else 0)
 
 

@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from database import Base, engine, SessionLocal
 import models
-from migraciones import asegurar_indice_unico_de_bloques
+from migraciones import asegurar_indice_unico_de_bloques, asegurar_columna_foto_url
 from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
 from auth import requiere_rol
 from auth import secreto_de_servicio_valido
@@ -23,6 +23,7 @@ import json
 Base.metadata.create_all(bind=engine)
 # create_all() no agrega restricciones a una tabla que ya existe: ver migraciones.py.
 asegurar_indice_unico_de_bloques(engine)
+asegurar_columna_foto_url(engine)
 
 app = FastAPI()
 
@@ -77,13 +78,22 @@ class LlegadaAlmacenInterno(BaseModel):
         return limpio
 
 
+FOTO_URL_MAXIMO = 500
+
+
 class CosechaAprobadaInterno(BaseModel):
     datos_cosecha: str | None = None
-    datos_certificado: str | None = None
-    # Usuario (no Verificador.id) que aprobó — Productores solo conoce el sub del token; acá se
-    # resuelve al perfil de Verificador para dejar su nombre visible en la cadena. Si ese usuario
-    # nunca completó su perfil de verificador, el bloque igual se crea, solo sin nombre.
-    verificador_usuario_id: str | None = None
+    # La foto de la cosecha (su huella SHA-256 viene dentro de datos_cosecha). Ver Bloque.foto_url.
+    foto_url: str | None = None
+
+    @field_validator("foto_url")
+    @classmethod
+    def _foto_url_valida(cls, valor):
+        if valor is None:
+            return None
+        if not valor.startswith(("http://", "https://")) or len(valor) > FOTO_URL_MAXIMO:
+            raise ValueError("La URL de la foto no es válida")
+        return valor
 
 @app.post("/certificacion/pedido/{pedido_id}/certificado")
 def crear_certificado_pedido(
@@ -152,13 +162,13 @@ def registrar_cosecha_aprobada(
         db: Session = Depends(get_db),
         x_servicio_secreto: str = Header(None)
 ):
-    """Llamado por Productores al aprobar una cosecha (aprobar_cosecha): registra en un solo paso
-    los dos primeros eventos de la cadena del producto recién creado — cosecha_registrada y
-    certificado_productor. Hasta ahora ningún flujo de la app los creaba (solo existía
-    POST /eventos, que nadie invocaba), así que el QR de un producto salía con la cadena vacía.
+    """Llamado por Productores al completar una cosecha (completar_cosecha): registra el primer evento de la cadena
+    del producto recién creado, cosecha_registrada, con la evidencia en origen (distancia a la chacra al sembrar y al
+    cosechar, y la huella de la foto) y la foto. Antes, además, un certificado_productor firmado por el Verificador:
+    ese rol se retiró (presentación del 2026-10-01) y los bloques que ya existen se conservan tal cual. La ruta
+    conserva su nombre para no cambiar el contrato entre servicios.
 
-    Idempotente por evento: un reintento (o un aprobar que se repite tras un fallo parcial) solo
-    crea los que falten, nunca duplica. Falla cerrado: si el secreto no está configurado en este
+    Idempotente: un reintento no duplica el bloque. Falla cerrado: si el secreto no está configurado en este
     servicio, rechaza todo (a diferencia de comparar None == None)."""
     if not secreto_de_servicio_valido(x_servicio_secreto, PRODUCTORES_A_CERTIFICACION_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
@@ -168,15 +178,7 @@ def registrar_cosecha_aprobada(
     }
     creados = []
     if "cosecha_registrada" not in existentes:
-        creados.append(crear_bloque(db, producto_id, "cosecha_registrada", datos.datos_cosecha))
-    if "certificado_productor" not in existentes:
-        verificador_id = None
-        if datos.verificador_usuario_id:
-            verificador = db.query(models.Verificador).filter(
-                models.Verificador.usuario_id == datos.verificador_usuario_id
-            ).first()
-            verificador_id = verificador.id if verificador else None
-        creados.append(crear_bloque(db, producto_id, "certificado_productor", datos.datos_certificado, verificador_id))
+        creados.append(crear_bloque(db, producto_id, "cosecha_registrada", datos.datos_cosecha, foto_url=datos.foto_url))
 
     total = db.query(models.Bloque).filter(models.Bloque.producto_id == producto_id).count()
     return {"creados": len(creados), "total_bloques": total}
@@ -248,6 +250,7 @@ def historial(producto_id: str, db: Session = Depends(get_db)):
             "verificador_id": b.verificador_id,
             "verificador_nombre": nombres_por_id.get(str(b.verificador_id)) if b.verificador_id else None,
             "verificador_credencial": credenciales_por_id.get(str(b.verificador_id)) if b.verificador_id else None,
+            "foto_url": b.foto_url,
         }
         for b in bloques
     ]

@@ -25,8 +25,8 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     return R * c
 
 
-# Sin uso desde que se cerró POST /certificacion/{id}/eventos: el flujo real (aprobar cosecha ->
-# /cosecha-aprobada) no valida ubicación. Se conserva por si se decide exigir geofencing al aprobar.
+# Sin uso desde que se cerró POST /certificacion/{id}/eventos. La distancia a la chacra la calcula ahora Productores al
+# registrar la siembra y al completar la cosecha (sin bloquear: queda como advertencia en el texto del bloque).
 def validar_geofencing(token: str, latitud_evento: str, longitud_evento: str):
     headers = {"Authorization": f"Bearer {token}"}
     try:
@@ -66,7 +66,8 @@ def _ultimo_bloque(db, producto_id):
     ).order_by(models.Bloque.indice.desc()).first()
 
 
-def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificador_id: str = None) -> models.Bloque:
+def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificador_id: str = None,
+                 foto_url: str = None) -> models.Bloque:
     """Agrega un bloque al final de la cadena del producto.
 
     La base exige un índice único por producto (uq_bloque_producto_indice): si otro proceso agregó un
@@ -95,6 +96,7 @@ def crear_bloque(db, producto_id: str, evento: str, datos: str = None, verificad
             hash_anterior=hash_anterior,
             hash_actual=hash_actual,
             verificador_id=verificador_id,
+            foto_url=foto_url,
         )
         db.add(nuevo_bloque)
         try:
