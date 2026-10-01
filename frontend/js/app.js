@@ -351,23 +351,6 @@ function escapeAttr(valor) {
     .replace(/>/g, '&gt;');
 }
 
-// Espera a que un elemento renderizado async (p. ej. tras un cambiarVista a una vista que carga
-// datos antes de pintar, como Mi Perfil) aparezca en el DOM, y recién entonces hace scroll. Un
-// scrollIntoView inmediato fallaría porque el contenido todavía es el skeleton de carga.
-function esperarElementoYScroll(id, intentosMax = 40) {
-  let intentos = 0;
-  const intervalo = setInterval(() => {
-    const el = document.getElementById(id);
-    intentos++;
-    if (el) {
-      clearInterval(intervalo);
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (intentos >= intentosMax) {
-      clearInterval(intervalo);
-    }
-  }, 50);
-}
-
 function renderMediaProducto(producto, contenedorClase = 'product-emoji') {
   const emoji = emojiParaProducto(producto);
   const url = (producto.imagen_url || producto.imagen_principal || '').trim();
@@ -4172,84 +4155,6 @@ async function crearPerfilProductor(e) {
   }
 }
 
-// ---- Gestión Económica: siembra ↔ unidad de medida (mismo patrón que el resto del panel) ----
-function actualizarVisibilidadEquivalenciaProduccion() {
-  const unidad = document.getElementById('produccion-unidad')?.value;
-  const bloque = document.getElementById('produccion-equivalencia-bloque');
-  const input = document.getElementById('produccion-equivalencia');
-  if (!bloque || !input) return;
-  const necesitaEquivalencia = unidad && unidad !== 'kg';
-  bloque.classList.toggle('hidden', !necesitaEquivalencia);
-  input.required = necesitaEquivalencia;
-  if (!necesitaEquivalencia) input.value = '';
-}
-
-// Puramente informativo — "sin afectar ningún campo automáticamente" (no toca precio/costos).
-async function mostrarPrecioReferenciaCultivo() {
-  const cultivo = document.getElementById('produccion-cultivo')?.value.trim();
-  const cont = document.getElementById('produccion-precio-referencia');
-  if (!cont) return;
-  if (!cultivo) { cont.classList.add('hidden'); return; }
-
-  cont.classList.remove('hidden');
-  cont.innerHTML = '<i class="ti ti-bulb"></i> Consultando precio de referencia…';
-  try {
-    const data = await Api.productos.precioReferencia(cultivo);
-    // innerHTML por el ícono, así que "cultivo" (texto libre del formulario) va escapado a mano.
-    cont.innerHTML = data.precio_promedio != null
-      ? `<i class="ti ti-bulb"></i> Precio de referencia en el catálogo: ${formatearMoneda(data.precio_promedio)}/kg (promedio)`
-      : `<i class="ti ti-bulb"></i> "${escapeAttr(cultivo)}" no tiene productos en el catálogo todavía — sin precio de referencia.`;
-  } catch (err) {
-    cont.innerHTML = '<i class="ti ti-bulb"></i> No se pudo consultar el precio de referencia (servicio de Productos no disponible).';
-  }
-}
-
-async function crearRegistroProduccion(e) {
-  e.preventDefault();
-  const btn = e.target.querySelector('button[type="submit"]');
-  const unidad = document.getElementById('produccion-unidad').value;
-  const equivalenciaValor = document.getElementById('produccion-equivalencia').value;
-  const chacraId = document.getElementById('produccion-chacra').value;
-
-  if (!chacraId) {
-    toast('Registra una chacra antes de poder registrar una siembra', 'error');
-    return;
-  }
-  if (unidad !== 'kg' && !equivalenciaValor) {
-    toast('Indica la equivalencia a kg para esta unidad de medida', 'error');
-    return;
-  }
-
-  btn.disabled = true;
-  const textoBoton = btn.innerHTML;
-  try {
-    btn.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Tomando tu ubicación…';
-    const ubicacion = await asegurarUbicacion(e.target.querySelector('.evidencia-gps'));
-    btn.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Registrando…';
-    const datos = {
-      cultivo: document.getElementById('produccion-cultivo').value.trim(),
-      chacra_id: chacraId,
-      numero_parcelas: parseInt(document.getElementById('produccion-parcelas').value, 10),
-      ubicacion_cosecha: document.getElementById('produccion-ubicacion').value.trim() || null,
-      costo_semillas: parseFloat(document.getElementById('produccion-costo-semillas').value) || 0,
-      costo_insumos: parseFloat(document.getElementById('produccion-costo-insumos').value) || 0,
-      unidad_medida: unidad,
-      equivalencia_kg: unidad !== 'kg' ? parseFloat(equivalenciaValor) : null,
-      fecha_siembra: document.getElementById('produccion-fecha-siembra').value,
-      fecha_cosecha_estimada: document.getElementById('produccion-fecha-cosecha-estimada').value,
-      ...(ubicacion ? { latitud: ubicacion.lat, longitud: ubicacion.lng } : {}),
-    };
-    await Api.productores.produccion.crear(datos);
-    toast('Siembra registrada 🌱');
-    cargarPerfil();
-  } catch (err) {
-    manejarError(err, 'registrar la siembra');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = textoBoton;
-  }
-}
-
 function alternarFormCompletarCosecha(registroId) {
   const form = document.querySelector(`.form-completar-cosecha[data-id="${registroId}"]`);
   if (!form) return;
@@ -4400,6 +4305,327 @@ function renderBloqueUbicacion(idBase, momento, atributos) {
 
 function firmaArchivo(archivo) {
   return `${archivo.name}|${archivo.size}|${archivo.lastModified}`;
+}
+
+// ============ ASISTENTES DEL AGRICULTOR (ver js/asistente.js) ============
+// Reemplazan a los formularios de "Registrar siembra" y "Completar cosecha": una pregunta por pantalla, con voz.
+
+function chacraPorId(chacraId) {
+  return (Estado.chacras || []).find((c) => String(c.id) === String(chacraId)) || null;
+}
+
+function nombreChacra(chacra) {
+  return chacra ? `${chacra.codigo}${chacra.nombre ? ` — ${chacra.nombre}` : ''}` : '—';
+}
+
+// Distancia del agricultor a la chacra del asistente: null si no hay ubicación o no se sabe la chacra.
+function distanciaEnAsistente(estado) {
+  const chacra = chacraPorId(estado.chacraId);
+  if (!estado.ubicacion || !chacra) return null;
+  return distanciaKm(estado.ubicacion.lat, estado.ubicacion.lng, chacra.ubicacion_latitud, chacra.ubicacion_longitud);
+}
+
+function resumenUbicacionAsistente(estado) {
+  const km = distanciaEnAsistente(estado);
+  if (km == null) return { etiqueta: 'Tu ubicación', valor: 'Sin ubicación (queda como advertencia)', icono: 'map-pin-off', advertencia: true };
+  if (km <= RADIO_CHACRA_KM) return { etiqueta: 'Tu ubicación', valor: `En tu chacra (a ${formatearDistancia(km)})`, icono: 'map-pin' };
+  return { etiqueta: 'Tu ubicación', valor: `A ${formatearDistancia(km)} de tu chacra (queda como advertencia)`, icono: 'alert-triangle', advertencia: true };
+}
+
+async function tomarUbicacionAsistente(bloque, estado) {
+  const ubicacion = await tomarUbicacion(bloque);
+  if (ubicacion) {
+    estado.ubicacion = ubicacion;
+    delete estado.sinUbicacion;
+  } else {
+    estado.ubicacion = null;
+    estado.sinUbicacion = bloque.querySelector('.evidencia-gps-texto').textContent;
+  }
+  if (bloque.isConnected && Voz.leerSolo) Voz.hablar(bloque.querySelector('.evidencia-gps-texto').textContent);
+}
+
+// Paso "¿Estás en tu chacra?" (siembra y cosecha): el mismo bloque de ubicación de antes; lo tomado se guarda en el
+// estado del asistente para no perderlo al ir y volver entre pasos. Nunca bloquea: lejos o sin GPS se sigue igual.
+function pasoUbicacionAsistente(momento, tipoAviso) {
+  return {
+    id: 'ubicacion',
+    pregunta: '¿Estás en tu chacra?',
+    ayuda: 'Vamos a ver dónde estás con el GPS del teléfono. Hazlo estando dentro de tu chacra: queda como constancia en '
+      + 'el certificado del producto. Si estás lejos o no hay señal, igual puedes seguir, pero queda como advertencia.',
+    voz: (estado) => `¿Estás en tu chacra ${chacraPorId(estado.chacraId)?.codigo || ''}? Hazlo estando dentro de tu chacra. `
+      + 'Vamos a tomar tu ubicación con el GPS del teléfono.',
+    render: (estado) => `${renderAvisoEnLaChacra(tipoAviso)}
+      ${renderBloqueUbicacion('asistente', momento, `data-chacra-id="${escapeAttr(estado.chacraId)}"`)}`,
+    alMostrar: (cont, estado) => {
+      const bloque = cont.querySelector('.evidencia-gps');
+      if (estado.ubicacion) {
+        bloque.dataset.lat = estado.ubicacion.lat;
+        bloque.dataset.lng = estado.ubicacion.lng;
+        evaluarUbicacion(bloque);
+      } else if (estado.sinUbicacion) {
+        pintarUbicacion(bloque, 'sin-gps', estado.sinUbicacion);
+      } else {
+        tomarUbicacionAsistente(bloque, estado);
+      }
+    },
+    resumen: resumenUbicacionAsistente,
+  };
+}
+
+function alClicAsistenteAgricultor(e, estado) {
+  const botonGps = e.target.closest('.btn-gps-tomar');
+  if (botonGps) {
+    const bloque = botonGps.closest('.evidencia-gps');
+    delete bloque.dataset.lat;
+    delete bloque.dataset.lng;
+    delete estado.sinUbicacion;
+    tomarUbicacionAsistente(bloque, estado);
+  }
+}
+
+// Después de guardar, se recarga la vista desde la que se abrió el asistente.
+function recargarVistaDelAgricultor() {
+  const vista = document.querySelector('.view.active')?.id?.replace('view-', '');
+  if (vista === 'perfil') cargarPerfil();
+  else if (vista === 'panel-productor') iniciarPanelProductor();
+}
+
+// ---- Registrar siembra ----
+const CULTIVOS_FRECUENTES = ['Papa', 'Maíz', 'Quinua', 'Habas', 'Arveja', 'Trigo', 'Cebada', 'Oca', 'Olluco', 'Kiwicha'];
+const OPCIONES_UNIDAD_SIEMBRA = [
+  { valor: 'kg', titulo: 'Por kilos', detalle: 'Lo vas a pesar en kilos (lo más común)', icono: 'scale' },
+  { valor: 'unidad', titulo: 'Por unidades', detalle: 'Se cuenta uno por uno, por ejemplo choclos o zapallos', icono: 'box' },
+  { valor: 'litro', titulo: 'Por litros', detalle: 'Por ejemplo leche o miel', icono: 'droplet' },
+];
+
+let temporizadorPrecioReferencia = null;
+async function pintarPrecioReferenciaAsistente(cultivo, destino) {
+  clearTimeout(temporizadorPrecioReferencia);
+  if (!cultivo || cultivo.length < 3) { destino.textContent = ''; return; }
+  temporizadorPrecioReferencia = setTimeout(async () => {
+    try {
+      const data = await Api.productos.precioReferencia(cultivo);
+      if (!destino.isConnected) return;
+      destino.textContent = data.precio_promedio != null
+        ? `En la tienda, "${cultivo}" se vende a ${formatearMoneda(data.precio_promedio)} el kilo (promedio).`
+        : '';
+    } catch { destino.textContent = ''; }
+  }, 500);
+}
+
+function pasosAsistenteSiembra() {
+  const hoy = new Date();
+  const chacras = Estado.chacras || [];
+  return [
+    {
+      id: 'chacra',
+      pregunta: '¿En qué chacra sembraste?',
+      ayuda: 'Toca la chacra donde está esta siembra. Si no aparece, primero regístrala en "Mis chacras".',
+      voz: () => `¿En qué chacra sembraste? Tus chacras son: ${chacras.map((c) => nombreChacra(c).replace(' — ', ', ')).join('; ')}. Toca una.`,
+      render: (estado) => campoOpcionesAsistente({
+        nombre: 'asistente-chacra',
+        valor: estado.chacraId,
+        opciones: chacras.map((c) => ({ valor: c.id, titulo: c.codigo, detalle: c.nombre || 'Sin nombre', icono: 'map-pin' })),
+      }),
+      recoger: (cont, estado) => {
+        const elegida = cont.querySelector('input[name="asistente-chacra"]:checked');
+        if (elegida) estado.chacraId = elegida.value;
+      },
+      validar: (estado) => (estado.chacraId ? null : 'Toca una de tus chacras para seguir.'),
+      resumen: (estado) => ({ etiqueta: 'Chacra', valor: nombreChacra(chacraPorId(estado.chacraId)), icono: 'map-2' }),
+    },
+    pasoUbicacionAsistente('registrar la siembra', 'siembra'),
+    {
+      id: 'cultivo',
+      pregunta: '¿Qué sembraste?',
+      ayuda: 'Escribe o di el nombre del cultivo, por ejemplo "papa amarilla". También puedes tocar uno de la lista.',
+      render: (estado) => `${campoTextoAsistente({
+        id: 'asistente-cultivo', etiqueta: 'Nombre del cultivo', valor: estado.cultivo || '', ejemplo: 'Ej. Papa amarilla', sugerencias: CULTIVOS_FRECUENTES,
+      })}<p class="asistente-nota" id="asistente-precio-referencia" aria-live="polite"></p>`,
+      alMostrar: (cont) => {
+        const campo = cont.querySelector('#asistente-cultivo');
+        const destino = cont.querySelector('#asistente-precio-referencia');
+        campo.addEventListener('input', () => pintarPrecioReferenciaAsistente(campo.value.trim(), destino));
+        pintarPrecioReferenciaAsistente(campo.value.trim(), destino);
+      },
+      recoger: (cont, estado) => { estado.cultivo = cont.querySelector('#asistente-cultivo').value.trim(); },
+      validar: (estado) => (estado.cultivo.length >= 2 ? null : 'Escribe o di qué sembraste.'),
+      resumen: (estado) => ({ etiqueta: 'Cultivo', valor: estado.cultivo, icono: 'plant' }),
+    },
+    {
+      id: 'parcelas',
+      pregunta: '¿En cuántas parcelas sembraste?',
+      ayuda: 'Cuenta las parcelas donde está este cultivo. Usa los botones de menos y más, o di el número.',
+      render: (estado) => campoNumeroAsistente({
+        id: 'asistente-parcelas', etiqueta: 'Número de parcelas', valor: estado.parcelas ?? 1, minimo: 1, maximo: 1000, decimales: false,
+        unidad: 'parc.',
+      }),
+      recoger: (cont, estado) => { estado.parcelas = Number(cont.querySelector('#asistente-parcelas').value); },
+      validar: (estado) => (Number.isInteger(estado.parcelas) && estado.parcelas >= 1 && estado.parcelas <= 1000
+        ? null : 'El número de parcelas debe ser un número entero, de 1 a 1000.'),
+      resumen: (estado) => ({ etiqueta: 'Parcelas', valor: String(estado.parcelas), icono: 'layout-grid' }),
+    },
+    {
+      id: 'fecha-siembra',
+      pregunta: '¿Cuándo sembraste?',
+      ayuda: 'Toca "Hoy", "Ayer" u otra opción. Si todavía vas a sembrar, elige el día en el calendario.',
+      render: (estado) => campoFechaAsistente({
+        id: 'asistente-fecha-siembra',
+        valor: estado.fechaSiembra || '',
+        minimo: '2000-01-01',
+        maximo: fechaIso(sumarDias(hoy, 730)),
+        atajos: [
+          { etiqueta: 'Hoy', fecha: fechaIso(hoy) },
+          { etiqueta: 'Ayer', fecha: fechaIso(sumarDias(hoy, -1)) },
+          { etiqueta: 'Hace una semana', fecha: fechaIso(sumarDias(hoy, -7)) },
+          { etiqueta: 'Hace un mes', fecha: fechaIso(sumarDias(hoy, -30)) },
+        ],
+      }),
+      recoger: (cont, estado) => { estado.fechaSiembra = cont.querySelector('#asistente-fecha-siembra').value; },
+      validar: (estado) => {
+        if (!estado.fechaSiembra) return 'Elige el día en que sembraste.';
+        if (estado.fechaSiembra < '2000-01-01' || estado.fechaSiembra > fechaIso(sumarDias(hoy, 730))) {
+          return 'Esa fecha no es válida: puede ser desde el año 2000 hasta dos años desde hoy.';
+        }
+        return null;
+      },
+      resumen: (estado) => ({ etiqueta: 'Sembraste', valor: fechaLegible(estado.fechaSiembra), icono: 'calendar' }),
+    },
+    {
+      id: 'fecha-cosecha',
+      pregunta: '¿Cuándo crees que vas a cosechar?',
+      ayuda: 'No tiene que ser exacto: elige cuántos meses después de la siembra crees que cosecharás, o un día en el calendario.',
+      render: (estado) => {
+        const siembra = new Date(`${estado.fechaSiembra}T00:00:00`);
+        return campoFechaAsistente({
+          id: 'asistente-fecha-cosecha',
+          valor: estado.fechaCosecha || '',
+          minimo: estado.fechaSiembra,
+          maximo: fechaIso(sumarDias(siembra, 1826)),
+          atajos: [3, 4, 5, 6].map((meses) => {
+            const fecha = new Date(siembra);
+            fecha.setMonth(fecha.getMonth() + meses);
+            return { etiqueta: `En ${meses} meses`, fecha: fechaIso(fecha) };
+          }),
+        });
+      },
+      recoger: (cont, estado) => { estado.fechaCosecha = cont.querySelector('#asistente-fecha-cosecha').value; },
+      validar: (estado) => {
+        if (!estado.fechaCosecha) return 'Elige cuándo crees que vas a cosechar.';
+        if (estado.fechaCosecha < estado.fechaSiembra) return 'La cosecha no puede ser antes de la siembra.';
+        return null;
+      },
+      resumen: (estado) => ({ etiqueta: 'Cosecharías', valor: fechaLegible(estado.fechaCosecha), icono: 'calendar-event' }),
+    },
+    {
+      id: 'unidad',
+      pregunta: '¿Cómo vas a medir tu cosecha?',
+      ayuda: 'Casi siempre es por kilos. Si la cuentas por unidades o por litros, dinos cuánto pesa cada una.',
+      voz: () => '¿Cómo vas a medir tu cosecha? Puedes elegir: por kilos, por unidades o por litros.',
+      render: (estado) => `${campoOpcionesAsistente({ nombre: 'asistente-unidad', valor: estado.unidad || 'kg', opciones: OPCIONES_UNIDAD_SIEMBRA })}
+        <div class="asistente-equivalencia ${(estado.unidad || 'kg') === 'kg' ? 'hidden' : ''}">
+          ${campoNumeroAsistente({
+            id: 'asistente-equivalencia', etiqueta: '¿Cuántos kilos pesa una unidad (o un litro)?', valor: estado.equivalencia ?? '',
+            minimo: 0, maximo: 5000, paso: 0.5, unidad: 'kg',
+          })}
+        </div>`,
+      alMostrar: (cont) => {
+        const caja = cont.querySelector('.asistente-equivalencia');
+        cont.querySelectorAll('input[name="asistente-unidad"]').forEach((radio) => radio.addEventListener('change', () => {
+          caja.classList.toggle('hidden', radio.value === 'kg');
+          if (radio.value !== 'kg') caja.querySelector('input').focus();
+        }));
+      },
+      recoger: (cont, estado) => {
+        estado.unidad = cont.querySelector('input[name="asistente-unidad"]:checked')?.value || 'kg';
+        const equivalencia = cont.querySelector('#asistente-equivalencia').value;
+        estado.equivalencia = equivalencia === '' ? null : Number(equivalencia);
+      },
+      validar: (estado) => {
+        if (estado.unidad === 'kg') return null;
+        return estado.equivalencia > 0 && estado.equivalencia <= 5000 ? null : 'Escribe cuántos kilos pesa una unidad (o un litro).';
+      },
+      resumen: (estado) => ({
+        etiqueta: 'Se mide',
+        valor: estado.unidad === 'kg' ? 'Por kilos'
+          : `${estado.unidad === 'litro' ? 'Por litros' : 'Por unidades'} (1 = ${String(estado.equivalencia).replace('.', ',')} kg)`,
+        icono: 'scale',
+      }),
+    },
+    {
+      id: 'gastos',
+      pregunta: '¿Cuánto gastaste para sembrar?',
+      ayuda: 'Lo que pagaste en semillas y en abono o insumos, en soles. Si no sabes, déjalo en cero: lo puedes calcular después.',
+      render: (estado) => `
+        ${campoNumeroAsistente({ id: 'asistente-semillas', etiqueta: 'En semillas', valor: estado.semillas ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/' })}
+        ${campoNumeroAsistente({ id: 'asistente-insumos', etiqueta: 'En abono e insumos', valor: estado.insumos ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/' })}`,
+      recoger: (cont, estado) => {
+        estado.semillas = Number(cont.querySelector('#asistente-semillas').value || 0);
+        estado.insumos = Number(cont.querySelector('#asistente-insumos').value || 0);
+      },
+      validar: (estado) => ([estado.semillas, estado.insumos].every((v) => Number.isFinite(v) && v >= 0 && v <= 9999999.99)
+        ? null : 'Los gastos deben ser montos desde cero, sin signos.'),
+      resumen: (estado) => ({ etiqueta: 'Gastos', valor: `Semillas ${formatearMoneda(estado.semillas)} · Insumos ${formatearMoneda(estado.insumos)}`, icono: 'coin' }),
+    },
+  ];
+}
+
+function abrirAsistenteSiembra() {
+  const chacras = Estado.chacras || [];
+  if (!chacras.length) {
+    toast('Primero registra tu chacra en "Mis chacras".', 'error');
+    cambiarVista('panel-productor');
+    activarTabProductor('chacras');
+    return;
+  }
+  Asistente.abrir({
+    titulo: 'Registrar siembra',
+    icono: 'seedling',
+    textoFinal: 'Registrar siembra',
+    estado: { chacraId: chacras.length === 1 ? chacras[0].id : null },
+    pasos: pasosAsistenteSiembra(),
+    alClic: alClicAsistenteAgricultor,
+    enviar: async (estado, ui) => {
+      ui.progreso('Registrando tu siembra…');
+      const datos = {
+        chacra_id: estado.chacraId,
+        cultivo: estado.cultivo,
+        numero_parcelas: estado.parcelas,
+        costo_semillas: estado.semillas,
+        costo_insumos: estado.insumos,
+        unidad_medida: estado.unidad || 'kg',
+        equivalencia_kg: (estado.unidad || 'kg') !== 'kg' ? estado.equivalencia : null,
+        fecha_siembra: estado.fechaSiembra,
+        fecha_cosecha_estimada: estado.fechaCosecha,
+        ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng } : {}),
+      };
+      try {
+        await Api.productores.produccion.crear(datos);
+      } catch (err) {
+        console.error('registrar la siembra', err);
+        ui.error(err.message || 'No se pudo registrar la siembra. Intenta de nuevo.');
+        return false;
+      }
+      toast('Siembra registrada 🌱');
+      if (Voz.leerSolo) Voz.hablar('Listo. Tu siembra quedó registrada.');
+      recargarVistaDelAgricultor();
+      return true;
+    },
+  });
+}
+
+function renderTarjetaAbrirSiembra() {
+  const chacras = Estado.chacras || [];
+  return `
+    <div class="card-panel siembra-cta">
+      <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
+      <p>Te haremos unas preguntas, una por una: dónde sembraste, qué, cuándo y cuánto gastaste.</p>
+      ${Voz.puedeHablar ? '<span class="siembra-cta-voz"><i class="ti ti-volume" aria-hidden="true"></i> Puedes escuchar las preguntas y responder hablando.</span>' : ''}
+      ${chacras.length ? `
+        <button type="button" class="btn btn-primary btn-abrir-asistente-siembra"><i class="ti ti-player-play" aria-hidden="true"></i> Empezar</button>` : `
+        <p class="mapa-ayuda" id="produccion-sin-chacras-aviso"><i class="ti ti-alert-circle"></i> Antes necesitas registrar tu chacra.</p>
+        <button type="button" class="btn btn-primary btn-abrir-asistente-siembra-chacra" id="btn-ir-a-chacras"><i class="ti ti-map-pin" aria-hidden="true"></i> Registrar mi chacra</button>`}
+    </div>`;
 }
 
 async function completarCosechaRegistro(e, registroId) {
@@ -6499,57 +6725,6 @@ function activarTabProductor(nombreTab) {
   }
 }
 
-function renderFormRegistroProduccion() {
-  const chacras = Estado.chacras || [];
-  const opcionesChacra = chacras.length
-    ? `<option value="">Elige una chacra</option>` + chacras.map((c) => `<option value="${escapeAttr(c.id)}">${escapeAttr(c.codigo)}${c.nombre ? ' — ' + escapeAttr(c.nombre) : ''}</option>`).join('')
-    : '';
-  return `
-    <div class="card-panel">
-      <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
-      <form id="form-registro-produccion" class="form-grid">
-        ${renderAvisoEnLaChacra('siembra')}
-        <label>Cultivo
-          <input type="text" id="produccion-cultivo" required maxlength="80" placeholder="Ej. Papa Nativa">
-        </label>
-        <div id="produccion-precio-referencia" class="produccion-precio-ref hidden"></div>
-        <label>Chacra
-          <select id="produccion-chacra" required ${chacras.length ? '' : 'disabled'}>${opcionesChacra}</select>
-        </label>
-        ${chacras.length ? '' : `
-        <p class="mapa-ayuda" id="produccion-sin-chacras-aviso"><i class="ti ti-alert-circle"></i> No tienes chacras registradas.
-          <button type="button" class="btn btn-outline btn-sm" id="btn-ir-a-chacras">Registra una chacra</button> antes de continuar.
-        </p>`}
-        <label>Número de parcelas
-          <input type="number" id="produccion-parcelas" min="1" max="1000" step="1" required placeholder="1">
-        </label>
-        <label>Ubicación de la cosecha (opcional)
-          <input type="text" id="produccion-ubicacion" placeholder="Ej. Parcela norte">
-        </label>
-        <label>Costo de semillas (S/)
-          <input type="number" id="produccion-costo-semillas" min="0" max="9999999.99" step="0.01" value="0">
-        </label>
-        <label>Costo de insumos (S/)
-          <input type="number" id="produccion-costo-insumos" min="0" max="9999999.99" step="0.01" value="0">
-        </label>
-        <label>Unidad de medida
-          <select id="produccion-unidad">${opcionesUnidadMedidaHtml([], { soloBase: true })}</select>
-        </label>
-        <label id="produccion-equivalencia-bloque" class="hidden">Equivalencia a kg (1 unidad = X kg)
-          <input type="number" id="produccion-equivalencia" min="0.0001" max="5000" step="0.0001" placeholder="Ej. 11.5">
-        </label>
-        <label>Fecha de siembra
-          <input type="date" id="produccion-fecha-siembra" required min="2000-01-01">
-        </label>
-        <label>Fecha estimada de cosecha
-          <input type="date" id="produccion-fecha-cosecha-estimada" required>
-        </label>
-        ${renderBloqueUbicacion('siembra', 'registrar la siembra', 'data-chacra-select="produccion-chacra"')}
-        <button type="submit" class="btn btn-primary">Registrar siembra</button>
-      </form>
-    </div>`;
-}
-
 // Máquina de estados de RegistroProduccion (ver productores/models.py): planificado -> cosechado (al completar la
 // cosecha con su foto; el producto nace como borrador). Los demás son de antes de retirar al Verificador: "aprobado"
 // equivale a cosechado, y "pendiente_verificacion"/"rechazado" quedaron a medio camino: se completan con su foto.
@@ -6697,7 +6872,7 @@ function renderProduccionSeccion(registros) {
 
   return `
     <div class="produccion-layout">
-      ${renderFormRegistroProduccion()}
+      ${renderTarjetaAbrirSiembra()}
       <div id="produccion-lista" class="produccion-lista">${lista}</div>
     </div>`;
 }
@@ -7381,11 +7556,7 @@ function inicializarEventos() {
       return;
     }
     if (e.target.closest('#btn-resumen-siembra')) {
-      // "Registrar siembra" vive en Mi Perfil, no en este panel — cambiamos de vista y
-      // esperamos a que cargarPerfil() termine de pintar antes de hacer scroll (ver
-      // esperarElementoYScroll).
-      cambiarVista('perfil');
-      esperarElementoYScroll('form-registro-produccion');
+      abrirAsistenteSiembra(); // el mismo asistente que en Mi Perfil; al terminar recarga este panel
       return;
     }
     if (e.target.closest('#btn-resumen-entregas-directas')) {
@@ -7617,6 +7788,7 @@ function inicializarEventos() {
       document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
     }
+    if (e.target.closest('.btn-abrir-asistente-siembra')) { abrirAsistenteSiembra(); return; }
     const btnCompletar = e.target.closest('.btn-toggle-completar-cosecha');
     if (btnCompletar) { alternarFormCompletarCosecha(btnCompletar.dataset.id); return; }
     const btnUbicacion = e.target.closest('.btn-gps-tomar');
@@ -7633,22 +7805,16 @@ function inicializarEventos() {
     if (btnCambiarFoto) { btnCambiarFoto.closest('.foto-entrega').querySelector('.foto-entrega-input').click(); return; }
   });
 
-  // Gestión Económica: el formulario de siembra y las mini-formas de "completar cosecha" (una
-  // por tarjeta) se re-renderizan en cada cargarPerfil(), así que van delegados sobre el
-  // contenedor estable en vez de engancharse directo — igual que los botones de arriba.
+  // Gestión Económica: las mini-formas de "completar cosecha" (una por tarjeta) se re-renderizan en cada
+  // cargarPerfil(), así que van delegados sobre el contenedor estable — igual que los botones de arriba.
+  // La siembra se registra con el asistente paso a paso (abrirAsistenteSiembra).
   document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
-    if (e.target.id === 'form-registro-produccion') { crearRegistroProduccion(e); return; }
     if (e.target.matches('.form-completar-cosecha')) { completarCosechaRegistro(e, e.target.dataset.id); return; }
   });
 
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
-    if (e.target.id === 'produccion-unidad') actualizarVisibilidadEquivalenciaProduccion();
-    if (e.target.id === 'produccion-chacra') evaluarUbicacion(document.querySelector('#form-registro-produccion .evidencia-gps'));
     if (e.target.matches('.form-completar-cosecha .foto-entrega-input')) alElegirFotoEntrega(e.target);
   });
-  document.getElementById('perfil-contenido').addEventListener('blur', (e) => {
-    if (e.target.id === 'produccion-cultivo') mostrarPrecioReferenciaCultivo();
-  }, true);
 }
 
 function cambiarTabAuth(tab) {

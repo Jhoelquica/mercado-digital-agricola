@@ -1,6 +1,6 @@
 """Cache busting real para los estáticos del frontend (sin proceso de build: HTML/CSS/JS a mano).
 
-Reescribe el "?v=" de css/style.css, js/api.js, js/app.js y js/verificar.js en index.html y
+Reescribe el "?v=" de css/style.css, js/api.js, js/asistente.js, js/app.js y js/verificar.js en index.html y
 verificar.html con un hash corto (8 hex) del CONTENIDO ACTUAL de cada archivo. Como el valor sale
 del contenido (no de un contador que hay que acordarse de subir a mano), es imposible reusar el
 mismo "?v=" por error tras un cambio real: si el archivo cambió, el hash cambia solo; si no cambió,
@@ -28,6 +28,7 @@ ARCHIVOS = [
     ("css/style.css", FRONTEND / "css" / "style.css"),
     ("js/api.js", FRONTEND / "js" / "api.js"),
     ("js/app.js", FRONTEND / "js" / "app.js"),
+    ("js/asistente.js", FRONTEND / "js" / "asistente.js"),
     ("js/verificar.js", FRONTEND / "js" / "verificar.js"),
 ]
 

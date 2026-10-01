@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=4dd873e2">
+<link rel="stylesheet" href="css/style.css?v=34f6ddda">
 </head>
 <body>
 
@@ -1019,11 +1019,45 @@
   </div>
 </div>
 
+<!-- ASISTENTE PASO A PASO (registrar siembra, completar cosecha): una pregunta por pantalla, con voz. Lo maneja
+     js/asistente.js; los pasos de cada asistente están en app.js. En el celular ocupa toda la pantalla. -->
+<div class="modal-overlay asistente-overlay hidden" id="modal-asistente">
+  <div class="asistente" role="dialog" aria-modal="true" aria-labelledby="asistente-pregunta">
+    <header class="asistente-cabecera">
+      <span class="asistente-titulo"><i class="ti ti-list-check asistente-titulo-icono" aria-hidden="true"></i> <span class="asistente-titulo-texto"></span></span>
+      <span class="asistente-contador"></span>
+      <button type="button" class="btn-asistente-cerrar" aria-label="Cerrar el asistente"><i class="ti ti-x" aria-hidden="true"></i></button>
+    </header>
+    <div class="asistente-progreso" role="progressbar" aria-label="Avance" aria-valuemin="1"></div>
+    <form class="asistente-form" novalidate>
+      <div class="asistente-cuerpo">
+        <h2 id="asistente-pregunta" class="asistente-pregunta" tabindex="-1"></h2>
+        <div class="asistente-voz">
+          <button type="button" class="btn-asistente-escuchar"><i class="ti ti-volume" aria-hidden="true"></i> Escuchar</button>
+          <button type="button" class="btn-asistente-ayuda" aria-expanded="false" aria-controls="asistente-ayuda"><i class="ti ti-help-circle" aria-hidden="true"></i> ¿Necesitas ayuda?</button>
+        </div>
+        <div class="asistente-ayuda hidden" id="asistente-ayuda"><i class="ti ti-bulb" aria-hidden="true"></i><p class="asistente-ayuda-texto"></p></div>
+        <div class="asistente-contenido"></div>
+        <p class="asistente-error hidden" role="alert"></p>
+        <p class="asistente-estado sr-only" role="status" aria-live="polite"></p>
+      </div>
+      <footer class="asistente-pie">
+        <label class="asistente-voz-lectura"><input type="checkbox" id="asistente-leer-solo"> <span>Leer las preguntas en voz alta</span></label>
+        <div class="asistente-botones">
+          <button type="button" class="btn btn-outline btn-asistente-atras"><i class="ti ti-arrow-left" aria-hidden="true"></i> Atrás</button>
+          <button type="submit" class="btn btn-primary btn-asistente-siguiente">Siguiente</button>
+        </div>
+      </footer>
+    </form>
+  </div>
+</div>
+
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=8af64037"></script>
-<script src="js/app.js?v=b31de5d5"></script>
+<script src="js/asistente.js?v=5a9e1b24"></script>
+<script src="js/app.js?v=f14ceb2b"></script>
 </body>
 </html>
