@@ -4155,16 +4155,6 @@ async function crearPerfilProductor(e) {
   }
 }
 
-function alternarFormCompletarCosecha(registroId) {
-  const form = document.querySelector(`.form-completar-cosecha[data-id="${registroId}"]`);
-  if (!form) return;
-  const abierto = !form.classList.toggle('hidden');
-  // Al abrirlo el agricultor ya leyó que tiene que estar en su chacra: se pide la ubicación de una vez (el navegador
-  // muestra su permiso en contexto) en vez de esperar al botón.
-  const bloque = form.querySelector('.evidencia-gps');
-  if (abierto && bloque?.dataset.estado === 'espera') tomarUbicacion(bloque);
-}
-
 // ---- Evidencia en origen: dónde está el agricultor al sembrar y al cosechar ----
 // Reemplaza al Verificador (presentación del 2026-10-01). Igual que RADIO_CHACRA_KM en productores/main.py: fuera de
 // este radio se registra igual, pero queda como advertencia en la cadena (el GPS falla seguido en el campo).
@@ -4628,48 +4618,180 @@ function renderTarjetaAbrirSiembra() {
     </div>`;
 }
 
-async function completarCosechaRegistro(e, registroId) {
-  e.preventDefault();
-  const form = e.target;
-  const btn = form.querySelector('button[type="submit"]');
-  const contenedorFoto = form.querySelector('.foto-entrega');
-  const archivo = form.querySelector('.foto-entrega-input').files[0];
-  // La foto es obligatoria: se avisa en el propio campo (y se lleva el foco ahí), no solo con un toast.
-  if (!archivo && !form.dataset.fotoGuardada) {
-    pintarFotoEntrega(contenedorFoto, 'error', { mensaje: 'Falta la foto de tu cosecha: tómala aquí, en tu chacra.' });
-    contenedorFoto.querySelector('.foto-entrega-input').focus();
-    contenedorFoto.scrollIntoView({ behavior: 'smooth', block: 'center' });
+// ---- Completar cosecha ----
+function renderFotoCosechaAsistente(estado) {
+  const guardada = !estado.archivoFoto && estado.fotoGuardadaUrl ? normalizarUrlImagen(estado.fotoGuardadaUrl) : null;
+  return `
+    <div class="foto-entrega asistente-foto" data-estado="${guardada ? 'lista' : 'vacia'}">
+      <!-- En el celular "capture" abre la cámara directamente. -->
+      <input class="foto-entrega-input" id="asistente-foto-cosecha" type="file" name="foto" accept="image/jpeg,image/png,image/webp"
+        capture="environment" aria-labelledby="asistente-pregunta" aria-describedby="asistente-foto-ayuda">
+      <label class="foto-entrega-zona" for="asistente-foto-cosecha">
+        <span class="foto-entrega-icono"><i class="ti ti-camera" aria-hidden="true"></i></span>
+        <span class="foto-entrega-texto">
+          <strong>Tomar foto de la cosecha</strong>
+          <small>Hazlo en tu chacra · JPG, PNG o WEBP · máx. 5 MB</small>
+        </span>
+      </label>
+      <div class="foto-entrega-previa">
+        <img alt="Vista previa de la foto de la cosecha" ${guardada ? `src="${escapeAttr(guardada)}"` : ''}>
+        <div class="foto-entrega-datos">
+          <strong class="foto-nombre">${guardada ? 'Foto ya guardada' : ''}</strong>
+          <small class="foto-peso"></small>
+        </div>
+        <div class="foto-entrega-botones">
+          <button type="button" class="btn btn-ghost foto-cambiar"><i class="ti ti-refresh" aria-hidden="true"></i> Cambiar</button>
+          <button type="button" class="btn btn-ghost foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
+        </div>
+      </div>
+      <p class="foto-entrega-ayuda" id="asistente-foto-ayuda" role="status" aria-live="polite"></p>
+    </div>`;
+}
+
+function pasosAsistenteCosecha(registro) {
+  const hoy = new Date();
+  const unidad = registro.unidad_medida || 'kg';
+  const nombreUnidad = { kg: 'kilos', unidad: 'unidades', litro: 'litros' }[unidad] || unidadPlural(unidad, 2);
+  const siembra = String(registro.fecha_siembra || '').slice(0, 10);
+  return [
+    pasoUbicacionAsistente('completar la cosecha', 'cosecha'),
+    {
+      id: 'foto',
+      pregunta: 'Toma una foto de tu cosecha',
+      ayuda: 'Toca el botón grande: se abre la cámara del teléfono. Toma la foto ahí mismo, en tu chacra, donde se vea lo '
+        + 'que cosechaste. La foto queda en el certificado que ve el comprador.',
+      render: renderFotoCosechaAsistente,
+      alMostrar: (cont, estado) => {
+        if (estado.archivoFoto) {
+          pintarFotoEntrega(cont.querySelector('.foto-entrega'), 'lista', { archivo: estado.archivoFoto, mensaje: 'Foto lista.' });
+        }
+      },
+      validar: (estado) => (estado.archivoFoto || estado.fotoGuardadaUrl ? null : 'Falta la foto de tu cosecha: tómala aquí, en tu chacra.'),
+      resumen: (estado) => ({ etiqueta: 'Foto', valor: estado.archivoFoto ? 'Foto tomada' : 'Foto ya guardada', icono: 'camera' }),
+    },
+    {
+      id: 'cantidad',
+      pregunta: '¿Cuánto cosechaste?',
+      ayuda: unidad === 'kg'
+        ? 'Escribe o di cuántos kilos cosechaste. No tiene que ser exacto: en el almacén lo vuelven a pesar.'
+        : `Escribe o di cuántos ${nombreUnidad} cosechaste.`,
+      render: (estado) => campoNumeroAsistente({
+        id: 'asistente-cantidad', etiqueta: `Cantidad en ${nombreUnidad}`, valor: estado.cantidad ?? '',
+        minimo: 0, maximo: 1000000, paso: 10, unidad: unidadCorta(unidad),
+      }),
+      recoger: (cont, estado) => {
+        const valor = cont.querySelector('#asistente-cantidad').value;
+        estado.cantidad = valor === '' ? null : Number(valor);
+      },
+      validar: (estado) => (estado.cantidad > 0 && estado.cantidad <= 1000000
+        ? null : `Escribe cuántos ${nombreUnidad} cosechaste (más de cero).`),
+      resumen: (estado) => ({ etiqueta: 'Cosechaste', valor: `${String(estado.cantidad).replace('.', ',')} ${nombreUnidad}`, icono: 'basket' }),
+    },
+    {
+      id: 'fecha',
+      pregunta: '¿Cuándo cosechaste?',
+      ayuda: 'Toca "Hoy", "Ayer" u otra opción, o elige el día en el calendario.',
+      render: (estado) => campoFechaAsistente({
+        id: 'asistente-fecha-cosecha-real',
+        valor: estado.fecha || '',
+        minimo: siembra,
+        maximo: fechaIso(hoy),
+        atajos: [
+          { etiqueta: 'Hoy', fecha: fechaIso(hoy) },
+          { etiqueta: 'Ayer', fecha: fechaIso(sumarDias(hoy, -1)) },
+          { etiqueta: 'Hace 2 días', fecha: fechaIso(sumarDias(hoy, -2)) },
+          { etiqueta: 'Hace una semana', fecha: fechaIso(sumarDias(hoy, -7)) },
+        ].filter((a) => !siembra || a.fecha >= siembra),
+      }),
+      recoger: (cont, estado) => { estado.fecha = cont.querySelector('#asistente-fecha-cosecha-real').value; },
+      validar: (estado) => {
+        if (!estado.fecha) return 'Elige el día en que cosechaste.';
+        if (siembra && estado.fecha < siembra) return 'La cosecha no puede ser antes de la siembra.';
+        if (estado.fecha > fechaIso(hoy)) return 'La cosecha no puede ser en el futuro.';
+        return null;
+      },
+      resumen: (estado) => ({ etiqueta: 'Cosechaste el', valor: fechaLegible(estado.fecha), icono: 'calendar' }),
+    },
+    {
+      id: 'mano-obra',
+      pregunta: '¿Cuánto pagaste por la mano de obra?',
+      ayuda: 'Lo que pagaste a quienes te ayudaron a sembrar, cuidar y cosechar, en soles. Si trabajaste solo con tu familia, deja cero.',
+      render: (estado) => campoNumeroAsistente({
+        id: 'asistente-mano-obra', etiqueta: 'Mano de obra', valor: estado.manoObra ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/',
+      }),
+      recoger: (cont, estado) => { estado.manoObra = Number(cont.querySelector('#asistente-mano-obra').value || 0); },
+      validar: (estado) => (Number.isFinite(estado.manoObra) && estado.manoObra >= 0 && estado.manoObra <= 9999999.99
+        ? null : 'El monto debe ser desde cero, sin signos.'),
+      resumen: (estado) => ({ etiqueta: 'Mano de obra', valor: formatearMoneda(estado.manoObra), icono: 'users' }),
+    },
+  ];
+}
+
+// La foto es el mismo selector de la foto de entrega del repartidor: aquí solo se guarda el archivo en el estado.
+function alCambiarAsistenteCosecha(e, estado) {
+  if (!e.target.matches('.foto-entrega-input')) return;
+  alElegirFotoEntrega(e.target);
+  const contenedor = e.target.closest('.foto-entrega');
+  estado.archivoFoto = contenedor.dataset.estado === 'lista' ? e.target.files[0] : null;
+  if (estado.archivoFoto && Voz.leerSolo) Voz.hablar('Foto lista. Toca Siguiente.');
+}
+
+function alClicAsistenteCosecha(e, estado) {
+  alClicAsistenteAgricultor(e, estado);
+  const quitar = e.target.closest('.foto-quitar');
+  if (quitar) {
+    estado.archivoFoto = null;
+    estado.fotoGuardadaUrl = null; // quitada la foto guardada, hay que tomar otra
+    quitarFotoEntrega(quitar.closest('.foto-entrega'));
     return;
   }
+  const cambiar = e.target.closest('.foto-cambiar');
+  if (cambiar) cambiar.closest('.foto-entrega').querySelector('.foto-entrega-input').click();
+}
 
-  btn.disabled = true;
-  const textoBoton = btn.innerHTML;
-  const enCurso = (texto) => { btn.innerHTML = `<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> ${texto}`; };
-  try {
-    enCurso('Tomando tu ubicación…');
-    const ubicacion = await asegurarUbicacion(form.querySelector('.evidencia-gps'));
-    // Un reintento (por ejemplo, si falló la confirmación) no vuelve a subir la misma foto.
-    if (archivo && form.dataset.fotoSubida !== firmaArchivo(archivo)) {
-      enCurso('Subiendo la foto…');
-      await Api.productores.produccion.subirFotoCosecha(registroId, archivo);
-      form.dataset.fotoSubida = firmaArchivo(archivo);
-    }
-    enCurso('Confirmando la cosecha…');
-    const datos = {
-      cantidad_cosechada: parseFloat(form.cantidad_cosechada.value),
-      fecha_cosecha_real: form.fecha_cosecha_real.value,
-      costo_mano_obra: parseFloat(form.costo_mano_obra.value) || 0,
-      ...(ubicacion ? { latitud: ubicacion.lat, longitud: ubicacion.lng } : {}),
-    };
-    await Api.productores.produccion.completarCosecha(registroId, datos);
-    toast('Cosecha completada ✅ Tu producto ya está en "Mis productos" como borrador: ponle precio y publícalo.');
-    cargarPerfil();
-  } catch (err) {
-    manejarError(err, 'completar la cosecha');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = textoBoton;
-  }
+function abrirAsistenteCosecha(registroId) {
+  const registro = (Estado.registrosProduccion || []).find((r) => String(r.id) === String(registroId));
+  if (!registro) { toast('No se encontró esa siembra. Recarga la página.', 'error'); return; }
+  Asistente.abrir({
+    titulo: `Completar cosecha · ${registro.cultivo}`,
+    icono: 'basket-check',
+    textoFinal: 'Confirmar cosecha',
+    estado: {
+      chacraId: registro.chacra_id,
+      fotoGuardadaUrl: registro.foto_cosecha_url || null,
+      cantidad: registro.cantidad_cosechada != null ? Number(registro.cantidad_cosechada) : null,
+      fecha: registro.fecha_cosecha_real ? String(registro.fecha_cosecha_real).slice(0, 10) : '',
+      manoObra: registro.costo_mano_obra != null ? Number(registro.costo_mano_obra) : 0,
+    },
+    pasos: pasosAsistenteCosecha(registro),
+    alClic: alClicAsistenteCosecha,
+    alCambiar: alCambiarAsistenteCosecha,
+    enviar: async (estado, ui) => {
+      try {
+        // Un reintento (por ejemplo, si falló la confirmación) no vuelve a subir la misma foto.
+        if (estado.archivoFoto && estado.fotoSubida !== firmaArchivo(estado.archivoFoto)) {
+          ui.progreso('Subiendo la foto…');
+          await Api.productores.produccion.subirFotoCosecha(registro.id, estado.archivoFoto);
+          estado.fotoSubida = firmaArchivo(estado.archivoFoto);
+        }
+        ui.progreso('Confirmando la cosecha…');
+        await Api.productores.produccion.completarCosecha(registro.id, {
+          cantidad_cosechada: estado.cantidad,
+          fecha_cosecha_real: estado.fecha,
+          costo_mano_obra: estado.manoObra,
+          ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng } : {}),
+        });
+      } catch (err) {
+        console.error('completar la cosecha', err);
+        ui.error(err.message || 'No se pudo completar la cosecha. Intenta de nuevo.');
+        return false;
+      }
+      toast('Cosecha completada ✅ Tu producto ya está en "Mis productos" como borrador: ponle precio y publícalo.');
+      if (Voz.leerSolo) Voz.hablar('Listo. Tu cosecha quedó registrada. Ahora ponle precio a tu producto en Mis productos.');
+      recargarVistaDelAgricultor();
+      return true;
+    },
+  });
 }
 
 function renderTarjetaProductorProducto(p, indice) {
@@ -6765,55 +6887,6 @@ function renderEvidenciaRegistro(r) {
     </div>`;
 }
 
-function renderFormCompletarCosecha(r) {
-  // Precargado con lo ya guardado (una cosecha que quedó a medio camino con el Verificador ya tiene sus datos).
-  const valorCantidad = r.cantidad_cosechada != null ? Number(r.cantidad_cosechada) : '';
-  const valorFecha = r.fecha_cosecha_real ? new Date(r.fecha_cosecha_real).toISOString().slice(0, 10) : '';
-  const valorManoObra = r.costo_mano_obra != null ? Number(r.costo_mano_obra) : 0;
-  const fotoGuardada = r.foto_cosecha_url ? normalizarUrlImagen(r.foto_cosecha_url) : null;
-  const id = r.id;
-  return `
-    <form class="form-grid form-completar-cosecha hidden" data-id="${id}" ${fotoGuardada ? 'data-foto-guardada="1"' : ''}>
-      ${renderAvisoEnLaChacra('cosecha')}
-      <div class="foto-entrega" data-estado="${fotoGuardada ? 'lista' : 'vacia'}">
-        <span class="foto-entrega-titulo" id="foto-titulo-cosecha-${id}">Foto de tu cosecha (obligatoria)</span>
-        <!-- Sin "required": la falta de foto se avisa en este mismo campo (completarCosechaRegistro). En el celular
-             "capture" abre la cámara directamente. -->
-        <input class="foto-entrega-input" id="foto-cosecha-${id}" type="file" name="foto" accept="image/jpeg,image/png,image/webp" capture="environment" aria-labelledby="foto-titulo-cosecha-${id}" aria-describedby="foto-ayuda-cosecha-${id}">
-        <label class="foto-entrega-zona" for="foto-cosecha-${id}">
-          <span class="foto-entrega-icono"><i class="ti ti-camera" aria-hidden="true"></i></span>
-          <span class="foto-entrega-texto">
-            <strong>Tomar foto de la cosecha</strong>
-            <small>En tu chacra · JPG, PNG o WEBP · máx. 5 MB</small>
-          </span>
-        </label>
-        <div class="foto-entrega-previa">
-          <img alt="Vista previa de la foto de la cosecha" ${fotoGuardada ? `src="${escapeAttr(fotoGuardada)}"` : ''}>
-          <div class="foto-entrega-datos">
-            <strong class="foto-nombre">${fotoGuardada ? 'Foto ya guardada' : ''}</strong>
-            <small class="foto-peso"></small>
-          </div>
-          <div class="foto-entrega-botones">
-            <button type="button" class="btn btn-ghost btn-sm foto-cambiar"><i class="ti ti-refresh" aria-hidden="true"></i> Cambiar</button>
-            <button type="button" class="btn btn-ghost btn-sm foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
-          </div>
-        </div>
-        <p class="foto-entrega-ayuda" id="foto-ayuda-cosecha-${id}" role="status" aria-live="polite"></p>
-      </div>
-      <label>Cantidad cosechada (${escapeAttr(r.unidad_medida)})
-        <input type="number" name="cantidad_cosechada" min="0.01" max="1000000" step="0.01" required value="${valorCantidad}">
-      </label>
-      <label>Fecha real de cosecha
-        <input type="date" name="fecha_cosecha_real" required min="${String(r.fecha_siembra || '').slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}" value="${valorFecha}">
-      </label>
-      <label>Costo de mano de obra final (S/)
-        <input type="number" name="costo_mano_obra" min="0" max="9999999.99" step="0.01" value="${valorManoObra}" required>
-      </label>
-      ${renderBloqueUbicacion(`cosecha-${id}`, 'completar la cosecha', `data-chacra-id="${escapeAttr(r.chacra_id)}"`)}
-      <button type="submit" class="btn btn-primary">Confirmar cosecha</button>
-    </form>`;
-}
-
 function renderTarjetaRegistroProduccion(r, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   const porCompletar = ESTADOS_POR_COMPLETAR.includes(r.estado);
@@ -6834,8 +6907,7 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     const aMedioCamino = r.estado !== 'planificado';
     bloqueEstado = `
       ${aMedioCamino ? '<p class="produccion-sin-calculo"><i class="ti ti-camera"></i> Esta cosecha quedó pendiente de revisión. Ya no hace falta: complétala con la foto de tu cosecha.</p>' : ''}
-      <button type="button" class="btn btn-primary btn-completar-cosecha btn-toggle-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>
-      ${renderFormCompletarCosecha(r)}`;
+      <button type="button" class="btn btn-primary btn-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>`;
   } else if (r.ingreso_estimado != null) {
     bloqueEstado = `
       <div class="perfil-datos-grid">
@@ -7789,31 +7861,9 @@ function inicializarEventos() {
       return;
     }
     if (e.target.closest('.btn-abrir-asistente-siembra')) { abrirAsistenteSiembra(); return; }
-    const btnCompletar = e.target.closest('.btn-toggle-completar-cosecha');
-    if (btnCompletar) { alternarFormCompletarCosecha(btnCompletar.dataset.id); return; }
-    const btnUbicacion = e.target.closest('.btn-gps-tomar');
-    if (btnUbicacion) { tomarUbicacion(btnUbicacion.closest('.evidencia-gps')); return; }
-    // El selector de la foto de la cosecha es el mismo de la foto de entrega del repartidor.
-    const btnQuitarFoto = e.target.closest('.foto-quitar');
-    if (btnQuitarFoto) {
-      const form = btnQuitarFoto.closest('form');
-      if (form) delete form.dataset.fotoGuardada; // quitada la foto guardada, hay que elegir otra
-      quitarFotoEntrega(btnQuitarFoto.closest('.foto-entrega'));
-      return;
-    }
-    const btnCambiarFoto = e.target.closest('.foto-cambiar');
-    if (btnCambiarFoto) { btnCambiarFoto.closest('.foto-entrega').querySelector('.foto-entrega-input').click(); return; }
-  });
-
-  // Gestión Económica: las mini-formas de "completar cosecha" (una por tarjeta) se re-renderizan en cada
-  // cargarPerfil(), así que van delegados sobre el contenedor estable — igual que los botones de arriba.
-  // La siembra se registra con el asistente paso a paso (abrirAsistenteSiembra).
-  document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
-    if (e.target.matches('.form-completar-cosecha')) { completarCosechaRegistro(e, e.target.dataset.id); return; }
-  });
-
-  document.getElementById('perfil-contenido').addEventListener('change', (e) => {
-    if (e.target.matches('.form-completar-cosecha .foto-entrega-input')) alElegirFotoEntrega(e.target);
+    // Siembra y cosecha se registran con el asistente paso a paso (ver js/asistente.js).
+    const btnCompletar = e.target.closest('.btn-completar-cosecha');
+    if (btnCompletar) { abrirAsistenteCosecha(btnCompletar.dataset.id); return; }
   });
 }
 

@@ -1512,14 +1512,14 @@ input, select { font-family: inherit; }
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
 .form-confirmar-entrega .foto-entrega-zona,
-.form-completar-cosecha .foto-entrega-zona {
+.asistente .foto-entrega-zona {
   display: flex; flex-direction: row; align-items: center; gap: 14px; min-height: 64px; padding: 12px 16px;
   border: 2px dashed #b9c8bd; border-radius: 14px; background: #fff; cursor: pointer;
   font-size: inherit; font-weight: inherit; color: inherit; flex: none;
   transition: border-color 0.2s, background-color 0.2s;
 }
 .form-confirmar-entrega .foto-entrega-zona:hover,
-.form-completar-cosecha .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
+.asistente .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
 .foto-entrega:focus-within .foto-entrega-zona { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
 .foto-entrega-icono {
   flex: none; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%;
@@ -1546,7 +1546,7 @@ input, select { font-family: inherit; }
 .foto-entrega-ayuda.ok { color: var(--color-primario); }
 .foto-entrega-ayuda.error { color: #b3401f; }
 @media (prefers-reduced-motion: reduce) {
-  .form-confirmar-entrega .foto-entrega-zona, .form-completar-cosecha .foto-entrega-zona { transition: none; }
+  .form-confirmar-entrega .foto-entrega-zona, .asistente .foto-entrega-zona { transition: none; }
 }
 
 .form-entrega-mensaje {
@@ -2227,13 +2227,6 @@ input, select { font-family: inherit; }
   margin: 0;
 }
 
-.produccion-card .form-completar-cosecha {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--borde);
-}
-/* La foto ocupa todo el ancho en la tarjeta (en "confirmar entrega" comparte fila con el código). */
-.form-completar-cosecha .foto-entrega { flex: none; }
 .produccion-card .btn-completar-cosecha { min-height: 48px; font-size: 1rem; align-self: flex-start; }
 .produccion-card .produccion-sin-calculo + .btn-completar-cosecha { margin-top: 12px; }
 
@@ -4821,6 +4814,16 @@ body.asistente-abierto { overflow: hidden; }
 .asistente .evidencia-gps-estado { font-size: 0.95rem; padding: 6px 12px; }
 .asistente .evidencia-gps-texto { font-size: 1.08rem; }
 .asistente .evidencia-gps .btn-gps-tomar { min-height: 56px; font-size: 1.05rem; padding: 10px 20px; }
+
+/* La foto de la cosecha en el asistente: una zona grande para tocar (abre la cámara en el celular). */
+.asistente .foto-entrega { flex: none; }
+.asistente .foto-entrega-zona { min-height: 120px; padding: 18px 20px; border-width: 3px; }
+.asistente .foto-entrega-icono { width: 64px; height: 64px; font-size: 2rem; }
+.asistente .foto-entrega-texto strong { font-size: 1.25rem; }
+.asistente .foto-entrega-texto small { font-size: 0.95rem; }
+.asistente .foto-entrega-previa img { width: 96px; height: 96px; }
+.asistente .foto-entrega-botones .btn { min-height: 48px; font-size: 1rem; }
+.asistente .foto-entrega-ayuda { font-size: 1rem; }
 
 /* Tarjeta que abre el asistente de siembra (en "Mis siembras"). */
 .siembra-cta { display: flex; flex-direction: column; gap: 14px; }
