@@ -458,13 +458,18 @@ def _pedir_crear_producto_desde_cosecha(payload: dict):
     )
 
 
+def _km(valor: float, formato: str) -> str:
+    """Con coma decimal, como se lee en Perú: el texto lo ve el comprador en la página del QR."""
+    return format(valor, formato).replace(".", ",")
+
+
 def _texto_ubicacion(momento: str, distancia_km) -> str:
     if distancia_km is None:
         return f"Al {momento}: sin ubicación GPS (advertencia)."
+    radio = _km(RADIO_CHACRA_KM, "g")
     if distancia_km > RADIO_CHACRA_KM:
-        return (f"Al {momento}: a {distancia_km:.2f} km de la chacra, fuera del radio de {RADIO_CHACRA_KM:g} km "
-                f"(advertencia).")
-    return f"Al {momento}: a {distancia_km:.2f} km de la chacra (dentro del radio de {RADIO_CHACRA_KM:g} km)."
+        return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la chacra, fuera del radio de {radio} km (advertencia)."
+    return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la chacra (dentro del radio de {radio} km)."
 
 
 def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: str) -> bool:

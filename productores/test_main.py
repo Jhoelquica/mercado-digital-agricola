@@ -512,8 +512,8 @@ def test_registrar_certificacion_cosecha_manda_la_evidencia_y_el_secreto(monkeyp
     assert "verificador_usuario_id" not in capturado["json"] and "datos_certificado" not in capturado["json"]
     texto = capturado["json"]["datos_cosecha"]
     assert "45.5 kg de Papa Nativa" in texto and "CH-01 (Parcela norte)" in texto and "Sol Naciente" in texto
-    assert "Al registrar la siembra: a 0.42 km de la chacra (dentro del radio de 1.5 km)." in texto
-    assert "Al completar la cosecha: a 3.10 km de la chacra, fuera del radio de 1.5 km (advertencia)." in texto
+    assert "Al registrar la siembra: a 0,42 km de la chacra (dentro del radio de 1,5 km)." in texto
+    assert "Al completar la cosecha: a 3,10 km de la chacra, fuera del radio de 1,5 km (advertencia)." in texto
     assert f"Foto de la cosecha (SHA-256 {'ab' * 32})." in texto
 
 
