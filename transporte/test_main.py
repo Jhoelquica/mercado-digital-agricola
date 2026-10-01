@@ -1134,6 +1134,7 @@ def test_las_respuestas_que_devuelven_un_envio_no_llevan_el_pin(monkeypatch):
     repartidor = _crear_repartidor_directo(usuario_id=usuario)
     propuesto = _crear_envio_directo(repartidor.id, estado="propuesto", pin_entrega="7391")
     monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    _mockear_pedidos(monkeypatch, _pedido_de(str(uuid.uuid4()), estado="confirmado"))
 
     _auth(usuario)
     propuestas = client.get("/envios/propuestas")
@@ -1146,6 +1147,49 @@ def test_las_respuestas_que_devuelven_un_envio_no_llevan_el_pin(monkeypatch):
     ubicacion = client.patch(f"/envios/{propuesto.id}/ubicacion", json={"latitud": "-13.16", "longitud": "-74.22"})
     assert ubicacion.status_code == 200, ubicacion.text
     assert "pin_entrega" not in ubicacion.json()
+
+
+# ---- un repartidor no puede aceptar un pedido sin pagar
+
+def _preparar_propuesta(monkeypatch, estado_pedido):
+    usuario = str(uuid.uuid4())
+    propuesto = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="propuesto")
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    _mockear_pedidos(monkeypatch, _pedido_de(str(uuid.uuid4()), estado=estado_pedido))
+    _auth(usuario)
+    return propuesto
+
+
+@pytest.mark.parametrize("estado_pedido", ["pendiente", "cancelado"])
+def test_no_se_acepta_la_propuesta_de_un_pedido_sin_pagar(monkeypatch, estado_pedido):
+    propuesto = _preparar_propuesta(monkeypatch, estado_pedido)
+
+    resp = client.post(f"/envios/{propuesto.id}/aceptar")
+
+    assert resp.status_code == 409, resp.text
+    assert "pago" in resp.json()["detail"]
+    assert _envio_recargado(propuesto.id).estado == "propuesto"  # no avanzó
+    main.publicar_evento.assert_not_called()
+
+
+def test_se_acepta_la_propuesta_de_un_pedido_pagado(monkeypatch):
+    propuesto = _preparar_propuesta(monkeypatch, "confirmado")
+
+    resp = client.post(f"/envios/{propuesto.id}/aceptar")
+
+    assert resp.status_code == 200, resp.text
+    assert _envio_recargado(propuesto.id).estado == "asignado"
+
+
+def test_si_pedidos_no_responde_no_se_acepta_a_ciegas(monkeypatch):
+    usuario = str(uuid.uuid4())
+    propuesto = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="propuesto")
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    _mockear_pedidos(monkeypatch, None, roto=True)
+    _auth(usuario)
+
+    assert client.post(f"/envios/{propuesto.id}/aceptar").status_code == 503
+    assert _envio_recargado(propuesto.id).estado == "propuesto"
 
 
 # ---- tope de intentos con el PIN

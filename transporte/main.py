@@ -349,6 +349,10 @@ def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dic
         raise HTTPException(status_code=403, detail="Esta propuesta no es tuya")
     if envio.estado != "propuesto":
         raise HTTPException(status_code=409, detail="Esta propuesta ya no está disponible")
+    # Un envío nuevo ya solo nace con el pago confirmado (rabbitmq_consumer.py), pero los creados antes de ese
+    # arreglo nacían con el pedido: esto evita que se acepte, se entregue y se liquide un pedido sin pagar.
+    if _pedido_interno(envio.pedido_id).get("estado") != "confirmado":
+        raise HTTPException(status_code=409, detail="El pago de este pedido todavía no está confirmado: no se puede aceptar")
 
     envio.estado = "asignado"
     db.commit()
