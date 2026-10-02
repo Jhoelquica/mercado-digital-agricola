@@ -862,3 +862,18 @@ def test_reservar_stock_traduce_los_rechazos_de_productos():
     with pytest.raises(HTTPException) as error:
         main.reservar_stock(None)  # un pago viejo sin detalle de productos: no se puede reservar
     assert error.value.status_code == 409
+
+
+# ============ GET /pagos/condiciones: lo que se le muestra al comprador y al repartidor ============
+
+def test_las_condiciones_de_pago_son_publicas_y_usan_la_misma_comision_que_las_liquidaciones():
+    resp = client.get("/pagos/condiciones")
+
+    assert resp.status_code == 200, resp.text
+    porcentaje = resp.json()["comision_plataforma_porcentaje"]
+    assert porcentaje == float(logica_liquidaciones.COMISION_PLATAFORMA_PORCENTAJE * 100) == 10.0
+    # el repartidor ve "ganas S/ 5.40" por un envío de S/ 6.00: lo mismo que se le liquida
+    from decimal import Decimal
+    bruto, comision, neto = logica_liquidaciones.calcular_comision_y_neto(Decimal("6.00"))
+    assert (comision, neto) == (Decimal("0.60"), Decimal("5.40"))
+

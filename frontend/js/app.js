@@ -2842,7 +2842,41 @@ let cotizandoEnvio = false;
 let envioCotizado = null; // costo de envío que se le mostró al comprador en el paso 2
 
 // Desglose del paso 2: lo que se ve aquí es lo que se cobra (Pagos suma subtotal + envío).
+// ---- Quién le paga al repartidor (observación de la presentación del 2026-10-01) ----
+// El envío que paga el comprador es para el repartidor que lleva el pedido, menos la comisión de la plataforma. El
+// porcentaje lo da Pagos (GET /pagos/condiciones, la misma constante con que liquida): se pide una sola vez.
+let condicionesPago = null;
+let condicionesPagoPromesa = null;
+function obtenerCondicionesPago() {
+  if (!condicionesPagoPromesa) {
+    condicionesPagoPromesa = Api.pagos.condiciones()
+      .then((c) => { condicionesPago = c; return c; })
+      .catch(() => { condicionesPagoPromesa = null; return null; }); // sin el dato, las pantallas no lo muestran
+  }
+  return condicionesPagoPromesa;
+}
+
+// Mismo redondeo que Pagos (al céntimo, mitad hacia arriba).
+function repartoDelEnvio(costoEnvio, porcentaje) {
+  const bruto = Number(costoEnvio) || 0;
+  const comision = Math.round((bruto * porcentaje / 100 + Number.EPSILON) * 100) / 100;
+  return { bruto, comision, neto: Math.round((bruto - comision) * 100) / 100 };
+}
+
+async function pintarNotaEnvioCheckout(envio) {
+  const nota = document.getElementById('checkout-envio-nota');
+  if (!nota) return;
+  const condiciones = envio > 0 ? await obtenerCondicionesPago() : null;
+  nota.classList.toggle('hidden', !condiciones);
+  if (!condiciones) return;
+  const { comision_plataforma_porcentaje: porcentaje } = condiciones;
+  const { neto } = repartoDelEnvio(envio, porcentaje);
+  nota.innerHTML = `<i class="ti ti-truck-delivery" aria-hidden="true"></i><span>El envío es para el repartidor que lleva tu pedido: `
+    + `recibe ${formatearMoneda(neto)} y Chakra Shop se queda con el ${porcentaje.toLocaleString('es-PE')}%.</span>`;
+}
+
 function pintarTotalesPaso2(subtotal, envio, distanciaKm = null) {
+  pintarNotaEnvioCheckout(envio);
   document.getElementById('checkout-subtotal-paso2').textContent = formatearMoneda(subtotal);
   document.getElementById('checkout-envio-etiqueta').textContent =
     Number.isFinite(distanciaKm) ? `Envío · ${distanciaKm.toFixed(1)} km` : 'Envío';
@@ -6077,13 +6111,19 @@ function renderMetricasPropuesta(resumen) {
     </div>`;
   const distancia = resumen.distancia_km != null ? `${numero(resumen.distancia_km)} km` : '—';
   const peso = resumen.peso_total_kg != null ? `${numero(resumen.peso_total_kg)} kg` : 'Sin dato';
-  const tarifa = resumen.costo_envio != null ? formatearMoneda(resumen.costo_envio) : '—';
+  // Lo que gana el repartidor: el envío que paga el comprador menos la comisión de la plataforma (si Pagos no
+  // respondió, se muestra la tarifa sola, como antes).
+  const porcentaje = condicionesPago?.comision_plataforma_porcentaje;
+  const reparto = resumen.costo_envio != null && porcentaje != null ? repartoDelEnvio(resumen.costo_envio, porcentaje) : null;
+  const tarifa = resumen.costo_envio != null ? formatearMoneda(reparto ? reparto.neto : resumen.costo_envio) : '—';
   return `
     <div class="propuesta-metricas" role="group" aria-label="Datos del envío">
       ${dato('route', distancia, 'Desde el almacén')}
       ${dato('weight', peso, 'Peso')}
-      ${dato('cash', tarifa, 'Tarifa')}
+      ${dato('cash', tarifa, reparto ? 'Ganas' : 'Tarifa')}
     </div>
+    ${reparto ? `<p class="propuesta-reparto"><i class="ti ti-info-circle" aria-hidden="true"></i> El comprador paga ${formatearMoneda(reparto.bruto)} de envío; `
+      + `${formatearMoneda(reparto.comision)} (${porcentaje.toLocaleString('es-PE')}%) es la comisión de Chakra Shop. Se registra a tu favor al entregar el pedido.</p>` : ''}
     ${resumen.requiere_vehiculo_grande ? '<p class="propuesta-aviso"><i class="ti ti-truck" aria-hidden="true"></i> Pedido grande: pide un vehículo con más capacidad.</p>' : ''}`;
 }
 
@@ -6201,7 +6241,8 @@ async function cargarListaEnvios(miRepartidorId) {
 
   let propuestas = [];
   try {
-    propuestas = await Api.transporte.propuestas();
+    // La comisión se pide junto con las propuestas: la tarjeta muestra cuánto gana el repartidor.
+    [propuestas] = await Promise.all([Api.transporte.propuestas(), obtenerCondicionesPago()]);
   } catch { /* si falla, seguimos mostrando al menos los envíos ya asignados */ }
   Estado.propuestasRepartidor = propuestas;
 

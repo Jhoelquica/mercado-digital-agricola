@@ -1806,6 +1806,9 @@ input, select { font-family: inherit; }
   background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.82rem; font-weight: 600;
 }
 .propuesta-actions .btn { flex: 1; padding: 12px 16px; font-size: 0.92rem; }
+/* De dónde sale lo que gana el repartidor (envío del comprador − comisión), bajo las cifras. */
+.propuesta-reparto { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 0.82rem; line-height: 1.45; color: var(--texto-suave); }
+.propuesta-reparto i { flex: none; margin-top: 2px; color: var(--acento-cosecha); }
 
 /* En el celular (375px) tres columnas dejan cifras y etiquetas partidas en varias líneas y "Aceptar envío" se corta
    dentro de su botón: los datos pasan a lista (ícono, etiqueta y cifra a la derecha) y los botones a ancho completo. */
@@ -2719,6 +2722,9 @@ input, select { font-family: inherit; }
 .checkout-resumen > h3 { margin: 0; font-size: 1.25rem; }
 .checkout-resumen-fila { display: flex; justify-content: space-between; gap: 12px; font-size: 0.98rem; color: var(--texto-suave); }
 .checkout-resumen-desglose { display: flex; flex-direction: column; gap: 10px; }
+/* Para quién es el envío (el repartidor), bajo el desglose: ícono y texto, no una cifra suelta más. */
+.checkout-envio-nota { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 0.85rem; line-height: 1.45; color: var(--texto-suave); }
+.checkout-envio-nota i { flex: none; margin-top: 2px; color: var(--acento-cosecha); font-size: 1.05rem; }
 .checkout-resumen-desglose .checkout-resumen-fila span:last-child { font-weight: 600; color: var(--texto); white-space: nowrap; }
 .checkout-resumen-nota {
   display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 14px; border-radius: 14px;

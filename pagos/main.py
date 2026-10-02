@@ -28,6 +28,7 @@ from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from rabbitmq_publisher import publicar_evento
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, pagos_sin_liquidaciones
+from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 
 logger = logging.getLogger("pagos.main")
@@ -147,6 +148,15 @@ class LiquidarRepartidor(BaseModel):
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "pagos"}
+
+# Público y antes de /pagos/{pedido_id} (si no, "condiciones" se tomaría por un id). Lo que el frontend muestra al
+# comprador y al repartidor sobre el dinero, desde la misma constante con que se calculan las liquidaciones: así la
+# pantalla no puede decir un porcentaje distinto del que se cobra. Observación de la presentación del 2026-10-01:
+# "¿quién le paga al repartidor?" — el envío que paga el comprador es para el repartidor, menos esta comisión.
+@app.get("/pagos/condiciones")
+def condiciones_de_pago():
+    return {"comision_plataforma_porcentaje": float(COMISION_PLATAFORMA_PORCENTAJE * 100)}
+
 
 @app.get("/pagos/sin-liquidaciones")
 def listar_pagos_sin_liquidaciones(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):

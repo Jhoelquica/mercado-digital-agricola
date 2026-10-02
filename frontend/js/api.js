@@ -301,6 +301,8 @@ const Api = {
   pagos: {
     procesar: (datos) => request('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
     obtener: (pedidoId) => request('pagos', `/pagos/${pedidoId}`, { auth: true }),
+    // Público: la comisión de la plataforma (y lo demás que el comprador y el repartidor ven sobre el dinero).
+    condiciones: () => request('pagos', '/pagos/condiciones'),
   },
   certificacion: {
     verificar: (productoId) => request('certificacion', `/certificacion/${productoId}/verificar`),
