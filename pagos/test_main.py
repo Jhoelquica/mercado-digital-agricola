@@ -877,3 +877,59 @@ def test_las_condiciones_de_pago_son_publicas_y_usan_la_misma_comision_que_las_l
     bruto, comision, neto = logica_liquidaciones.calcular_comision_y_neto(Decimal("6.00"))
     assert (comision, neto) == (Decimal("0.60"), Decimal("5.40"))
 
+
+# ============ Límite de Yape por operación ============
+
+def _procesar_con(pago, metodo):
+    return client.post("/pagos/procesar", json={
+        "pedido_id": str(pago.pedido_id), "token_culqi": "tkn_test", "email": "cliente@test.com", "metodo": metodo,
+    }, headers=CON_TOKEN)
+
+
+def test_yape_por_encima_del_limite_se_rechaza_sin_cobrar_ni_tocar_el_stock(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 500.01}])
+    cargo, reservar = MagicMock(), MagicMock()
+    monkeypatch.setattr(main, "crear_cargo", cargo)
+    monkeypatch.setattr(main, "reservar_stock", reservar)
+
+    resp = _procesar_con(pago, "yape")
+
+    assert resp.status_code == 422, resp.text
+    assert "hasta S/ 500.00" in resp.json()["detail"] and "500.01" in resp.json()["detail"]
+    cargo.assert_not_called()
+    reservar.assert_not_called()
+    assert _estado_del_pago(pago) == "pendiente"
+
+
+def test_yape_justo_en_el_limite_se_cobra_y_queda_guardado_el_metodo(monkeypatch):
+    producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 2, "precio_unitario": 250.0}])
+    _mockear_cargo_aprobado(monkeypatch)
+    _mockear_productos(monkeypatch, {producto: productor})
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    resp = _procesar_con(pago, "yape")
+
+    assert resp.status_code == 200, resp.text
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        assert (fila.estado, fila.metodo) == ("aprobado", "yape")
+    finally:
+        db.close()
+
+
+def test_con_tarjeta_no_hay_limite_y_un_metodo_desconocido_falla_422(monkeypatch):
+    producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 3, "precio_unitario": 400.0}])
+    _mockear_cargo_aprobado(monkeypatch)
+    _mockear_productos(monkeypatch, {producto: productor})
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+
+    assert _procesar_con(pago, "bitcoin").status_code == 422
+    assert _procesar_con(pago, "tarjeta").status_code == 200
+
+
+def test_las_condiciones_dicen_el_limite_de_yape():
+    assert client.get("/pagos/condiciones").json()["yape_maximo_por_operacion"] == 500.0
+

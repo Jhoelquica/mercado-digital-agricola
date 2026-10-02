@@ -2,6 +2,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from decimal import Decimal
+from typing import Literal
+
 from pydantic import BaseModel
 import os
 import json
@@ -135,10 +138,17 @@ def reservar_stock(items_json: str):
         raise HTTPException(status_code=409, detail=f"No se puede reintentar el pago: {detalle.rstrip('.')}. Crea un nuevo pedido.")
     raise HTTPException(status_code=503, detail="No se pudo reservar el stock de los productos")
 
+# Yape permite hasta S/ 500 por operación (y por día entre S/ 500 y S/ 2,000, según el banco del cliente). Un pago del
+# checkout es una sola operación: un total mayor no se puede pagar con Yape (observación de la presentación del
+# 2026-10-01: "¿qué pasa si no pueden pagar por Yape?" → tarjeta o transferencia bancaria).
+YAPE_MAXIMO_POR_OPERACION = Decimal("500.00")
+
+
 class ProcesarPago(BaseModel):
     pedido_id: uuid.UUID
     token_culqi: str
     email: str
+    metodo: Literal["tarjeta", "yape"] = "tarjeta"  # el que eligió en el checkout (Culqi abre solo ese)
 
 class LiquidarRepartidor(BaseModel):
     pedido_id: str
@@ -155,7 +165,10 @@ def salud():
 # "¿quién le paga al repartidor?" — el envío que paga el comprador es para el repartidor, menos esta comisión.
 @app.get("/pagos/condiciones")
 def condiciones_de_pago():
-    return {"comision_plataforma_porcentaje": float(COMISION_PLATAFORMA_PORCENTAJE * 100)}
+    return {
+        "comision_plataforma_porcentaje": float(COMISION_PLATAFORMA_PORCENTAJE * 100),
+        "yape_maximo_por_operacion": float(YAPE_MAXIMO_POR_OPERACION),
+    }
 
 
 @app.get("/pagos/sin-liquidaciones")
@@ -258,6 +271,14 @@ def procesar_pago(
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
+    # Antes de reservar stock o llamar a Culqi: un Yape por encima del límite lo rechazaría la pasarela igual.
+    if datos.metodo == "yape" and Decimal(str(pago.monto)) > YAPE_MAXIMO_POR_OPERACION:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Yape permite pagar hasta S/ {YAPE_MAXIMO_POR_OPERACION:.2f} por operación y este pedido es de "
+                   f"S/ {Decimal(str(pago.monto)):.2f}. Paga con tarjeta.",
+        )
+    pago.metodo = datos.metodo
 
     # Un pago "rechazado" ya devolvió su stock (compensar_stock). Reintentarlo vuelve a reservarlo ANTES de
     # cobrar: si ya no alcanza, 409 y no se cobra nada. Si el reintento vuelve a fallar, se libera solo lo

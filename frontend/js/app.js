@@ -2875,8 +2875,35 @@ async function pintarNotaEnvioCheckout(envio) {
     + `recibe ${formatearMoneda(neto)} y Chakra Shop se queda con el ${porcentaje.toLocaleString('es-PE')}%.</span>`;
 }
 
+// Yape permite hasta S/ 500 por operación (el límite lo da Pagos, que también lo exige): con un total mayor la
+// opción se apaga y se dice por qué y qué usar, en vez de dejar que la pasarela lo rechace después.
+async function actualizarDisponibilidadYape(total) {
+  const condiciones = await obtenerCondicionesPago();
+  const maximo = condiciones?.yape_maximo_por_operacion;
+  const radio = document.querySelector('input[name="metodo-pago"][value="yape"]');
+  const aviso = document.getElementById('metodo-pago-aviso');
+  if (!radio || !aviso) return;
+  const detalle = document.getElementById('metodo-yape-detalle');
+  if (maximo == null) { aviso.classList.add('hidden'); return; }
+  detalle.textContent = `Desde tu celular · hasta ${formatearMoneda(maximo)}`;
+  const excede = total > maximo;
+  radio.disabled = excede;
+  radio.closest('.metodo-pago-card').classList.toggle('deshabilitado', excede);
+  if (excede && radio.checked) {
+    const tarjeta = document.querySelector('input[name="metodo-pago"][value="tarjeta"]');
+    tarjeta.checked = true;
+    tarjeta.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  aviso.classList.toggle('hidden', !excede);
+  aviso.innerHTML = excede
+    ? `<i class="ti ti-info-circle" aria-hidden="true"></i><span>Yape permite pagar hasta ${formatearMoneda(maximo)} por operación `
+      + `(y por día, entre S/ 500 y S/ 2,000 según tu banco). Para este total de ${formatearMoneda(total)}, paga con tarjeta.</span>`
+    : '';
+}
+
 function pintarTotalesPaso2(subtotal, envio, distanciaKm = null) {
   pintarNotaEnvioCheckout(envio);
+  actualizarDisponibilidadYape(subtotal + envio);
   document.getElementById('checkout-subtotal-paso2').textContent = formatearMoneda(subtotal);
   document.getElementById('checkout-envio-etiqueta').textContent =
     Number.isFinite(distanciaKm) ? `Envío · ${distanciaKm.toFixed(1)} km` : 'Envío';
@@ -2997,7 +3024,7 @@ function abrirCheckoutCulqi(pedidoId, montoTotal, metodo = 'tarjeta', envio = 0)
     return;
   }
 
-  pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal, envio };
+  pagoEnCurso = { pedidoId, email: Estado.email, monto: montoTotal, envio, metodo };
   Culqi.publicKey = CULQI_PUBLIC_KEY;
   Culqi.settings({
     title: 'Chakra Shop',
@@ -3035,7 +3062,7 @@ window.culqi = function () {
 };
 
 async function procesarPagoCulqi(tokenCulqi, datosPago) {
-  const { pedidoId, email, monto, envio } = datosPago;
+  const { pedidoId, email, monto, envio, metodo } = datosPago;
   let resultado = null;
   let errorMsg = null;
   try {
@@ -3043,6 +3070,7 @@ async function procesarPagoCulqi(tokenCulqi, datosPago) {
       pedido_id: pedidoId,
       token_culqi: tokenCulqi,
       email,
+      metodo, // Pagos lo guarda y exige el límite de Yape
     });
   } catch (err) {
     errorMsg = err.message;

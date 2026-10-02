@@ -2722,6 +2722,14 @@ input, select { font-family: inherit; }
 .checkout-resumen > h3 { margin: 0; font-size: 1.25rem; }
 .checkout-resumen-fila { display: flex; justify-content: space-between; gap: 12px; font-size: 0.98rem; color: var(--texto-suave); }
 .checkout-resumen-desglose { display: flex; flex-direction: column; gap: 10px; }
+/* Yape apagado por pasar su límite: se ve atenuado y el aviso de abajo dice por qué (no solo el color). */
+.metodo-pago-card.deshabilitado { opacity: 0.5; cursor: not-allowed; filter: grayscale(0.4); }
+.metodo-pago-card.deshabilitado:hover { transform: none; box-shadow: none; }
+.metodo-pago-aviso {
+  display: flex; align-items: flex-start; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border-radius: 12px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.88rem; font-weight: 600; line-height: 1.45;
+}
+.metodo-pago-aviso i { flex: none; margin-top: 2px; font-size: 1.05rem; }
 /* Para quién es el envío (el repartidor), bajo el desglose: ícono y texto, no una cifra suelta más. */
 .checkout-envio-nota { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; font-size: 0.85rem; line-height: 1.45; color: var(--texto-suave); }
 .checkout-envio-nota i { flex: none; margin-top: 2px; color: var(--acento-cosecha); font-size: 1.05rem; }
