@@ -10,14 +10,24 @@ class Pago(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)
     monto = Column(Numeric(10, 2), nullable=False)
-    estado = Column(String, default="pendiente")  # pendiente, aprobado, rechazado
-    metodo = Column(String, default="tarjeta")     # tarjeta, yape
+    estado = Column(String, default="pendiente")  # pendiente, en_revision (transferencia), aprobado, rechazado
+    metodo = Column(String, default="tarjeta")     # tarjeta, yape, transferencia
     culqi_charge_id = Column(String, nullable=True)  # el id que devuelve Culqi
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     # JSON serializado: [{"producto_id", "cantidad", "unidad", "cantidad_base", "precio_unitario"}]. cantidad es lo
     # que compró el comprador (3 sacos) y cantidad_base lo que se descontó del stock (30 kg); los pagos creados
     # antes de que el evento trajera cantidad_base solo tienen cantidad.
     items = Column(String, nullable=True)
+    # Transferencia bancaria (la alternativa a Culqi para montos que Yape no permite): el comprador sube la constancia
+    # y el número de operación, el pago queda "en_revision" y un admin lo aprueba o lo rechaza. Columnas opcionales:
+    # en una base ya creada las agrega migraciones.py.
+    numero_operacion = Column(String, nullable=True)
+    constancia_objeto = Column(String, nullable=True)  # nombre del archivo en el bucket privado pagos-constancias
+    constancia_tipo = Column(String, nullable=True)
+    fecha_constancia = Column(DateTime, nullable=True)
+    motivo_rechazo = Column(String, nullable=True)
+    revisado_por = Column(UUID(as_uuid=True), nullable=True)  # el admin que la aprobó o rechazó
+    fecha_revision = Column(DateTime, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

@@ -409,11 +409,21 @@ services:
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
       PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${DB_USER}
+      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      # Cuenta DE EJEMPLO para la transferencia bancaria (ver k8s/pagos.yaml).
+      TRANSFERENCIA_BANCO: "BCP (cuenta de ejemplo)"
+      TRANSFERENCIA_TITULAR: "Chakra Shop S.A.C."
+      TRANSFERENCIA_CUENTA: "191-00000000-0-00"
+      TRANSFERENCIA_CCI: "002-191-000000000000-00"
     depends_on:
       db-pagos:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      minio:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8007/salud', timeout=3)"]
       interval: 10s

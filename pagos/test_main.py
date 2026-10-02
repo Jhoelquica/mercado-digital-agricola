@@ -933,3 +933,174 @@ def test_con_tarjeta_no_hay_limite_y_un_metodo_desconocido_falla_422(monkeypatch
 def test_las_condiciones_dicen_el_limite_de_yape():
     assert client.get("/pagos/condiciones").json()["yape_maximo_por_operacion"] == 500.0
 
+
+# ============ Transferencia bancaria: el comprador sube la constancia y un admin la revisa ============
+
+JPEG_CONSTANCIA = b"\xff\xd8\xff\xe0" + b"constancia de transferencia" * 8
+CUENTA_DE_EJEMPLO = {"banco": "Banco de ejemplo", "titular": "Chakra Shop S.A.C.", "cuenta": "000-0000000-0-00", "cci": "000-000-000000000000-00"}
+
+
+@pytest.fixture
+def transferencia(monkeypatch):
+    """Cuenta configurada, MinIO simulado (guarda en un dict) y los eventos/stock/liquidaciones capturados."""
+    monkeypatch.setattr(main, "TRANSFERENCIA_DATOS", dict(CUENTA_DE_EJEMPLO))
+    guardadas = {}
+
+    def _subir(datos, tipo):
+        nombre = f"{uuid.uuid4()}.jpg"
+        guardadas[nombre] = datos
+        return nombre
+
+    monkeypatch.setattr(main, "subir_constancia", _subir)
+    monkeypatch.setattr(main, "leer_constancia", lambda nombre: guardadas[nombre])
+    eventos, reservar, compensar = [], MagicMock(), MagicMock()
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    monkeypatch.setattr(main, "reservar_stock", reservar)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    return {"guardadas": guardadas, "eventos": eventos, "reservar": reservar, "compensar": compensar}
+
+
+def _enviar_constancia(pago, numero="OP123456", datos=JPEG_CONSTANCIA, tipo="image/jpeg"):
+    return client.post(
+        "/pagos/transferencia",
+        data={"pedido_id": str(pago.pedido_id), "numero_operacion": numero},
+        files={"archivo": ("constancia.jpg", datos, tipo)},
+        headers=CON_TOKEN,
+    )
+
+
+def _sesion_con_rol(rol):
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": rol}
+
+
+def _fila_pago(pago):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+    finally:
+        db.close()
+
+
+def test_la_transferencia_va_a_revision_y_el_admin_la_aprueba_como_un_pago_de_culqi(transferencia, monkeypatch):
+    producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 4, "precio_unitario": 200.0}])  # S/ 800: más que Yape
+    _mockear_productos(monkeypatch, {producto: productor})
+
+    enviada = _enviar_constancia(pago, numero=" OP-778899 ")
+
+    assert enviada.status_code == 200, enviada.text
+    fila = _fila_pago(pago)
+    assert (fila.estado, fila.metodo, fila.numero_operacion) == ("en_revision", "transferencia", "OP-778899")
+    assert transferencia["guardadas"][fila.constancia_objeto] == JPEG_CONSTANCIA
+    assert transferencia["eventos"] == []  # todavía no se confirma nada
+
+    _sesion_con_rol("admin")
+    try:
+        lista = client.get("/pagos/admin/transferencias").json()
+        constancia = client.get(f"/pagos/admin/transferencias/{pago.pedido_id}/constancia")
+        aprobada = client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/aprobar")
+        otra_vez = client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/aprobar")
+    finally:
+        _sesion_con_rol("comprador")
+
+    item = next(t for t in lista if t["pedido_id"] == str(pago.pedido_id))
+    assert (item["monto"], item["numero_operacion"]) == (800.0, "OP-778899")
+    assert constancia.status_code == 200 and constancia.content == JPEG_CONSTANCIA
+    assert constancia.headers["content-type"] == "image/jpeg" and constancia.headers["cache-control"] == "no-store"
+    assert aprobada.status_code == 200, aprobada.text
+    assert _fila_pago(pago).estado == "aprobado" and _fila_pago(pago).revisado_por is not None
+    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id)}]
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+    assert otra_vez.status_code == 409  # dos admins a la vez: el segundo ve que ya no está en revisión
+    transferencia["compensar"].assert_not_called()
+
+
+def test_rechazada_devuelve_el_stock_deja_el_motivo_y_el_comprador_puede_volver_a_enviarla(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 900.0}])
+    assert _enviar_constancia(pago).status_code == 200
+
+    _sesion_con_rol("admin")
+    try:
+        sin_motivo = client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/rechazar", json={"motivo": "  "})
+        rechazada = client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/rechazar",
+                                json={"motivo": "El monto transferido no coincide con el total"})
+    finally:
+        _sesion_con_rol("comprador")
+
+    assert sin_motivo.status_code == 422
+    assert rechazada.status_code == 200, rechazada.text
+    fila = _fila_pago(pago)
+    assert (fila.estado, fila.motivo_rechazo) == ("rechazado", "El monto transferido no coincide con el total")
+    transferencia["compensar"].assert_called_once_with(fila.items)
+    assert transferencia["eventos"] == [{"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id)}]
+
+    # el comprador corrige y vuelve a enviar: se reserva otra vez el stock y vuelve a revisión, sin el motivo viejo
+    otra = _enviar_constancia(pago, numero="OP999000", datos=JPEG_CONSTANCIA + b"nueva")
+    assert otra.status_code == 200, otra.text
+    transferencia["reservar"].assert_called_once_with(fila.items)
+    fila = _fila_pago(pago)
+    assert (fila.estado, fila.numero_operacion, fila.motivo_rechazo) == ("en_revision", "OP999000", None)
+
+
+def test_una_constancia_mal_formada_o_repetida_no_se_acepta(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+
+    assert _enviar_constancia(pago, numero="12").status_code == 422          # muy corto
+    assert _enviar_constancia(pago, numero="OP 12 34").status_code == 422    # con espacios
+    assert _enviar_constancia(pago, tipo="application/pdf").status_code == 422
+    assert _enviar_constancia(pago, datos=b"<html>no soy una foto</html>").status_code == 422
+    assert _fila_pago(pago).estado == "pendiente"
+
+    assert _enviar_constancia(pago).status_code == 200
+    repetida = _enviar_constancia(pago, numero="OP000111")
+    assert repetida.status_code == 409 and "revisión" in repetida.json()["detail"]
+    # mientras está en revisión tampoco se puede pagar con tarjeta (se cobraría dos veces)
+    assert _procesar(pago).status_code == 409
+
+
+def test_un_pedido_pagado_no_acepta_constancia_y_sin_cuenta_configurada_no_se_ofrece(transferencia, monkeypatch):
+    pagado = _crear_pago_con_estado("aprobado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    assert _enviar_constancia(pagado).status_code == 409
+
+    monkeypatch.setattr(main, "TRANSFERENCIA_DATOS", {"banco": "X", "titular": None, "cuenta": None, "cci": None})
+    pendiente = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    assert _enviar_constancia(pendiente).status_code == 503
+    assert client.get("/pagos/condiciones").json()["transferencia"] is None
+
+
+def test_las_condiciones_traen_la_cuenta_para_transferir(transferencia):
+    assert client.get("/pagos/condiciones").json()["transferencia"] == CUENTA_DE_EJEMPLO
+
+
+def test_si_no_se_puede_guardar_la_constancia_responde_502_y_un_reintento_libera_lo_reservado(transferencia, monkeypatch):
+    pago = _crear_pago_con_estado("rechazado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    monkeypatch.setattr(main, "subir_constancia", MagicMock(side_effect=Exception("MinIO caído")))
+
+    resp = _enviar_constancia(pago)
+
+    assert resp.status_code == 502
+    transferencia["reservar"].assert_called_once()
+    transferencia["compensar"].assert_called_once()  # lo reservado para este intento se devuelve
+    assert _fila_pago(pago).estado == "rechazado"
+
+
+def test_solo_un_admin_revisa_transferencias(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    assert _enviar_constancia(pago).status_code == 200
+    for rol in ("comprador", "productor", "repartidor"):
+        _sesion_con_rol(rol)
+        try:
+            assert client.get("/pagos/admin/transferencias").status_code == 403, rol
+            assert client.get(f"/pagos/admin/transferencias/{pago.pedido_id}/constancia").status_code == 403, rol
+            assert client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/aprobar").status_code == 403, rol
+            assert client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/rechazar", json={"motivo": "no"}).status_code == 403, rol
+        finally:
+            _sesion_con_rol("comprador")
+    assert _fila_pago(pago).estado == "en_revision"
+
+
+def test_una_constancia_de_mas_de_5_mb_falla_413(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    resp = _enviar_constancia(pago, datos=b"\xff\xd8\xff" + b"0" * (5 * 1024 * 1024))
+    assert resp.status_code == 413
+    assert _fila_pago(pago).estado == "pendiente"
