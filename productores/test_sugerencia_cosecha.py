@@ -132,7 +132,7 @@ def test_con_ia_las_fechas_salen_de_los_dias_de_claude_y_solo_viaja_la_zona(monk
     assert cuerpo["explicacion"] == "Depende de las lluvias."
 
     [llamada] = falso.llamadas
-    assert llamada["model"] == "claude-opus-5-5"
+    assert llamada["model"] == "claude-sonnet-5-5"
     assert llamada["fallbacks"] == "default" and llamada["betas"] == ["server-side-fallback-2026-07-01"]
     assert llamada["output_config"]["format"]["type"] == "json_schema"
     pregunta = llamada["messages"][0]["content"]

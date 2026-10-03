@@ -21,7 +21,9 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-MODELO = "claude-opus-5-5"
+# Sonnet 5.5 y no Opus: para estimar un ciclo de cultivo alcanza, y cuesta la mitad (US$ 2 / 10 por millón de tokens de
+# entrada / salida). Con esfuerzo bajo casi no "piensa" antes de responder, así que cada consulta sale muy barata.
+MODELO = "claude-sonnet-5-5"
 # Si Claude se niega por sus políticas, la API reintenta sola con el modelo de respaldo que Anthropic recomienda.
 BETA_RESPALDO = "server-side-fallback-2026-07-01"
 TIEMPO_MAXIMO_SEGUNDOS = 20  # el agricultor está esperando en el asistente: pasado esto, la tabla
