@@ -107,6 +107,14 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD
+            # Sugerencia de la fecha de cosecha con IA (sugerencia_cosecha.py). OPCIONAL: si el Secret no tiene esta
+            # clave, el pod arranca igual y la sugerencia sale de la tabla de ciclos típicos de los cultivos.
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: ANTHROPIC_API_KEY
+                  optional: true
 ---
 apiVersion: v1
 kind: Service

@@ -26,6 +26,7 @@ from validaciones import (
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from migraciones import agregar_columnas_faltantes
+import sugerencia_cosecha
 
 from database import Base, engine, SessionLocal
 import models
@@ -185,6 +186,12 @@ class RegistroProduccionCrear(_ConUbicacionGps):
     equivalencia_kg: Equivalencia | None = None
     fecha_siembra: Fecha
     fecha_cosecha_estimada: Fecha
+
+class SugerirCosechaDatos(BaseModel):
+    chacra_id: uuid.UUID
+    cultivo: Cultivo
+    fecha_siembra: Fecha
+
 
 class CompletarCosechaDatos(_ConUbicacionGps):
     cantidad_cosechada: Cantidad
@@ -621,6 +628,14 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
     }
 
 
+def _validar_fecha_siembra(fecha_siembra: datetime):
+    if fecha_siembra < FECHA_SIEMBRA_MINIMA or fecha_siembra > datetime.utcnow() + timedelta(days=SIEMBRA_FUTURA_MAXIMA_DIAS):
+        raise HTTPException(
+            status_code=422,
+            detail="La fecha de siembra no es válida: debe ser posterior al año 2000 y no pasar de dos años a partir de hoy",
+        )
+
+
 @app.post("/productores/produccion")
 def crear_registro_produccion(
     datos: RegistroProduccionCrear,
@@ -639,12 +654,7 @@ def crear_registro_produccion(
         raise HTTPException(status_code=422, detail="El número de parcelas debe ser mayor a 0")
     if datos.fecha_cosecha_estimada < datos.fecha_siembra:
         raise HTTPException(status_code=422, detail="La fecha de cosecha estimada no puede ser anterior a la de siembra")
-    ahora = datetime.utcnow()
-    if datos.fecha_siembra < FECHA_SIEMBRA_MINIMA or datos.fecha_siembra > ahora + timedelta(days=SIEMBRA_FUTURA_MAXIMA_DIAS):
-        raise HTTPException(
-            status_code=422,
-            detail="La fecha de siembra no es válida: debe ser posterior al año 2000 y no pasar de dos años a partir de hoy",
-        )
+    _validar_fecha_siembra(datos.fecha_siembra)
     if datos.fecha_cosecha_estimada > datos.fecha_siembra + timedelta(days=CICLO_MAXIMO_DIAS):
         raise HTTPException(status_code=422, detail="La fecha de cosecha estimada no puede pasar de cinco años desde la siembra")
     if datos.unidad_medida not in UNIDADES_COSECHA_VALIDAS:
@@ -697,6 +707,25 @@ def listar_mi_produccion(
     # un registro con el mismo cultivo.
     cache_precios = {}
     return [_serializar_registro(r, cache_precios, db) for r in registros]
+
+
+@app.post("/productores/produccion/sugerir-cosecha")
+def sugerir_fecha_de_cosecha(
+    datos: SugerirCosechaDatos,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """Cuándo se podría cosechar lo que se está por registrar (paso "¿Cuándo crees que vas a cosechar?" del asistente
+    de siembra). Es solo una sugerencia: el agricultor decide la fecha. Ver sugerencia_cosecha.py."""
+    productor = _obtener_productor_del_token(usuario, db)
+    chacra = _obtener_chacra_propia(str(datos.chacra_id), productor, db)
+    _validar_fecha_siembra(datos.fecha_siembra)
+    sugerencia = sugerencia_cosecha.sugerir(
+        datos.cultivo, datos.fecha_siembra, chacra.ubicacion_latitud, chacra.ubicacion_longitud, str(productor.id),
+    )
+    if sugerencia is None:
+        raise HTTPException(status_code=404, detail="No conocemos cuánto tarda ese cultivo: elige tú la fecha.")
+    return sugerencia
 
 
 # "planificado": la primera vez. "pendiente_verificacion" y "rechazado" son de antes de retirar al Verificador (ver
