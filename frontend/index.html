@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=bca34473">
+<link rel="stylesheet" href="css/style.css?v=89fa42ff">
 </head>
 <body>
 
@@ -867,6 +867,37 @@
             </label>
           </div>
         </fieldset>
+        <!-- Solo para compradores (observación de la presentación del 2026-10-01): persona o negocio. Ver
+             sincronizarTipoComprador en app.js. -->
+        <fieldset class="auth-roles auth-tipo-comprador" id="registro-tipo-comprador">
+          <legend>¿Para qué vas a comprar?</legend>
+          <div class="auth-roles-grid">
+            <label class="auth-rol">
+              <input type="radio" name="registro-tipo-comprador" value="persona" checked>
+              <span class="auth-rol-caja"><i class="ti ti-home" aria-hidden="true"></i><strong>Para mi casa</strong><small>Compro por kilos</small></span>
+            </label>
+            <label class="auth-rol">
+              <input type="radio" name="registro-tipo-comprador" value="negocio">
+              <span class="auth-rol-caja"><i class="ti ti-building-store" aria-hidden="true"></i><strong>Para mi negocio</strong><small>Restaurante, bodega o puesto: compro por sacos</small></span>
+            </label>
+          </div>
+          <div class="auth-datos-negocio hidden" id="registro-datos-negocio">
+            <div class="auth-grupo">
+              <label for="registro-nombre-comercial">Nombre del negocio <span class="auth-opcional">(opcional)</span></label>
+              <div class="auth-campo">
+                <i class="ti ti-building-store" aria-hidden="true"></i>
+                <input type="text" id="registro-nombre-comercial" maxlength="120" placeholder="Ej. Restaurante El Ayacuchano" autocomplete="organization">
+              </div>
+            </div>
+            <div class="auth-grupo">
+              <label for="registro-ruc">RUC <span class="auth-opcional">(opcional)</span></label>
+              <div class="auth-campo">
+                <i class="ti ti-id" aria-hidden="true"></i>
+                <input type="text" id="registro-ruc" inputmode="numeric" maxlength="11" placeholder="11 dígitos, empieza con 10 o 20" autocomplete="off">
+              </div>
+            </div>
+          </div>
+        </fieldset>
         <select id="registro-rol" hidden>
           <option value="comprador">Comprador (restaurante, mercado, persona)</option>
           <option value="productor">Productor (agricultor)</option>
@@ -1011,6 +1042,7 @@
               <div class="checkout-resumen-fila"><span>Subtotal</span><span id="checkout-subtotal-paso2">S/ 0.00</span></div>
               <div class="checkout-resumen-fila"><span id="checkout-envio-etiqueta">Envío</span><span id="checkout-envio-paso2">S/ 0.00</span></div>
             </div>
+            <div class="checkout-tipo-compra hidden" id="checkout-tipo-compra" role="status"></div>
             <p class="checkout-envio-nota hidden" id="checkout-envio-nota"></p>
             <div class="carrito-total">
               <span>Total a pagar</span>
@@ -1082,8 +1114,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=5663e746"></script>
+<script src="js/api.js?v=2ce80c3a"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=2c660795"></script>
+<script src="js/app.js?v=15516dd3"></script>
 </body>
 </html>

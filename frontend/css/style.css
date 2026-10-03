@@ -4949,3 +4949,67 @@ body.asistente-abierto { overflow: hidden; }
   .sugerencia-cosecha { transition: none; }
   .sugerencia-cosecha-esqueleto span { animation: none; }
 }
+
+/* ===== Compras por mayor y por menor (observación de la presentación del 2026-10-01) =====
+   Criterios de ui-ux-pro-max: opciones como tarjetas grandes para tocar (>= 44px) en vez de un <select>, campos opcionales
+   rotulados "(opcional)" y mostrados solo cuando hacen falta (divulgación progresiva), y el estado de la compra dicho con
+   texto e ícono, no solo con color. De 21st.dev ("Pricing Tiers List"): las unidades como filas apiladas con precio,
+   insignia y detalle. */
+.auth-opcional { font-weight: 500; color: var(--texto-suave); }
+.auth-tipo-comprador { margin-top: 4px; }
+.auth-datos-negocio { display: grid; gap: 12px; margin-top: 12px; }
+
+.detalle-unidades { border: none; margin: 0 0 16px; padding: 0; min-width: 0; display: grid; gap: 10px; }
+.detalle-unidades legend { padding: 0; margin-bottom: 10px; font-size: 1rem; font-weight: 700; color: var(--texto); }
+.detalle-unidad { position: relative; display: block; cursor: pointer; }
+.detalle-unidad input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.detalle-unidad-caja {
+  display: grid; gap: 4px; padding: 14px 16px; border-radius: 14px; border: 2px solid #d6ddd0; background: #fff;
+  transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+}
+.detalle-unidad:hover .detalle-unidad-caja { border-color: var(--color-borde); }
+.detalle-unidad input:checked + .detalle-unidad-caja { border-color: var(--color-primario); background: var(--verde-fondo); box-shadow: inset 0 0 0 1px var(--color-primario); }
+.detalle-unidad input:focus-visible + .detalle-unidad-caja { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.detalle-unidad.sin-stock { cursor: not-allowed; }
+.detalle-unidad.sin-stock .detalle-unidad-caja { opacity: 0.55; background: var(--color-superficie); }
+.detalle-unidad-fila { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.detalle-unidad-nombre { font-size: 1.02rem; color: var(--texto); }
+.detalle-unidad-insignia {
+  padding: 3px 10px; border-radius: 999px; font-size: 0.78rem; font-weight: 800; white-space: nowrap;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); border: 1px solid #e2c27a;
+}
+.detalle-unidad-insignia.por-menor { background: var(--color-superficie); color: var(--texto-suave); border-color: transparent; }
+.detalle-unidad-precio { font-size: 1.15rem; font-weight: 800; color: var(--color-primario); }
+.detalle-unidad-detalle { font-size: 0.86rem; color: var(--texto-suave); }
+.detalle-unidad-ahorro { color: #1f6f43; }
+
+.product-por-mayor {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; margin-top: 2px; padding: 3px 10px;
+  border-radius: 999px; font-size: 0.78rem; font-weight: 700; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto);
+}
+.product-por-mayor strong { color: #1f6f43; }
+
+.checkout-tipo-compra {
+  display: flex; align-items: flex-start; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 14px;
+  background: var(--color-superficie); color: var(--texto); font-size: 0.88rem; line-height: 1.45;
+}
+.checkout-tipo-compra > i { flex: none; margin-top: 1px; font-size: 1.35rem; color: var(--color-primario); }
+.checkout-tipo-compra strong { display: block; margin-bottom: 2px; font-size: 0.95rem; color: var(--color-primario); }
+.checkout-tipo-compra span { color: var(--texto-suave); }
+.checkout-tipo-compra.es-por-mayor { background: var(--acento-cosecha-suave); border: 1px solid #e2c27a; }
+.checkout-tipo-compra.es-por-mayor > i, .checkout-tipo-compra.es-por-mayor strong { color: var(--acento-cosecha-texto); }
+
+.mp-chip-por-mayor { background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); }
+.mp-cobro-nota { display: block; font-size: 0.78rem; font-weight: 500; color: var(--texto-suave); }
+
+.perfil-como-compras form { display: grid; gap: 16px; }
+.perfil-como-compras .btn { justify-self: start; min-height: 48px; }
+.perfil-datos-negocio { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.perfil-campo { display: grid; gap: 6px; font-size: 0.92rem; font-weight: 700; color: var(--texto); }
+.perfil-campo input { padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--color-borde); font-size: 1rem; font-family: inherit; }
+.perfil-campo input:focus { outline: none; border-color: var(--color-primario); box-shadow: 0 0 0 3px rgba(45, 59, 42, 0.15); }
+.perfil-form-error { margin: 0; padding: 10px 14px; border-radius: 12px; background: #fdecec; color: #9b1c1c; font-size: 0.9rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .detalle-unidad-caja { transition: none; }
+}

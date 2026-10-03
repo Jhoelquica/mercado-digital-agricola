@@ -5,6 +5,7 @@ const Estado = {
   nombre: null,
   email: null,
   rol: null,
+  tipoComprador: null, // "persona" | "negocio" (solo compradores): al negocio se le muestra primero el precio por mayor
   productos: [],
   carrito: [],        // {producto_id, nombre, precio, cantidad, stockDisponible}
   productorId: null,
@@ -592,6 +593,38 @@ function stockEnUnidad(producto, unidad) {
   return Math.floor(producto.stock / Number(alt.factor_a_base));
 }
 
+// ---- Precio por mayor (observación de la presentación del 2026-10-01) ----
+// El productor pone el precio del saco o la arroba (unidad alternativa); aquí se muestra como "precio por mayor" con lo
+// que cuesta cada kg (o la unidad base) y cuánto se ahorra frente a comprar suelto. Si el saco no sale más barato, igual
+// es la compra por mayor, pero sin "ahorras".
+function precioPorMayor(producto, alt) {
+  const factor = Number(alt.factor_a_base) || 1;
+  const porBase = Number(alt.precio) / factor;
+  const base = Number(producto.precio) || 0;
+  const ahorro = base > 0 ? Math.round((1 - porBase / base) * 100) : 0;
+  return { porBase, ahorro: ahorro >= 1 ? ahorro : 0, factor };
+}
+
+// Solo las unidades de empaque (saco, arroba) son compra por mayor: una unidad chica alternativa (p. ej. "unidad" de
+// 0,5 kg) es otra forma de comprar por menor.
+function esUnidadPorMayor(alt) {
+  return !infoUnidad(alt.unidad).esBase;
+}
+
+// La unidad por mayor más conveniente que tenga stock (la de menor precio por kg), o null.
+function mejorUnidadPorMayor(producto) {
+  return (producto.unidades_alternativas || [])
+    .filter((alt) => esUnidadPorMayor(alt) && stockEnUnidad(producto, alt.unidad) > 0)
+    .map((alt) => ({ alt, ...precioPorMayor(producto, alt) }))
+    .sort((a, b) => a.porBase - b.porBase)[0] || null;
+}
+
+function nombreUnidadPorMayor(producto, alt) {
+  const factor = Number(alt.factor_a_base) || 1;
+  const cantidad = Number.isInteger(factor) ? factor : String(factor).replace('.', ',');
+  return `${infoUnidad(alt.unidad).label} de ${cantidad} ${unidadPlural(producto.unidad_medida, factor)}`;
+}
+
 function renderEstrellas(promedio) {
   // Un solo ícono (ti-star): "llena" vs "vacía" se distingue por color (ver .estrella-llena en
   // CSS), no por cambiar de ícono — el set outline de Tabler no trae una variante rellena sin
@@ -805,6 +838,7 @@ function guardarSesion() {
     nombre: Estado.nombre,
     email: Estado.email,
     rol: Estado.rol,
+    tipoComprador: Estado.tipoComprador,
   }));
 }
 
@@ -848,6 +882,7 @@ function manejarSesionExpirada(tokenUsado) {
   Estado.nombre = null;
   Estado.email = null;
   Estado.rol = null;
+  Estado.tipoComprador = null;
   Estado.productorId = null;
   Estado.repartidorId = null;
   localStorage.removeItem(SESSION_KEY);
@@ -866,6 +901,7 @@ function cerrarSesion() {
   Estado.nombre = null;
   Estado.email = null;
   Estado.rol = null;
+  Estado.tipoComprador = null;
   Estado.productorId = null;
   Estado.carrito = [];
   localStorage.removeItem(SESSION_KEY);
@@ -912,6 +948,7 @@ async function iniciarSesionConToken(token) {
     const usuario = await Api.usuarios.obtener(payload.sub);
     Estado.nombre = usuario.nombre;
     Estado.email = usuario.email;
+    Estado.tipoComprador = usuario.tipo_comprador || null;
   } catch {
     Estado.nombre = Estado.nombre || 'Usuario';
   }
@@ -1045,7 +1082,38 @@ function abrirRegistroConRol(rol) {
 function sincronizarTarjetasRol() {
   const rol = document.getElementById('registro-rol').value;
   document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => { radio.checked = radio.value === rol; });
+  sincronizarTipoComprador();
 }
+
+// ---- Persona o negocio (observación de la presentación del 2026-10-01) ----
+// Solo se pregunta a un comprador; el nombre del negocio y el RUC (opcionales) solo aparecen si compra para un negocio.
+function tipoCompradorElegido() {
+  return document.querySelector('input[name="registro-tipo-comprador"]:checked')?.value || 'persona';
+}
+
+function sincronizarTipoComprador() {
+  const esComprador = document.getElementById('registro-rol').value === 'comprador';
+  document.getElementById('registro-tipo-comprador')?.classList.toggle('hidden', !esComprador);
+  document.getElementById('registro-datos-negocio')?.classList.toggle('hidden', !esComprador || tipoCompradorElegido() !== 'negocio');
+}
+
+// Mismo criterio que Usuarios (ruc_valido): 11 dígitos, empieza con 10, 15, 17 o 20 y el último es el dígito
+// verificador de SUNAT. Aquí solo para avisar antes de enviar; el servidor lo vuelve a revisar.
+function rucValido(ruc) {
+  if (!/^(10|15|17|20)\d{9}$/.test(ruc)) return false;
+  const pesos = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+  const resto = 11 - (pesos.reduce((acc, p, i) => acc + p * Number(ruc[i]), 0) % 11);
+  return Number(ruc[10]) === ({ 10: 0, 11: 1 }[resto] ?? resto);
+}
+
+// Los datos de persona/negocio que se mandan al registrarse (o al guardar el perfil). null si hay un error que mostrar.
+function datosDeComprador(tipo, nombreComercial, ruc) {
+  if (tipo !== 'negocio') return { tipo_comprador: 'persona' };
+  const rucLimpio = ruc.replace(/\s+/g, '');
+  if (rucLimpio && !rucValido(rucLimpio)) return null;
+  return { tipo_comprador: 'negocio', nombre_comercial: nombreComercial.trim() || null, ruc: rucLimpio || null };
+}
+const MENSAJE_RUC_INVALIDO = 'El RUC no es válido: son 11 dígitos y empieza con 10 o 20. Revisa que esté bien escrito, o déjalo vacío.';
 
 // ============ MODALES ============
 let focoPrevioModalAuth = null; // quién tenía el foco antes de abrir el modal de acceso: se lo devolvemos al cerrarlo
@@ -1599,6 +1667,7 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
         <h4>${escapeAttr(p.nombre)}</h4>
         <span class="product-productor"><i class="ti ti-plant-2"></i> ${escapeAttr(p.productor_nombre || 'Productor local')}</span>
         <span class="product-price">${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadCorta(p.unidad_medida)}</span></span>
+        ${renderChipPorMayor(p)}
         <span class="product-stock ${stockBajo ? 'low' : ''}">${p.stock > 0 ? `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles` : 'Sin stock'}</span>
         ${clickable ? `
         <button class="btn btn-primary btn-agregar" data-id="${p.id}" ${p.stock <= 0 ? 'disabled' : ''}>
@@ -1608,6 +1677,13 @@ function renderTarjetaProductoCatalogo(p, { clickable = true, indice = 0 } = {})
     </div>`;
 }
 
+
+function renderChipPorMayor(p) {
+  const mejor = mejorUnidadPorMayor(p);
+  if (!mejor) return '';
+  return `<span class="product-por-mayor"><i class="ti ti-packages" aria-hidden="true"></i>
+    Por mayor: ${formatearMoneda(mejor.porBase)} / ${unidadCorta(p.unidad_medida)}${mejor.ahorro ? ` <strong>−${mejor.ahorro}%</strong>` : ''}</span>`;
+}
 
 function renderBloqueProductor(p, productor) {
   const nombre = productor?.nombre || p.productor_nombre || 'Productor local';
@@ -1985,11 +2061,37 @@ function inicializarBannerCinematico() {
 // usan los <select> de unidad en Registrar-siembra / gestión de unidades del productor
 // (infoUnidad(...).label) — así el comprador ve el mismo vocabulario en todo el sitio. value=""
 // para la base (select.value || null da directamente lo que espera unidadSeleccionada).
-function opcionesUnidadCompraHtml(p) {
-  const base = `<option value="">${escapeAttr(infoUnidad(p.unidad_medida).label)} — ${formatearMoneda(p.precio)}</option>`;
-  const alternativas = (p.unidades_alternativas || [])
-    .map((u) => `<option value="${escapeAttr(u.unidad)}">${escapeAttr(infoUnidad(u.unidad).label)} — ${formatearMoneda(u.precio)}</option>`)
-    .join('');
+// Antes era un <select>; ahora tarjetas grandes para tocar, una por unidad: la suelta ("por menor") y cada saco o arroba
+// como "precio por mayor" con su precio por kg y el ahorro. value="" = unidad base (unidadSeleccionada = null).
+function opcionesUnidadCompraHtml(p, seleccion = null) {
+  const opcion = ({ valor, nombre, precio, detalle, porMayor, ahorro, sinStock }) => `
+    <label class="detalle-unidad ${sinStock ? 'sin-stock' : ''}">
+      <input type="radio" name="detalle-unidad" value="${escapeAttr(valor)}" ${(seleccion || '') === valor ? 'checked' : ''} ${sinStock ? 'disabled' : ''}>
+      <span class="detalle-unidad-caja">
+        <span class="detalle-unidad-fila">
+          <strong class="detalle-unidad-nombre">${escapeAttr(nombre)}</strong>
+          ${porMayor ? '<span class="detalle-unidad-insignia">Precio por mayor</span>' : '<span class="detalle-unidad-insignia por-menor">Por menor</span>'}
+        </span>
+        <span class="detalle-unidad-precio">${precio}</span>
+        <small class="detalle-unidad-detalle">${detalle}${ahorro ? ` · <strong class="detalle-unidad-ahorro">Ahorras ${ahorro}%</strong>` : ''}</small>
+      </span>
+    </label>`;
+  const unidadBase = unidadCorta(p.unidad_medida);
+  const base = opcion({
+    valor: '', nombre: `Por ${infoUnidad(p.unidad_medida).singular}`, porMayor: false,
+    precio: `${formatearMoneda(p.precio)} <span class="price-unit">/ ${unidadBase}</span>`,
+    detalle: 'Lo que necesites, para tu casa',
+  });
+  const alternativas = (p.unidades_alternativas || []).map((alt) => {
+    const { porBase, ahorro } = precioPorMayor(p, alt);
+    const sinStock = stockEnUnidad(p, alt.unidad) <= 0;
+    const porMayor = esUnidadPorMayor(alt);
+    return opcion({
+      valor: alt.unidad, nombre: nombreUnidadPorMayor(p, alt), porMayor, ahorro: sinStock || !porMayor ? 0 : ahorro, sinStock,
+      precio: `${formatearMoneda(alt.precio)} <span class="price-unit">/ ${unidadCorta(alt.unidad)}</span>`,
+      detalle: sinStock ? 'Sin stock suficiente para uno completo' : `Sale a ${formatearMoneda(porBase)} el ${unidadBase}`,
+    });
+  }).join('');
   return base + alternativas;
 }
 
@@ -2019,9 +2121,10 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
       </div>
 
       ${!sinStock && tieneAlternativas ? `
-      <label class="detalle-unidad-label">Unidad de compra
-        <select id="detalle-unidad-selector">${opcionesUnidadCompraHtml(p)}</select>
-      </label>` : ''}
+      <fieldset class="detalle-unidades" id="detalle-unidad-selector">
+        <legend>¿Cómo lo quieres?</legend>
+        ${opcionesUnidadCompraHtml(p, unidadInicialDetalle(p))}
+      </fieldset>` : ''}
 
       <div class="detalle-accion-principal">
         ${!sinStock ? `
@@ -2057,6 +2160,12 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
         <i class="ti ti-arrow-right" aria-hidden="true"></i>
       </button>
     </aside>`;
+}
+
+// Un negocio ve primero el precio por mayor (el saco más conveniente con stock); una persona, la unidad suelta.
+function unidadInicialDetalle(p) {
+  if (Estado.tipoComprador !== 'negocio' || p.stock <= 0) return null;
+  return mejorUnidadPorMayor(p)?.alt.unidad || null;
 }
 
 function renderPaginaDetalleProducto(p, resenas, productor) {
@@ -2120,7 +2229,8 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   `;
 
   let cantidadSeleccionada = 1;
-  let unidadSeleccionada = null; // null = unidad base del producto (comportamiento de siempre)
+  // null = unidad base del producto (comportamiento de siempre); un negocio arranca en el precio por mayor
+  let unidadSeleccionada = tieneAlternativas && !sinStock ? unidadInicialDetalle(p) : null;
   const cantidadValorEl = document.getElementById('detalle-cantidad-valor');
   const totalEl = document.getElementById('detalle-total-valor');
 
@@ -2171,6 +2281,7 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
     unidadSeleccionada = e.target.value || null;
     refrescarPrecioYStockDetalle();
   });
+  if (unidadSeleccionada) refrescarPrecioYStockDetalle(); // el render inicial mostró la unidad base
 
   document.getElementById('btn-cantidad-menos')?.addEventListener('click', () => {
     if (cantidadSeleccionada > 1) {
@@ -2907,6 +3018,31 @@ async function actualizarMetodosDePago(total) {
     : '';
 }
 
+// ---- Compra por mayor o por menor (observación de la presentación del 2026-10-01) ----
+// Lo dice la cotización de Pedidos con el peso real del carrito: pasando el umbral (25 kg) va en camioneta y el envío
+// suma un recargo por cada kg de más.
+function formatearKg(kg) {
+  return `${Number(kg).toLocaleString('es-PE', { maximumFractionDigits: 1 })} kg`;
+}
+
+function pintarTipoCompraCheckout(c) {
+  const caja = document.getElementById('checkout-tipo-compra');
+  if (!caja) return;
+  caja.classList.toggle('hidden', !c);
+  if (!c) return;
+  const pesoConocido = c.peso_total_kg != null;
+  caja.classList.toggle('es-por-mayor', Boolean(c.por_mayor));
+  caja.innerHTML = c.por_mayor
+    ? `<i class="ti ti-truck" aria-hidden="true"></i>
+       <div><strong>Compra por mayor · ${formatearKg(c.peso_total_kg)}</strong>
+       <span>Pasa los ${formatearKg(c.umbral_kg)}: va en camioneta. El envío es ${formatearMoneda(c.costo_envio_base)} por la distancia
+       más ${formatearMoneda(c.recargo_envio_peso)} por los ${formatearKg(c.kg_extra)} de más (${formatearMoneda(c.recargo_por_kg)} por kg).</span></div>`
+    : `<i class="ti ti-shopping-bag" aria-hidden="true"></i>
+       <div><strong>Compra por menor${pesoConocido ? ` · ${formatearKg(c.peso_total_kg)}` : ''}</strong>
+       <span>El envío es solo por la distancia. Desde ${formatearKg(c.umbral_kg)} es compra por mayor: va en camioneta y el envío
+       suma ${formatearMoneda(c.recargo_por_kg)} por cada kg de más.</span></div>`;
+}
+
 function pintarTotalesPaso2(subtotal, envio, distanciaKm = null) {
   pintarNotaEnvioCheckout(envio);
   actualizarMetodosDePago(subtotal + envio);
@@ -2938,7 +3074,14 @@ async function irAPaso2() {
   btn.textContent = 'Calculando envío...';
   let cotizacion;
   try {
-    cotizacion = await Api.pedidos.cotizarEnvio(destinoSeleccionado.lat, destinoSeleccionado.lng);
+    // Con el carrito, no solo el destino: así el envío incluye el recargo de una compra por mayor (el mismo que se cobra).
+    cotizacion = await Api.pedidos.cotizar({
+      destino_latitud: destinoSeleccionado.lat,
+      destino_longitud: destinoSeleccionado.lng,
+      items: Estado.carrito.map((i) => (i.unidad
+        ? { producto_id: i.producto_id, cantidad: i.cantidad, unidad: i.unidad }
+        : { producto_id: i.producto_id, cantidad: i.cantidad })),
+    });
   } catch (err) {
     manejarError(err, 'calcular el envío');
     if (err.status === 400) resaltarMapaDestino(); // destino fuera de la región de entrega
@@ -2952,6 +3095,7 @@ async function irAPaso2() {
   const subtotal = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
   envioCotizado = Number(cotizacion.costo_envio) || 0;
   pintarTotalesPaso2(subtotal, envioCotizado, Number(cotizacion.distancia_km));
+  pintarTipoCompraCheckout(cotizacion);
   document.getElementById('checkout-entrega-telefono').textContent = telefono;
   document.getElementById('checkout-entrega-punto').innerHTML =
     `<i class="ti ti-map-pin" aria-hidden="true"></i> Marcado en el mapa (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
@@ -3747,10 +3891,11 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       </li>`;
   }).join('');
 
+  const recargoPeso = Number(pedido.recargo_envio_peso) || 0;
   const cobro = `
     <dl class="mp-cobro" aria-label="Detalle del cobro">
       <div><dt>Subtotal</dt><dd>${formatearMoneda(subtotalPedido(pedido))}</dd></div>
-      <div><dt>Envío</dt><dd>${formatearMoneda(costoEnvio)}</dd></div>
+      <div><dt>Envío${recargoPeso > 0 ? ` <small class="mp-cobro-nota">incluye ${formatearMoneda(recargoPeso)} por el peso</small>` : ''}</dt><dd>${formatearMoneda(costoEnvio)}</dd></div>
       <div class="mp-cobro-total"><dt>Total</dt><dd>${formatearMoneda(total)}</dd></div>
     </dl>`;
 
@@ -3816,6 +3961,9 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
             <span class="mp-chip mp-chip-id" title="Número de pedido">#${idCorto}</span>
             <span class="mp-chip"><i class="ti ti-calendar-event"></i> ${formatearFechaServidor(pedido.fecha_creacion)}</span>
             <span class="mp-chip"><i class="ti ti-shopping-bag"></i> ${items.length} producto${items.length === 1 ? '' : 's'}</span>
+            ${pedido.requiere_vehiculo_grande
+              ? `<span class="mp-chip mp-chip-por-mayor"><i class="ti ti-truck"></i> Por mayor${pedido.peso_total_kg != null ? ` · ${formatearKg(pedido.peso_total_kg)}` : ''}</span>`
+              : '<span class="mp-chip"><i class="ti ti-basket"></i> Por menor</span>'}
           </div>
         </div>
         <div class="mp-total">
@@ -6976,7 +7124,66 @@ function renderPerfilCuenta(usuario, rolInfo) {
         <div class="perfil-dato"><span class="perfil-dato-label">Tipo de cuenta</span><span class="perfil-dato-valor">${rolInfo.texto}</span></div>
       </div>
       <p class="perfil-cuenta-descripcion">${rolInfo.descripcion || ''}</p>
+    </section>
+    ${usuario.rol === 'comprador' ? renderPerfilComoCompras(usuario) : ''}`;
+}
+
+// Persona o negocio: cambia lo que la tienda muestra primero (por kilo o por saco). Ver Api.usuarios.actualizarComprador.
+function renderPerfilComoCompras(usuario) {
+  const negocio = usuario.tipo_comprador === 'negocio';
+  const opcion = (valor, icono, titulo, detalle) => `
+    <label class="auth-rol">
+      <input type="radio" name="perfil-tipo-comprador" value="${valor}" ${(negocio ? 'negocio' : 'persona') === valor ? 'checked' : ''}>
+      <span class="auth-rol-caja"><i class="ti ti-${icono}" aria-hidden="true"></i><strong>${titulo}</strong><small>${detalle}</small></span>
+    </label>`;
+  return `
+    <section class="card-panel perfil-tarjeta perfil-como-compras">
+      <h3><i class="ti ti-building-store"></i> ¿Cómo compras?</h3>
+      <form id="perfil-form-comprador" novalidate>
+        <fieldset class="auth-roles">
+          <legend class="sr-only">Compro para</legend>
+          <div class="auth-roles-grid">
+            ${opcion('persona', 'home', 'Para mi casa', 'Te mostramos primero el precio por kilo')}
+            ${opcion('negocio', 'building-store', 'Para mi negocio', 'Te mostramos primero el precio por mayor (por saco)')}
+          </div>
+        </fieldset>
+        <div class="perfil-datos-negocio ${negocio ? '' : 'hidden'}" id="perfil-datos-negocio">
+          <label class="perfil-campo"><span>Nombre del negocio <span class="auth-opcional">(opcional)</span></span>
+            <input type="text" id="perfil-nombre-comercial" maxlength="120" value="${escapeAttr(usuario.nombre_comercial || '')}" placeholder="Ej. Restaurante El Ayacuchano">
+          </label>
+          <label class="perfil-campo"><span>RUC <span class="auth-opcional">(opcional)</span></span>
+            <input type="text" id="perfil-ruc" inputmode="numeric" maxlength="11" value="${escapeAttr(usuario.ruc || '')}" placeholder="11 dígitos">
+          </label>
+        </div>
+        <p class="perfil-form-error hidden" id="perfil-comprador-error" role="alert"></p>
+        <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
+      </form>
     </section>`;
+}
+
+async function guardarPerfilComprador(form) {
+  const error = form.querySelector('#perfil-comprador-error');
+  const tipo = form.querySelector('input[name="perfil-tipo-comprador"]:checked')?.value || 'persona';
+  const datos = datosDeComprador(tipo, form.querySelector('#perfil-nombre-comercial').value, form.querySelector('#perfil-ruc').value);
+  error.classList.toggle('hidden', Boolean(datos));
+  if (!datos) {
+    error.textContent = MENSAJE_RUC_INVALIDO;
+    form.querySelector('#perfil-ruc').focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    const perfil = await Api.usuarios.actualizarComprador(datos);
+    Estado.tipoComprador = perfil.tipo_comprador;
+    guardarSesion();
+    toast(perfil.tipo_comprador === 'negocio' ? 'Listo: te mostraremos primero el precio por mayor.' : 'Listo: te mostraremos primero el precio por kilo.');
+    cargarPerfil();
+  } catch (err) {
+    error.textContent = err.message || 'No se pudo guardar. Intenta de nuevo.';
+    error.classList.remove('hidden');
+    boton.disabled = false;
+  }
 }
 
 // Accesos a lo que más se usa; el panel propio del rol va primero. Se resuelven por delegación en
@@ -7621,8 +7828,18 @@ async function manejarRegistro(e) {
     const email = document.getElementById('registro-email').value.trim();
     const password = document.getElementById('registro-password').value;
     const rol = document.getElementById('registro-rol').value;
+    let comprador = {};
+    if (rol === 'comprador') {
+      comprador = datosDeComprador(tipoCompradorElegido(), document.getElementById('registro-nombre-comercial').value,
+        document.getElementById('registro-ruc').value);
+      if (!comprador) {
+        mostrarErrorAuth('registro-alerta', MENSAJE_RUC_INVALIDO);
+        document.getElementById('registro-ruc').focus();
+        return;
+      }
+    }
 
-    await Api.usuarios.registrar({ nombre, email, password, rol });
+    await Api.usuarios.registrar({ nombre, email, password, rol, ...comprador });
     const resp = await Api.usuarios.login({ email, password });
     Estado.nombre = nombre;
     await iniciarSesionConToken(resp.access_token);
@@ -7712,10 +7929,28 @@ async function manejarLoginGoogle(credential) {
 async function manejarRegistroGoogle(credential) {
   const rol = document.getElementById('registro-rol').value;
   const datos = { id_token: credential, rol };
+  const comprador = rol === 'comprador'
+    ? datosDeComprador(tipoCompradorElegido(), document.getElementById('registro-nombre-comercial').value,
+      document.getElementById('registro-ruc').value)
+    : null;
+  if (rol === 'comprador' && !comprador) {
+    mostrarErrorAuth('registro-alerta', MENSAJE_RUC_INVALIDO);
+    return;
+  }
 
   try {
     const resp = await Api.usuarios.oauthGoogle(datos);
     await iniciarSesionConToken(resp.access_token);
+    // Con Google la cuenta nace como "persona": si eligió negocio, se guarda enseguida.
+    if (Estado.rol === 'comprador' && comprador?.tipo_comprador === 'negocio') {
+      try {
+        const perfil = await Api.usuarios.actualizarComprador(comprador);
+        Estado.tipoComprador = perfil.tipo_comprador;
+        guardarSesion();
+      } catch (err) {
+        manejarError(err, 'guardar los datos de tu negocio (puedes hacerlo desde tu perfil)');
+      }
+    }
     document.getElementById('form-registro').reset();
     sincronizarTarjetasRol(); // el reset vuelve el <select> a "comprador" — resincroniza las tarjetas
     cerrarModal('modal-auth');
@@ -7862,6 +8097,13 @@ function inicializarEventos() {
   document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => {
     radio.addEventListener('change', () => {
       document.getElementById('registro-rol').value = radio.value;
+      sincronizarTipoComprador();
+    });
+  });
+  document.querySelectorAll('input[name="registro-tipo-comprador"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      sincronizarTipoComprador();
+      if (radio.value === 'negocio' && radio.checked) document.getElementById('registro-nombre-comercial').focus();
     });
   });
   modalAuth.addEventListener('input', limpiarErroresAuth);
@@ -8365,6 +8607,17 @@ function inicializarEventos() {
     if (rechazar) { responderPropuesta(rechazar.dataset.envioId, 'rechazar'); return; }
   });
 
+  document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
+    if (e.target.id !== 'perfil-form-comprador') return;
+    e.preventDefault();
+    guardarPerfilComprador(e.target);
+  });
+  document.getElementById('perfil-contenido').addEventListener('change', (e) => {
+    if (e.target.name !== 'perfil-tipo-comprador') return;
+    const negocio = e.target.value === 'negocio';
+    document.getElementById('perfil-datos-negocio')?.classList.toggle('hidden', !negocio);
+    if (negocio) document.getElementById('perfil-nombre-comercial')?.focus();
+  });
   document.getElementById('perfil-contenido').addEventListener('click', (e) => {
     if (e.target.closest('#btn-perfil-logout')) { cerrarSesion(); return; }
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }

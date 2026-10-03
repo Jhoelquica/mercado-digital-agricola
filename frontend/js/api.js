@@ -88,7 +88,7 @@ function exigirImagenLiviana(archivo) {
   if (archivo && archivo.size > TAMANO_MAXIMO_IMAGEN) throw new ApiError('La imagen no puede pesar más de 5 MB.', 413);
 }
 
-const ETIQUETAS_DE_CAMPO = { password: 'Contraseña', email: 'Correo', nombre: 'Nombre' };
+const ETIQUETAS_DE_CAMPO = { password: 'Contraseña', email: 'Correo', nombre: 'Nombre', ruc: 'RUC', nombre_comercial: 'Nombre del negocio' };
 
 function mensajeDeDetalle(detail) {
   if (typeof detail === 'string') return detail;
@@ -214,6 +214,8 @@ const Api = {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
     login: (datos) => request('usuarios', '/usuarios/login', { method: 'POST', body: datos }),
     obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
+    // El comprador cambia si compra como persona o como negocio (con RUC y nombre comercial opcionales).
+    actualizarComprador: (datos) => request('usuarios', '/usuarios/me/comprador', { method: 'PATCH', body: datos, auth: true }),
     // rol solo aplica si el id_token no matchea ninguna cuenta existente (registro nuevo) — mismo
     // filtro de roles que Api.usuarios.registrar(), resuelto del lado del backend (ver POST
     // /usuarios/oauth/google).
@@ -285,6 +287,8 @@ const Api = {
     // Lo que hay que saber antes de armar el pedido (hoy: { monto_minimo }).
     condiciones: () => request('pedidos', '/pedidos/condiciones'),
     cotizarEnvio: (latitud, longitud) => request('pedidos', `/pedidos/costo-envio?latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`),
+    // El envío exacto de este carrito a este destino (con el recargo por peso si es una compra por mayor).
+    cotizar: (datos) => request('pedidos', '/pedidos/cotizar', { method: 'POST', body: datos, auth: true }),
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`, { auth: true }),
