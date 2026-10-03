@@ -56,6 +56,37 @@ class Envio(Base):
     # bloqueo. Nullable a propósito: migraciones.py agrega solas las columnas nuevas que aceptan NULL.
     pin_intentos_fallidos = Column(Integer, nullable=True)
     pin_bloqueado_hasta = Column(DateTime, nullable=True)
+    # ---- Compradores lejanos (decisiones del usuario 2026-10-03) ----
+    # "local", "agencia" (el repartidor lo deja en una agencia de carga en Huamanga; el comprador recoge en su ciudad y
+    # confirma) o "camion" (viaje compartido; se descarga recién con el saldo pagado).
+    modalidad_envio = Column(String, nullable=True)
+    destino_ciudad = Column(String, nullable=True)
+    sacos = Column(Integer, nullable=True)
+    viaje_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    saldo_pagado = Column(Boolean, nullable=True)
+    agencia_nombre = Column(String, nullable=True)
+    numero_guia = Column(String, nullable=True)
+    foto_guia_url = Column(String, nullable=True)
+    fecha_despacho = Column(DateTime, nullable=True)
+    fecha_recibido = Column(DateTime, nullable=True)
+
+
+class Viaje(Base):
+    """Un viaje compartido de camión a una ciudad lejana: junta envíos de varios compradores (ver logica_viajes.py)."""
+    __tablename__ = "viajes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    destino_lejano_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    destino_ciudad = Column(String, nullable=True)
+    capacidad_sacos = Column(Integer, nullable=False)
+    sacos_para_salir = Column(Integer, nullable=False)
+    estado = Column(String, nullable=False, default="abierto")  # abierto, listo, en_ruta, llegado, completado
+    transportista_id = Column(UUID(as_uuid=True), nullable=True)  # Repartidor con documentos de carga verificados
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_salida = Column(DateTime, nullable=True)
+    fecha_llegada = Column(DateTime, nullable=True)
+    fecha_cierre = Column(DateTime, nullable=True)
+
 
 class Repartidor(Base):
     __tablename__ = "repartidores"
@@ -75,6 +106,23 @@ class Repartidor(Base):
     # registro es autoservicio de punta a punta (ver informe de la sub-entrega anterior), y este
     # dato sigue ese mismo criterio.
     capacidad_maxima_kg = Column(Numeric(10, 2), nullable=True)
+    # ---- Transportista de carga (viajes largos en camión; decisión del usuario 2026-10-03) ----
+    # Puede ser un camión de ChakraShop o de un tercero: sube su licencia, la tarjeta de propiedad del vehículo y el
+    # SOAT (bucket PRIVADO transporte-documentos) y el admin los revisa. Solo uno "verificado" hace viajes.
+    transportista_carga = Column(Boolean, nullable=True)
+    placa = Column(String, nullable=True)
+    licencia_numero = Column(String, nullable=True)
+    doc_licencia_objeto = Column(String, nullable=True)
+    doc_licencia_tipo = Column(String, nullable=True)
+    doc_tarjeta_objeto = Column(String, nullable=True)
+    doc_tarjeta_tipo = Column(String, nullable=True)
+    doc_soat_objeto = Column(String, nullable=True)
+    doc_soat_tipo = Column(String, nullable=True)
+    verificacion_estado = Column(String, nullable=True)  # pendiente, verificado, rechazado
+    verificacion_motivo = Column(String, nullable=True)
+    fecha_documentos = Column(DateTime, nullable=True)
+    verificado_por = Column(UUID(as_uuid=True), nullable=True)
+    fecha_verificacion = Column(DateTime, nullable=True)
 
 
 class EnvioRechazo(Base):

@@ -1396,3 +1396,324 @@ def test_sin_propuestas_no_se_le_pregunta_nada_a_pedidos(monkeypatch):
 
     assert resp.status_code == 200 and resp.json() == []
     assert llamadas == []
+
+
+
+# ============ Compradores lejanos: agencia de carga, transportistas de carga y viajes compartidos en camión ============
+
+import logica_viajes  # noqa: E402
+import rabbitmq_consumer  # noqa: E402
+
+PDF_FALSO = b"%PDF-1.7 documento de prueba"
+
+
+@pytest.fixture
+def lejanos(monkeypatch):
+    """Sin RabbitMQ, MinIO, Pagos ni Certificación de verdad: todo queda capturado o simulado."""
+    eventos = []
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/guia.jpg")
+    monkeypatch.setattr(main, "intentar_resolver_envio_huerfano", MagicMock())
+    guardados = {}
+    monkeypatch.setattr(main, "subir_documento_transportista", lambda datos, tipo: guardados.setdefault(f"doc-{len(guardados)}", datos) and f"doc-{len(guardados) - 1}")
+    monkeypatch.setattr(main, "leer_documento_transportista", lambda nombre: guardados[nombre])
+    # Pagos y Certificación se simulan reemplazando el mismo httpx.Client: cada test elige cuál necesita.
+    _mockear_pagos_ok(monkeypatch)
+    return {"eventos": eventos, "guardados": guardados}
+
+
+def _repartidor(capacidad=None, verificado=False, disponible="disponible"):
+    db = main.SessionLocal()
+    try:
+        r = main.models.Repartidor(usuario_id=uuid.uuid4(), nombre="Transportista QA", dni="12345678",
+                                   estado_disponibilidad=disponible, tipo_vehiculo="camion" if capacidad else "moto",
+                                   capacidad_maxima_kg=capacidad,
+                                   transportista_carga=True if verificado else None,
+                                   verificacion_estado="verificado" if verificado else None, placa="ABC-123" if verificado else None)
+        db.add(r)
+        db.commit()
+        db.refresh(r)
+        db.expunge(r)
+        return r
+    finally:
+        db.close()
+
+
+def _envio_lejano(repartidor_id, modalidad, estado="asignado", **extra):
+    db = main.SessionLocal()
+    try:
+        envio = main.models.Envio(repartidor_id=repartidor_id, pedido_id=uuid.uuid4(), estado=estado, pin_entrega="1234",
+                                  modalidad_envio=modalidad, **extra)
+        db.add(envio)
+        db.commit()
+        db.refresh(envio)
+        db.expunge(envio)
+        return envio
+    finally:
+        db.close()
+
+
+def _fila(modelo, id_):
+    db = main.SessionLocal()
+    try:
+        return db.query(modelo).filter(modelo.id == id_).first()
+    finally:
+        db.close()
+
+
+def _despachar(envio_id, agencia="Shalom", guia="GR-000123"):
+    return client.post(f"/envios/{envio_id}/despachar-agencia", data={"agencia": agencia, "numero_guia": guia},
+                       files={"foto": ("guia.jpg", FOTO_JPEG_VALIDA, "image/jpeg")})
+
+
+# ---- viajes compartidos desde los eventos ----
+
+def _preparar_camion(monkeypatch, pedidos, capacidad=100, para_salir=80):
+    monkeypatch.setattr(rabbitmq_consumer, "_obtener_pedido", lambda pid: pedidos.get(str(pid)))
+    monkeypatch.setattr(logica_viajes, "_destino", lambda did: {"ciudad": "Lima", "camion": {"capacidad_sacos": capacidad, "sacos_para_salir": para_salir}})
+    proponer = MagicMock()
+    monkeypatch.setattr(rabbitmq_consumer, "proponer_envio_a_repartidor", proponer)
+    return proponer
+
+
+def _envio_del_pedido(pedido_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Envio).filter(main.models.Envio.pedido_id == pedido_id).first()
+    finally:
+        db.close()
+
+
+def test_los_pedidos_en_camion_se_juntan_en_un_viaje_que_sale_al_80(monkeypatch):
+    destino = str(uuid.uuid4())
+    p1, p2, p3 = (str(uuid.uuid4()) for _ in range(3))
+    pedidos = {p: {"modalidad_envio": "camion", "destino_lejano_id": destino, "sacos": s, "destino_ciudad": "Lima"}
+               for p, s in ((p1, 50), (p2, 30), (p3, 40))}
+    proponer = _preparar_camion(monkeypatch, pedidos)
+
+    rabbitmq_consumer.crear_envio_si_falta(p1, adelanto=True)
+    e1 = _envio_del_pedido(p1)
+    viaje = _fila(main.models.Viaje, e1.viaje_id)
+    assert (e1.estado, e1.modalidad_envio, e1.sacos, e1.saldo_pagado) == ("esperando_camion", "camion", 50, False)
+    assert (viaje.estado, viaje.capacidad_sacos, viaje.sacos_para_salir) == ("abierto", 100, 80)
+
+    rabbitmq_consumer.crear_envio_si_falta(p2, adelanto=True)
+    assert _envio_del_pedido(p2).viaje_id == viaje.id
+    assert _fila(main.models.Viaje, viaje.id).estado == "listo"  # 80 sacos: ya puede salir
+
+    rabbitmq_consumer.crear_envio_si_falta(p3, adelanto=True)  # 120 > 100: otro viaje
+    assert _envio_del_pedido(p3).viaje_id != viaje.id
+    proponer.assert_not_called()  # nada en camión se le propone a un repartidor local
+
+
+def test_si_pedidos_no_responde_el_envio_en_camion_espera_y_el_job_lo_sube(monkeypatch):
+    destino, pedido_id = str(uuid.uuid4()), str(uuid.uuid4())
+    pedidos = {}
+    proponer = _preparar_camion(monkeypatch, pedidos)
+    rabbitmq_consumer.crear_envio_si_falta(pedido_id, adelanto=True)  # el adelanto basta para saber que va en camión
+    envio = _envio_del_pedido(pedido_id)
+    assert (envio.estado, envio.modalidad_envio, envio.viaje_id) == ("esperando_camion", "camion", None)
+    proponer.assert_not_called()
+
+    pedidos[pedido_id] = {"modalidad_envio": "camion", "destino_lejano_id": destino, "sacos": 60, "destino_ciudad": "Lima"}
+    db = main.SessionLocal()
+    try:
+        assert logica_viajes.asignar_envios_de_camion_sin_viaje(db, lambda pid: pedidos.get(str(pid))) >= 1
+    finally:
+        db.close()
+    assert _envio_del_pedido(pedido_id).viaje_id is not None
+
+
+def test_un_pedido_por_agencia_se_propone_a_un_repartidor_local(monkeypatch):
+    pedido_id = str(uuid.uuid4())
+    proponer = _preparar_camion(monkeypatch, {pedido_id: {"modalidad_envio": "agencia", "destino_ciudad": "Lima"}})
+    rabbitmq_consumer.crear_envio_si_falta(pedido_id)
+    envio = _envio_del_pedido(pedido_id)
+    assert envio.modalidad_envio == "agencia" and envio.destino_ciudad == "Lima"
+    proponer.assert_called_once()
+
+
+def test_el_saldo_pagado_habilita_la_descarga():
+    envio = _envio_lejano(None, "camion", estado="esperando_camion", saldo_pagado=False)
+    rabbitmq_consumer.marcar_saldo_pagado(str(envio.pedido_id))
+    assert _envio_recargado(envio.id).saldo_pagado is True
+
+
+# ---- por agencia ----
+
+def test_el_repartidor_deja_el_pedido_en_la_agencia_y_queda_libre(lejanos):
+    repartidor = _repartidor(disponible="ocupado")
+    envio = _envio_lejano(repartidor.id, "agencia", estado="en_camino")
+    _auth(str(repartidor.usuario_id), "repartidor")
+
+    assert _despachar(envio.id, guia="?").status_code == 422
+    resp = _despachar(envio.id, agencia="  Shalom  ", guia=" GR-000123 ")
+    assert resp.status_code == 200, resp.text
+    fila = _envio_recargado(envio.id)
+    assert (fila.estado, fila.agencia_nombre, fila.numero_guia) == ("en_agencia", "Shalom", "GR-000123")
+    assert fila.foto_guia_url == "http://fake/guia.jpg" and fila.fecha_despacho is not None
+    assert fila.liquidacion_confirmada is True  # su tramo ya se liquida
+    assert _fila(main.models.Repartidor, repartidor.id).estado_disponibilidad == "disponible"
+    assert lejanos["eventos"][-1]["estado"] == "en_agencia"
+    assert _despachar(envio.id).status_code == 409  # ya está en la agencia
+    assert _confirmar_entrega(envio.id).status_code == 409  # por agencia no se entrega con PIN
+
+
+def test_solo_se_despacha_por_agencia_un_envio_propio_que_va_por_agencia(lejanos):
+    repartidor, otro = _repartidor(), _repartidor()
+    local = _envio_lejano(repartidor.id, "local")
+    ajeno = _envio_lejano(otro.id, "agencia")
+    _auth(str(repartidor.usuario_id), "repartidor")
+    assert _despachar(local.id).status_code == 409
+    assert _despachar(ajeno.id).status_code == 403
+
+
+def test_el_comprador_confirma_que_recogio_su_pedido(lejanos, monkeypatch):
+    comprador = str(uuid.uuid4())
+    _mockear_certificacion_ok(monkeypatch)
+    envio = _envio_lejano(None, "agencia", estado="en_agencia")
+    monkeypatch.setattr(main, "_pedido_interno", lambda pid: {"usuario_id": comprador})
+
+    _auth(str(uuid.uuid4()), "repartidor")
+    assert client.post(f"/envios/{envio.id}/recibido").status_code == 403
+    _auth(str(uuid.uuid4()), "comprador")
+    assert client.post(f"/envios/{envio.id}/recibido").status_code == 403  # no es su pedido
+
+    _auth(comprador, "comprador")
+    resp = client.post(f"/envios/{envio.id}/recibido")
+    assert resp.status_code == 200, resp.text
+    fila = _envio_recargado(envio.id)
+    assert fila.estado == "entregado" and fila.fecha_recibido is not None and fila.certificacion_confirmada is True
+    assert client.post(f"/envios/{envio.id}/recibido").status_code == 409
+
+
+# ---- camión: se descarga en destino y con el saldo pagado ----
+
+def _viaje_con(transportista_id, envios_sacos, estado="listo", capacidad=100, para_salir=80):
+    db = main.SessionLocal()
+    try:
+        viaje = main.models.Viaje(destino_lejano_id=uuid.uuid4(), destino_ciudad="Lima", capacidad_sacos=capacidad,
+                                  sacos_para_salir=para_salir, estado=estado, transportista_id=transportista_id)
+        db.add(viaje)
+        db.flush()
+        envios = []
+        for sacos in envios_sacos:
+            envio = main.models.Envio(pedido_id=uuid.uuid4(), estado="esperando_camion", pin_entrega="1234",
+                                      modalidad_envio="camion", sacos=sacos, viaje_id=viaje.id, saldo_pagado=False)
+            db.add(envio)
+            envios.append(envio)
+        db.commit()
+        ids = (viaje.id, [e.id for e in envios])
+        return ids
+    finally:
+        db.close()
+
+
+def test_en_camion_no_se_descarga_sin_llegar_ni_sin_el_saldo(lejanos):
+    transportista = _repartidor(capacidad=5000, verificado=True, disponible="ocupado")
+    viaje_id, (envio_id,) = _viaje_con(transportista.id, [50], estado="en_ruta")
+    db = main.SessionLocal()
+    try:
+        envio = db.query(main.models.Envio).filter(main.models.Envio.id == envio_id).one()
+        envio.repartidor_id, envio.estado = transportista.id, "en_camino"
+        db.commit()
+    finally:
+        db.close()
+    _auth(str(transportista.usuario_id), "repartidor")
+    resp = _confirmar_entrega(envio_id)
+    assert resp.status_code == 409 and "llegó" in resp.json()["detail"]
+
+    assert client.post(f"/viajes/{viaje_id}/llegar").status_code == 200
+    assert _envio_recargado(envio_id).estado == "en_destino"
+    resp = _confirmar_entrega(envio_id)
+    assert resp.status_code == 409 and "saldo" in resp.json()["detail"]
+
+    rabbitmq_consumer.marcar_saldo_pagado(str(_envio_recargado(envio_id).pedido_id))
+    assert _confirmar_entrega(envio_id).status_code == 200
+    assert _fila(main.models.Viaje, viaje_id).estado == "completado"  # era el único envío
+    assert _fila(main.models.Repartidor, transportista.id).estado_disponibilidad == "disponible"
+
+
+# ---- transportistas de carga ----
+
+def _enviar_documentos(placa="abc-123", licencia="q12345678", archivo=PDF_FALSO):
+    return client.post("/repartidores/me/carga", data={"placa": placa, "licencia_numero": licencia},
+                       files={"licencia": ("licencia.pdf", archivo, "application/pdf"),
+                              "tarjeta_propiedad": ("tarjeta.jpg", FOTO_JPEG_VALIDA, "image/jpeg"),
+                              "soat": ("soat.pdf", PDF_FALSO, "application/pdf")})
+
+
+def test_un_transportista_envia_sus_documentos_y_el_admin_los_verifica(lejanos):
+    transportista = _repartidor(capacidad=5000)
+    _auth(str(transportista.usuario_id), "repartidor")
+    assert _enviar_documentos(placa="1").status_code == 422
+    assert _enviar_documentos(archivo=b"<html></html>").status_code == 422
+    resp = _enviar_documentos()
+    assert resp.status_code == 200 and resp.json() == {"verificacion_estado": "pendiente"}
+    fila = _fila(main.models.Repartidor, transportista.id)
+    assert (fila.placa, fila.licencia_numero, fila.transportista_carga) == ("ABC-123", "Q12345678", True)
+
+    assert client.get("/repartidores/admin/transportistas").status_code == 403
+    _auth(str(uuid.uuid4()), "admin")
+    [item] = [t for t in client.get("/repartidores/admin/transportistas").json() if t["id"] == str(transportista.id)]
+    assert item["documentos"] == {"licencia": "application/pdf", "tarjeta": "image/jpeg", "soat": "application/pdf"}
+    doc = client.get(f"/repartidores/admin/transportistas/{transportista.id}/documento/licencia")
+    assert doc.status_code == 200 and doc.content == PDF_FALSO and doc.headers["cache-control"] == "no-store"
+    assert client.get(f"/repartidores/admin/transportistas/{transportista.id}/documento/otro").status_code == 404
+    assert client.post(f"/repartidores/admin/transportistas/{transportista.id}/rechazar", json={"motivo": "x"}).status_code == 422
+    rechazo = client.post(f"/repartidores/admin/transportistas/{transportista.id}/rechazar", json={"motivo": "El SOAT está vencido"})
+    assert rechazo.json()["verificacion_estado"] == "rechazado" and rechazo.json()["verificacion_motivo"] == "El SOAT está vencido"
+    assert client.post(f"/repartidores/admin/transportistas/{transportista.id}/verificar").json()["verificacion_estado"] == "verificado"
+
+
+def test_un_vehiculo_chico_no_hace_viajes_de_carga(lejanos):
+    moto = _repartidor(capacidad=150)
+    _auth(str(moto.usuario_id), "repartidor")
+    resp = _enviar_documentos()
+    assert resp.status_code == 422 and "2500 kg" in resp.json()["detail"]
+
+
+# ---- viajes: asignar, salir y llegar ----
+
+def test_el_admin_asigna_un_transportista_verificado_con_capacidad_y_el_viaje_sale(lejanos):
+    viaje_id, envios = _viaje_con(None, [50, 40], estado="listo")
+    sin_verificar, chico, bueno = _repartidor(capacidad=9000), _repartidor(capacidad=2000, verificado=True), _repartidor(capacidad=5000, verificado=True)
+    _auth(str(uuid.uuid4()), "admin")
+    assert client.post(f"/viajes/{viaje_id}/salir", json={}).status_code == 409  # sin transportista
+    assert client.post(f"/viajes/{viaje_id}/asignar", json={"transportista_id": str(sin_verificar.id)}).status_code == 422
+    assert client.post(f"/viajes/{viaje_id}/asignar", json={"transportista_id": str(chico.id)}).status_code == 422  # 90 sacos = 4500 kg
+    assert client.post(f"/viajes/{viaje_id}/asignar", json={"transportista_id": str(bueno.id)}).status_code == 200
+    [listado] = [v for v in client.get("/viajes").json() if v["id"] == str(viaje_id)]
+    assert listado["sacos_cargados"] == 90 and listado["transportista"]["placa"] == "ABC-123" and len(listado["envios"]) == 2
+
+    _auth(str(uuid.uuid4()), "repartidor")
+    assert client.post(f"/viajes/{viaje_id}/salir", json={}).status_code in (403, 404)  # no es su viaje
+    _auth(str(bueno.usuario_id), "repartidor")
+    assert [v["id"] for v in client.get("/viajes/mios").json()] == [str(viaje_id)]
+    resp = client.post(f"/viajes/{viaje_id}/salir", json={})
+    assert resp.status_code == 200 and resp.json()["estado"] == "en_ruta"
+    assert all(_envio_recargado(e).estado == "en_camino" and _envio_recargado(e).repartidor_id == bueno.id for e in envios)
+    assert _fila(main.models.Repartidor, bueno.id).estado_disponibilidad == "ocupado"
+    assert client.post(f"/viajes/{viaje_id}/llegar").json()["estado"] == "llegado"
+    assert {_envio_recargado(e).estado for e in envios} == {"en_destino"}
+
+
+def test_un_viaje_abierto_no_sale_salvo_que_el_admin_lo_fuerce(lejanos):
+    transportista = _repartidor(capacidad=5000, verificado=True)
+    viaje_id, _ = _viaje_con(transportista.id, [50], estado="abierto")
+    _auth(str(transportista.usuario_id), "repartidor")
+    resp = client.post(f"/viajes/{viaje_id}/salir", json={"forzar": True})  # el transportista no puede forzar
+    assert resp.status_code == 409 and "80 sacos" in resp.json()["detail"]
+    _auth(str(uuid.uuid4()), "admin")
+    assert client.post(f"/viajes/{viaje_id}/salir", json={"forzar": True}).status_code == 200
+
+
+def test_el_comprador_ve_cuanto_le_falta_al_camion(lejanos, monkeypatch):
+    comprador = str(uuid.uuid4())
+    viaje_id, (envio_id, _) = _viaje_con(None, [50, 10], estado="abierto")
+    monkeypatch.setattr(main, "_pedido_interno", lambda pid: {"usuario_id": comprador})
+    _auth(comprador, "comprador")
+    datos = client.get(f"/envios/{_envio_recargado(envio_id).pedido_id}").json()
+    assert datos["modalidad_envio"] == "camion" and datos["sacos"] == 50
+    assert datos["viaje"]["sacos_cargados"] == 60 and datos["viaje"]["sacos_para_salir"] == 80
+    assert datos["viaje"]["estado"] == "abierto" and datos["pin_entrega"] == "1234"

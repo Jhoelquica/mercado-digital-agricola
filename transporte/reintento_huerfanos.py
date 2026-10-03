@@ -16,7 +16,8 @@ import threading
 
 from database import SessionLocal
 import models
-from logica_repartidores import proponer_envio_a_repartidor
+from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
+import logica_viajes
 
 INTERVALO_SEGUNDOS = 60
 
@@ -24,6 +25,8 @@ INTERVALO_SEGUNDOS = 60
 def _revisar_envios_huerfanos():
     db = SessionLocal()
     try:
+        # Envíos en camión que no se pudieron subir a un viaje (Pedidos no respondió al crearlos).
+        logica_viajes.asignar_envios_de_camion_sin_viaje(db, _obtener_pedido)
         huerfanos = (
             db.query(models.Envio)
             .filter(models.Envio.estado == "pendiente_asignacion")

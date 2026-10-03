@@ -959,7 +959,8 @@ def resumen_de_entrega_interno(
 
 # El repartidor solo ve el pedido (nombre, teléfono y dirección del comprador) cuando ya aceptó el envío: una
 # propuesta que todavía no aceptó, o que rechazó, no cuenta.
-ESTADOS_DE_ENVIO_CON_ACCESO_AL_PEDIDO = ("asignado", "en_camino", "entregado")
+# "en_destino": el camión de un viaje compartido ya llegó a la ciudad y el transportista entrega pedido por pedido.
+ESTADOS_DE_ENVIO_CON_ACCESO_AL_PEDIDO = ("asignado", "en_camino", "en_destino", "entregado")
 
 
 def _repartidor_tiene_el_envio(pedido_id: uuid.UUID, token: str) -> bool:

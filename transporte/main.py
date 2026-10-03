@@ -28,7 +28,11 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 from database import Base, engine, SessionLocal
 import models
 from migraciones import agregar_columnas_faltantes
-from minio_client import subir_foto_entrega
+from minio_client import subir_foto_entrega, subir_documento_transportista, leer_documento_transportista
+from documentos import leer_documento_validado, LIMITE_CUERPO_DOCUMENTOS_BYTES
+from fastapi import Response
+import re
+import logica_viajes
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
@@ -56,10 +60,14 @@ async def limitar_el_tamano_de_las_subidas(request, call_next):
     recibía entero un archivo de cualquier tamaño y recién después decidía. Va antes del middleware de CORS a
     propósito (queda por dentro), para que el 413 también lleve las cabeceras CORS y el navegador muestre el
     mensaje en vez de un error de red."""
-    if request.method == "POST" and request.url.path.endswith("/entregar"):
+    if request.method == "POST" and request.url.path.endswith(("/entregar", "/despachar-agencia")):
         longitud = request.headers.get("content-length", "")
         if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_BYTES:
             return JSONResponse(status_code=413, content={"detail": MENSAJE_MUY_GRANDE})
+    if request.method == "POST" and request.url.path.endswith("/repartidores/me/carga"):
+        longitud = request.headers.get("content-length", "")
+        if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_DOCUMENTOS_BYTES:
+            return JSONResponse(status_code=413, content={"detail": "Cada documento puede pesar hasta 5 MB."})
     return await call_next(request)
 
 app.add_middleware(
@@ -138,6 +146,16 @@ class EnvioSalida(BaseModel):
     foto_entrega_url: str | None = None
     entrega_latitud: str | None = None
     entrega_longitud: str | None = None
+    # Compradores lejanos
+    modalidad_envio: str | None = None
+    destino_ciudad: str | None = None
+    sacos: int | None = None
+    viaje_id: uuid.UUID | None = None
+    saldo_pagado: bool | None = None
+    agencia_nombre: str | None = None
+    numero_guia: str | None = None
+    fecha_despacho: datetime | None = None
+    fecha_recibido: datetime | None = None
 
 
 class EnvioConPin(EnvioSalida):
@@ -408,7 +426,11 @@ def obtener_envio(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: 
         raise HTTPException(status_code=404, detail="Envío no encontrado para ese pedido")
     ve_el_pin = _autorizar_envio(envio, usuario, db)
     modelo = EnvioConPin if ve_el_pin else EnvioSalida
-    return modelo.model_validate(envio).model_dump(mode="json")
+    datos = modelo.model_validate(envio).model_dump(mode="json")
+    if envio.viaje_id:
+        viaje = db.query(models.Viaje).filter(models.Viaje.id == envio.viaje_id).first()
+        datos["viaje"] = logica_viajes.resumen_de_viaje(db, viaje) if viaje else None
+    return datos
 
 @app.delete("/envios/{envio_id}")
 def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
@@ -423,6 +445,34 @@ def eliminar_envio(envio_id: str, db: Session = Depends(get_db), x_servicio_secr
     db.commit()
     return {"mensaje": "Envío eliminado"}
 
+def _cerrar_viaje_si_termino(db: Session, viaje_id):
+    """Cuando el último envío de un viaje se entrega, el viaje se completa y el transportista queda libre."""
+    viaje = db.query(models.Viaje).filter(models.Viaje.id == viaje_id).first()
+    if not viaje:
+        return
+    pendientes = db.query(models.Envio).filter(models.Envio.viaje_id == viaje_id, models.Envio.estado != "entregado").count()
+    if pendientes:
+        return
+    viaje.estado = "completado"
+    viaje.fecha_cierre = datetime.utcnow()
+    if viaje.transportista_id:
+        transportista = db.query(models.Repartidor).filter(models.Repartidor.id == viaje.transportista_id).first()
+        if transportista:
+            transportista.estado_disponibilidad = "disponible"
+    db.commit()
+
+
+def _liquidar_al_repartidor(db: Session, envio: models.Envio):
+    """Mismo criterio no intrusivo de siempre: un fallo queda para reintento_liquidacion_repartidor.py."""
+    try:
+        notificar_liquidacion_repartidor(db, envio)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.error("No se pudo confirmar la liquidación del repartidor para el pedido %s (queda pendiente para el reintento)",
+                     envio.pedido_id, exc_info=True)
+
+
 def _efectos_post_entrega(db: Session, envio: models.Envio):
     """Cadena de efectos secundarios al confirmar una entrega — compartida entre el productor
     (entrega directa, sin PIN/foto/GPS, vía PATCH /estado) y el repartidor (vía POST /entregar).
@@ -431,7 +481,9 @@ def _efectos_post_entrega(db: Session, envio: models.Envio):
     # Solo si hubo repartidor (una entrega directa por el productor nunca tuvo uno asignado —
     # envio.repartidor_id sigue en None de punta a punta): no hay a quién liberar ni a quién
     # buscarle un huérfano nuevo, porque nadie quedó libre.
-    if envio.repartidor_id:
+    if envio.viaje_id:
+        _cerrar_viaje_si_termino(db, envio.viaje_id)
+    elif envio.repartidor_id:
         repartidor_envio = db.query(models.Repartidor).filter(
             models.Repartidor.id == envio.repartidor_id
         ).first()
@@ -570,7 +622,14 @@ def confirmar_entrega(
         raise HTTPException(status_code=404, detail="Envío no encontrado")
     if str(envio.repartidor_id) != str(repartidor.id):
         raise HTTPException(status_code=403, detail="No puedes confirmar la entrega de un envío que no es tuyo")
-    if envio.estado not in ["asignado", "en_camino"]:
+    if envio.modalidad_envio == "agencia":
+        raise HTTPException(status_code=409, detail="Este pedido va por agencia: regístralo con \"Dejé el pedido en la agencia\".")
+    if envio.modalidad_envio == "camion":
+        if envio.estado != "en_destino":
+            raise HTTPException(status_code=409, detail="Marca primero que el camión llegó a la ciudad.")
+        if not envio.saldo_pagado:
+            raise HTTPException(status_code=409, detail="El comprador todavía no pagó el saldo (30%): no descargues hasta que el sistema lo confirme.")
+    elif envio.estado not in ["asignado", "en_camino"]:
         raise HTTPException(status_code=409, detail="Este envío no está en un estado que permita confirmar la entrega")
     # Sin este tope, el repartidor podía probar los 10.000 códigos posibles y marcar la entrega sin ver
     # al comprador. La comparación va en tiempo constante.
@@ -623,6 +682,310 @@ def confirmar_entrega(
     _efectos_post_entrega(db, envio)
 
     return envio
+
+# ============ Compradores lejanos (decisiones del usuario, 2026-10-03) ============
+
+# ---- Por agencia de carga: el repartidor deja el pedido en la agencia y el comprador confirma que lo recogió ----
+NUMERO_GUIA = re.compile(r"^[A-Za-z0-9-]{3,40}$")
+
+
+def _repartidor_de(usuario: dict, db: Session) -> models.Repartidor:
+    repartidor = db.query(models.Repartidor).filter(models.Repartidor.usuario_id == usuario.get("sub")).first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
+    return repartidor
+
+
+@app.post("/envios/{envio_id}/despachar-agencia", response_model=EnvioSalida)
+def despachar_en_agencia(
+    envio_id: uuid.UUID,
+    agencia: str = Form(...),
+    numero_guia: str = Form(...),
+    foto: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("repartidor")),
+):
+    agencia = " ".join((agencia or "").split())
+    numero_guia = (numero_guia or "").strip()
+    if not 2 <= len(agencia) <= 60:
+        raise HTTPException(status_code=422, detail="Escribe el nombre de la agencia (por ejemplo, Shalom).")
+    if not NUMERO_GUIA.match(numero_guia):
+        raise HTTPException(status_code=422, detail="El número de guía tiene de 3 a 40 letras, números o guiones: está en el comprobante de la agencia.")
+    datos_foto, tipo_foto = leer_imagen_validada(foto)
+    repartidor = _repartidor_de(usuario, db)
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).with_for_update().first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+    if str(envio.repartidor_id) != str(repartidor.id):
+        raise HTTPException(status_code=403, detail="Este envío no es tuyo")
+    if envio.modalidad_envio != "agencia":
+        raise HTTPException(status_code=409, detail="Este pedido no va por agencia")
+    if envio.estado not in ("asignado", "en_camino"):
+        raise HTTPException(status_code=409, detail="Este envío no está en camino a la agencia")
+    try:
+        url_foto = subir_foto_entrega(io.BytesIO(datos_foto), tipo_foto)
+    except Exception:
+        raise HTTPException(status_code=502, detail="No se pudo subir la foto al almacenamiento")
+    envio.estado = "en_agencia"
+    envio.agencia_nombre = agencia
+    envio.numero_guia = numero_guia
+    envio.foto_guia_url = url_foto
+    envio.fecha_despacho = datetime.utcnow()
+    db.commit()
+    db.refresh(envio)
+    publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    # Su parte terminó: queda libre para otro envío y se le liquida su tramo.
+    repartidor.estado_disponibilidad = "disponible"
+    db.commit()
+    intentar_resolver_envio_huerfano(db)
+    _liquidar_al_repartidor(db, envio)
+    return envio
+
+
+@app.post("/envios/{envio_id}/recibido", response_model=EnvioSalida)
+def confirmar_que_lo_recogi(envio_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+    """El comprador (o el admin) confirma que recogió en la agencia de su ciudad el pedido que se mandó por agencia."""
+    if usuario.get("rol") not in ("comprador", "admin"):
+        raise HTTPException(status_code=403, detail="Solo el comprador confirma que recogió su pedido")
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).with_for_update().first()
+    if not envio:
+        raise HTTPException(status_code=404, detail="Envío no encontrado")
+    _autorizar_envio(envio, usuario, db)
+    if envio.estado != "en_agencia":
+        raise HTTPException(status_code=409, detail="Este pedido todavía no está en la agencia (o ya lo confirmaste)")
+    envio.estado = "entregado"
+    envio.fecha_recibido = datetime.utcnow()
+    db.commit()
+    db.refresh(envio)
+    publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    try:
+        notificar_entrega_a_certificacion(db, envio)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.error("No se pudo notificar a Certificación para el pedido %s (queda pendiente para el reintento)",
+                     envio.pedido_id, exc_info=True)
+    return envio
+
+
+# ---- Transportistas de carga: documentos que revisa el admin ----
+PLACA = re.compile(r"^[A-Z0-9]{3}-?[A-Z0-9]{3}$")
+LICENCIA = re.compile(r"^[A-Z0-9-]{6,15}$")
+KG_MINIMOS_PARA_CARGA = 2500  # 50 sacos de 50 kg: el mínimo de un comprador lejano
+DOCUMENTOS_DE_CARGA = {"licencia": ("doc_licencia_objeto", "doc_licencia_tipo"),
+                       "tarjeta": ("doc_tarjeta_objeto", "doc_tarjeta_tipo"),
+                       "soat": ("doc_soat_objeto", "doc_soat_tipo")}
+
+
+def _transportista_para_admin(r: models.Repartidor) -> dict:
+    return {"id": str(r.id), "nombre": r.nombre, "dni": r.dni, "tipo_vehiculo": r.tipo_vehiculo,
+            "capacidad_maxima_kg": float(r.capacidad_maxima_kg) if r.capacidad_maxima_kg is not None else None,
+            "placa": r.placa, "licencia_numero": r.licencia_numero, "estado_disponibilidad": r.estado_disponibilidad,
+            "verificacion_estado": r.verificacion_estado, "verificacion_motivo": r.verificacion_motivo,
+            "fecha_documentos": r.fecha_documentos, "documentos": {cual: getattr(r, campos[1]) for cual, campos in DOCUMENTOS_DE_CARGA.items()}}
+
+
+@app.post("/repartidores/me/carga")
+def enviar_documentos_de_carga(
+    placa: str = Form(...),
+    licencia_numero: str = Form(...),
+    licencia: UploadFile = File(...),
+    tarjeta_propiedad: UploadFile = File(...),
+    soat: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("repartidor")),
+):
+    repartidor = _repartidor_de(usuario, db)
+    placa = (placa or "").strip().upper().replace(" ", "")
+    licencia_numero = (licencia_numero or "").strip().upper().replace(" ", "")
+    if not PLACA.match(placa):
+        raise HTTPException(status_code=422, detail="La placa son 6 letras o números (por ejemplo ABC-123).")
+    if not LICENCIA.match(licencia_numero):
+        raise HTTPException(status_code=422, detail="Escribe el número de tu licencia de conducir (6 a 15 letras o números).")
+    if repartidor.capacidad_maxima_kg is None or float(repartidor.capacidad_maxima_kg) < KG_MINIMOS_PARA_CARGA:
+        raise HTTPException(status_code=422, detail=f"Para viajes de carga el vehículo debe llevar al menos {KG_MINIMOS_PARA_CARGA} kg (50 sacos). Actualiza la capacidad de tu vehículo.")
+    leidos = {cual: leer_documento_validado(archivo) for cual, archivo in
+              (("licencia", licencia), ("tarjeta", tarjeta_propiedad), ("soat", soat))}
+    try:
+        objetos = {cual: subir_documento_transportista(datos, tipo) for cual, (datos, tipo) in leidos.items()}
+    except Exception:
+        logger.error("No se pudieron guardar los documentos de carga del repartidor %s", repartidor.id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudieron guardar los documentos. Intenta de nuevo en unos momentos.")
+    for cual, (campo_objeto, campo_tipo) in DOCUMENTOS_DE_CARGA.items():
+        setattr(repartidor, campo_objeto, objetos[cual])
+        setattr(repartidor, campo_tipo, leidos[cual][1])
+    repartidor.transportista_carga = True
+    repartidor.placa = placa
+    repartidor.licencia_numero = licencia_numero
+    repartidor.verificacion_estado = "pendiente"
+    repartidor.verificacion_motivo = None
+    repartidor.fecha_documentos = datetime.utcnow()
+    db.commit()
+    return {"verificacion_estado": "pendiente"}
+
+
+@app.get("/repartidores/admin/transportistas")
+def listar_transportistas(estado: str = "pendiente", db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    consulta = db.query(models.Repartidor).filter(models.Repartidor.transportista_carga.is_(True))
+    if estado != "todos":
+        consulta = consulta.filter(models.Repartidor.verificacion_estado == estado)
+    return [_transportista_para_admin(r) for r in consulta.order_by(models.Repartidor.fecha_documentos).all()]
+
+
+def _transportista_o_404(db: Session, repartidor_id) -> models.Repartidor:
+    r = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id, models.Repartidor.transportista_carga.is_(True)).first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Transportista no encontrado")
+    return r
+
+
+@app.get("/repartidores/admin/transportistas/{repartidor_id}/documento/{cual}")
+def ver_documento_de_carga(repartidor_id: uuid.UUID, cual: str, db: Session = Depends(get_db),
+                           usuario: dict = Depends(requiere_rol("admin"))):
+    if cual not in DOCUMENTOS_DE_CARGA:
+        raise HTTPException(status_code=404, detail="El documento es 'licencia', 'tarjeta' o 'soat'")
+    r = _transportista_o_404(db, repartidor_id)
+    campo_objeto, campo_tipo = DOCUMENTOS_DE_CARGA[cual]
+    try:
+        datos = leer_documento_transportista(getattr(r, campo_objeto))
+    except Exception:
+        logger.error("No se pudo leer el documento %s del transportista %s", cual, repartidor_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo leer el documento. Intenta de nuevo en unos momentos.")
+    return Response(content=datos, media_type=getattr(r, campo_tipo), headers={"Cache-Control": "no-store"})
+
+
+class RechazoDocumentos(BaseModel):
+    motivo: str
+
+
+@app.post("/repartidores/admin/transportistas/{repartidor_id}/verificar")
+def verificar_transportista(repartidor_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    r = _transportista_o_404(db, repartidor_id)
+    r.verificacion_estado = "verificado"
+    r.verificacion_motivo = None
+    r.verificado_por = usuario.get("sub")
+    r.fecha_verificacion = datetime.utcnow()
+    db.commit()
+    return _transportista_para_admin(r)
+
+
+@app.post("/repartidores/admin/transportistas/{repartidor_id}/rechazar")
+def rechazar_transportista(repartidor_id: uuid.UUID, datos: RechazoDocumentos, db: Session = Depends(get_db),
+                           usuario: dict = Depends(requiere_rol("admin"))):
+    motivo = " ".join((datos.motivo or "").split())
+    if not 3 <= len(motivo) <= 300:
+        raise HTTPException(status_code=422, detail="Escribe el motivo (lo verá el transportista).")
+    r = _transportista_o_404(db, repartidor_id)
+    r.verificacion_estado = "rechazado"
+    r.verificacion_motivo = motivo
+    r.verificado_por = usuario.get("sub")
+    r.fecha_verificacion = datetime.utcnow()
+    db.commit()
+    return _transportista_para_admin(r)
+
+
+# ---- Viajes compartidos (logica_viajes.py) ----
+def _viaje_para_mostrar(db: Session, viaje: models.Viaje, con_envios: bool = True) -> dict:
+    datos = logica_viajes.resumen_de_viaje(db, viaje)
+    transportista = db.query(models.Repartidor).filter(models.Repartidor.id == viaje.transportista_id).first() if viaje.transportista_id else None
+    datos["transportista"] = ({"id": str(transportista.id), "nombre": transportista.nombre, "placa": transportista.placa,
+                               "capacidad_maxima_kg": float(transportista.capacidad_maxima_kg or 0)} if transportista else None)
+    if con_envios:
+        datos["envios"] = [{"id": str(e.id), "pedido_id": str(e.pedido_id), "sacos": e.sacos, "estado": e.estado,
+                            "saldo_pagado": bool(e.saldo_pagado)}
+                           for e in db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id).all()]
+    return datos
+
+
+def _viaje_o_404(db: Session, viaje_id) -> models.Viaje:
+    viaje = db.query(models.Viaje).filter(models.Viaje.id == viaje_id).with_for_update().first()
+    if not viaje:
+        raise HTTPException(status_code=404, detail="Viaje no encontrado")
+    return viaje
+
+
+@app.get("/viajes")
+def listar_viajes(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    viajes = db.query(models.Viaje).filter(models.Viaje.estado != "completado").order_by(models.Viaje.fecha_creacion).all()
+    return [_viaje_para_mostrar(db, v) for v in viajes]
+
+
+@app.get("/viajes/mios")
+def mis_viajes(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    repartidor = _repartidor_de(usuario, db)
+    viajes = (db.query(models.Viaje).filter(models.Viaje.transportista_id == repartidor.id, models.Viaje.estado != "completado")
+              .order_by(models.Viaje.fecha_creacion).all())
+    return [_viaje_para_mostrar(db, v) for v in viajes]
+
+
+class AsignarTransportista(BaseModel):
+    transportista_id: uuid.UUID
+
+
+@app.post("/viajes/{viaje_id}/asignar")
+def asignar_transportista(viaje_id: uuid.UUID, datos: AsignarTransportista, db: Session = Depends(get_db),
+                          usuario: dict = Depends(requiere_rol("admin"))):
+    viaje = _viaje_o_404(db, viaje_id)
+    if viaje.estado not in ("abierto", "listo"):
+        raise HTTPException(status_code=409, detail="Este viaje ya salió")
+    transportista = db.query(models.Repartidor).filter(models.Repartidor.id == datos.transportista_id).first()
+    if not transportista or transportista.verificacion_estado != "verificado":
+        raise HTTPException(status_code=422, detail="Solo se asigna un transportista de carga con sus documentos verificados.")
+    if float(transportista.capacidad_maxima_kg or 0) < logica_viajes.sacos_cargados(db, viaje) * 50:
+        raise HTTPException(status_code=422, detail="El vehículo de ese transportista no carga todos los sacos de este viaje.")
+    viaje.transportista_id = transportista.id
+    db.commit()
+    return _viaje_para_mostrar(db, viaje)
+
+
+class SalidaDeViaje(BaseModel):
+    forzar: bool = False  # el admin puede hacerlo salir antes de juntar el % (p. ej. un pedido urgente que paga el viaje)
+
+
+@app.post("/viajes/{viaje_id}/salir")
+def salir_de_viaje(viaje_id: uuid.UUID, datos: SalidaDeViaje = SalidaDeViaje(), db: Session = Depends(get_db),
+                   usuario: dict = Depends(requiere_rol("admin", "repartidor"))):
+    viaje = _viaje_o_404(db, viaje_id)
+    if usuario.get("rol") == "repartidor" and str(viaje.transportista_id) != str(_repartidor_de(usuario, db).id):
+        raise HTTPException(status_code=403, detail="Este viaje no es tuyo")
+    if not viaje.transportista_id:
+        raise HTTPException(status_code=409, detail="Asígnale primero un transportista verificado.")
+    if viaje.estado == "abierto" and not (datos.forzar and usuario.get("rol") == "admin"):
+        raise HTTPException(status_code=409, detail=f"El camión sale al juntar {viaje.sacos_para_salir} sacos; lleva {logica_viajes.sacos_cargados(db, viaje)}.")
+    if viaje.estado not in ("abierto", "listo"):
+        raise HTTPException(status_code=409, detail="Este viaje ya salió")
+    viaje.estado = "en_ruta"
+    viaje.fecha_salida = datetime.utcnow()
+    transportista = db.query(models.Repartidor).filter(models.Repartidor.id == viaje.transportista_id).first()
+    transportista.estado_disponibilidad = "ocupado"
+    envios = db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id).all()
+    for envio in envios:
+        envio.repartidor_id = viaje.transportista_id
+        envio.estado = "en_camino"
+    db.commit()
+    for envio in envios:
+        publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    return _viaje_para_mostrar(db, viaje)
+
+
+@app.post("/viajes/{viaje_id}/llegar")
+def llegar_a_destino(viaje_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    """El camión llegó a la ciudad: cada comprador paga su saldo y recién ahí se descarga (con su PIN)."""
+    viaje = _viaje_o_404(db, viaje_id)
+    if str(viaje.transportista_id) != str(_repartidor_de(usuario, db).id):
+        raise HTTPException(status_code=403, detail="Este viaje no es tuyo")
+    if viaje.estado != "en_ruta":
+        raise HTTPException(status_code=409, detail="Este viaje no está en ruta")
+    viaje.estado = "llegado"
+    viaje.fecha_llegada = datetime.utcnow()
+    envios = db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id, models.Envio.estado == "en_camino").all()
+    for envio in envios:
+        envio.estado = "en_destino"
+    db.commit()
+    for envio in envios:
+        publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    return _viaje_para_mostrar(db, viaje)
+
 
 @app.post("/repartidores")
 def crear_repartidor(datos: RepartidorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):

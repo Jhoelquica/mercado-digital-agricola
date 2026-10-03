@@ -58,7 +58,8 @@ def envios_entregados_sin_liquidar(db: Session):
     el job de reintento (reintento_liquidacion_repartidor.py)."""
     return (
         db.query(models.Envio)
-        .filter(models.Envio.estado == "entregado", models.Envio.liquidacion_confirmada == False)
+        # "en_agencia": el repartidor terminó su parte al dejarlo en la agencia de carga (el comprador lo recoge después).
+        .filter(models.Envio.estado.in_(("entregado", "en_agencia")), models.Envio.liquidacion_confirmada == False)
         .order_by(models.Envio.fecha_creacion.asc())
         .all()
     )

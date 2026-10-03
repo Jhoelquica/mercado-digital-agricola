@@ -39,3 +39,27 @@ def subir_foto_entrega(archivo, content_type: str) -> str:
         content_type=content_type,
     )
     return f"{MINIO_PUBLIC_URL}/{MINIO_BUCKET}/{nombre_archivo}"
+
+
+# ---- Documentos de los transportistas de carga (licencia, tarjeta de propiedad, SOAT) ----
+# Bucket PRIVADO: nadie los ve por una URL; el admin los pide a Transporte, que los lee con sus credenciales.
+BUCKET_DOCUMENTOS = "transporte-documentos"
+EXTENSIONES_DOCUMENTOS = {**EXTENSIONES, "application/pdf": ".pdf"}
+
+
+def subir_documento_transportista(datos: bytes, content_type: str) -> str:
+    import io
+    if not client.bucket_exists(BUCKET_DOCUMENTOS):
+        client.make_bucket(BUCKET_DOCUMENTOS)
+    nombre = f"{uuid.uuid4()}{EXTENSIONES_DOCUMENTOS.get(content_type, '.bin')}"
+    client.put_object(BUCKET_DOCUMENTOS, nombre, io.BytesIO(datos), length=len(datos), content_type=content_type)
+    return nombre
+
+
+def leer_documento_transportista(nombre: str) -> bytes:
+    respuesta = client.get_object(BUCKET_DOCUMENTOS, nombre)
+    try:
+        return respuesta.read()
+    finally:
+        respuesta.close()
+        respuesta.release_conn()
