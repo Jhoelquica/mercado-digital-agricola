@@ -15,6 +15,9 @@ Google de verdad. Los usuarios de un rol que no se registra (admin) se insertan 
 import uuid
 from datetime import datetime, timedelta
 
+import httpx
+import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from jose import jwt as jose_jwt
@@ -697,10 +700,13 @@ def test_un_negocio_se_registra_con_ruc_y_nombre_comercial():
     assert perfil["ruc"] == "20131312955" and perfil["nombre_comercial"] == "Bodega Doña Rosa"
 
 
-def test_un_negocio_puede_registrarse_sin_ruc():
-    resp = _registrar_comprador(tipo_comprador="negocio")
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["tipo_comprador"] == "negocio" and resp.json()["ruc"] is None
+def test_un_negocio_no_puede_registrarse_sin_ruc():
+    email = _email()
+    resp = client.post("/usuarios/registro", json={
+        "nombre": "Comprador", "email": email, "password": "test1234", "rol": "comprador", "tipo_comprador": "negocio"})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT."
+    assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
 
 
 def test_un_ruc_mal_escrito_o_un_tipo_inventado_fallan_422_y_no_crean_la_cuenta():
@@ -768,3 +774,148 @@ def test_un_comprador_nuevo_con_google_queda_como_persona(monkeypatch):
     assert resp.status_code == 200, resp.text
     usuario_id = _decodificar_jwt(resp.json()["access_token"])["sub"]
     assert _perfil_comprador_de(usuario_id)["tipo_comprador"] == "persona"
+
+
+
+# ============ El RUC de un negocio se verifica en SUNAT (sunat.py) ============
+# Ningún test consulta SUNAT de verdad: este fixture (autouse, vale para todo el archivo) responde por el servicio.
+
+SUNAT_ACTIVO = {"razon_social": "EMPRESA DE PRUEBA S.A.C.", "estado": "ACTIVO", "condicion": "HABIDO"}
+_CONSULTAR_RUC_REAL = main.sunat.consultar_ruc  # al importar el archivo, antes de que el fixture lo reemplace
+
+
+@pytest.fixture(autouse=True)
+def _sunat_simulado(monkeypatch):
+    consultas = []
+
+    def responder(ruc):
+        consultas.append(ruc)
+        respuesta = _sunat_simulado.respuestas.get(ruc, SUNAT_ACTIVO)
+        if isinstance(respuesta, Exception):
+            raise respuesta
+        return respuesta
+
+    _sunat_simulado.respuestas = {}
+    _sunat_simulado.consultas = consultas
+    monkeypatch.setattr(main.sunat, "consultar_ruc", responder)
+    monkeypatch.setattr(main.sunat, "_cache", {})
+
+
+def _registro_negocio(ruc, email=None):
+    return client.post("/usuarios/registro", json={
+        "nombre": "Negocio", "email": email or _email(), "password": "test1234", "rol": "comprador",
+        "tipo_comprador": "negocio", "ruc": ruc})
+
+
+def test_un_negocio_verificado_guarda_la_razon_social_de_sunat():
+    resp = _registro_negocio("20131312955")
+    assert resp.status_code == 200, resp.text
+    perfil = _perfil_comprador_de(resp.json()["id"])
+    assert perfil["razon_social"] == "EMPRESA DE PRUEBA S.A.C." and perfil["ruc_verificado_en"]
+    assert _sunat_simulado.consultas == ["20131312955"]
+
+
+@pytest.mark.parametrize("respuesta, codigo, texto", [
+    (None, 422, "SUNAT no tiene registrado el RUC 20131312955"),
+    ({"razon_social": "X S.A.C.", "estado": "BAJA DE OFICIO", "condicion": "HABIDO"}, 422, "figura en SUNAT como baja de oficio"),
+    ({"razon_social": "X S.A.C.", "estado": "SUSPENSION TEMPORAL", "condicion": "HABIDO"}, 422, "solo un negocio activo"),
+    ({"razon_social": "X S.A.C.", "estado": "ACTIVO", "condicion": "NO HABIDO"}, 422, "figura en SUNAT como no habido"),
+    (main.sunat.SunatNoDisponible("HTTP 429"), 503, "No pudimos consultar SUNAT en este momento"),
+], ids=["no-existe", "baja", "suspendido", "no-habido", "sunat-caido"])
+def test_un_ruc_que_sunat_no_da_por_bueno_no_crea_la_cuenta(respuesta, codigo, texto):
+    _sunat_simulado.respuestas["20131312955"] = respuesta
+    email = _email()
+    resp = _registro_negocio("20131312955", email)
+    assert resp.status_code == codigo, resp.text
+    assert texto in resp.json()["detail"]
+    assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
+
+
+def test_cambiar_a_negocio_desde_el_perfil_tambien_se_verifica():
+    usuario_id = _registrar_comprador().json()["id"]
+    _auth(usuario_id, "comprador")
+    _sunat_simulado.respuestas["20100047218"] = None
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218"})
+    assert resp.status_code == 422, resp.text
+    assert _perfil_comprador_de(usuario_id)["tipo_comprador"] == "persona"  # no cambió nada
+
+    _sunat_simulado.respuestas["20100047218"] = SUNAT_ACTIVO
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218"})
+    assert resp.status_code == 200 and resp.json()["razon_social"] == "EMPRESA DE PRUEBA S.A.C."
+
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"})
+    assert resp.json()["razon_social"] is None and resp.json()["ruc_verificado_en"] is None
+
+
+def test_una_persona_u_otro_rol_no_consultan_sunat():
+    _registrar_comprador(tipo_comprador="persona", ruc="20131312955")
+    client.post("/usuarios/registro", json={"nombre": "P", "email": _email(), "password": "test1234", "rol": "productor",
+                                            "tipo_comprador": "negocio", "ruc": "20131312955"})
+    assert _sunat_simulado.consultas == []
+
+
+# ---- sunat.consultar_ruc, con el servicio simulado a nivel de HTTP ----
+
+class _RespuestaHttp:
+    def __init__(self, status_code, cuerpo=None):
+        self.status_code = status_code
+        self._cuerpo = cuerpo
+
+    def json(self):
+        if isinstance(self._cuerpo, Exception):
+            raise self._cuerpo
+        return self._cuerpo
+
+
+class _ModuloSunat:
+    """El consultar_ruc de verdad (tomado al importar, antes de que el fixture lo reemplace) y la excepción."""
+    consultar_ruc = staticmethod(_CONSULTAR_RUC_REAL)
+    SunatNoDisponible = main.sunat.SunatNoDisponible
+
+
+def _consultar_con_http(monkeypatch, respuesta):
+    llamadas = []
+
+    def get(url, params=None, headers=None, timeout=None):
+        llamadas.append({"url": url, "params": params, "headers": headers})
+        if isinstance(respuesta, Exception):
+            raise respuesta
+        return respuesta
+
+    monkeypatch.setattr(main.sunat.httpx, "get", get)
+    return _ModuloSunat, llamadas
+
+
+def test_consultar_ruc_lee_la_razon_social_el_estado_y_la_condicion(monkeypatch):
+    modulo, llamadas = _consultar_con_http(monkeypatch, _RespuestaHttp(200, {
+        "razonSocial": "  SUPERINTENDENCIA  NACIONAL ", "estado": "activo", "condicion": "habido"}))
+    assert modulo.consultar_ruc("20131312955") == {
+        "razon_social": "SUPERINTENDENCIA NACIONAL", "estado": "ACTIVO", "condicion": "HABIDO"}
+    assert llamadas[0]["params"] == {"numero": "20131312955"} and "Authorization" not in llamadas[0]["headers"]
+    modulo.consultar_ruc("20131312955")
+    assert len(llamadas) == 1  # la segunda sale del caché
+
+
+def test_consultar_ruc_entiende_la_v1_y_manda_el_token_si_hay(monkeypatch):
+    monkeypatch.setenv("SUNAT_RUC_TOKEN", "token-de-prueba")
+    monkeypatch.setenv("SUNAT_RUC_URL", "https://otro-servicio.pe/ruc")
+    modulo, llamadas = _consultar_con_http(monkeypatch, _RespuestaHttp(200, {
+        "nombre": "BANCO DE CREDITO DEL PERU", "estado": "ACTIVO", "condicion": "HABIDO"}))
+    assert modulo.consultar_ruc("20100047218")["razon_social"] == "BANCO DE CREDITO DEL PERU"
+    assert llamadas[0]["url"] == "https://otro-servicio.pe/ruc"
+    assert llamadas[0]["headers"]["Authorization"] == "Bearer token-de-prueba"
+
+
+def test_consultar_ruc_un_404_es_que_no_existe(monkeypatch):
+    modulo, _ = _consultar_con_http(monkeypatch, _RespuestaHttp(404, {"message": "not found"}))
+    assert modulo.consultar_ruc("20123456786") is None
+
+
+@pytest.mark.parametrize("respuesta", [
+    _RespuestaHttp(429, {"message": "limit"}), _RespuestaHttp(500), _RespuestaHttp(200, ValueError("no es JSON")),
+    _RespuestaHttp(200, {"estado": "ACTIVO"}), httpx.ReadTimeout("tardó"), httpx.ConnectError("sin red"),
+], ids=["limite", "error-500", "no-json", "sin-razon-social", "tarda", "sin-red"])
+def test_consultar_ruc_si_el_servicio_falla_no_afirma_nada(monkeypatch, respuesta):
+    modulo, _ = _consultar_con_http(monkeypatch, respuesta)
+    with pytest.raises(modulo.SunatNoDisponible):
+        modulo.consultar_ruc("20131312955")

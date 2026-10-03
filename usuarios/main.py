@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -19,6 +20,7 @@ from auth import secreto_de_servicio_valido
 from database import Base, engine, SessionLocal
 import models
 from migraciones import agregar_columnas_faltantes
+import sunat
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
 
@@ -135,23 +137,63 @@ class _DatosDeComprador(BaseModel):
         return valor
 
 
-def _aplicar_datos_de_comprador(usuario, datos: _DatosDeComprador) -> None:
-    """Solo un comprador tiene tipo (por defecto "persona"); el RUC y el nombre comercial solo se guardan para un
-    negocio (si pasa a persona, se borran)."""
+logger = logging.getLogger("usuarios")
+
+
+def _verificar_negocio_en_sunat(datos: _DatosDeComprador):
+    """Un comprador "negocio" tiene que dar su RUC, y SUNAT tiene que tenerlo ACTIVO y HABIDO (ver sunat.py). Devuelve lo
+    que dijo SUNAT (para guardar la razón social), o None si no compra como negocio. Se llama ANTES de crear o cambiar la
+    cuenta: si el RUC no pasa, no se guarda nada."""
+    if datos.tipo_comprador != "negocio":
+        return None
+    if not datos.ruc:
+        raise HTTPException(status_code=422, detail="Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT.")
+    try:
+        en_sunat = sunat.consultar_ruc(datos.ruc)
+    except sunat.SunatNoDisponible as error:
+        logger.warning("No se pudo consultar el RUC en SUNAT (%s)", error)
+        raise HTTPException(
+            status_code=503,
+            detail="No pudimos consultar SUNAT en este momento. Intenta en unos minutos, o regístrate para tu casa y cambia "
+                   "a negocio desde tu perfil.",
+        )
+    if en_sunat is None:
+        raise HTTPException(status_code=422, detail=f"SUNAT no tiene registrado el RUC {datos.ruc}. Revisa que esté bien escrito.")
+    if en_sunat["estado"] != "ACTIVO":
+        raise HTTPException(
+            status_code=422,
+            detail=f"El RUC {datos.ruc} figura en SUNAT como {en_sunat['estado'].lower()}: solo un negocio activo puede comprar como negocio.",
+        )
+    if en_sunat["condicion"] != "HABIDO":
+        raise HTTPException(
+            status_code=422,
+            detail=f"El RUC {datos.ruc} figura en SUNAT como {en_sunat['condicion'].lower() or 'sin condición'} (su domicilio "
+                   f"fiscal no está confirmado): solo un negocio habido puede comprar como negocio.",
+        )
+    return en_sunat
+
+
+def _aplicar_datos_de_comprador(usuario, datos: _DatosDeComprador, en_sunat=None) -> None:
+    """Solo un comprador tiene tipo (por defecto "persona"); el RUC, el nombre comercial y lo verificado en SUNAT solo se
+    guardan para un negocio (si pasa a persona, se borran). `en_sunat` es lo que devolvió _verificar_negocio_en_sunat."""
     if usuario.rol != "comprador":
         usuario.tipo_comprador = usuario.ruc = usuario.nombre_comercial = None
+        usuario.razon_social = usuario.ruc_verificado_en = None
         return
     usuario.tipo_comprador = datos.tipo_comprador or "persona"
     es_negocio = usuario.tipo_comprador == "negocio"
     usuario.ruc = datos.ruc if es_negocio else None
     usuario.nombre_comercial = datos.nombre_comercial if es_negocio else None
+    usuario.razon_social = en_sunat["razon_social"] if es_negocio and en_sunat else None
+    usuario.ruc_verificado_en = datetime.utcnow() if es_negocio and en_sunat else None
 
 
 def _perfil(usuario) -> dict:
     perfil = {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol}
     if usuario.rol == "comprador":
         perfil.update(tipo_comprador=usuario.tipo_comprador or "persona", ruc=usuario.ruc,
-                      nombre_comercial=usuario.nombre_comercial)
+                      nombre_comercial=usuario.nombre_comercial, razon_social=usuario.razon_social,
+                      ruc_verificado_en=usuario.ruc_verificado_en)
     return perfil
 
 
@@ -208,6 +250,7 @@ def _validar_rol_de_registro(rol: str) -> None:
 def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     rol = datos.rol
     _validar_rol_de_registro(rol)
+    en_sunat = _verificar_negocio_en_sunat(datos) if rol == "comprador" else None
 
     nuevo = models.Usuario(
         nombre=datos.nombre,
@@ -215,7 +258,7 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
         password_hash=hashear_password(datos.password),
         rol=rol,
     )
-    _aplicar_datos_de_comprador(nuevo, datos)
+    _aplicar_datos_de_comprador(nuevo, datos, en_sunat)
     db.add(nuevo)
     try:
         db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email
@@ -354,7 +397,7 @@ def actualizar_perfil_comprador(datos: PerfilCompradorActualizar, db: Session = 
     usuario = db.query(models.Usuario).filter(models.Usuario.id == solicitante.get("sub")).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    _aplicar_datos_de_comprador(usuario, datos)
+    _aplicar_datos_de_comprador(usuario, datos, _verificar_negocio_en_sunat(datos))
     db.commit()
     db.refresh(usuario)
     return _perfil(usuario)

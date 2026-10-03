@@ -367,6 +367,9 @@ services:
       ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
       ADMIN_BOOTSTRAP_PASSWORD: dev-admin-12345
       GOOGLE_CLIENT_ID: 546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com
+      # Verificación del RUC en SUNAT (ver k8s/usuarios.yaml). El token es opcional (en .env).
+      SUNAT_RUC_URL: https://api.apis.net.pe/v2/sunat/ruc
+      SUNAT_RUC_TOKEN: ${SUNAT_RUC_TOKEN:-}
     depends_on:
       db-usuarios:
         condition: service_healthy

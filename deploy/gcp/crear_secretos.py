@@ -7,7 +7,8 @@ Las claves salen de k8s/secret.yaml (el de desarrollo, ignorado por git) para qu
   - QA_LIMPIEZA_SECRETO: también al azar y nadie lo conoce, así que los DELETE de limpieza de pruebas quedan cerrados.
   - CULQI_*: las que pases con --culqi-public/--culqi-secret; si no, se copian las de PRUEBA del Secret de desarrollo.
   - ADMIN_BOOTSTRAP_EMAIL / _PASSWORD: el primer admin (lo crea Usuarios al arrancar si todavía no hay ninguno).
-  - GEMINI_API_KEY (opcional): la IA que sugiere la fecha de cosecha (plan gratuito de Gemini). Se copia la del Secret de desarrollo si la
+  - GEMINI_API_KEY (opcional): la IA que sugiere la fecha de cosecha (plan gratuito de Gemini).
+  - SUNAT_RUC_TOKEN (opcional): clave del servicio que consulta el RUC en SUNAT, si un día la pide. Se copia la del Secret de desarrollo si la
     tiene; si no, Productores usa la tabla de ciclos típicos.
 
 Ningún valor se imprime. Lo único que necesitas saber (el correo y la contraseña del admin) se guarda en
@@ -85,7 +86,7 @@ def main():
             valores[clave] = args.email_admin
         elif clave == "ADMIN_BOOTSTRAP_PASSWORD":
             valores[clave] = password_admin
-        elif clave == "GEMINI_API_KEY":
+        elif clave in ("GEMINI_API_KEY", "SUNAT_RUC_TOKEN"):
             if locales[clave]:
                 valores[clave] = locales[clave]
         else:

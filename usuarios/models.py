@@ -27,6 +27,9 @@ class Usuario(Base):
     tipo_comprador = Column(String, nullable=True)
     ruc = Column(String(11), nullable=True)
     nombre_comercial = Column(String, nullable=True)
+    # Lo que dijo SUNAT del RUC al verificarlo (ver sunat.py): un negocio solo se acepta con su RUC activo y habido.
+    razon_social = Column(String, nullable=True)
+    ruc_verificado_en = Column(DateTime, nullable=True)
 
 
 # La tabla "invitaciones" (códigos de un solo uso para registrarse con un rol restringido) se quitó con el rol
