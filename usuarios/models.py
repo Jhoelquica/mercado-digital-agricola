@@ -1,11 +1,15 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer
+from sqlalchemy import Column, String, DateTime, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
 class Usuario(Base):
     __tablename__ = "usuarios"
+    # Un RUC solo puede estar en una cuenta (pedido del usuario, 2026-10-03): así nadie más se registra como un negocio
+    # que ya tiene cuenta. Varios NULL (personas y otros roles) sí se permiten. En una base ya creada lo agrega
+    # migraciones.crear_indices_faltantes.
+    __table_args__ = (Index("uq_usuarios_ruc", "ruc", unique=True),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nombre = Column(String, nullable=False)

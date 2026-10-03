@@ -15,6 +15,8 @@ Google de verdad. Los usuarios de un rol que no se registra (admin) se insertan 
 import uuid
 from datetime import datetime, timedelta
 
+import random
+
 import httpx
 import pytest
 
@@ -693,11 +695,12 @@ def test_un_comprador_se_registra_como_persona_por_defecto():
 
 
 def test_un_negocio_se_registra_con_ruc_y_nombre_comercial():
-    resp = _registrar_comprador(tipo_comprador="negocio", ruc=" 20131312955 ", nombre_comercial="  Bodega   Doña Rosa ")
+    ruc = _ruc_nuevo()
+    resp = _registrar_comprador(tipo_comprador="negocio", ruc=f" {ruc} ", nombre_comercial="  Bodega   Doña Rosa ")
     assert resp.status_code == 200, resp.text
     perfil = _perfil_comprador_de(resp.json()["id"])
     assert perfil["tipo_comprador"] == "negocio"
-    assert perfil["ruc"] == "20131312955" and perfil["nombre_comercial"] == "Bodega Doña Rosa"
+    assert perfil["ruc"] == ruc and perfil["nombre_comercial"] == "Bodega Doña Rosa"
 
 
 def test_un_negocio_no_puede_registrarse_sin_ruc():
@@ -737,10 +740,11 @@ def test_el_comprador_cambia_su_tipo_desde_el_perfil():
     usuario_id = _registrar_comprador().json()["id"]
     _auth(usuario_id, "comprador")
 
-    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218",
+    ruc = _ruc_nuevo()
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc,
                                                         "nombre_comercial": "Mercado Central"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["tipo_comprador"] == "negocio" and resp.json()["ruc"] == "20100047218"
+    assert resp.json()["tipo_comprador"] == "negocio" and resp.json()["ruc"] == ruc
 
     resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"})
     assert resp.json()["tipo_comprador"] == "persona" and resp.json()["ruc"] is None
@@ -808,24 +812,26 @@ def _registro_negocio(ruc, email=None):
 
 
 def test_un_negocio_verificado_guarda_la_razon_social_de_sunat():
-    resp = _registro_negocio("20131312955")
+    ruc = _ruc_nuevo()
+    resp = _registro_negocio(ruc)
     assert resp.status_code == 200, resp.text
     perfil = _perfil_comprador_de(resp.json()["id"])
     assert perfil["razon_social"] == "EMPRESA DE PRUEBA S.A.C." and perfil["ruc_verificado_en"]
-    assert _sunat_simulado.consultas == ["20131312955"]
+    assert _sunat_simulado.consultas == [ruc]
 
 
 @pytest.mark.parametrize("respuesta, codigo, texto", [
-    (None, 422, "SUNAT no tiene registrado el RUC 20131312955"),
+    (None, 422, "SUNAT no tiene registrado el RUC"),
     ({"razon_social": "X S.A.C.", "estado": "BAJA DE OFICIO", "condicion": "HABIDO"}, 422, "figura en SUNAT como baja de oficio"),
     ({"razon_social": "X S.A.C.", "estado": "SUSPENSION TEMPORAL", "condicion": "HABIDO"}, 422, "solo un negocio activo"),
     ({"razon_social": "X S.A.C.", "estado": "ACTIVO", "condicion": "NO HABIDO"}, 422, "figura en SUNAT como no habido"),
     (main.sunat.SunatNoDisponible("HTTP 429"), 503, "No pudimos consultar SUNAT en este momento"),
 ], ids=["no-existe", "baja", "suspendido", "no-habido", "sunat-caido"])
 def test_un_ruc_que_sunat_no_da_por_bueno_no_crea_la_cuenta(respuesta, codigo, texto):
-    _sunat_simulado.respuestas["20131312955"] = respuesta
+    ruc = _ruc_nuevo()
+    _sunat_simulado.respuestas[ruc] = respuesta
     email = _email()
-    resp = _registro_negocio("20131312955", email)
+    resp = _registro_negocio(ruc, email)
     assert resp.status_code == codigo, resp.text
     assert texto in resp.json()["detail"]
     assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
@@ -834,13 +840,14 @@ def test_un_ruc_que_sunat_no_da_por_bueno_no_crea_la_cuenta(respuesta, codigo, t
 def test_cambiar_a_negocio_desde_el_perfil_tambien_se_verifica():
     usuario_id = _registrar_comprador().json()["id"]
     _auth(usuario_id, "comprador")
-    _sunat_simulado.respuestas["20100047218"] = None
-    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218"})
+    ruc = _ruc_nuevo()
+    _sunat_simulado.respuestas[ruc] = None
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc})
     assert resp.status_code == 422, resp.text
     assert _perfil_comprador_de(usuario_id)["tipo_comprador"] == "persona"  # no cambió nada
 
-    _sunat_simulado.respuestas["20100047218"] = SUNAT_ACTIVO
-    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218"})
+    _sunat_simulado.respuestas[ruc] = SUNAT_ACTIVO
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc})
     assert resp.status_code == 200 and resp.json()["razon_social"] == "EMPRESA DE PRUEBA S.A.C."
 
     resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"})
@@ -919,3 +926,78 @@ def test_consultar_ruc_si_el_servicio_falla_no_afirma_nada(monkeypatch, respuest
     modulo, _ = _consultar_con_http(monkeypatch, respuesta)
     with pytest.raises(modulo.SunatNoDisponible):
         modulo.consultar_ruc("20131312955")
+
+
+
+# ============ Un RUC por cuenta ============
+
+def _ruc_nuevo():
+    """Un RUC con el dígito verificador correcto que ningún otro test usó (un RUC va en una sola cuenta)."""
+    base = "20" + "".join(random.choice("0123456789") for _ in range(8))
+    resto = 11 - sum(int(d) * p for d, p in zip(base, main.PESOS_DIGITO_RUC)) % 11
+    return base + str({10: 0, 11: 1}.get(resto, resto))
+
+
+def test_el_ruc_nuevo_de_los_tests_es_valido():
+    assert all(main.ruc_valido(_ruc_nuevo()) for _ in range(50))
+
+
+def test_un_ruc_solo_puede_estar_en_una_cuenta_y_no_se_consulta_sunat_de_nuevo():
+    ruc = _ruc_nuevo()
+    assert _registro_negocio(ruc).status_code == 200
+
+    email = _email()
+    resp = _registro_negocio(ruc, email)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO
+    assert _sunat_simulado.consultas == [ruc]  # el segundo se rechaza antes de consultar SUNAT
+    assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
+
+
+def test_no_se_puede_cambiar_al_ruc_de_otra_cuenta_pero_si_volver_a_guardar_el_propio():
+    ruc = _ruc_nuevo()
+    duena_id = _registro_negocio(ruc).json()["id"]
+
+    otra_id = _registrar_comprador().json()["id"]
+    _auth(otra_id, "comprador")
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc})
+    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO
+    assert _perfil_comprador_de(otra_id)["tipo_comprador"] == "persona"
+
+    _auth(duena_id, "comprador")
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc, "nombre_comercial": "Nuevo nombre"})
+    assert resp.status_code == 200, resp.text
+
+
+def test_si_la_cuenta_pasa_a_persona_su_ruc_queda_libre():
+    ruc = _ruc_nuevo()
+    duena_id = _registro_negocio(ruc).json()["id"]
+    _auth(duena_id, "comprador")
+    assert client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"}).status_code == 200
+
+    assert _registro_negocio(ruc).status_code == 200
+
+
+def test_la_base_no_deja_dos_cuentas_con_el_mismo_ruc():
+    """El índice único (uq_usuarios_ruc) es la última barrera: dos registros a la vez pasan el chequeo previo."""
+    ruc = _ruc_nuevo()
+    db = main.SessionLocal()
+    try:
+        for i in range(2):
+            db.add(main.models.Usuario(nombre=f"N{i}", email=_email(), password_hash="x", rol="comprador",
+                                       tipo_comprador="negocio", ruc=ruc))
+            if i == 0:
+                db.commit()
+        with pytest.raises(main.IntegrityError):
+            db.commit()
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_si_dos_registros_con_el_mismo_ruc_llegan_a_la_vez_el_segundo_recibe_el_mensaje_del_ruc(monkeypatch):
+    ruc = _ruc_nuevo()
+    assert _registro_negocio(ruc).status_code == 200
+    monkeypatch.setattr(main, "_ruc_ocupado", lambda *a, **k: False)  # como si el chequeo previo no lo hubiera visto
+    resp = _registro_negocio(ruc)
+    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO

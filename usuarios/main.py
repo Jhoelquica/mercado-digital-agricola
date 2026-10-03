@@ -19,7 +19,7 @@ from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
-from migraciones import agregar_columnas_faltantes
+from migraciones import agregar_columnas_faltantes, crear_indices_faltantes
 import sunat
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
@@ -31,6 +31,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
+crear_indices_faltantes(engine, Base)
 
 app = FastAPI()
 
@@ -140,14 +141,35 @@ class _DatosDeComprador(BaseModel):
 logger = logging.getLogger("usuarios")
 
 
-def _verificar_negocio_en_sunat(datos: _DatosDeComprador):
-    """Un comprador "negocio" tiene que dar su RUC, y SUNAT tiene que tenerlo ACTIVO y HABIDO (ver sunat.py). Devuelve lo
-    que dijo SUNAT (para guardar la razón social), o None si no compra como negocio. Se llama ANTES de crear o cambiar la
-    cuenta: si el RUC no pasa, no se guarda nada."""
+MENSAJE_RUC_OCUPADO = "Ese RUC ya está registrado en otra cuenta de Chakra Shop. Si es tu negocio, entra con esa cuenta."
+
+
+def _ruc_ocupado(db: Session, ruc: str, usuario_id=None) -> bool:
+    """¿Otra cuenta (no la que se está cambiando) ya tiene este RUC?"""
+    consulta = db.query(models.Usuario.id).filter(models.Usuario.ruc == ruc)
+    if usuario_id is not None:
+        consulta = consulta.filter(models.Usuario.id != usuario_id)
+    return consulta.first() is not None
+
+
+def _conflicto_al_guardar(error: IntegrityError) -> HTTPException:
+    """El índice único del RUC (uq_usuarios_ruc) o el del correo: dos registros a la vez pueden pasar los chequeos
+    previos, y la base deja entrar solo al primero."""
+    if "uq_usuarios_ruc" in str(error.orig):
+        return HTTPException(status_code=409, detail=MENSAJE_RUC_OCUPADO)
+    return HTTPException(status_code=409, detail="Ese email ya está registrado")
+
+
+def _verificar_negocio_en_sunat(datos: _DatosDeComprador, db: Session, usuario_id=None):
+    """Un comprador "negocio" tiene que dar su RUC, que no puede estar en otra cuenta, y SUNAT tiene que tenerlo ACTIVO y
+    HABIDO (ver sunat.py). Devuelve lo que dijo SUNAT (para guardar la razón social), o None si no compra como negocio.
+    Se llama ANTES de crear o cambiar la cuenta: si el RUC no pasa, no se guarda nada."""
     if datos.tipo_comprador != "negocio":
         return None
     if not datos.ruc:
         raise HTTPException(status_code=422, detail="Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT.")
+    if _ruc_ocupado(db, datos.ruc, usuario_id):
+        raise HTTPException(status_code=409, detail=MENSAJE_RUC_OCUPADO)
     try:
         en_sunat = sunat.consultar_ruc(datos.ruc)
     except sunat.SunatNoDisponible as error:
@@ -250,7 +272,7 @@ def _validar_rol_de_registro(rol: str) -> None:
 def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     rol = datos.rol
     _validar_rol_de_registro(rol)
-    en_sunat = _verificar_negocio_en_sunat(datos) if rol == "comprador" else None
+    en_sunat = _verificar_negocio_en_sunat(datos, db) if rol == "comprador" else None
 
     nuevo = models.Usuario(
         nombre=datos.nombre,
@@ -261,10 +283,10 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     _aplicar_datos_de_comprador(nuevo, datos, en_sunat)
     db.add(nuevo)
     try:
-        db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email
-    except IntegrityError:
+        db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email (o de RUC)
+    except IntegrityError as error:
         db.rollback()
-        raise HTTPException(status_code=409, detail="Ese email ya está registrado")
+        raise _conflicto_al_guardar(error)
 
     db.commit()
     db.refresh(nuevo)
@@ -397,8 +419,12 @@ def actualizar_perfil_comprador(datos: PerfilCompradorActualizar, db: Session = 
     usuario = db.query(models.Usuario).filter(models.Usuario.id == solicitante.get("sub")).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    _aplicar_datos_de_comprador(usuario, datos, _verificar_negocio_en_sunat(datos))
-    db.commit()
+    _aplicar_datos_de_comprador(usuario, datos, _verificar_negocio_en_sunat(datos, db, usuario.id))
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise _conflicto_al_guardar(error)
     db.refresh(usuario)
     return _perfil(usuario)
 
