@@ -5096,3 +5096,74 @@ body.asistente-abierto { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .reclamo-archivo-caja { transition: none; }
 }
+
+/* ===== Compradores lejanos: reglas, opciones agencia/camión, DNI de quien recibe y seguimiento =====
+   ui-ux-pro-max: la ayuda en el mismo lugar del checkout (desplegable), opciones como tarjetas con lo que incluyen y por
+   qué no aplican, progreso del camión con barra + texto (no solo color), foco visible. 21st.dev: "Radio Group in Card"
+   (opciones de envío), "Shipping Info Cards" (reglas con ícono) y "Collapsible Billing Card" (barra de progreso). */
+.lejanos-info { margin-top: 14px; display: grid; gap: 10px; }
+.lejanos-cobertura { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.9rem; color: var(--texto); }
+.lejanos-cobertura i { color: var(--color-primario); font-size: 1.15rem; margin-top: 1px; }
+.lejanos-reglas { border: 1px solid #e2c27a; border-radius: 14px; background: #fffdf7; }
+.lejanos-reglas summary { cursor: pointer; padding: 12px 14px; font-weight: 700; color: var(--acento-cosecha-texto); display: flex; gap: 8px; align-items: center; list-style: none; }
+.lejanos-reglas summary::-webkit-details-marker { display: none; }
+.lejanos-reglas summary::after { content: "\25BE"; margin-left: auto; transition: transform 0.2s; }
+.lejanos-reglas[open] summary::after { transform: rotate(180deg); }
+.lejanos-reglas summary:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; border-radius: 12px; }
+.lejanos-reglas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; padding: 0 14px 12px; }
+.lejanos-regla { display: flex; gap: 10px; padding: 12px; border-radius: 12px; background: #fff; border: 1px solid #efe3c4; }
+.lejanos-regla > i { flex: none; font-size: 1.4rem; color: var(--acento-cosecha); }
+.lejanos-regla div { display: grid; gap: 3px; }
+.lejanos-regla strong { font-size: 0.92rem; color: var(--texto); }
+.lejanos-regla span { font-size: 0.84rem; line-height: 1.45; color: var(--texto-suave); }
+.lejanos-tabla-envoltura { padding: 0 14px 14px; overflow-x: auto; }
+.lejanos-tabla { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+.lejanos-tabla caption { text-align: left; font-weight: 700; padding-bottom: 6px; color: var(--texto); }
+.lejanos-tabla th, .lejanos-tabla td { text-align: left; padding: 8px; border-top: 1px solid #efe3c4; vertical-align: top; }
+.lejanos-tabla thead th { color: var(--texto-suave); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; border-top: none; }
+.lejanos-tabla th[scope="row"] { font-weight: 800; color: var(--color-primario); }
+.lejanos-tabla .btn-link { display: block; font-size: 0.78rem; font-weight: 600; }
+.mapa-ayuda.fuera { color: #9b1c1c; }
+
+.opciones-lejanas { display: grid; gap: 10px; margin: 12px 0; }
+.opcion-lejana { position: relative; display: block; cursor: pointer; }
+.opcion-lejana input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.opcion-lejana-caja { display: grid; gap: 8px; padding: 14px 16px; border-radius: 14px; border: 2px solid #d6ddd0; background: #fff; transition: border-color 0.15s, background-color 0.15s; }
+.opcion-lejana:hover .opcion-lejana-caja { border-color: var(--color-borde); }
+.opcion-lejana input:checked + .opcion-lejana-caja { border-color: var(--color-primario); background: var(--verde-fondo); box-shadow: inset 0 0 0 1px var(--color-primario); }
+.opcion-lejana input:focus-visible + .opcion-lejana-caja { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.opcion-lejana.no-disponible { cursor: not-allowed; }
+.opcion-lejana.no-disponible .opcion-lejana-caja { background: var(--color-superficie); opacity: 0.8; }
+.opcion-lejana-cabecera { display: flex; align-items: center; gap: 10px; }
+.opcion-lejana-icono { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 1.2rem; flex: none; }
+.opcion-lejana-cabecera strong { font-size: 1rem; color: var(--texto); }
+.opcion-lejana-precio { margin-left: auto; font-weight: 800; color: var(--color-primario); white-space: nowrap; }
+.opcion-lejana-detalle { font-size: 0.88rem; line-height: 1.5; color: var(--texto-suave); }
+.opcion-lejana-detalle b { color: var(--texto); }
+.opcion-lejana-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.opcion-lejana-chips span { padding: 3px 10px; border-radius: 999px; background: var(--color-superficie); font-size: 0.76rem; font-weight: 700; color: var(--texto-suave); }
+.opcion-lejana-motivo { display: flex; gap: 6px; align-items: flex-start; font-size: 0.84rem; font-weight: 600; color: #9b1c1c; }
+.lejano-nota, .lejano-consejo { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.84rem; line-height: 1.45; color: var(--texto-suave); }
+.lejano-consejo { margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--verde-fondo); color: #14532d; }
+.lejano-sin-opcion, .lejano-receptor-error { margin: 0; color: #9b1c1c; font-weight: 600; font-size: 0.88rem; }
+.lejano-receptor { margin-top: 6px; display: grid; gap: 8px; }
+.lejano-receptor-fila { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.lejano-receptor-fila input { flex: 1 1 140px; }
+.lejano-receptor-confirmar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--acento-cosecha-suave); }
+.lejano-receptor-confirmar p { margin: 0; }
+.lejano-receptor-ok { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 12px; background: #e8f5ee; color: #14532d; font-size: 0.9rem; }
+
+.checkout-pago-partes { display: grid; gap: 6px; margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--color-superficie); font-size: 0.86rem; }
+.checkout-pago-partes div { display: flex; justify-content: space-between; gap: 10px; }
+.checkout-pago-partes dt { color: var(--texto-suave); }
+.checkout-pago-partes dd { margin: 0; font-weight: 700; white-space: nowrap; }
+.checkout-pago-partes .destacada dt, .checkout-pago-partes .destacada dd { color: var(--color-primario); font-weight: 800; }
+
+.mp-lejano p { margin: 0 0 8px; font-size: 0.9rem; line-height: 1.5; }
+.mp-viaje-barra { height: 12px; border-radius: 999px; background: #e3e8dd; overflow: hidden; margin: 4px 0 6px; }
+.mp-viaje-barra span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--color-primario), #4c7a3d); transition: width 0.4s; }
+.mp-lejano-pago { display: flex; gap: 8px; align-items: flex-start; color: var(--acento-cosecha-texto); font-weight: 600; }
+
+@media (prefers-reduced-motion: reduce) {
+  .opcion-lejana-caja, .mp-viaje-barra span, .lejanos-reglas summary::after { transition: none; }
+}

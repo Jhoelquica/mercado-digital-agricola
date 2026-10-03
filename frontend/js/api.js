@@ -307,9 +307,14 @@ const Api = {
     cotizarEnvio: (latitud, longitud) => request('pedidos', `/pedidos/costo-envio?latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`),
     // El envío exacto de este carrito a este destino (con el recargo por peso si es una compra por mayor).
     cotizar: (datos) => request('pedidos', '/pedidos/cotizar', { method: 'POST', body: datos, auth: true }),
+    // Compradores lejanos: las ciudades a las que se llega (público) y el DNI de quien recibe (nombre enmascarado).
+    destinosLejanos: () => request('pedidos', '/destinos-lejanos'),
+    consultarDni: (dni) => request('pedidos', `/pedidos/dni/${encodeURIComponent(dni)}`, { auth: true }),
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`, { auth: true }),
+    // Pedido por agencia: el comprador confirma que lo recogió en la agencia de su ciudad.
+    confirmarRecibido: (envioId) => request('transporte', `/envios/${envioId}/recibido`, { method: 'POST', auth: true }),
     listarTodos: () => request('transporte', '/envios', { auth: true }),
     actualizarEstado: (envioId, estado) => request('transporte', `/envios/${envioId}/estado`, { method: 'PATCH', body: { estado }, auth: true }),
     ruta: (envioId) => request('transporte', `/envios/${envioId}/ruta`, { auth: true }),

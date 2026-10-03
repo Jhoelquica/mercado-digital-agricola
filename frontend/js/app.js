@@ -2840,10 +2840,19 @@ function resetCheckout() {
 // ---- Reintentar el pago de un pedido ya existente (rechazado) ----
 let pedidoReintento = null; // { id, monto, envio }
 
-function reintentarPago(pedidoId, monto, envio = 0) {
+function reintentarPago(pedidoId, monto, envio = 0, parte = null) {
   pedidoReintento = { id: pedidoId, monto, envio };
   abrirModal('modal-pedido');
+  limpiarCheckoutLejano();
   pintarTotalesPaso2(monto - envio, envio);
+  if (parte === 'adelanto' || parte === 'saldo') {
+    // Un pago parcial (camión): se muestra solo lo que toca pagar ahora, sin repartirlo en subtotal y envío.
+    document.getElementById('checkout-subtotal-paso2').textContent = '—';
+    document.getElementById('checkout-envio-paso2').textContent = '—';
+    document.querySelector('#checkout-panel-2 .carrito-total span').textContent = parte === 'saldo' ? 'Saldo (30%)' : 'Adelanto (70%)';
+    document.getElementById('checkout-total-paso2').textContent = formatearMoneda(monto);
+    actualizarMetodosDePago(monto);
+  }
   envioCotizado = null;
   document.getElementById('checkout-bloque-entrega').classList.add('hidden'); // el pedido ya tiene su entrega
   document.getElementById('checkout-recap').innerHTML = `
@@ -2895,6 +2904,11 @@ function inicializarMapaDestino() {
       quitarResaltadoMapaDestino();
     },
   });
+  // Un checkout nuevo: a qué ciudades se llega y cómo funciona (sin restos de un pedido lejano anterior).
+  limpiarCheckoutLejano();
+  modalidadElegida = null;
+  receptorVerificado = null;
+  pintarInfoLejanos();
 }
 
 function actualizarAyudaDestino() {
@@ -2902,6 +2916,227 @@ function actualizarAyudaDestino() {
   if (!ayuda || !destinoSeleccionado) return;
   ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Destino marcado (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
   ayuda.classList.add('confirmado');
+  avisarSiElDestinoEsLejano();
+}
+
+// ============ COMPRADORES LEJANOS (decisiones del usuario, 2026-10-03) ============
+// Fuera de Ayacucho se llega a las ciudades que habilita el admin, por agencia de carga (el flete se paga al recoger) o en
+// camión compartido (desde 50 sacos por comprador; sale al juntar el 80% de su capacidad; 70% al pedir y 30% al llegar).
+// Todas las reglas se le explican al comprador aquí, con los números reales de cada ciudad.
+const AYACUCHO_CAJA = { latMin: -15.2, latMax: -12.85, lngMin: -75.1, lngMax: -73.0 }; // misma caja que Pedidos
+let destinosLejanosPromesa = null;
+let cotizacionActual = null;
+let modalidadElegida = null;       // 'agencia' | 'camion'
+let receptorVerificado = null;     // { dni, nombre } cuando el comprador confirmó el nombre que dio RENIEC
+
+function obtenerDestinosLejanos() {
+  if (!destinosLejanosPromesa) {
+    destinosLejanosPromesa = Api.pedidos.destinosLejanos().catch(() => { destinosLejanosPromesa = null; return []; });
+  }
+  return destinosLejanosPromesa;
+}
+
+function estaEnAyacucho(lat, lng) {
+  const c = AYACUCHO_CAJA;
+  return lat >= c.latMin && lat <= c.latMax && lng >= c.lngMin && lng <= c.lngMax;
+}
+
+function distanciaKmAprox(lat1, lng1, lat2, lng2) {
+  const r = (g) => (g * Math.PI) / 180;
+  const a = Math.sin(r(lat2 - lat1) / 2) ** 2 + Math.cos(r(lat1)) * Math.cos(r(lat2)) * Math.sin(r(lng2 - lng1) / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function avisarSiElDestinoEsLejano() {
+  const ayuda = document.getElementById('mapa-destino-ayuda');
+  if (!ayuda || !destinoSeleccionado) return;
+  const { lat, lng } = destinoSeleccionado;
+  if (estaEnAyacucho(lat, lng)) return;
+  const destinos = await obtenerDestinosLejanos();
+  const cerca = destinos.find((d) => distanciaKmAprox(d.latitud, d.longitud, lat, lng) <= d.radio_km);
+  ayuda.classList.toggle('confirmado', Boolean(cerca));
+  ayuda.classList.toggle('fuera', !cerca);
+  ayuda.innerHTML = cerca
+    ? `<i class="ti ti-truck-delivery" aria-hidden="true"></i> Tu punto está en <strong>${escapeAttr(cerca.ciudad)}</strong>: en el siguiente paso eliges si llega por agencia o en camión.`
+    : `<i class="ti ti-map-pin-off" aria-hidden="true"></i> Todavía no llegamos a ese punto. Entregamos en la región de Ayacucho${destinos.length ? ` y en ${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}` : ''}.`;
+}
+
+function formatearKgCorto(kg) {
+  return `${Number(kg).toLocaleString('es-PE', { maximumFractionDigits: 1 })} kg`;
+}
+
+async function pintarInfoLejanos() {
+  const caja = document.getElementById('checkout-lejanos-info');
+  if (!caja) return;
+  const destinos = await obtenerDestinosLejanos();
+  if (!destinos.length) { caja.innerHTML = ''; return; }
+  const filas = destinos.map((d) => `
+    <tr>
+      <th scope="row">${escapeAttr(d.ciudad)}
+        <button type="button" class="btn-link lejanos-ver-ciudad" data-lat="${d.latitud}" data-lng="${d.longitud}">ver en el mapa</button></th>
+      <td>${d.agencia ? `${escapeAttr(d.agencia.nombre || 'Agencia')}${d.agencia.flete_kg != null ? ` · flete aprox. ${formatearMoneda(d.agencia.flete_kg)}/kg` : ''}${d.agencia.dias ? ` · ~${d.agencia.dias} días` : ''}` : '—'}</td>
+      <td>${d.camion ? `${formatearMoneda(d.camion.precio_saco)} por saco · desde ${d.camion.minimo_sacos} sacos · sale con ${d.camion.sacos_para_salir} de ${d.camion.capacidad_sacos}` : '—'}</td>
+    </tr>`).join('');
+  caja.innerHTML = `
+    <p class="lejanos-cobertura"><i class="ti ti-map-2" aria-hidden="true"></i>
+      Entregamos en la región de Ayacucho y en <strong>${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}</strong>.</p>
+    <details class="lejanos-reglas">
+      <summary><i class="ti ti-help-circle" aria-hidden="true"></i> ¿Compras desde otra ciudad? Así funciona</summary>
+      <div class="lejanos-reglas-grid">
+        <div class="lejanos-regla"><i class="ti ti-building-warehouse" aria-hidden="true"></i><div><strong>Por agencia de carga</strong>
+          <span>Dejamos tu pedido en la agencia en Huamanga y lo recoges en su oficina de tu ciudad. Ahora pagas el producto y el traslado a la agencia; <b>el flete de la agencia lo pagas al recoger</b> (te mostramos cuánto sería, aproximado).</span></div></div>
+        <div class="lejanos-regla"><i class="ti ti-truck" aria-hidden="true"></i><div><strong>En camión compartido</strong>
+          <span>Para compras grandes: <b>desde 50 sacos de 50 kg por comprador</b>. El camión sale cuando junta el 80% de su carga con otros compradores de tu ciudad; mientras, tu pedido espera y ves cuánto falta.</span></div></div>
+        <div class="lejanos-regla"><i class="ti ti-wallet" aria-hidden="true"></i><div><strong>Pago con camión: 70% y 30%</strong>
+          <span>Pagas el <b>70% al pedir</b> para reservar tu lugar y el <b>30% cuando el camión llega</b>, antes de descargar. Luego le das al chofer tu código de entrega.</span></div></div>
+        <div class="lejanos-regla"><i class="ti ti-id" aria-hidden="true"></i><div><strong>DNI de quien recibe</strong>
+          <span>La agencia o el chofer entregan solo a quien muestra su DNI. Lo verificamos en RENIEC y solo te mostramos sus iniciales para que confirmes.</span></div></div>
+        <div class="lejanos-regla"><i class="ti ti-plant-2" aria-hidden="true"></i><div><strong>Qué conviene pedir desde lejos</strong>
+          <span>Lo de más valor por kilo: quinua, kiwicha, papas nativas, papa amarilla. La papa blanca común suele estar más barata en el mercado de tu ciudad.</span></div></div>
+      </div>
+      <div class="lejanos-tabla-envoltura">
+        <table class="lejanos-tabla">
+          <caption>Precios por ciudad (los actualiza Chakra Shop)</caption>
+          <thead><tr><th scope="col">Ciudad</th><th scope="col">Agencia</th><th scope="col">Camión compartido</th></tr></thead>
+          <tbody>${filas}</tbody>
+        </table>
+      </div>
+    </details>`;
+}
+
+function renderOpcionLejana({ valor, titulo, icono, disponible, motivo, precio, detalle, chips = [] }) {
+  return `
+    <label class="opcion-lejana ${disponible ? '' : 'no-disponible'}">
+      <input type="radio" name="modalidad-envio" value="${valor}" ${disponible ? '' : 'disabled'} ${modalidadElegida === valor ? 'checked' : ''}>
+      <span class="opcion-lejana-caja">
+        <span class="opcion-lejana-cabecera">
+          <span class="opcion-lejana-icono"><i class="ti ti-${icono}" aria-hidden="true"></i></span>
+          <strong>${titulo}</strong>
+          ${precio ? `<span class="opcion-lejana-precio">${precio}</span>` : ''}
+        </span>
+        <span class="opcion-lejana-detalle">${detalle}</span>
+        ${chips.length ? `<span class="opcion-lejana-chips">${chips.map((c) => `<span>${c}</span>`).join('')}</span>` : ''}
+        ${disponible ? '' : `<span class="opcion-lejana-motivo"><i class="ti ti-info-circle" aria-hidden="true"></i> ${escapeAttr(motivo || 'No disponible para este destino.')}</span>`}
+      </span>
+    </label>`;
+}
+
+function pintarCheckoutLejano(c) {
+  const seccion = document.getElementById('checkout-bloque-lejano');
+  const { agencia, camion } = c.opciones;
+  const ciudad = escapeAttr(c.destino.ciudad);
+  const agenciaOk = Boolean(agencia) && !agencia.motivo_no_disponible;
+  const camionOk = Boolean(camion) && !camion.motivo_no_disponible;
+  if (modalidadElegida === 'agencia' && !agenciaOk) modalidadElegida = null;
+  if (modalidadElegida === 'camion' && !camionOk) modalidadElegida = null;
+  if (!modalidadElegida) modalidadElegida = camionOk ? 'camion' : agenciaOk ? 'agencia' : null;
+
+  const opcionAgencia = renderOpcionLejana({
+    valor: 'agencia', titulo: `Por agencia de carga${agencia?.agencia ? ` (${escapeAttr(agencia.agencia)})` : ''}`, icono: 'building-warehouse',
+    disponible: agenciaOk, motivo: agencia ? agencia.motivo_no_disponible : `A ${ciudad} no enviamos por agencia.`,
+    precio: agencia ? formatearMoneda(agencia.costo_envio) : '',
+    detalle: agencia ? `Lo dejamos en la agencia en Huamanga y lo recoges en su oficina de ${ciudad}${agencia.dias ? ` en unos ${agencia.dias} días` : ''}.
+      Ahora pagas el traslado a la agencia. <b>El flete de la agencia lo pagas al recoger</b>${agencia.flete_destino_estimado != null ? `: aprox. <b>${formatearMoneda(agencia.flete_destino_estimado)}</b> (${formatearMoneda(agencia.flete_kg)} por kg × ${formatearKgCorto(c.peso_total_kg)}; lo confirma la agencia)` : ''}.` : '',
+  });
+  const opcionCamion = renderOpcionLejana({
+    valor: 'camion', titulo: 'En camión compartido', icono: 'truck',
+    disponible: camionOk, motivo: camion ? camion.motivo_no_disponible : `A ${ciudad} no va el camión.`,
+    precio: camionOk ? formatearMoneda(camion.costo_envio) : '',
+    detalle: !camion ? '' : !camionOk
+      ? `${formatearMoneda(camion.precio_saco)} por saco de ${c.kg_por_saco} kg, desde ${camion.minimo_sacos} sacos por comprador. Sale al juntar ${camion.sacos_para_salir} sacos con otros compradores; ${camion.porcentaje_adelanto}% al pedir y el resto al llegar.`
+      : `${camion.sacos != null ? `${camion.sacos} sacos de ${c.kg_por_saco} kg × ${formatearMoneda(camion.precio_saco)}. ` : ''}
+      El camión sale cuando junta <b>${camion.sacos_para_salir} sacos</b> (el ${camion.porcentaje_salida}% de ${camion.capacidad_sacos}) con otros compradores de ${ciudad}; mientras, tu pedido espera y ves cuánto falta.
+      ${camion.adelanto != null ? `Pagas <b>${formatearMoneda(camion.adelanto)} ahora (${camion.porcentaje_adelanto}%)</b> y <b>${formatearMoneda(camion.saldo)} cuando llegue</b>, antes de descargar.` : ''}`,
+    chips: camion ? [`Desde ${camion.minimo_sacos} sacos por comprador`, `${camion.porcentaje_adelanto}% al pedir · resto al llegar`, camion.dias ? `~${camion.dias} días de viaje` : null].filter(Boolean) : [],
+  });
+
+  seccion.innerHTML = `
+    <h3 id="checkout-lejano-titulo"><i class="ti ti-truck-delivery" aria-hidden="true"></i> Tu pedido va a ${ciudad}</h3>
+    ${c.destino.nota ? `<p class="lejano-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> ${escapeAttr(c.destino.nota)}</p>` : ''}
+    <div class="opciones-lejanas" role="radiogroup" aria-label="Cómo llega tu pedido">${opcionCamion}${opcionAgencia}</div>
+    ${!agenciaOk && !camionOk ? '<p class="lejano-sin-opcion" role="alert">Con este carrito no hay forma de llegar a esa ciudad: revisa el motivo de cada opción.</p>' : ''}
+    <div class="lejano-receptor">
+      <label class="checkout-campo" for="receptor-dni">DNI de quien recibe en ${ciudad}
+        <span class="lejano-receptor-fila">
+          <input type="text" id="receptor-dni" inputmode="numeric" maxlength="8" placeholder="8 dígitos" autocomplete="off" value="${escapeAttr(receptorVerificado?.dni || '')}">
+          <button type="button" class="btn btn-outline" id="btn-verificar-dni"><i class="ti ti-shield-check" aria-hidden="true"></i> Verificar en RENIEC</button>
+        </span>
+        <small class="muted">La agencia o el chofer entregan solo a quien muestra este DNI. Te mostramos solo sus iniciales.</small>
+      </label>
+      <div id="receptor-resultado" aria-live="polite">${receptorVerificado ? renderReceptorConfirmado(receptorVerificado) : ''}</div>
+    </div>
+    <p class="lejano-consejo"><i class="ti ti-plant-2" aria-hidden="true"></i> Desde lejos conviene lo de más valor por kilo (quinua, kiwicha, papas nativas, papa amarilla): la papa blanca común suele estar más barata en tu ciudad.</p>`;
+  seccion.classList.remove('hidden');
+}
+
+function renderReceptorConfirmado(r) {
+  return `<p class="lejano-receptor-ok"><i class="ti ti-circle-check" aria-hidden="true"></i> Recibe <strong>${escapeAttr(r.nombre)}</strong> (DNI ${escapeAttr(r.dni)}). ¿No es esa persona? Cambia el DNI.</p>`;
+}
+
+async function verificarDniDeQuienRecibe() {
+  const dni = document.getElementById('receptor-dni').value.trim();
+  const resultado = document.getElementById('receptor-resultado');
+  receptorVerificado = null;
+  if (!/^\d{8}$/.test(dni)) {
+    resultado.innerHTML = '<p class="lejano-receptor-error" role="alert">El DNI son 8 dígitos.</p>';
+    return;
+  }
+  const boton = document.getElementById('btn-verificar-dni');
+  boton.disabled = true;
+  resultado.innerHTML = '<p class="muted"><i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Consultando RENIEC…</p>';
+  try {
+    const r = await Api.pedidos.consultarDni(dni);
+    resultado.innerHTML = `
+      <div class="lejano-receptor-confirmar">
+        <p>RENIEC dice: <strong>${escapeAttr(r.nombre_para_confirmar)}</strong></p>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-confirmar-receptor" data-dni="${escapeAttr(r.dni)}" data-nombre="${escapeAttr(r.nombre_para_confirmar)}">Sí, es quien va a recibir</button>
+      </div>`;
+  } catch (err) {
+    resultado.innerHTML = `<p class="lejano-receptor-error" role="alert">${escapeAttr(err.message || 'No se pudo consultar el DNI.')}</p>`;
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+// Desglose del paso 2 para un pedido lejano: lo que se paga ahora y lo que se paga después.
+function pintarTotalesLejano() {
+  const c = cotizacionActual;
+  const partes = document.getElementById('checkout-pago-partes');
+  if (!c || c.tipo !== 'lejano') { partes.classList.add('hidden'); partes.innerHTML = ''; return; }
+  const opcion = modalidadElegida ? c.opciones[modalidadElegida] : null;
+  const subtotal = Number(c.subtotal) || 0;
+  const envio = Number(opcion?.costo_envio) || 0;
+  envioCotizado = envio;
+  document.getElementById('checkout-subtotal-paso2').textContent = formatearMoneda(subtotal);
+  document.getElementById('checkout-envio-etiqueta').textContent = modalidadElegida === 'camion'
+    ? `Camión · ${opcion?.sacos ?? '—'} sacos` : modalidadElegida === 'agencia' ? 'Traslado a la agencia' : 'Envío';
+  document.getElementById('checkout-envio-paso2').textContent = opcion ? formatearMoneda(envio) : '—';
+  let ahora = subtotal + envio;
+  let filas = '';
+  if (modalidadElegida === 'camion' && opcion?.adelanto != null) {
+    ahora = Number(opcion.adelanto);
+    filas = `
+      <div><dt>Total del pedido</dt><dd>${formatearMoneda(subtotal + envio)}</dd></div>
+      <div class="destacada"><dt>Pagas ahora (${opcion.porcentaje_adelanto}%)</dt><dd>${formatearMoneda(opcion.adelanto)}</dd></div>
+      <div><dt>Al llegar el camión (${100 - opcion.porcentaje_adelanto}%)</dt><dd>${formatearMoneda(opcion.saldo)}</dd></div>`;
+  } else if (modalidadElegida === 'agencia' && opcion?.flete_destino_estimado != null) {
+    filas = `<div><dt>Flete de la agencia, lo pagas al recoger (aprox.)</dt><dd>${formatearMoneda(opcion.flete_destino_estimado)}</dd></div>`;
+  }
+  partes.innerHTML = filas;
+  partes.classList.toggle('hidden', !filas);
+  document.getElementById('checkout-total-paso2').textContent = opcion ? formatearMoneda(ahora) : '—';
+  document.querySelector('#checkout-panel-2 .carrito-total span').textContent = modalidadElegida === 'camion' ? 'Pagas ahora' : 'Total a pagar';
+  actualizarMetodosDePago(ahora);
+  pintarNotaEnvioCheckout(envio);
+}
+
+function limpiarCheckoutLejano() {
+  cotizacionActual = null;
+  document.getElementById('checkout-bloque-lejano')?.classList.add('hidden');
+  const partes = document.getElementById('checkout-pago-partes');
+  if (partes) { partes.classList.add('hidden'); partes.innerHTML = ''; }
+  const etiquetaTotal = document.querySelector('#checkout-panel-2 .carrito-total span');
+  if (etiquetaTotal) etiquetaTotal.textContent = 'Total a pagar';
 }
 
 // Resalta el mapa de destino (borde + scroll) cuando el usuario intenta confirmar sin haber
@@ -3103,9 +3338,17 @@ async function irAPaso2() {
   }
 
   const subtotal = Estado.carrito.reduce((acc, i) => acc + i.precio * i.cantidad, 0);
-  envioCotizado = Number(cotizacion.costo_envio) || 0;
-  pintarTotalesPaso2(subtotal, envioCotizado, Number(cotizacion.distancia_km));
-  pintarTipoCompraCheckout(cotizacion);
+  if (cotizacion.tipo === 'lejano') {
+    cotizacionActual = cotizacion;
+    pintarTipoCompraCheckout(null);
+    pintarCheckoutLejano(cotizacion);
+    pintarTotalesLejano();
+  } else {
+    limpiarCheckoutLejano();
+    envioCotizado = Number(cotizacion.costo_envio) || 0;
+    pintarTotalesPaso2(subtotal, envioCotizado, Number(cotizacion.distancia_km));
+    pintarTipoCompraCheckout(cotizacion);
+  }
   document.getElementById('checkout-entrega-telefono').textContent = telefono;
   document.getElementById('checkout-entrega-punto').innerHTML =
     `<i class="ti ti-map-pin" aria-hidden="true"></i> Marcado en el mapa (${destinoSeleccionado.lat.toFixed(5)}, ${destinoSeleccionado.lng.toFixed(5)})`;
@@ -3131,6 +3374,18 @@ async function confirmarYPagar() {
     return;
   }
 
+  const lejano = cotizacionActual?.tipo === 'lejano';
+  if (lejano && !modalidadElegida) {
+    toast('Elige cómo llega tu pedido: por agencia o en camión.', 'error');
+    document.getElementById('checkout-bloque-lejano').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (lejano && !receptorVerificado) {
+    toast('Verifica en RENIEC el DNI de quien recibe y confírmalo.', 'error');
+    document.getElementById('receptor-dni')?.focus();
+    return;
+  }
+
   const btn = document.getElementById('btn-checkout-pagar');
   const metodo = document.querySelector('input[name="metodo-pago"]:checked')?.value || 'tarjeta';
   btn.disabled = true;
@@ -3149,6 +3404,7 @@ async function confirmarYPagar() {
       items: Estado.carrito.map((i) => (i.unidad
         ? { producto_id: i.producto_id, cantidad: i.cantidad, unidad: i.unidad }
         : { producto_id: i.producto_id, cantidad: i.cantidad })),
+      ...(lejano ? { modalidad_envio: modalidadElegida, receptor_dni: receptorVerificado.dni } : {}),
     };
     const pedido = await Api.pedidos.crear(datos);
     guardarPedidoTrackeado(pedido.id);
@@ -3167,8 +3423,13 @@ async function confirmarYPagar() {
       toast(`El costo de envío cambió a ${formatearMoneda(envio)}. Revisa el monto antes de pagar.`);
     }
     envioCotizado = null;
-    if (metodo === 'transferencia') { mostrarPagoPorTransferencia({ pedidoId: pedido.id, monto: subtotal + envio, envio }); return; }
-    abrirCheckoutCulqi(pedido.id, subtotal + envio, metodo, envio);
+    // En camión se cobra ahora solo el adelanto (el resto, al llegar): Pagos cobra esa parte y Culqi debe mostrar lo mismo.
+    const ahora = pedido.monto_adelanto != null ? Number(pedido.monto_adelanto) : subtotal + envio;
+    limpiarCheckoutLejano();
+    receptorVerificado = null;
+    modalidadElegida = null;
+    if (metodo === 'transferencia') { mostrarPagoPorTransferencia({ pedidoId: pedido.id, monto: ahora, envio }); return; }
+    abrirCheckoutCulqi(pedido.id, ahora, metodo, envio);
   } catch (err) {
     manejarError(err, 'crear el pedido');
     resetearBotonPago();
@@ -3763,14 +4024,14 @@ function pagoConfirmadoPedido(d) {
   return d.pago?.estado === 'aprobado' || ['confirmado', 'entregado'].includes(d.pedido.estado) || esPedidoEntregado(d);
 }
 
-const ETIQUETAS_ESTADO_PAGO = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado' };
+const ETIQUETAS_ESTADO_PAGO = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado', adelanto_pagado: 'Adelanto pagado (70%)' };
 const ETIQUETAS_METODO_PAGO = { tarjeta: 'tarjeta', yape: 'Yape', transferencia: 'transferencia' };
 
 function textoEstadoPago(pago) {
   if (!pago) return '—';
   const estado = ETIQUETAS_ESTADO_PAGO[pago.estado] || pago.estado;
   // El método solo se sabe cuando hubo un intento (un pago pendiente todavía no tiene uno elegido).
-  return pago.estado === 'pendiente' ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
+  return pago.estado === 'pendiente' || !pago.metodo ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
 }
 
 function pagoRechazadoPedido(d) {
@@ -3787,6 +4048,9 @@ function estadoGeneralPedido(d) {
   // Pedidos solo cancela un pedido cuando su pago se rechaza, y ese pago se puede reintentar: "Pago rechazado" lo dice mejor.
   if (pagoRechazadoPedido(d)) return { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
   if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
+  if (envio?.estado === 'en_agencia') return { clave: 'en_curso', etiqueta: 'En la agencia de tu ciudad', icono: 'building-warehouse', pill: 'en_camino' };
+  if (envio?.estado === 'en_destino') return { clave: 'en_curso', etiqueta: 'El camión llegó a tu ciudad', icono: 'truck', pill: 'en_camino' };
+  if (envio?.estado === 'esperando_camion') return { clave: 'en_curso', etiqueta: 'Esperando que se llene el camión', icono: 'truck-loading', pill: 'confirmado' };
   if (envio?.estado === 'en_camino') return { clave: 'en_curso', etiqueta: 'En camino', icono: 'truck', pill: 'en_camino' };
   if (envio?.estado === 'asignado') return { clave: 'en_curso', etiqueta: 'Repartidor asignado', icono: 'user-check', pill: 'asignado' };
   if (envio?.estado === 'propuesto') return { clave: 'en_curso', etiqueta: 'Esperando repartidor', icono: 'hourglass', pill: 'propuesto' };
@@ -3804,7 +4068,11 @@ function pasosPedido(d) {
   // Una transferencia en revisión no es un fallo, aunque sea el reintento de un pedido que quedó cancelado.
   const enRevision = d.pago?.estado === 'en_revision';
   const pagoMal = !pagoOk && !enRevision && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado');
-  const enCamino = envio?.estado === 'en_camino' || entregado;
+  const enCamino = ['en_camino', 'en_agencia', 'en_destino'].includes(envio?.estado) || entregado;
+  // Pedidos a otra ciudad: el paso "En camino" dice cómo va (agencia o camión) en vez de "Buscando repartidor".
+  const detalleLejano = {
+    esperando_camion: 'Completando el camión', en_agencia: 'En la agencia de tu ciudad', en_destino: 'Llegó a tu ciudad',
+  }[envio?.estado];
 
   const pasos = [
     { icono: 'receipt', titulo: 'Pedido', hecho: true, detalle: 'Realizado' },
@@ -3815,8 +4083,9 @@ function pasosPedido(d) {
     },
     {
       icono: 'truck', titulo: 'En camino', hecho: enCamino,
-      detalle: enCamino ? (entregado ? 'Completado' : 'En ruta hacia ti')
+      detalle: enCamino ? (entregado ? 'Completado' : detalleLejano || 'En ruta hacia ti')
         : !pagoOk ? 'Por asignar'
+        : detalleLejano ? detalleLejano
         : envio?.estado === 'asignado' ? 'Repartidor asignado'
         : envio?.estado === 'propuesto' ? 'Esperando al repartidor'  // ya se le ofreció el envío; falta que acepte
         : envio ? 'Buscando repartidor' : 'Preparando el envío',
@@ -3871,6 +4140,58 @@ function renderPinEntrega(pin) {
     </div>`;
 }
 
+async function confirmarQueLoRecogi(boton) {
+  boton.disabled = true;
+  try {
+    await Api.transporte.confirmarRecibido(boton.dataset.envioId);
+    toast('¡Listo! Marcamos tu pedido como recibido.');
+    cargarMisPedidos();
+  } catch (err) {
+    manejarError(err, 'confirmar que recogiste tu pedido');
+    boton.disabled = false;
+  }
+}
+
+// Pedido a otra ciudad: cómo va (agencia o camión) y qué tiene que hacer el comprador.
+function renderBloqueLejano(d) {
+  const { pedido, envio, pago } = d;
+  const ciudad = escapeAttr(envio.destino_ciudad || pedido.destino_ciudad || 'tu ciudad');
+  if (envio.modalidad_envio === 'agencia') {
+    const flete = pedido.flete_destino_estimado != null ? ` Al recoger pagas el flete de la agencia: aprox. <b>${formatearMoneda(pedido.flete_destino_estimado)}</b>.` : '';
+    const cuerpo = envio.estado === 'en_agencia'
+      ? `<p>Tu pedido está en <b>${escapeAttr(envio.agencia_nombre || 'la agencia')}</b>. Guía N.º <b>${escapeAttr(envio.numero_guia || '—')}</b>.
+           Recógelo en su oficina de ${ciudad} con el DNI de <b>${escapeAttr(pedido.receptor_nombre || 'quien recibe')}</b>.${flete}</p>
+         <button type="button" class="btn btn-primary btn-ya-lo-recogi" data-envio-id="${escapeAttr(envio.id)}"><i class="ti ti-package" aria-hidden="true"></i> Ya lo recogí</button>`
+      : envio.estado === 'entregado'
+        ? `<p>Lo recogiste en la agencia de ${ciudad}.</p>`
+        : `<p>Un repartidor lo lleva a la agencia de carga en Huamanga; te avisamos con el número de guía para que lo sigas.${flete}</p>`;
+    return `<section class="mp-bloque mp-lejano"><h4 class="mp-bloque-titulo"><i class="ti ti-building-warehouse"></i> Por agencia a ${ciudad}</h4>${cuerpo}</section>`;
+  }
+  const v = envio.viaje;
+  let cuerpo = '';
+  if (v && ['abierto', 'listo'].includes(v.estado)) {
+    const porcentaje = Math.min(100, Math.round((v.sacos_cargados / v.sacos_para_salir) * 100));
+    cuerpo = `
+      <p>${v.estado === 'listo' ? 'El camión ya juntó su carga: sale pronto.' : `El camión a ${ciudad} lleva <b>${v.sacos_cargados} de ${v.sacos_para_salir} sacos</b> para salir (carga hasta ${v.capacidad_sacos}).`}</p>
+      <div class="mp-viaje-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${v.sacos_para_salir}" aria-valuenow="${Math.min(v.sacos_cargados, v.sacos_para_salir)}" aria-label="Sacos juntados para que salga el camión">
+        <span style="width:${porcentaje}%"></span></div>
+      <small class="muted">Tus ${envio.sacos ?? '—'} sacos van en este camión. Te avisamos cuando salga.</small>`;
+  } else if (v?.estado === 'en_ruta' || envio.estado === 'en_camino') {
+    cuerpo = `<p>El camión salió${v?.fecha_salida ? ` el ${formatearFechaServidor(v.fecha_salida)}` : ''} rumbo a ${ciudad} con tus ${envio.sacos ?? '—'} sacos.</p>`;
+  } else if (envio.estado === 'en_destino') {
+    cuerpo = envio.saldo_pagado
+      ? '<p>El camión llegó y tu saldo está pagado: el chofer ya puede descargar. Dale tu código de entrega.</p>'
+      : '<p>El camión llegó a tu ciudad. Paga el 30% para que descarguen tu pedido.</p>';
+  } else if (envio.estado === 'entregado') {
+    cuerpo = '<p>Tu pedido llegó en el camión.</p>';
+  } else {
+    cuerpo = '<p>Estamos subiendo tu pedido a un camión a tu ciudad.</p>';
+  }
+  const pagoTexto = pago?.estado === 'adelanto_pagado' && envio.estado !== 'en_destino'
+    ? `<p class="mp-lejano-pago"><i class="ti ti-wallet" aria-hidden="true"></i> Pagaste el adelanto (70%). Falta ${formatearMoneda(pago.monto_a_pagar)} (30%) cuando llegue el camión.</p>` : '';
+  return `<section class="mp-bloque mp-lejano"><h4 class="mp-bloque-titulo"><i class="ti ti-truck"></i> En camión compartido a ${ciudad}</h4>${cuerpo}${pagoTexto}</section>`;
+}
+
 function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
   const retraso = Math.min(indice, 8) * 60;
   const d = { pedido, envio, pago };
@@ -3916,7 +4237,8 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       <div><dt><i class="ti ti-credit-card"></i> Pago</dt><dd>${escapeAttr(textoEstadoPago(pago))}</dd></div>
     </dl>`;
 
-  const botonPagar = (texto) => `<button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}" data-envio="${costoEnvio}">${texto}</button>`;
+  const montoAhora = pago?.monto_a_pagar != null ? Number(pago.monto_a_pagar) : total;
+  const botonPagar = (texto) => `<button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${montoAhora}" data-envio="${costoEnvio}" data-parte="${escapeAttr(pago?.parte_a_pagar || '')}">${texto}</button>`;
   let alertaPago = '';
   if (pagoRechazadoPedido(d)) {
     const motivo = pago?.motivo_rechazo ? `Motivo: ${escapeAttr(pago.motivo_rechazo.replace(/[.\s]+$/, ''))}. ` : '';
@@ -3933,15 +4255,27 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       <div><strong>Estamos revisando tu transferencia</strong><span>Operación ${escapeAttr(pago.numero_operacion || '—')}. Cuando confirmemos que llegó el dinero, tu pedido sale a reparto.</span></div>
     </div>`;
   } else if (pago?.estado === 'pendiente' && pedido.estado === 'pendiente') {
+    const esAdelanto = pago.parte_a_pagar === 'adelanto';
     alertaPago = `
     <div class="mp-alerta mp-alerta-info" role="status">
       <i class="ti ti-wallet"></i>
-      <div><strong>Falta pagar este pedido</strong><span>Está reservado: págalo con tarjeta, Yape o transferencia.</span></div>
-      ${botonPagar('Pagar ahora')}
+      <div><strong>${esAdelanto ? `Falta pagar el adelanto (70%): ${formatearMoneda(montoAhora)}` : 'Falta pagar este pedido'}</strong>
+        <span>${esAdelanto ? 'Con el adelanto reservas tu lugar en el camión; el 30% se paga cuando llegue.' : 'Está reservado: págalo con tarjeta, Yape o transferencia.'}</span></div>
+      ${botonPagar(esAdelanto ? 'Pagar el adelanto' : 'Pagar ahora')}
+    </div>`;
+  } else if (pago?.estado === 'adelanto_pagado' && envio?.estado === 'en_destino') {
+    alertaPago = `
+    <div class="mp-alerta" role="alert">
+      <i class="ti ti-truck"></i>
+      <div><strong>El camión llegó: paga el 30% (${formatearMoneda(montoAhora)})</strong><span>El chofer descarga tu pedido cuando se confirme este pago. Después dale tu código de entrega.</span></div>
+      ${botonPagar('Pagar el saldo')}
     </div>`;
   }
 
-  const pin = activo && envio.pin_entrega ? renderPinEntrega(envio.pin_entrega) : '';
+  // En camión el código se da al llegar (con el saldo pagado); por agencia no hay código (se recoge con el DNI).
+  const conPin = envio?.modalidad_envio === 'camion' ? envio.estado === 'en_destino' : envio?.modalidad_envio !== 'agencia' && activo;
+  const pin = conPin && envio.pin_entrega ? renderPinEntrega(envio.pin_entrega) : '';
+  const lejano = envio && ['agencia', 'camion'].includes(envio.modalidad_envio) ? renderBloqueLejano(d) : '';
 
   const seguimiento = activo ? `
     <section class="mp-bloque">
@@ -3959,7 +4293,7 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       </div>
     </section>` : '';
 
-  const lateral = [alertaPago, pin, seguimiento, postEntrega].filter(Boolean).join('');
+  const lateral = [alertaPago, lejano, pin, seguimiento, postEntrega].filter(Boolean).join('');
 
   return `
     <article class="pedido-card mp-card" style="animation-delay:${retraso}ms" data-pedido-id="${pedido.id}" data-estado="${general.clave}">
@@ -4132,6 +4466,9 @@ const ETIQUETAS_ESTADO_ENVIO = {
   propuesto: 'Propuesto a un repartidor',
   asignado: 'Repartidor asignado',
   en_camino: 'En camino',
+  esperando_camion: 'Esperando que se llene el camión',
+  en_destino: 'El camión llegó a tu ciudad',
+  en_agencia: 'En la agencia de tu ciudad',
   entregado: 'Entregado',
   cancelado: 'Cancelado',
 };
@@ -8604,11 +8941,41 @@ function inicializarEventos() {
     filtroPedidoActual = tab.dataset.filtro;
     filtrarYRenderizarPedidos();
   });
+  // ---- Checkout a otra ciudad: modalidad, DNI de quien recibe y la ciudad en el mapa ----
+  const bloqueLejano = document.getElementById('checkout-bloque-lejano');
+  bloqueLejano.addEventListener('change', (e) => {
+    if (e.target.name === 'modalidad-envio') {
+      modalidadElegida = e.target.value;
+      pintarTotalesLejano();
+    }
+  });
+  bloqueLejano.addEventListener('input', (e) => {
+    if (e.target.id === 'receptor-dni' && receptorVerificado && e.target.value.trim() !== receptorVerificado.dni) {
+      receptorVerificado = null;
+      document.getElementById('receptor-resultado').innerHTML = '';
+    }
+  });
+  bloqueLejano.addEventListener('click', (e) => {
+    if (e.target.closest('#btn-verificar-dni')) { verificarDniDeQuienRecibe(); return; }
+    const confirmar = e.target.closest('#btn-confirmar-receptor');
+    if (confirmar) {
+      receptorVerificado = { dni: confirmar.dataset.dni, nombre: confirmar.dataset.nombre };
+      document.getElementById('receptor-resultado').innerHTML = renderReceptorConfirmado(receptorVerificado);
+    }
+  });
+  document.getElementById('checkout-lejanos-info').addEventListener('click', (e) => {
+    const ver = e.target.closest('.lejanos-ver-ciudad');
+    if (!ver || !mapaDestinoPedido) return;
+    mapaDestinoPedido.mapa.setView([Number(ver.dataset.lat), Number(ver.dataset.lng)], 12);
+    document.getElementById('mapa-destino-pedido').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
   document.getElementById('pedidos-list').addEventListener('click', (e) => {
     const calificar = e.target.closest('.btn-calificar-producto');
     if (calificar) { cambiarVista('detalle-producto', calificar.dataset.productoId); return; }
     const reintentar = e.target.closest('.btn-reintentar-pago');
-    if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto), Number(reintentar.dataset.envio)); return; }
+    if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto), Number(reintentar.dataset.envio), reintentar.dataset.parte || null); return; }
+    const recogido = e.target.closest('.btn-ya-lo-recogi');
+    if (recogido) { confirmarQueLoRecogi(recogido); return; }
     const certPedido = e.target.closest('.btn-ver-certificado-pedido');
     if (certPedido) { alternarCertificadoPedido(certPedido.dataset.pedidoId); return; }
     const copiarPin = e.target.closest('.btn-copiar-pin');
