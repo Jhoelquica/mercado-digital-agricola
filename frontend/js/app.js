@@ -4596,6 +4596,14 @@ function pasoUbicacionAsistente(momento, tipoAviso) {
 }
 
 function alClicAsistenteAgricultor(e, estado) {
+  const usar = e.target.closest('.btn-usar-sugerencia');
+  if (usar) {
+    const campo = document.getElementById('asistente-fecha-cosecha');
+    campo.value = usar.dataset.valor;
+    campo.dispatchEvent(new Event('input', { bubbles: true }));
+    if (Voz.leerSolo) Voz.hablar(`Listo. Elegiste el ${fechaLegible(usar.dataset.valor)}.`);
+    return;
+  }
   const botonGps = e.target.closest('.btn-gps-tomar');
   if (botonGps) {
     const bloque = botonGps.closest('.evidencia-gps');
@@ -4634,6 +4642,111 @@ async function pintarPrecioReferenciaAsistente(cultivo, destino) {
         : '';
     } catch { destino.textContent = ''; }
   }, 500);
+}
+
+// ---- Sugerencia de la fecha de cosecha (observación de la presentación del 2026-10-01) ----
+// Productores la calcula con IA (Claude) para el cultivo y la zona de la chacra, o con una tabla de ciclos típicos si la
+// IA no está disponible (ver productores/sugerencia_cosecha.py). Es solo una ayuda: el agricultor la usa con un toque o
+// elige otra fecha.
+function claveSugerenciaCosecha(estado) {
+  return `${estado.chacraId}|${(estado.cultivo || '').trim().toLowerCase()}|${estado.fechaSiembra}`;
+}
+
+function tiempoHastaCosecha(dias) {
+  if (dias < 60) return `unas ${Math.round(dias / 7)} semanas`;
+  const meses = Math.round(dias / 30.4);
+  return meses === 1 ? 'un mes' : `unos ${meses} meses`;
+}
+
+function fechaDiaMes(iso, conAnio) {
+  const [a, m, d] = iso.split('-').map(Number);
+  return new Date(a, m - 1, d).toLocaleDateString('es-PE', { day: 'numeric', month: 'long', ...(conAnio ? { year: 'numeric' } : {}) });
+}
+
+function rangoSugerenciaCosecha(s) {
+  const mismoAnio = s.fecha_desde.slice(0, 4) === s.fecha_hasta.slice(0, 4);
+  return `entre el ${fechaDiaMes(s.fecha_desde, !mismoAnio)} y el ${fechaDiaMes(s.fecha_hasta, true)}`;
+}
+
+function vozSugerenciaCosecha(s) {
+  return `Te sugerimos cosechar el ${fechaLegible(s.fecha_sugerida)}, ${tiempoHastaCosecha(s.dias_probable)} después de sembrar. `
+    + `${s.explicacion} Si te parece bien, toca "Usar esta fecha".`;
+}
+
+function renderSugerenciaCosecha(sugerencia, fechaElegida) {
+  if (!sugerencia) {
+    return `<div class="sugerencia-cosecha cargando" aria-busy="true">
+      <div class="sugerencia-cosecha-cabecera"><i class="ti ti-sparkles" aria-hidden="true"></i><span>Calculando cuándo podrías cosechar…</span></div>
+      <div class="sugerencia-cosecha-esqueleto" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>`;
+  }
+  if (sugerencia.error) {
+    return `<p class="sugerencia-cosecha-sin-dato"><i class="ti ti-info-circle" aria-hidden="true"></i><span>${escapeAttr(sugerencia.error)}</span></p>`;
+  }
+  const s = sugerencia.datos;
+  const esIa = s.fuente === 'ia';
+  const tiempo = tiempoHastaCosecha(s.dias_probable);
+  return `<section class="sugerencia-cosecha" aria-labelledby="sugerencia-cosecha-titulo">
+    <div class="sugerencia-cosecha-cabecera">
+      <i class="ti ${esIa ? 'ti-sparkles' : 'ti-book-2'}" aria-hidden="true"></i>
+      <span id="sugerencia-cosecha-titulo">Te sugerimos cosechar</span>
+      <span class="sugerencia-cosecha-fuente">${esIa ? 'Sugerencia con IA' : 'Tabla de cultivos'}</span>
+    </div>
+    <p class="sugerencia-cosecha-fecha">${escapeAttr(fechaLegible(s.fecha_sugerida))}</p>
+    <p class="sugerencia-cosecha-detalle">${escapeAttr(tiempo.charAt(0).toUpperCase() + tiempo.slice(1))} después de sembrar. Puede ser ${escapeAttr(rangoSugerenciaCosecha(s))}.</p>
+    <p class="sugerencia-cosecha-explicacion">${escapeAttr(s.explicacion)}</p>
+    <p class="sugerencia-cosecha-origen">${esIa
+      ? 'La calculó una inteligencia artificial para tu cultivo y tu zona.'
+      : `Es lo que suele tardar un cultivo de ${escapeAttr((s.cultivo_tabla || '').toLowerCase())} en la sierra.`} Es una ayuda: tú decides la fecha.</p>
+    <button type="button" class="btn btn-primary btn-usar-sugerencia" data-valor="${escapeAttr(s.fecha_sugerida)}" aria-pressed="false">
+      <i class="ti ti-calendar-check" aria-hidden="true"></i><span>Usar esta fecha</span>
+    </button>
+  </section>`;
+}
+
+// Marca en la tarjeta si la fecha elegida es la sugerida (sin repintarla: el botón conserva el foco).
+function marcarSugerenciaUsada(caja, valor) {
+  const boton = caja.querySelector('.btn-usar-sugerencia');
+  if (!boton) return;
+  const usada = boton.dataset.valor === valor;
+  caja.querySelector('.sugerencia-cosecha').classList.toggle('usada', usada);
+  boton.setAttribute('aria-pressed', String(usada));
+  boton.querySelector('i').className = `ti ${usada ? 'ti-circle-check' : 'ti-calendar-check'}`;
+  boton.querySelector('span').textContent = usada ? 'Elegiste esta fecha' : 'Usar esta fecha';
+}
+
+async function pintarSugerenciaCosecha(cont, estado) {
+  const caja = cont.querySelector('#asistente-sugerencia-cosecha');
+  const campo = cont.querySelector('#asistente-fecha-cosecha');
+  const pintar = () => {
+    caja.innerHTML = renderSugerenciaCosecha(estado.sugerenciaCosecha, campo.value);
+    marcarSugerenciaUsada(caja, campo.value);
+  };
+  campo.addEventListener('input', () => marcarSugerenciaUsada(caja, campo.value));
+  const clave = claveSugerenciaCosecha(estado);
+  if (estado.sugerenciaCosecha?.clave === clave) { pintar(); return; }
+
+  estado.sugerenciaCosecha = null;
+  estado.sugerenciaPedida = clave;
+  pintar();
+  let sugerencia;
+  try {
+    const datos = await Api.productores.produccion.sugerirCosecha({
+      chacra_id: estado.chacraId, cultivo: estado.cultivo, fecha_siembra: estado.fechaSiembra,
+    });
+    sugerencia = { clave, datos };
+  } catch (err) {
+    sugerencia = {
+      clave,
+      error: err.status === 404 ? 'No conocemos cuánto tarda ese cultivo: elige tú la fecha aquí abajo.'
+        : 'Ahora no pudimos calcular una fecha sugerida. Elige tú la fecha aquí abajo.',
+    };
+  }
+  if (estado.sugerenciaPedida !== clave) return; // mientras tanto cambió el cultivo, la chacra o la siembra
+  estado.sugerenciaCosecha = sugerencia;
+  if (!caja.isConnected) return; // el agricultor ya pasó a otro paso: la verá al volver
+  pintar();
+  if (Voz.leerSolo) Voz.hablar(sugerencia.datos ? vozSugerenciaCosecha(sugerencia.datos) : sugerencia.error, { encolar: true });
 }
 
 function pasosAsistenteSiembra() {
@@ -4717,10 +4830,17 @@ function pasosAsistenteSiembra() {
     {
       id: 'fecha-cosecha',
       pregunta: '¿Cuándo crees que vas a cosechar?',
-      ayuda: 'No tiene que ser exacto: elige cuántos meses después de la siembra crees que cosecharás, o un día en el calendario.',
+      ayuda: 'Arriba te damos una fecha sugerida para tu cultivo y tu zona: si te parece bien, toca "Usar esta fecha". '
+        + 'No tiene que ser exacto: también puedes elegir cuántos meses después de la siembra, o un día en el calendario.',
+      voz: (estado) => {
+        const lista = estado.sugerenciaCosecha?.clave === claveSugerenciaCosecha(estado) && estado.sugerenciaCosecha.datos;
+        return lista ? `¿Cuándo crees que vas a cosechar? ${vozSugerenciaCosecha(lista)}`
+          : '¿Cuándo crees que vas a cosechar? Un momento: estamos calculando una fecha sugerida para tu cultivo.';
+      },
+      alMostrar: (cont, estado) => pintarSugerenciaCosecha(cont, estado),
       render: (estado) => {
         const siembra = new Date(`${estado.fechaSiembra}T00:00:00`);
-        return campoFechaAsistente({
+        return `<div id="asistente-sugerencia-cosecha" aria-live="polite"></div>${campoFechaAsistente({
           id: 'asistente-fecha-cosecha',
           valor: estado.fechaCosecha || '',
           minimo: estado.fechaSiembra,
@@ -4730,7 +4850,7 @@ function pasosAsistenteSiembra() {
             fecha.setMonth(fecha.getMonth() + meses);
             return { etiqueta: `En ${meses} meses`, fecha: fechaIso(fecha) };
           }),
-        });
+        })}`;
       },
       recoger: (cont, estado) => { estado.fechaCosecha = cont.querySelector('#asistente-fecha-cosecha').value; },
       validar: (estado) => {

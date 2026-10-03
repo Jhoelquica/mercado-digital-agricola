@@ -228,6 +228,7 @@ const Api = {
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),
     produccion: {
       crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
+      sugerirCosecha: (datos) => request('productores', '/productores/produccion/sugerir-cosecha', { method: 'POST', body: datos, auth: true }),
       listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
       // La foto de la cosecha va antes que completarCosecha (que la exige) y aparte, para que esa siga siendo JSON.

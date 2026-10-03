@@ -41,9 +41,10 @@ const Voz = (() => {
       try { localStorage.setItem(CLAVE_LECTURA, valor ? '1' : '0'); } catch { /* sin almacenamiento: vale para esta visita */ }
     },
 
-    hablar(texto) {
+    // encolar: se lee después de lo que se está leyendo (p. ej. una sugerencia que llega mientras se lee la pregunta).
+    hablar(texto, { encolar = false } = {}) {
       if (!this.puedeHablar || !texto) return;
-      window.speechSynthesis.cancel();
+      if (!encolar) window.speechSynthesis.cancel();
       const frase = new SpeechSynthesisUtterance(texto);
       const voz = vozEnEspanol();
       if (voz) frase.voice = voz;
