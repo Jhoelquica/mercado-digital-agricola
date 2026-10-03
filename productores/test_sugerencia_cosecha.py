@@ -6,8 +6,8 @@ Cubre:
   ("Papa amarilla", "maíz morado", "HABAS"...)
 - con IA (Gemini), las fechas las calcula el servidor con los días que estima el modelo, y al modelo solo le llega el
   cultivo, la fecha y la zona aproximada de la chacra (nada del agricultor ni las coordenadas exactas)
-- si Gemini bloquea la respuesta, se acabó la cuota gratis, falla, no responde a tiempo o devuelve algo absurdo, se usa
-  la tabla
+- si el modelo principal está saturado o sin cuota se pregunta al de respaldo; si tampoco sirve, Gemini bloquea la
+  respuesta, falla, no responde a tiempo o devuelve algo absurdo, se usa la tabla
 - un cultivo que nadie conoce responde 404 con un mensaje para el agricultor
 - una consulta repetida sale del caché, y por productor hay un límite de consultas a la IA por hora
 - la chacra tiene que ser del productor, y solo el productor puede pedir la sugerencia
@@ -39,23 +39,33 @@ def _sin_ia_ni_estado(monkeypatch):
     """Por defecto no hay clave (como un despliegue sin IA) y cada test empieza con el caché y los límites vacíos."""
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_MODELO", raising=False)
+    monkeypatch.delenv("GEMINI_MODELO_RESPALDO", raising=False)
     monkeypatch.setattr(sugerencia_cosecha, "_cliente", None)
     monkeypatch.setattr(sugerencia_cosecha, "_cache", {})
     monkeypatch.setattr(sugerencia_cosecha, "_consultas_por_productor", {})
 
 
 class _GeminiFalso:
-    def __init__(self, respuesta=None, error=None):
+    """Responde `respuesta` o lanza `error` en cada llamada; con `por_modelo` ({modelo: respuesta o excepción}), según el
+    modelo que se pida."""
+    def __init__(self, respuesta=None, error=None, por_modelo=None):
         self.llamadas = []
         self.respuesta = respuesta
         self.error = error
+        self.por_modelo = por_modelo
         self.models = SimpleNamespace(generate_content=self._generar)
 
     def _generar(self, **kwargs):
         self.llamadas.append(kwargs)
-        if self.error:
-            raise self.error
-        return self.respuesta
+        resultado = self.por_modelo[kwargs["model"]] if self.por_modelo else (self.error or self.respuesta)
+        if isinstance(resultado, Exception):
+            raise resultado
+        return resultado
+
+
+def _error_gemini(codigo, estado="UNAVAILABLE"):
+    clase = errores_gemini.ServerError if codigo >= 500 else errores_gemini.ClientError
+    return clase(codigo, {"error": {"code": codigo, "message": estado, "status": estado}})
 
 
 def _respuesta(datos, motivo=types.FinishReason.STOP):
@@ -139,7 +149,7 @@ def test_con_ia_las_fechas_salen_de_los_dias_de_gemini_y_solo_viaja_la_zona(monk
     assert cuerpo["explicacion"] == "Depende de las lluvias."
 
     [llamada] = falso.llamadas
-    assert llamada["model"] == "gemini-3.8-flash"
+    assert llamada["model"] == "gemini-3.5-flash-lite"
     config = llamada["config"]
     assert config.response_mime_type == "application/json"
     assert config.response_json_schema == sugerencia_cosecha.ESQUEMA
@@ -151,24 +161,23 @@ def test_con_ia_las_fechas_salen_de_los_dias_de_gemini_y_solo_viaja_la_zona(monk
     assert sub not in pregunta and sub[:8] not in pregunta and "Chacra del cerro" not in pregunta
 
 
-@pytest.mark.parametrize("falso", [
-    _GeminiFalso(_respuesta(_ia(), motivo=types.FinishReason.SAFETY)),
-    _GeminiFalso(_respuesta(_ia(), motivo=types.FinishReason.MAX_TOKENS)),
-    _GeminiFalso(_bloqueada_en_la_pregunta()),
-    _GeminiFalso(error=errores_gemini.ClientError(
-        429, {"error": {"code": 429, "message": "Quota exceeded", "status": "RESOURCE_EXHAUSTED"}})),
-    _GeminiFalso(error=errores_gemini.ServerError(
-        503, {"error": {"code": 503, "message": "Overloaded", "status": "UNAVAILABLE"}})),
-    _GeminiFalso(error=httpx.ReadTimeout("tardó demasiado")),
-    _GeminiFalso(error=httpx.ConnectError("sin red")),
-    _GeminiFalso(_respuesta(_ia(5, 6, 7))),             # días absurdos
-    _GeminiFalso(_respuesta(_ia(150, 120, 180))),       # el probable fuera del rango
-    _GeminiFalso(_respuesta(_ia(explicacion="   "))),   # sin explicación
-    _GeminiFalso(_respuesta("esto no es JSON")),
-    _GeminiFalso(_respuesta({"es_cultivo": True})),     # faltan campos
-], ids=["bloqueada", "sin-espacio", "pregunta-bloqueada", "cuota-agotada", "sobrecargado", "tarda", "sin-red",
-        "absurdo", "desordenado", "sin-explicacion", "json-roto", "incompleto"])
-def test_si_gemini_no_sirve_se_usa_la_tabla(monkeypatch, falso):
+@pytest.mark.parametrize("falso, llamadas", [
+    (_GeminiFalso(_respuesta(_ia(), motivo=types.FinishReason.SAFETY)), 1),
+    (_GeminiFalso(_respuesta(_ia(), motivo=types.FinishReason.MAX_TOKENS)), 1),
+    (_GeminiFalso(_bloqueada_en_la_pregunta()), 1),
+    (_GeminiFalso(error=_error_gemini(429, "RESOURCE_EXHAUSTED")), 2),  # los dos modelos sin cuota
+    (_GeminiFalso(error=_error_gemini(503)), 2),                        # los dos saturados
+    (_GeminiFalso(error=_error_gemini(400, "INVALID_ARGUMENT")), 1),     # un error de la consulta no se reintenta
+    (_GeminiFalso(error=httpx.ReadTimeout("tardó demasiado")), 1),      # el agricultor ya esperó: no se reintenta
+    (_GeminiFalso(error=httpx.ConnectError("sin red")), 1),
+    (_GeminiFalso(_respuesta(_ia(5, 6, 7))), 1),             # días absurdos
+    (_GeminiFalso(_respuesta(_ia(150, 120, 180))), 1),       # el probable fuera del rango
+    (_GeminiFalso(_respuesta(_ia(explicacion="   "))), 1),   # sin explicación
+    (_GeminiFalso(_respuesta("esto no es JSON")), 1),
+    (_GeminiFalso(_respuesta({"es_cultivo": True})), 1),     # faltan campos
+], ids=["bloqueada", "sin-espacio", "pregunta-bloqueada", "cuota-agotada", "sobrecargado", "consulta-invalida", "tarda",
+        "sin-red", "absurdo", "desordenado", "sin-explicacion", "json-roto", "incompleto"])
+def test_si_gemini_no_sirve_se_usa_la_tabla(monkeypatch, falso, llamadas):
     _con_ia(monkeypatch, falso)
     _, chacra_id = _productor_con_chacra()
 
@@ -177,6 +186,28 @@ def test_si_gemini_no_sirve_se_usa_la_tabla(monkeypatch, falso):
     assert resp.status_code == 200, resp.text
     assert resp.json()["fuente"] == "tabla"
     assert resp.json()["cultivo_tabla"] == "Quinua"
+    assert len(falso.llamadas) == llamadas
+
+
+@pytest.mark.parametrize("codigo", [503, 429, 500])
+def test_si_el_modelo_principal_esta_saturado_responde_el_de_respaldo(monkeypatch, codigo):
+    falso = _con_ia(monkeypatch, _GeminiFalso(por_modelo={
+        "gemini-3.5-flash-lite": _error_gemini(codigo), "gemini-3.8-flash": _respuesta(_ia(100, 115, 130)),
+    }))
+    _, chacra_id = _productor_con_chacra()
+
+    resp = _sugerir(chacra_id, "Papa")
+
+    assert resp.json()["fuente"] == "ia" and resp.json()["fecha_sugerida"] == _dia(115)
+    assert [llamada["model"] for llamada in falso.llamadas] == ["gemini-3.5-flash-lite", "gemini-3.8-flash"]
+
+
+def test_sin_modelo_de_respaldo_un_503_va_directo_a_la_tabla(monkeypatch):
+    monkeypatch.setenv("GEMINI_MODELO_RESPALDO", "")
+    falso = _con_ia(monkeypatch, _GeminiFalso(error=_error_gemini(503)))
+    _, chacra_id = _productor_con_chacra()
+
+    assert _sugerir(chacra_id, "Papa").json()["fuente"] == "tabla"
     assert len(falso.llamadas) == 1
 
 
@@ -221,12 +252,12 @@ def test_cada_productor_tiene_un_limite_de_consultas_a_la_ia_por_hora(monkeypatc
 
 
 def test_el_modelo_se_cambia_con_gemini_modelo(monkeypatch):
-    monkeypatch.setenv("GEMINI_MODELO", "gemini-3.5-flash-lite")
+    monkeypatch.setenv("GEMINI_MODELO", "gemini-3.8-flash")  # el mismo que el de respaldo: no se repite
     falso = _con_ia(monkeypatch, _GeminiFalso(_respuesta(_ia())))
     _, chacra_id = _productor_con_chacra()
 
     assert _sugerir(chacra_id).json()["fuente"] == "ia"
-    assert falso.llamadas[0]["model"] == "gemini-3.5-flash-lite"
+    assert falso.llamadas[0]["model"] == "gemini-3.8-flash"
 
 
 def test_el_cliente_real_solo_se_crea_con_clave_y_sin_reintentos(monkeypatch):

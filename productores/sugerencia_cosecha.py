@@ -25,10 +25,14 @@ from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# El Flash más reciente que está en el plan gratuito (2026-10-03, ai.google.dev/gemini-api/docs/pricing). Se puede
-# cambiar sin tocar el código con la variable GEMINI_MODELO (p. ej. "gemini-3.5-flash-lite", que deja más consultas
-# gratis por día).
-MODELO_POR_DEFECTO = "gemini-3.8-flash"
+# Modelos del plan gratuito (2026-10-03, ai.google.dev/gemini-api/docs/pricing). Medido con la clave real ese día:
+# Flash-Lite responde en 1-2 s con rangos razonables y más cuota gratis por día; 3.8 Flash tarda 9-17 s (cerca del
+# límite de 20 s) y a ratos responde 503 "alta demanda". Por eso el principal es Flash-Lite, y si está saturado o se le
+# acabó la cuota se le pregunta a 3.8 Flash (su cuota es aparte) antes de caer a la tabla. Los dos se cambian sin tocar
+# el código: GEMINI_MODELO y GEMINI_MODELO_RESPALDO (vacío = sin respaldo).
+MODELO_POR_DEFECTO = "gemini-3.5-flash-lite"
+MODELO_RESPALDO_POR_DEFECTO = "gemini-3.8-flash"
+CODIGOS_PARA_EL_RESPALDO = {429, 500, 503}  # sin cuota, error interno o saturado
 TIEMPO_MAXIMO_SEGUNDOS = 20  # el agricultor está esperando en el asistente: pasado esto, la tabla
 DECIMALES_ZONA = 1           # 0,1° ≈ 11 km: la zona (altura, clima), no la chacra
 DIAS_MINIMOS, DIAS_MAXIMOS = 20, 730
@@ -128,8 +132,31 @@ def _cliente_ia():
     return _cliente
 
 
-def _modelo():
-    return os.getenv("GEMINI_MODELO") or MODELO_POR_DEFECTO
+def _modelos():
+    principal = os.getenv("GEMINI_MODELO") or MODELO_POR_DEFECTO
+    respaldo = os.getenv("GEMINI_MODELO_RESPALDO", MODELO_RESPALDO_POR_DEFECTO)
+    return [principal] + ([respaldo] if respaldo and respaldo != principal else [])
+
+
+def _generar(cliente, pregunta: str):
+    """La respuesta del modelo principal o, si está saturado o sin cuota, la del de respaldo. Un tiempo agotado no se
+    reintenta (el agricultor ya esperó): sube como error y se usa la tabla."""
+    config = types.GenerateContentConfig(
+        system_instruction=SISTEMA,
+        response_mime_type="application/json",
+        response_json_schema=ESQUEMA,
+        thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+        max_output_tokens=4000,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),  # no usa herramientas
+    )
+    modelos = _modelos()
+    for i, modelo in enumerate(modelos):
+        try:
+            return cliente.models.generate_content(model=modelo, contents=pregunta, config=config)
+        except errores_gemini.APIError as error:
+            if error.code not in CODIGOS_PARA_EL_RESPALDO or i == len(modelos) - 1:
+                raise
+            logger.warning("Sugerencia de cosecha: %s respondió %s; se pregunta a %s", modelo, error.code, modelos[i + 1])
 
 
 def _puede_consultar(clave_productor: str) -> bool:
@@ -158,17 +185,7 @@ def _preguntar_a_la_ia(cliente, cultivo: str, fecha_siembra: datetime, latitud: 
         f"Zona de la chacra (aproximada): latitud {latitud:.{DECIMALES_ZONA}f}, longitud {longitud:.{DECIMALES_ZONA}f}"
     )
     try:
-        respuesta = cliente.models.generate_content(
-            model=_modelo(),
-            contents=pregunta,
-            config=types.GenerateContentConfig(
-                system_instruction=SISTEMA,
-                response_mime_type="application/json",
-                response_json_schema=ESQUEMA,
-                thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
-                max_output_tokens=4000,
-            ),
-        )
+        respuesta = _generar(cliente, pregunta)
         candidato = (respuesta.candidates or [None])[0]
         motivo = candidato.finish_reason if candidato is not None else None
         if motivo != types.FinishReason.STOP:  # bloqueada (SAFETY...), sin espacio (MAX_TOKENS) o sin respuesta
