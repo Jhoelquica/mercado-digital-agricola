@@ -17,9 +17,11 @@ from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
+from migraciones import agregar_columnas_faltantes
 import models
 
 Base.metadata.create_all(bind=engine)
+agregar_columnas_faltantes(engine, Base)
 
 app = FastAPI()
 
@@ -146,6 +148,18 @@ def calcular_costo_envio(distancia_km: float) -> float:
             return costo
     return COSTO_ENVIO_MAS_DE_25KM
 
+# Compras por mayor (observación de la presentación del 2026-10-01): un pedido que pasa el umbral de peso (el mismo que
+# pide vehículo grande, configurable por el admin) es "por mayor", y su envío suma este recargo por cada kg de más sobre
+# la tarifa por distancia: el repartidor pone una camioneta y carga más (recibe el 90% del envío, como siempre). Ej.:
+# 200 kg con umbral de 25 kg = 175 kg de más = S/ 17,50 sobre la tarifa por distancia.
+RECARGO_ENVIO_POR_KG_EXTRA = 0.10
+
+def calcular_recargo_por_peso(peso_total_kg, umbral_kg: float) -> float:
+    """0 si el pedido no pasa el umbral o si su peso no se conoce (mismo criterio que requiere_vehiculo_grande)."""
+    if peso_total_kg is None or peso_total_kg <= umbral_kg:
+        return 0.0
+    return round((peso_total_kg - umbral_kg) * RECARGO_ENVIO_POR_KG_EXTRA, 2)
+
 def get_db():
     db = SessionLocal()
     try:
@@ -178,6 +192,24 @@ def calcular_envio_a_destino(db: Session, latitud: float, longitud: float):
 
     distancia_km = calcular_distancia_km(almacen.valor_latitud, almacen.valor_longitud, latitud, longitud)
     return distancia_km, calcular_costo_envio(distancia_km)
+
+def _peso_total(items_validados):
+    """Peso total del pedido: null si CUALQUIER línea tiene peso desconocido — no se aproxima ni se ignora la línea
+    faltante, porque no podemos afirmar un total si falta un dato."""
+    pesos = [peso_kg for _, _, _, _, peso_kg in items_validados]
+    return sum(pesos) if all(p is not None for p in pesos) else None
+
+def _umbral_pedido_grande_kg(db: Session) -> float:
+    """Mismo criterio que el almacén: el umbral se lee de ConfiguracionSistema (nunca hardcodeado), así un cambio del
+    Admin en /configuracion/umbral-pedido-grande afecta a los pedidos nuevos sin tocar código."""
+    umbral_config = db.query(models.ConfiguracionSistema).filter(
+        models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
+    ).first()
+    if not umbral_config:
+        # No debería pasar nunca en la práctica (sembrar_configuracion_umbral_pedido_grande corre al arrancar cada
+        # réplica), pero sin esto un pedido se crearía con un criterio de vehículo grande inventado.
+        raise HTTPException(status_code=503, detail="No se pudo determinar el umbral de pedido grande: falta la configuración")
+    return umbral_config.valor_numerico
 
 # Topes de un pedido. Sin límite inferior, una línea con cantidad negativa restaba dinero al total (el
 # cargo se calcula sumando cantidad x precio) y "descontaba" stock al revés; con una segunda línea
@@ -226,6 +258,11 @@ class PedidoCrear(BaseModel):
             raise ValueError("El teléfono de contacto debe tener 9 dígitos y empezar con 9 (ej. 987654321)")
         return limpio
 
+    destino_latitud: float
+    destino_longitud: float
+    items: list[ItemPedido] = Field(min_length=1, max_length=LINEAS_MAXIMAS_POR_PEDIDO)
+
+class CotizacionCrear(BaseModel):
     destino_latitud: float
     destino_longitud: float
     items: list[ItemPedido] = Field(min_length=1, max_length=LINEAS_MAXIMAS_POR_PEDIDO)
@@ -313,6 +350,70 @@ def actualizar_umbral_pedido_grande(
         "fecha_actualizacion": config.fecha_actualizacion,
     }
 
+def _validar_items(client, items):
+    """Valida cada línea contra Productos (existe, se puede comprar, unidad, stock) y devuelve
+    [(item, producto, precio_unitario, cantidad_base, peso_kg)]. La usan crear_pedido y la cotización: el envío
+    que se muestra antes de pagar sale de los mismos datos que el que se cobra."""
+    items_validados = []
+    for item in items:
+        try:
+            resp = client.get(f"{PRODUCTOS_URL}/productos/{item.producto_id}", timeout=5)
+        except httpx.RequestError:
+            raise HTTPException(status_code=503, detail="Servicio de Productos no disponible")
+
+        if resp.status_code != 200:
+            raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no existe")
+
+        producto = resp.json()
+
+        # Un borrador (sin precio) o un producto que aún viaja al almacén no se compra. Esta es la
+        # revisión rápida para dar un mensaje claro antes de tocar la base; la definitiva es atómica,
+        # dentro de Productos, al descontar el stock (más abajo).
+        if producto.get("estado", "disponible") != "disponible" or producto.get("precio") is None:
+            raise HTTPException(status_code=409, detail=f"{producto.get('nombre', 'El producto')} aún no está disponible para comprar")
+
+        if item.unidad is None:
+            # Comportamiento de siempre, sin cambios: precio y cantidad ya están en la unidad
+            # base del producto.
+            precio_unitario = producto["precio"]
+            cantidad_base = item.cantidad
+        else:
+            # Busca la unidad alternativa DENTRO de la respuesta fresca de Productos — nunca
+            # se confía en un precio que mande el cliente (acá ni siquiera existe ese campo
+            # en ItemPedido), solo en el nombre de la unidad.
+            unidad_alt = next(
+                (u for u in producto.get("unidades_alternativas", []) if u["unidad"] == item.unidad),
+                None,
+            )
+            if unidad_alt is None:
+                raise HTTPException(status_code=400, detail="Este producto no está disponible en esa unidad.")
+            precio_unitario = unidad_alt["precio"]
+            # Conversión a unidad base SOLO para validar stock y para lo que se le manda a
+            # descontar_stock (que sigue recibiendo todo en unidad base, sin cambios de su
+            # lado) — precio_unitario y la cantidad guardada en PedidoItem quedan en la
+            # unidad que eligió el comprador.
+            cantidad_base = item.cantidad * unidad_alt["factor_a_base"]
+
+        if producto["stock"] < cantidad_base:
+            raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
+
+        # Peso real de esta línea (cantidad ya en unidad base): directo si la unidad base del
+        # producto es "kg" (1 unidad base = 1 kg, no hace falta factor). Si no es "kg", se
+        # convierte con producto["equivalencia_kg"] cuando el producto lo tiene (llega desde
+        # RegistroProduccion.equivalencia_kg vía aprobar_cosecha — ver Producto.equivalencia_kg
+        # en productos/models.py); si el producto no lo tiene (ej. uno creado a mano, sin ese
+        # dato), el peso sigue siendo indeterminable.
+        if producto.get("unidad_medida") == "kg":
+            peso_kg = cantidad_base
+        elif producto.get("equivalencia_kg") is not None:
+            peso_kg = cantidad_base * producto["equivalencia_kg"]
+        else:
+            peso_kg = None
+
+        items_validados.append((item, producto, precio_unitario, cantidad_base, peso_kg))
+    return items_validados
+
+
 @app.post("/pedidos")
 def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
     # Validación 1 (fail-fast, antes de tocar la base de datos): el destino de entrega debe caer
@@ -323,65 +424,8 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
     # validarlos) — ver calcular_envio_a_destino.
     _, costo_envio = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
 
-    items_validados = []
-
     with httpx.Client() as client:
-        for item in datos.items:
-            try:
-                resp = client.get(f"{PRODUCTOS_URL}/productos/{item.producto_id}", timeout=5)
-            except httpx.RequestError:
-                raise HTTPException(status_code=503, detail="Servicio de Productos no disponible")
-
-            if resp.status_code != 200:
-                raise HTTPException(status_code=404, detail=f"Producto {item.producto_id} no existe")
-
-            producto = resp.json()
-
-            # Un borrador (sin precio) o un producto que aún viaja al almacén no se compra. Esta es la
-            # revisión rápida para dar un mensaje claro antes de tocar la base; la definitiva es atómica,
-            # dentro de Productos, al descontar el stock (más abajo).
-            if producto.get("estado", "disponible") != "disponible" or producto.get("precio") is None:
-                raise HTTPException(status_code=409, detail=f"{producto.get('nombre', 'El producto')} aún no está disponible para comprar")
-
-            if item.unidad is None:
-                # Comportamiento de siempre, sin cambios: precio y cantidad ya están en la unidad
-                # base del producto.
-                precio_unitario = producto["precio"]
-                cantidad_base = item.cantidad
-            else:
-                # Busca la unidad alternativa DENTRO de la respuesta fresca de Productos — nunca
-                # se confía en un precio que mande el cliente (acá ni siquiera existe ese campo
-                # en ItemPedido), solo en el nombre de la unidad.
-                unidad_alt = next(
-                    (u for u in producto.get("unidades_alternativas", []) if u["unidad"] == item.unidad),
-                    None,
-                )
-                if unidad_alt is None:
-                    raise HTTPException(status_code=400, detail="Este producto no está disponible en esa unidad.")
-                precio_unitario = unidad_alt["precio"]
-                # Conversión a unidad base SOLO para validar stock y para lo que se le manda a
-                # descontar_stock (que sigue recibiendo todo en unidad base, sin cambios de su
-                # lado) — precio_unitario y la cantidad guardada en PedidoItem quedan en la
-                # unidad que eligió el comprador.
-                cantidad_base = item.cantidad * unidad_alt["factor_a_base"]
-
-            if producto["stock"] < cantidad_base:
-                raise HTTPException(status_code=409, detail=f"Stock insuficiente para {producto['nombre']}")
-
-            # Peso real de esta línea (cantidad ya en unidad base): directo si la unidad base del
-            # producto es "kg" (1 unidad base = 1 kg, no hace falta factor). Si no es "kg", se
-            # convierte con producto["equivalencia_kg"] cuando el producto lo tiene (llega desde
-            # RegistroProduccion.equivalencia_kg vía aprobar_cosecha — ver Producto.equivalencia_kg
-            # en productos/models.py); si el producto no lo tiene (ej. uno creado a mano, sin ese
-            # dato), el peso sigue siendo indeterminable.
-            if producto.get("unidad_medida") == "kg":
-                peso_kg = cantidad_base
-            elif producto.get("equivalencia_kg") is not None:
-                peso_kg = cantidad_base * producto["equivalencia_kg"]
-            else:
-                peso_kg = None
-
-            items_validados.append((item, producto, precio_unitario, cantidad_base, peso_kg))
+        items_validados = _validar_items(client, datos.items)
 
         # Validación 2 (fail-fast, todavía antes de tocar la base de datos): el subtotal (precio ×
         # cantidad de cada item, sin contar envío) debe alcanzar el mínimo de compra. precio_unitario
@@ -394,24 +438,10 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 detail="El monto mínimo de compra es S/30.00. Agrega más productos para continuar.",
             )
 
-        # Peso total del pedido: null si CUALQUIER línea tiene peso desconocido — no se aproxima
-        # ni se ignora la línea faltante, porque no podemos afirmar un total si falta un dato.
-        pesos = [peso_kg for _, _, _, _, peso_kg in items_validados]
-        peso_total_kg = sum(pesos) if all(p is not None for p in pesos) else None
-
-        # Mismo criterio que el almacén: el umbral se lee de ConfiguracionSistema (nunca
-        # hardcodeado), así un cambio del Admin en /configuracion/umbral-pedido-grande afecta a
-        # los pedidos nuevos sin tocar código.
-        umbral_config = db.query(models.ConfiguracionSistema).filter(
-            models.ConfiguracionSistema.clave == CLAVE_UMBRAL_PEDIDO_GRANDE
-        ).first()
-        if not umbral_config:
-            # No debería pasar nunca en la práctica (sembrar_configuracion_umbral_pedido_grande
-            # corre al arrancar cada réplica), pero sin esto un pedido se crearía con un criterio
-            # de vehículo grande inventado.
-            raise HTTPException(status_code=503, detail="No se pudo determinar el umbral de pedido grande: falta la configuración")
-
-        requiere_vehiculo_grande = peso_total_kg is not None and peso_total_kg > umbral_config.valor_numerico
+        peso_total_kg = _peso_total(items_validados)
+        umbral_kg = _umbral_pedido_grande_kg(db)
+        requiere_vehiculo_grande = peso_total_kg is not None and peso_total_kg > umbral_kg
+        recargo_envio_peso = calcular_recargo_por_peso(peso_total_kg, umbral_kg)
 
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(
@@ -420,9 +450,10 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             comprador_telefono=datos.comprador_telefono,
             destino_latitud=datos.destino_latitud,
             destino_longitud=datos.destino_longitud,
-            costo_envio=costo_envio,
+            costo_envio=round(costo_envio + recargo_envio_peso, 2),
             peso_total_kg=peso_total_kg,
             requiere_vehiculo_grande=requiere_vehiculo_grande,
+            recargo_envio_peso=recargo_envio_peso,
         )
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía
@@ -500,12 +531,43 @@ def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(g
     return {"costo_envio": costo_envio, "distancia_km": distancia_km}
 
 
-# Lo que el comprador necesita saber ANTES de armar su pedido (hoy, el monto mínimo de compra): el carrito lo muestra y
-# no deja seguir hasta llegar, en vez de que se entere al pulsar "Confirmar y pagar". Pública, y declarada antes de
-# /pedidos/{pedido_id} por la misma razón que /pedidos/costo-envio. La regla real se sigue exigiendo al crear el pedido.
+# El envío EXACTO de este carrito a este destino, antes de pagar: misma validación de productos y mismas fórmulas que
+# crear_pedido (no crea nada ni reserva stock), así que lo que ve el comprador es lo que se le cobra. Dice además si la
+# compra es por mayor (pasa el umbral de peso) y cuánto suma el recargo por los kg de más.
+@app.post("/pedidos/cotizar")
+def cotizar_pedido(datos: CotizacionCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
+    validar_destino_en_region(datos.destino_latitud, datos.destino_longitud)
+    distancia_km, costo_base = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
+    with httpx.Client() as client:
+        items_validados = _validar_items(client, datos.items)
+    peso_total_kg = _peso_total(items_validados)
+    umbral_kg = _umbral_pedido_grande_kg(db)
+    recargo = calcular_recargo_por_peso(peso_total_kg, umbral_kg)
+    return {
+        "distancia_km": distancia_km,
+        "subtotal": round(sum(precio * item.cantidad for item, _, precio, _, _ in items_validados), 2),
+        "peso_total_kg": peso_total_kg,
+        "umbral_kg": umbral_kg,
+        "por_mayor": peso_total_kg is not None and peso_total_kg > umbral_kg,
+        "kg_extra": round(max(0.0, peso_total_kg - umbral_kg), 3) if peso_total_kg is not None else 0.0,
+        "recargo_por_kg": RECARGO_ENVIO_POR_KG_EXTRA,
+        "costo_envio_base": costo_base,
+        "recargo_envio_peso": recargo,
+        "costo_envio": round(costo_base + recargo, 2),
+    }
+
+
+# Lo que el comprador necesita saber ANTES de armar su pedido: el monto mínimo de compra (el carrito no deja seguir hasta
+# llegar, en vez de que se entere al pulsar "Confirmar y pagar") y desde cuántos kg la compra es por mayor y cuánto suma
+# el envío por cada kg de más. Pública, y declarada antes de /pedidos/{pedido_id} por la misma razón que
+# /pedidos/costo-envio. Las reglas reales se siguen aplicando al crear el pedido.
 @app.get("/pedidos/condiciones")
-def condiciones_de_compra():
-    return {"monto_minimo": float(MONTO_MINIMO_PEDIDO)}
+def condiciones_de_compra(db: Session = Depends(get_db)):
+    return {
+        "monto_minimo": float(MONTO_MINIMO_PEDIDO),
+        "umbral_por_mayor_kg": _umbral_pedido_grande_kg(db),
+        "recargo_envio_por_kg": RECARGO_ENVIO_POR_KG_EXTRA,
+    }
 
 
 def _pedido_o_404(db: Session, pedido_id: uuid.UUID):

@@ -36,6 +36,9 @@ class Pedido(Base):
     # clave "umbral_pedido_grande_kg") AL MOMENTO de crear el pedido — igual que costo_envio, un
     # cambio de umbral posterior no recalcula pedidos ya creados.
     requiere_vehiculo_grande = Column(Boolean, nullable=False, default=False)
+    # Parte de costo_envio que se cobró por los kg que pasan el umbral (compra por mayor; ver calcular_recargo_por_peso
+    # en main.py). costo_envio ya la incluye: esto es solo para mostrar el desglose. Null en los pedidos de antes.
+    recargo_envio_peso = Column(Numeric(10, 2), nullable=True)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"

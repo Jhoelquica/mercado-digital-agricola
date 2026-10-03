@@ -949,16 +949,160 @@ def test_las_condiciones_de_compra_son_publicas_y_dicen_el_monto_minimo():
             main.app.dependency_overrides[verificar_token] = sesion
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"monto_minimo": main.MONTO_MINIMO_PEDIDO}
+    assert resp.json()["monto_minimo"] == main.MONTO_MINIMO_PEDIDO
 
 
 def test_el_minimo_que_se_muestra_es_el_mismo_que_se_exige_al_pedir(monkeypatch):
     """Lo que dice /pedidos/condiciones y lo que rechaza POST /pedidos salen de la misma constante."""
     monkeypatch.setattr(main, "MONTO_MINIMO_PEDIDO", 77.0)
 
-    assert client.get("/pedidos/condiciones").json() == {"monto_minimo": 77.0}
+    assert client.get("/pedidos/condiciones").json()["monto_minimo"] == 77.0
 
 
 def test_condiciones_no_se_confunde_con_un_id_de_pedido():
     """Se declaró antes de /pedidos/{pedido_id}: si no, "condiciones" se leería como un id (422) en vez de responder."""
     assert client.get("/pedidos/condiciones").status_code == 200
+
+
+
+# ============ Compras por mayor: recargo del envío por peso y cotización con el carrito ============
+
+def _envio_base(destino=DESTINO_DENTRO_AYACUCHO):
+    """La tarifa por distancia de ese destino con el almacén que haya dejado otro test (la de siempre, sin peso)."""
+    return client.get("/pedidos/costo-envio", params={
+        "latitud": destino["destino_latitud"], "longitud": destino["destino_longitud"]}).json()["costo_envio"]
+
+
+def _crear(payload, **producto):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(**producto)), patch("main.publicar_evento"):
+        return client.post("/pedidos", json=payload)
+
+
+def _cotizar_carrito(payload, **producto):
+    cuerpo = {k: payload[k] for k in ("destino_latitud", "destino_longitud", "items")}
+    mock = _mock_httpx_client(**producto)
+    with patch("main.httpx.Client", return_value=mock), patch("main.publicar_evento") as publicar:
+        resp = client.post("/pedidos/cotizar", json=cuerpo)
+    return resp, mock, publicar
+
+
+def test_el_recargo_es_por_cada_kg_sobre_el_umbral():
+    assert main.calcular_recargo_por_peso(10.0, 25.0) == 0.0
+    assert main.calcular_recargo_por_peso(25.0, 25.0) == 0.0
+    assert main.calcular_recargo_por_peso(30.0, 25.0) == 0.5
+    assert main.calcular_recargo_por_peso(200.0, 25.0) == 17.5
+    assert main.calcular_recargo_por_peso(None, 25.0) == 0.0  # peso desconocido: no se inventa un recargo
+
+
+def test_una_compra_por_mayor_paga_la_tarifa_por_distancia_mas_los_kg_de_mas():
+    _fijar_umbral(25.0)
+    base = _envio_base()
+    resp = _crear(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=200), precio=5.0, stock=500)
+
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["requiere_vehiculo_grande"] is True
+    assert float(cuerpo["recargo_envio_peso"]) == 17.5
+    assert float(cuerpo["costo_envio"]) == round(base + 17.5, 2)
+
+
+def test_una_compra_por_menor_paga_solo_la_tarifa_por_distancia():
+    _fijar_umbral(25.0)
+    base = _envio_base()
+    resp = _crear(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10), precio=5.0)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["requiere_vehiculo_grande"] is False
+    assert float(resp.json()["recargo_envio_peso"]) == 0.0
+    assert float(resp.json()["costo_envio"]) == base
+
+
+def test_sin_peso_conocido_no_hay_recargo_aunque_la_cantidad_sea_grande():
+    _fijar_umbral(25.0)
+    base = _envio_base()
+    resp = _crear(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=200), precio=5.0, stock=500,
+                  unidad_medida="unidad")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["peso_total_kg"] is None
+    assert float(resp.json()["costo_envio"]) == base
+
+
+def test_el_evento_y_el_resumen_para_transporte_llevan_el_envio_con_el_recargo(monkeypatch):
+    """El repartidor cobra sobre costo_envio: con el recargo incluido gana más por una carga más grande."""
+    _fijar_umbral(25.0)
+    base = _envio_base()
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, stock=500)), \
+         patch("main.publicar_evento") as publicar:
+        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=125))
+    assert resp.status_code == 200, resp.text
+    assert publicar.call_args[0][0]["costo_envio"] == round(base + 10.0, 2)
+
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-de-prueba")
+    resumen = client.get(f"/pedidos/interno/{resp.json()['id']}/resumen-entrega",
+                         headers={"X-Servicio-Secreto": "secreto-de-prueba"})
+    assert resumen.json()["costo_envio"] == round(base + 10.0, 2)
+
+
+def test_la_cotizacion_dice_si_es_por_mayor_y_coincide_con_lo_que_se_cobra():
+    _fijar_umbral(25.0)
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=200)
+
+    cotizacion, mock, publicar = _cotizar_carrito(payload, precio=5.0, stock=500)
+    assert cotizacion.status_code == 200, cotizacion.text
+    c = cotizacion.json()
+    assert c["por_mayor"] is True and c["peso_total_kg"] == 200 and c["umbral_kg"] == 25.0
+    assert c["kg_extra"] == 175 and c["recargo_por_kg"] == main.RECARGO_ENVIO_POR_KG_EXTRA
+    assert c["recargo_envio_peso"] == 17.5 and c["subtotal"] == 1000.0
+    assert c["costo_envio"] == round(c["costo_envio_base"] + 17.5, 2)
+    mock.post.assert_not_called()  # cotizar no reserva stock
+    publicar.assert_not_called()   # ni crea el pedido
+
+    pedido = _crear(payload, precio=5.0, stock=500)
+    assert float(pedido.json()["costo_envio"]) == c["costo_envio"]
+
+
+def test_la_cotizacion_de_una_compra_chica_es_por_menor_y_sin_recargo():
+    _fijar_umbral(25.0)
+    resp, _, _ = _cotizar_carrito(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10), precio=5.0)
+    c = resp.json()
+    assert c["por_mayor"] is False and c["kg_extra"] == 0 and c["recargo_envio_peso"] == 0
+    assert c["costo_envio"] == c["costo_envio_base"]
+
+
+def test_la_cotizacion_usa_el_precio_y_el_peso_de_la_unidad_alternativa():
+    """3 sacos de 50 kg = 150 kg: por mayor aunque la cantidad pedida sea 3."""
+    _fijar_umbral(25.0)
+    resp, _, _ = _cotizar_carrito(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=0, cantidad=3, unidad="saco"), precio=2.0,
+                          stock=500, unidades_alternativas=[{"unidad": "saco", "precio": 90.0, "factor_a_base": 50}])
+    c = resp.json()
+    assert resp.status_code == 200, resp.text
+    assert c["peso_total_kg"] == 150 and c["por_mayor"] is True and c["subtotal"] == 270.0
+    assert c["recargo_envio_peso"] == 12.5
+
+
+def test_la_cotizacion_valida_igual_que_el_pedido():
+    _fijar_umbral(25.0)
+    fuera, _, _ = _cotizar_carrito(_payload(DESTINO_FUERA_AYACUCHO, precio_item=5.0, cantidad=10), precio=5.0)
+    assert fuera.status_code == 400
+    sin_stock, _, _ = _cotizar_carrito(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=200), precio=5.0, stock=50)
+    assert sin_stock.status_code == 409
+
+
+def test_la_cotizacion_es_solo_para_compradores():
+    _como(str(uuid.uuid4()), "productor")
+    try:
+        resp, _, _ = _cotizar_carrito(_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10), precio=5.0)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert resp.status_code == 403
+
+
+def test_las_condiciones_dicen_desde_cuantos_kg_es_por_mayor_y_el_recargo():
+    _fijar_umbral(40.0)
+    try:
+        cuerpo = client.get("/pedidos/condiciones").json()
+    finally:
+        _fijar_umbral(25.0)
+    assert cuerpo["umbral_por_mayor_kg"] == 40.0
+    assert cuerpo["recargo_envio_por_kg"] == main.RECARGO_ENVIO_POR_KG_EXTRA
