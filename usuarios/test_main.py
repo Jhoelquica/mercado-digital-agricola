@@ -661,3 +661,110 @@ def test_siempre_se_compara_una_contrasena_exista_o_no_la_cuenta(monkeypatch):
     assert comparaciones == [seguridad.HASH_DE_RELLENO, seguridad.HASH_DE_RELLENO]
 
 
+
+
+
+# ============ Tipo de comprador: persona o negocio (observación de la presentación del 2026-10-01) ============
+
+def _registrar_comprador(**extra):
+    return client.post("/usuarios/registro", json={
+        "nombre": "Comprador", "email": _email(), "password": "test1234", "rol": "comprador", **extra})
+
+
+def _perfil_comprador_de(usuario_id, rol="comprador"):
+    _auth(usuario_id, rol)
+    return client.get(f"/usuarios/{usuario_id}").json()
+
+
+def test_el_digito_verificador_del_ruc():
+    for valido in ("20131312955", "20100047218"):  # SUNAT y BCP
+        assert main.ruc_valido(valido), valido
+    for invalido in ("20131312954", "2013131295", "201313129551", "30131312955", "2013131295a", ""):
+        assert not main.ruc_valido(invalido), invalido
+
+
+def test_un_comprador_se_registra_como_persona_por_defecto():
+    resp = _registrar_comprador()
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tipo_comprador"] == "persona" and resp.json()["ruc"] is None
+
+
+def test_un_negocio_se_registra_con_ruc_y_nombre_comercial():
+    resp = _registrar_comprador(tipo_comprador="negocio", ruc=" 20131312955 ", nombre_comercial="  Bodega   Doña Rosa ")
+    assert resp.status_code == 200, resp.text
+    perfil = _perfil_comprador_de(resp.json()["id"])
+    assert perfil["tipo_comprador"] == "negocio"
+    assert perfil["ruc"] == "20131312955" and perfil["nombre_comercial"] == "Bodega Doña Rosa"
+
+
+def test_un_negocio_puede_registrarse_sin_ruc():
+    resp = _registrar_comprador(tipo_comprador="negocio")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tipo_comprador"] == "negocio" and resp.json()["ruc"] is None
+
+
+def test_un_ruc_mal_escrito_o_un_tipo_inventado_fallan_422_y_no_crean_la_cuenta():
+    email = _email()
+    for extra in ({"tipo_comprador": "negocio", "ruc": "20131312954"}, {"tipo_comprador": "mayorista"},
+                  {"tipo_comprador": "negocio", "nombre_comercial": "x" * 121}):
+        resp = client.post("/usuarios/registro", json={
+            "nombre": "Comprador", "email": email, "password": "test1234", "rol": "comprador", **extra})
+        assert resp.status_code == 422, (extra, resp.text)
+    assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
+
+
+def test_una_persona_no_guarda_ruc_aunque_lo_mande():
+    resp = _registrar_comprador(tipo_comprador="persona", ruc="20131312955", nombre_comercial="Algo")
+    assert resp.json()["ruc"] is None and resp.json()["nombre_comercial"] is None
+
+
+def test_los_otros_roles_no_tienen_tipo_de_comprador():
+    resp = client.post("/usuarios/registro", json={
+        "nombre": "Productor", "email": _email(), "password": "test1234", "rol": "productor",
+        "tipo_comprador": "negocio", "ruc": "20131312955"})
+    assert resp.status_code == 200, resp.text
+    assert "tipo_comprador" not in resp.json()
+    assert "tipo_comprador" not in _perfil_comprador_de(resp.json()["id"], "productor")
+
+
+def test_el_comprador_cambia_su_tipo_desde_el_perfil():
+    usuario_id = _registrar_comprador().json()["id"]
+    _auth(usuario_id, "comprador")
+
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "20100047218",
+                                                        "nombre_comercial": "Mercado Central"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tipo_comprador"] == "negocio" and resp.json()["ruc"] == "20100047218"
+
+    resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"})
+    assert resp.json()["tipo_comprador"] == "persona" and resp.json()["ruc"] is None
+    assert _perfil_comprador_de(usuario_id)["nombre_comercial"] is None
+
+
+def test_cambiar_el_tipo_valida_igual_que_el_registro_y_es_solo_para_compradores():
+    usuario_id = _registrar_comprador().json()["id"]
+    _auth(usuario_id, "comprador")
+    assert client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": "123"}).status_code == 422
+    assert client.patch("/usuarios/me/comprador", json={}).status_code == 422
+
+    _auth(_crear_usuario("productor"), "productor")
+    assert client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio"}).status_code == 403
+
+
+def test_un_comprador_de_antes_sin_tipo_se_ve_como_persona():
+    usuario_id = _registrar_comprador().json()["id"]
+    db = main.SessionLocal()
+    try:
+        db.execute(text("UPDATE usuarios SET tipo_comprador = NULL WHERE id = :id"), {"id": usuario_id})
+        db.commit()
+    finally:
+        db.close()
+    assert _perfil_comprador_de(usuario_id)["tipo_comprador"] == "persona"
+
+
+def test_un_comprador_nuevo_con_google_queda_como_persona(monkeypatch):
+    _mockear_google(monkeypatch, sub=f"google-{uuid.uuid4().hex}", email=_email())
+    resp = client.post("/usuarios/oauth/google", json={"id_token": "x", "rol": "comprador"})
+    assert resp.status_code == 200, resp.text
+    usuario_id = _decodificar_jwt(resp.json()["access_token"])["sub"]
+    assert _perfil_comprador_de(usuario_id)["tipo_comprador"] == "persona"

@@ -21,6 +21,12 @@ class Usuario(Base):
     # POST /usuarios/oauth/google): tanto una cuenta 100% Google desde el principio como una
     # cuenta con contraseña que se vincula después terminan con este campo poblado.
     google_id = Column(String, unique=True, nullable=True)
+    # Solo para compradores (observación de la presentación del 2026-10-01: distinguir a quien compra para su casa de un
+    # negocio que compra sacos para revender). "persona" o "negocio"; null en los demás roles y en los compradores de
+    # antes (se tratan como "persona"). El RUC y el nombre comercial son opcionales y solo se guardan para un negocio.
+    tipo_comprador = Column(String, nullable=True)
+    ruc = Column(String(11), nullable=True)
+    nombre_comercial = Column(String, nullable=True)
 
 
 # La tabla "invitaciones" (códigos de un solo uso para registrarse con un rol restringido) se quitó con el rol

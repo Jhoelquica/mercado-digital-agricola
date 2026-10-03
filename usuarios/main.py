@@ -7,7 +7,9 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from typing import Literal
+
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
@@ -16,6 +18,7 @@ from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
+from migraciones import agregar_columnas_faltantes
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
 
@@ -25,6 +28,7 @@ import acceso
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 Base.metadata.create_all(bind=engine)
+agregar_columnas_faltantes(engine, Base)
 
 app = FastAPI()
 
@@ -91,7 +95,67 @@ def get_db():
     finally:
         db.close()
 
-class UsuarioRegistro(BaseModel):
+# ---- Tipo de comprador: persona o negocio ----
+NOMBRE_COMERCIAL_MAXIMO = 120
+PESOS_DIGITO_RUC = (5, 4, 3, 2, 7, 6, 5, 4, 3, 2)
+
+
+def ruc_valido(ruc: str) -> bool:
+    """RUC peruano: 11 dígitos, empieza con 10, 15, 17 o 20 y el último es el dígito verificador (módulo 11 de SUNAT).
+    Evita que un número mal tipeado quede guardado; no consulta a SUNAT si el RUC existe."""
+    if len(ruc) != 11 or not ruc.isdigit() or ruc[:2] not in ("10", "15", "17", "20"):
+        return False
+    resto = 11 - sum(int(d) * p for d, p in zip(ruc[:10], PESOS_DIGITO_RUC)) % 11
+    return int(ruc[10]) == {10: 0, 11: 1}.get(resto, resto)
+
+
+class _DatosDeComprador(BaseModel):
+    tipo_comprador: Literal["persona", "negocio"] | None = None
+    ruc: str | None = None
+    nombre_comercial: str | None = None
+
+    @field_validator("ruc")
+    @classmethod
+    def _ruc(cls, valor):
+        valor = (valor or "").strip().replace(" ", "")
+        if not valor:
+            return None
+        if not ruc_valido(valor):
+            raise ValueError("El RUC no es válido: son 11 dígitos y empieza con 10 o 20. Revisa que esté bien escrito.")
+        return valor
+
+    @field_validator("nombre_comercial")
+    @classmethod
+    def _nombre_comercial(cls, valor):
+        valor = " ".join((valor or "").split())
+        if not valor:
+            return None
+        if "\x00" in valor or len(valor) > NOMBRE_COMERCIAL_MAXIMO:
+            raise ValueError(f"El nombre comercial no puede superar {NOMBRE_COMERCIAL_MAXIMO} caracteres")
+        return valor
+
+
+def _aplicar_datos_de_comprador(usuario, datos: _DatosDeComprador) -> None:
+    """Solo un comprador tiene tipo (por defecto "persona"); el RUC y el nombre comercial solo se guardan para un
+    negocio (si pasa a persona, se borran)."""
+    if usuario.rol != "comprador":
+        usuario.tipo_comprador = usuario.ruc = usuario.nombre_comercial = None
+        return
+    usuario.tipo_comprador = datos.tipo_comprador or "persona"
+    es_negocio = usuario.tipo_comprador == "negocio"
+    usuario.ruc = datos.ruc if es_negocio else None
+    usuario.nombre_comercial = datos.nombre_comercial if es_negocio else None
+
+
+def _perfil(usuario) -> dict:
+    perfil = {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol}
+    if usuario.rol == "comprador":
+        perfil.update(tipo_comprador=usuario.tipo_comprador or "persona", ruc=usuario.ruc,
+                      nombre_comercial=usuario.nombre_comercial)
+    return perfil
+
+
+class UsuarioRegistro(_DatosDeComprador):
     nombre: str
     email: EmailStr
     password: str
@@ -106,6 +170,9 @@ class UsuarioRegistro(BaseModel):
 class UsuarioLogin(BaseModel):
     email: EmailStr
     password: str = Field(max_length=200)
+
+class PerfilCompradorActualizar(_DatosDeComprador):
+    tipo_comprador: Literal["persona", "negocio"]
 
 class UsuarioOAuthGoogle(BaseModel):
     id_token: str
@@ -148,6 +215,7 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
         password_hash=hashear_password(datos.password),
         rol=rol,
     )
+    _aplicar_datos_de_comprador(nuevo, datos)
     db.add(nuevo)
     try:
         db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email
@@ -157,7 +225,7 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(nuevo)
-    return {"id": nuevo.id, "nombre": nuevo.nombre, "email": nuevo.email, "rol": nuevo.rol}
+    return _perfil(nuevo)
 
 @app.post("/usuarios/login")
 def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
@@ -235,6 +303,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
         google_id=google_id,
         rol=datos.rol,
     )
+    _aplicar_datos_de_comprador(nuevo, _DatosDeComprador())  # comprador "persona"; lo puede cambiar en su perfil
     db.add(nuevo)
     try:
         db.flush()
@@ -273,7 +342,22 @@ def obtener_usuario(usuario_id: uuid.UUID, db: Session = Depends(get_db), solici
     usuario = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol}
+    return _perfil(usuario)
+
+# El comprador cambia si compra como persona o como negocio (y su RUC / nombre comercial). Solo el propio comprador, por
+# su token: no hay id en la ruta que se pueda cambiar por el de otro.
+@app.patch("/usuarios/me/comprador")
+def actualizar_perfil_comprador(datos: PerfilCompradorActualizar, db: Session = Depends(get_db),
+                                solicitante: dict = Depends(verificar_token)):
+    if solicitante.get("rol") != "comprador":
+        raise HTTPException(status_code=403, detail="Solo una cuenta de comprador elige si compra como persona o negocio")
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == solicitante.get("sub")).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    _aplicar_datos_de_comprador(usuario, datos)
+    db.commit()
+    db.refresh(usuario)
+    return _perfil(usuario)
 
 @app.delete("/usuarios/{usuario_id}")
 def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
