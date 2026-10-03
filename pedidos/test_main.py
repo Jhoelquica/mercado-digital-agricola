@@ -29,6 +29,8 @@ from auth import verificar_token
 client = TestClient(main.app)
 main.sembrar_configuracion_almacen()
 main.sembrar_configuracion_umbral_pedido_grande()
+main.sembrar_agencia_de_despacho()
+main.sembrar_destinos_lejanos()
 
 # Bypassea la autenticación real: en todos los tests se simula un comprador ya autenticado.
 # Se sobreescribe la dependencia estable `verificar_token` (no `requiere_rol(...)`, que genera
@@ -37,7 +39,7 @@ main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4(
 
 # Coordenadas de ejemplo dentro de Ayacucho (Huamanga, aprox.) y claramente fuera (Lima).
 DESTINO_DENTRO_AYACUCHO = {"destino_latitud": -13.1588, "destino_longitud": -74.2239}
-DESTINO_FUERA_AYACUCHO = {"destino_latitud": -12.0464, "destino_longitud": -77.0428}
+DESTINO_FUERA_AYACUCHO = {"destino_latitud": -3.7437, "destino_longitud": -73.2516}  # Iquitos: no hay destino ahí
 
 
 def _como(sub: str, rol: str):
@@ -144,7 +146,7 @@ def test_pedido_fuera_de_ayacucho_falla_con_400():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "El destino del pedido debe estar dentro de la región de Ayacucho."
+    assert resp.json()["detail"].startswith("Por ahora entregamos en la región de Ayacucho y en ")
     # La validación geográfica va antes que cualquier llamada a Productos o publicación de eventos.
     mock_ctor.assert_not_called()
     mock_publicar.assert_not_called()
@@ -899,7 +901,9 @@ def test_el_resumen_de_entrega_trae_distancia_peso_y_tarifa_sin_datos_del_compra
 
     assert resp.status_code == 200, resp.text
     cuerpo = resp.json()
-    assert set(cuerpo) == {"distancia_km", "peso_total_kg", "costo_envio", "requiere_vehiculo_grande"}
+    # modalidad/ciudad/sacos dicen cómo va el envío (agencia o camión): no son datos del comprador.
+    assert set(cuerpo) == {"distancia_km", "peso_total_kg", "costo_envio", "requiere_vehiculo_grande",
+                           "modalidad_envio", "destino_ciudad", "sacos"}
     db = main.SessionLocal()
     try:
         pedido = db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).first()
@@ -1106,3 +1110,242 @@ def test_las_condiciones_dicen_desde_cuantos_kg_es_por_mayor_y_el_recargo():
         _fijar_umbral(25.0)
     assert cuerpo["umbral_por_mayor_kg"] == 40.0
     assert cuerpo["recargo_envio_por_kg"] == main.RECARGO_ENVIO_POR_KG_EXTRA
+
+
+
+# ============ Compradores lejanos: destinos, agencia, camión compartido y DNI de quien recibe ============
+
+import pytest  # noqa: E402
+
+DESTINO_LIMA = {"destino_latitud": -12.0700, "destino_longitud": -77.0300}  # ~3 km del centro de Lima
+
+
+@pytest.fixture(autouse=True)
+def _reniec_simulado(monkeypatch):
+    """RENIEC nunca se consulta de verdad: por defecto todo DNI es de "ROSA ELENA QUISPE HUAMAN"."""
+    respuestas = {}
+
+    def consultar(dni):
+        r = respuestas.get(dni, {"nombre": "ROSA ELENA QUISPE HUAMAN"})
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    monkeypatch.setattr(main.reniec, "consultar_dni", consultar)
+    monkeypatch.setattr(main, "_consultas_dni", {})
+    _reniec_simulado.respuestas = respuestas
+
+
+def _lima(**cambios):
+    """Deja Lima con valores conocidos (otro test pudo editarla) y devuelve su id."""
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        lima = next(d for d in client.get("/destinos-lejanos/admin").json() if d["ciudad"] == "Lima")
+        datos = {**main.DESTINO_INICIAL, **cambios}
+        resp = client.put(f"/destinos-lejanos/{lima['id']}", json=datos)
+        assert resp.status_code == 200, resp.text
+        return lima["id"]
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def _pedido_lejano(cantidad_kg, modalidad, dni="45678912", precio=2.0, stock=100000, **producto):
+    payload = _payload(DESTINO_LIMA, precio_item=precio, cantidad=cantidad_kg)
+    payload.update(modalidad_envio=modalidad, receptor_dni=dni)
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=precio, stock=stock, **producto)), \
+         patch("main.publicar_evento") as publicar:
+        resp = client.post("/pedidos", json=payload)
+    return resp, publicar
+
+
+def test_lima_esta_sembrada_y_se_lista_con_lo_que_el_comprador_necesita_saber():
+    _lima()
+    sesion = main.app.dependency_overrides.pop(verificar_token, None)  # la lista es pública
+    try:
+        [lima] = [d for d in client.get("/destinos-lejanos").json() if d["ciudad"] == "Lima"]
+    finally:
+        main.app.dependency_overrides[verificar_token] = sesion
+    assert lima["agencia"] == {"nombre": "Shalom", "flete_kg": 0.5, "dias": 2}
+    assert lima["camion"]["precio_saco"] == 38.0 and lima["camion"]["minimo_sacos"] == 50
+    assert lima["camion"]["sacos_para_salir"] == 80 and lima["camion"]["porcentaje_salida"] == 80
+    assert lima["nota"].startswith("Valores de ejemplo")
+
+
+def test_la_cotizacion_a_lima_trae_la_agencia_y_el_camion():
+    _lima()
+    resp, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=3000), precio=2.0, stock=100000)
+    assert resp.status_code == 200, resp.text
+    c = resp.json()
+    assert c["tipo"] == "lejano" and c["destino"]["ciudad"] == "Lima" and c["kg_por_saco"] == 50
+    agencia, camion = c["opciones"]["agencia"], c["opciones"]["camion"]
+    assert agencia["agencia"] == "Shalom" and agencia["flete_destino_estimado"] == 1500.0  # 3000 kg x S/ 0,50
+    assert agencia["costo_envio"] > 0 and agencia["motivo_no_disponible"] is None
+    assert camion["sacos"] == 60 and camion["costo_envio"] == 2280.0  # 60 x S/ 38
+    assert camion["adelanto"] == round((6000 + 2280) * 0.70, 2) and camion["saldo"] == round(8280 - camion["adelanto"], 2)
+    assert camion["motivo_no_disponible"] is None
+
+
+def test_el_camion_exige_el_minimo_de_sacos_y_cabe_en_un_camion():
+    _lima()
+    poco, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=1000), precio=2.0, stock=100000)
+    assert "desde 50 sacos" in poco.json()["opciones"]["camion"]["motivo_no_disponible"]
+    mucho, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=6000), precio=2.0, stock=100000)
+    assert "no entra en un solo camión" in mucho.json()["opciones"]["camion"]["motivo_no_disponible"]
+
+    resp, publicar = _pedido_lejano(1000, "camion")
+    assert resp.status_code == 422 and "desde 50 sacos" in resp.json()["detail"]
+    publicar.assert_not_called()
+
+
+def test_un_pedido_por_agencia_cobra_el_tramo_local_y_estima_el_flete_en_destino():
+    _lima()
+    resp, publicar = _pedido_lejano(100, "agencia")
+    assert resp.status_code == 200, resp.text
+    p = resp.json()
+    assert p["modalidad_envio"] == "agencia" and p["destino_ciudad"] == "Lima"
+    assert float(p["flete_destino_estimado"]) == 50.0 and p["monto_adelanto"] is None
+    assert p["receptor_dni"] == "45678912"
+    assert p["receptor_nombre"] == "ROSA E. Q*** H***"  # el comprador lo ve enmascarado
+    evento = publicar.call_args[0][0]
+    assert evento["modalidad_envio"] == "agencia" and evento["monto_adelanto"] is None
+
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        completo = client.get(f"/pedidos/{p['id']}", headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert completo["receptor_nombre"] == "ROSA ELENA QUISPE HUAMAN"  # el admin, completo
+
+
+def test_un_pedido_en_camion_lleva_sus_sacos_y_el_adelanto_del_70():
+    _lima()
+    resp, publicar = _pedido_lejano(2600, "camion")  # 52 sacos
+    assert resp.status_code == 200, resp.text
+    p = resp.json()
+    assert p["modalidad_envio"] == "camion" and p["sacos"] == 52
+    assert float(p["costo_envio"]) == 52 * 38.0
+    total = 2600 * 2.0 + 52 * 38.0
+    assert float(p["monto_adelanto"]) == round(total * 0.70, 2) and p["porcentaje_adelanto"] == 70
+    assert publicar.call_args[0][0]["monto_adelanto"] == round(total * 0.70, 2)
+
+
+def test_fuera_de_ayacucho_hay_que_elegir_modalidad_y_dar_un_dni_que_exista():
+    _lima()
+    resp, _ = _pedido_lejano(100, "local")
+    assert resp.status_code == 422 and "elige cómo llega tu pedido" in resp.json()["detail"]
+    resp, _ = _pedido_lejano(100, "agencia", dni="123")
+    assert resp.status_code == 422 and "8 dígitos" in resp.json()["detail"]
+    _reniec_simulado.respuestas["11111111"] = None
+    resp, _ = _pedido_lejano(100, "agencia", dni="11111111")
+    assert resp.status_code == 422 and "RENIEC no tiene registrado el DNI 11111111" in resp.json()["detail"]
+    _reniec_simulado.respuestas["22222222"] = main.reniec.ReniecNoDisponible("HTTP 503")
+    resp, _ = _pedido_lejano(100, "agencia", dni="22222222")
+    assert resp.status_code == 503
+
+
+def test_dentro_de_ayacucho_no_se_elige_agencia_ni_camion():
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    payload["modalidad_envio"] = "camion"
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=payload)
+    assert resp.status_code == 422
+
+
+def test_si_lima_no_tiene_camion_o_agencia_no_se_ofrece():
+    _lima(camion_disponible=False, camion_precio_saco=None)
+    try:
+        resp, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=3000), precio=2.0, stock=100000)
+        assert resp.json()["opciones"]["camion"] is None
+        pedido, _ = _pedido_lejano(3000, "camion")
+        assert pedido.status_code == 422 and "no va el camión" in pedido.json()["detail"]
+    finally:
+        _lima()
+
+
+def test_un_destino_desactivado_deja_de_cubrir_su_ciudad():
+    _lima(activo=False)
+    try:
+        resp, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=100), precio=2.0, stock=100000)
+        assert resp.status_code == 400
+        assert all(d["ciudad"] != "Lima" for d in client.get("/destinos-lejanos").json())
+    finally:
+        _lima()
+
+
+def test_el_admin_agrega_y_edita_ciudades_y_los_demas_no():
+    datos = {"ciudad": "Cusco", "departamento": "Cusco", "latitud": -13.5320, "longitud": -71.9675, "radio_km": 30,
+             "agencia_nombre": "Marvisur", "agencia_flete_kg": 0.6, "camion_precio_saco": 45, "camion_minimo_sacos": 50,
+             "camion_capacidad_sacos": 200, "camion_porcentaje_salida": 80}
+    assert client.post("/destinos-lejanos", json=datos).status_code == 403  # un comprador no
+
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        assert client.post("/destinos-lejanos", json={**datos, "latitud": -13.16, "longitud": -74.22}).status_code == 422  # en Ayacucho
+        assert client.post("/destinos-lejanos", json={**datos, "camion_capacidad_sacos": 10}).status_code == 422
+        assert client.post("/destinos-lejanos", json={**datos, "camion_precio_saco": None}).status_code == 422
+        assert client.post("/destinos-lejanos", json={**datos, "latitud": 40.4, "longitud": -3.7}).status_code == 422  # fuera del Perú
+        creado = client.post("/destinos-lejanos", json=datos)
+        assert creado.status_code == 200, creado.text
+        cusco_id = creado.json()["id"]
+        editado = client.put(f"/destinos-lejanos/{cusco_id}", json={**datos, "camion_precio_saco": 50, "activo": False})
+        assert editado.status_code == 200 and float(editado.json()["camion_precio_saco"]) == 50.0
+        assert client.put(f"/destinos-lejanos/{uuid.uuid4()}", json=datos).status_code == 404
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_la_agencia_de_despacho_la_mueve_el_admin_dentro_de_ayacucho():
+    sesion = main.app.dependency_overrides.pop(verificar_token, None)
+    try:
+        assert client.get("/configuracion/agencia-despacho").status_code == 200
+    finally:
+        main.app.dependency_overrides[verificar_token] = sesion
+    assert client.patch("/configuracion/agencia-despacho", json={"latitud": -13.15, "longitud": -74.22}).status_code == 403
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        assert client.patch("/configuracion/agencia-despacho", json={"latitud": -12.05, "longitud": -77.04}).status_code == 422
+        resp = client.patch("/configuracion/agencia-despacho", json={"latitud": -13.1460, "longitud": -74.2190})
+        assert resp.status_code == 200
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_consultar_el_dni_muestra_el_nombre_enmascarado_y_tiene_tope():
+    resp = client.get("/pedidos/dni/45678912")
+    assert resp.status_code == 200 and resp.json() == {"dni": "45678912", "nombre_para_confirmar": "ROSA E. Q*** H***"}
+    assert client.get("/pedidos/dni/4567").status_code == 422
+    for _ in range(main.CONSULTAS_DNI_POR_HORA - 2):
+        client.get("/pedidos/dni/45678912")
+    assert client.get("/pedidos/dni/45678912").status_code == 429
+
+    _como(str(uuid.uuid4()), "productor")
+    try:
+        assert client.get("/pedidos/dni/45678912").status_code == 403
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_el_nombre_se_enmascara_dejando_solo_el_primer_nombre():
+    assert main.reniec.nombre_para_confirmar("ROSA ELENA QUISPE HUAMAN") == "ROSA E. Q*** H***"
+    assert main.reniec.nombre_para_confirmar("JUAN PEREZ LOPEZ") == "JUAN P*** L***"
+    assert main.reniec.nombre_para_confirmar("MARIA") == "MARIA"
+
+
+def test_reniec_entiende_los_formatos_del_servicio():
+    assert main.reniec._nombre_de({"nombres": "Rosa Elena", "apellidoPaterno": "Quispe", "apellidoMaterno": "Huaman"}) == "ROSA ELENA QUISPE HUAMAN"
+    assert main.reniec._nombre_de({"nombre": "juan perez lopez"}) == "JUAN PEREZ LOPEZ"
+    assert main.reniec._nombre_de({"full_name": "ANA  TORRES"}) == "ANA TORRES"
+
+
+def test_el_resumen_para_transporte_dice_la_modalidad(monkeypatch):
+    _lima()
+    resp, _ = _pedido_lejano(2600, "camion")
+    monkeypatch.setattr(main, "TRANSPORTE_A_PEDIDOS_SECRETO", "secreto-de-prueba")
+    resumen = client.get(f"/pedidos/interno/{resp.json()['id']}/resumen-entrega",
+                         headers={"X-Servicio-Secreto": "secreto-de-prueba"}).json()
+    assert resumen["modalidad_envio"] == "camion" and resumen["destino_ciudad"] == "Lima" and resumen["sacos"] == 52
+
+
+def test_las_condiciones_dicen_el_saco_y_el_adelanto():
+    c = client.get("/pedidos/condiciones").json()
+    assert c["kg_por_saco"] == 50 and c["porcentaje_adelanto_camion"] == 70

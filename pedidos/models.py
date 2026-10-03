@@ -39,6 +39,20 @@ class Pedido(Base):
     # Parte de costo_envio que se cobró por los kg que pasan el umbral (compra por mayor; ver calcular_recargo_por_peso
     # en main.py). costo_envio ya la incluye: esto es solo para mostrar el desglose. Null en los pedidos de antes.
     recargo_envio_peso = Column(Numeric(10, 2), nullable=True)
+    # ---- Compradores lejanos (decisiones del usuario, 2026-10-03; ver DestinoLejano) ----
+    # "local" (reparto en Ayacucho, como siempre), "agencia" (el repartidor lo deja en una agencia de carga en Huamanga
+    # y el flete de la agencia se paga en destino) o "camion" (viaje compartido de un camión, con adelanto).
+    # Nullable para que la migración la agregue a la tabla ya creada: NULL (pedidos de antes) = "local".
+    modalidad_envio = Column(String, nullable=True, default="local")
+    destino_lejano_id = Column(UUID(as_uuid=True), nullable=True)
+    destino_ciudad = Column(String, nullable=True)  # copia del nombre: el destino se puede editar después
+    # Quien recibe en la otra ciudad, con su DNI consultado en RENIEC (la agencia o el chofer entregan contra ese DNI).
+    receptor_dni = Column(String(8), nullable=True)
+    receptor_nombre = Column(String, nullable=True)
+    sacos = Column(Integer, nullable=True)  # camión: peso / 50 kg, redondeado hacia arriba
+    flete_destino_estimado = Column(Numeric(10, 2), nullable=True)  # agencia: aproximado, se paga en destino
+    monto_adelanto = Column(Numeric(10, 2), nullable=True)  # camión: lo que se paga al pedir (el resto al llegar)
+    porcentaje_adelanto = Column(Integer, nullable=True)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"
@@ -84,4 +98,33 @@ class ConfiguracionSistema(Base):
     # Config numérica genérica (ej. umbral_pedido_grande_kg) — no atada a coordenadas, para no
     # forzar futuras configuraciones que no sean una ubicación a vivir en valor_latitud.
     valor_numerico = Column(Float, nullable=True)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DestinoLejano(Base):
+    """Una ciudad fuera de Ayacucho a la que se vende (lista que edita el admin: solo donde sea rentable llegar). Un punto
+    de entrega dentro de `radio_km` de la ciudad es de esa ciudad. Cada una dice si se llega por agencia de carga (el
+    flete lo cobra la agencia en destino; aquí solo va una estimación) y/o en camión compartido (precio por saco, mínimo
+    por comprador, capacidad y porcentaje con el que sale). Los valores iniciales son de ejemplo: ver el informe de
+    rentabilidad en la memoria del proyecto (viaje redondo Ayacucho-Lima ~S/ 2 400–2 900 en un camión de 5 t)."""
+    __tablename__ = "destinos_lejanos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ciudad = Column(String, nullable=False)
+    departamento = Column(String, nullable=True)
+    latitud = Column(Float, nullable=False)
+    longitud = Column(Float, nullable=False)
+    radio_km = Column(Float, nullable=False, default=40)
+    activo = Column(Boolean, nullable=False, default=True)
+    agencia_disponible = Column(Boolean, nullable=False, default=True)
+    agencia_nombre = Column(String, nullable=True)
+    agencia_flete_kg = Column(Numeric(10, 2), nullable=True)
+    agencia_dias = Column(Integer, nullable=True)
+    camion_disponible = Column(Boolean, nullable=False, default=True)
+    camion_precio_saco = Column(Numeric(10, 2), nullable=True)
+    camion_minimo_sacos = Column(Integer, nullable=False, default=50)
+    camion_capacidad_sacos = Column(Integer, nullable=False, default=100)
+    camion_porcentaje_salida = Column(Integer, nullable=False, default=80)
+    camion_dias = Column(Integer, nullable=True)
+    nota = Column(String, nullable=True)
     fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

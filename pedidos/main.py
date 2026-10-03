@@ -1,7 +1,11 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+import logging
 import os
 import re
 import math
+import threading
+import time
+from typing import Literal
 import uuid
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -19,6 +23,10 @@ from auth import verificar_token, requiere_rol, security
 from database import Base, engine, SessionLocal
 from migraciones import agregar_columnas_faltantes
 import models
+import reniec
+from fastapi.encoders import jsonable_encoder
+
+logger = logging.getLogger("pedidos")
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
@@ -96,6 +104,51 @@ def sembrar_configuracion_umbral_pedido_grande():
     finally:
         db.close()
 
+CLAVE_AGENCIA_DESPACHO = "agencia_despacho_ubicacion"
+# Dónde deja el repartidor los pedidos que van por agencia de carga: las agencias (Shalom, Marvisur...) están junto al
+# Terminal Terrestre Libertadores de América, en Huamanga. Coordenadas APROXIMADAS: el admin las corrige desde
+# PATCH /configuracion/agencia-despacho. Misma siembra que el almacén: una sola vez, nunca pisa un cambio del admin.
+AGENCIA_DESPACHO_LATITUD_DEFAULT = -13.1460
+AGENCIA_DESPACHO_LONGITUD_DEFAULT = -74.2190
+
+@app.on_event("startup")
+def sembrar_agencia_de_despacho():
+    db = SessionLocal()
+    try:
+        if db.query(models.ConfiguracionSistema).filter(models.ConfiguracionSistema.clave == CLAVE_AGENCIA_DESPACHO).first():
+            return
+        db.add(models.ConfiguracionSistema(clave=CLAVE_AGENCIA_DESPACHO, valor_latitud=AGENCIA_DESPACHO_LATITUD_DEFAULT,
+                                           valor_longitud=AGENCIA_DESPACHO_LONGITUD_DEFAULT))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+    finally:
+        db.close()
+
+# Lima, para empezar (valores DE EJEMPLO que el admin edita: el flete por kg de la agencia hay que confirmarlo con la
+# agencia, y el precio por saco del camión sale del informe de rentabilidad). Solo si todavía no hay ningún destino.
+DESTINO_INICIAL = {
+    "ciudad": "Lima", "departamento": "Lima", "latitud": -12.0464, "longitud": -77.0428, "radio_km": 40,
+    "agencia_disponible": True, "agencia_nombre": "Shalom", "agencia_flete_kg": 0.50, "agencia_dias": 2,
+    "camion_disponible": True, "camion_precio_saco": 38.00, "camion_minimo_sacos": 50, "camion_capacidad_sacos": 100,
+    "camion_porcentaje_salida": 80, "camion_dias": 3,
+    "nota": "Valores de ejemplo: confirma el flete con la agencia y el precio del camión con el transportista.",
+}
+
+@app.on_event("startup")
+def sembrar_destinos_lejanos():
+    db = SessionLocal()
+    try:
+        if db.query(models.DestinoLejano).first():
+            return
+        db.add(models.DestinoLejano(**DESTINO_INICIAL))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+    finally:
+        db.close()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -169,6 +222,9 @@ def get_db():
 
 # Validación fail-fast: el destino de entrega debe caer dentro de la región de Ayacucho. La usan
 # crear_pedido y la cotización del envío, para que ambas rechacen exactamente lo mismo.
+def dentro_de_ayacucho(latitud: float, longitud: float) -> bool:
+    return AYACUCHO_LAT_MIN <= latitud <= AYACUCHO_LAT_MAX and AYACUCHO_LNG_MIN <= longitud <= AYACUCHO_LNG_MAX
+
 def validar_destino_en_region(latitud: float, longitud: float):
     if not (AYACUCHO_LAT_MIN <= latitud <= AYACUCHO_LAT_MAX) or \
        not (AYACUCHO_LNG_MIN <= longitud <= AYACUCHO_LNG_MAX):
@@ -210,6 +266,135 @@ def _umbral_pedido_grande_kg(db: Session) -> float:
         # réplica), pero sin esto un pedido se crearía con un criterio de vehículo grande inventado.
         raise HTTPException(status_code=503, detail="No se pudo determinar el umbral de pedido grande: falta la configuración")
     return umbral_config.valor_numerico
+
+# ---- Compradores lejanos (decisiones del usuario, 2026-10-03) ----
+KG_POR_SACO = 50
+PORCENTAJE_ADELANTO_CAMION = 70  # se paga al pedir; el resto al llegar, antes de descargar
+MODALIDADES_LEJANAS = ("agencia", "camion")
+
+def destino_lejano_para(db: Session, latitud: float, longitud: float):
+    """None si el punto está en Ayacucho (reparto local); si no, el destino lejano ACTIVO más cercano que lo cubre (dentro
+    de su radio). Fuera de todo, 400 con la lista de ciudades a las que sí se llega."""
+    if dentro_de_ayacucho(latitud, longitud):
+        return None
+    activos = db.query(models.DestinoLejano).filter(models.DestinoLejano.activo.is_(True)).all()
+    cerca = [(calcular_distancia_km(d.latitud, d.longitud, latitud, longitud), d) for d in activos]
+    cerca = [(km, d) for km, d in cerca if km <= d.radio_km]
+    if not cerca:
+        ciudades = ", ".join(sorted(d.ciudad for d in activos))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Por ahora entregamos en la región de Ayacucho{' y en ' + ciudades if ciudades else ''}. "
+                   "Tu punto de entrega no está cerca de ninguna de esas ciudades.",
+        )
+    return min(cerca, key=lambda par: par[0])[1]
+
+def _agencia_de_despacho(db: Session):
+    config = db.query(models.ConfiguracionSistema).filter(models.ConfiguracionSistema.clave == CLAVE_AGENCIA_DESPACHO).first()
+    if not config:
+        raise HTTPException(status_code=503, detail="Falta la configuración de la agencia de despacho")
+    return config
+
+def opcion_agencia(db: Session, destino, peso_total_kg, umbral_kg) -> dict | None:
+    """Por agencia: se cobra el tramo local almacén -> agencia en Huamanga (con el recargo por peso, como cualquier envío
+    local); el flete de la agencia lo paga el comprador al recoger y aquí solo se estima."""
+    if not destino.agencia_disponible:
+        return None
+    almacen = db.query(models.ConfiguracionSistema).filter(models.ConfiguracionSistema.clave == CLAVE_ALMACEN).first()
+    agencia = _agencia_de_despacho(db)
+    tramo_km = calcular_distancia_km(almacen.valor_latitud, almacen.valor_longitud, agencia.valor_latitud, agencia.valor_longitud)
+    recargo = calcular_recargo_por_peso(peso_total_kg, umbral_kg)
+    flete_kg = float(destino.agencia_flete_kg) if destino.agencia_flete_kg is not None else None
+    return {
+        "agencia": destino.agencia_nombre,
+        "dias": destino.agencia_dias,
+        "costo_envio": round(calcular_costo_envio(tramo_km) + recargo, 2),
+        "recargo_envio_peso": recargo,
+        "flete_kg": flete_kg,
+        "flete_destino_estimado": round(peso_total_kg * flete_kg, 2) if peso_total_kg is not None and flete_kg is not None else None,
+        "motivo_no_disponible": None,
+    }
+
+def opcion_camion(destino, subtotal: float, peso_total_kg) -> dict | None:
+    """Camión compartido: precio por saco (de 50 kg), mínimo por comprador, y sale cuando junta el porcentaje de su
+    capacidad. Se paga un adelanto al pedir y el resto al llegar."""
+    if not destino.camion_disponible or destino.camion_precio_saco is None:
+        return None
+    precio = float(destino.camion_precio_saco)
+    sacos = math.ceil(peso_total_kg / KG_POR_SACO) if peso_total_kg else None
+    motivo = None
+    if sacos is None:
+        motivo = "Para el camión necesitamos saber el peso: hay productos de este carrito sin peso conocido."
+    elif sacos < destino.camion_minimo_sacos:
+        motivo = (f"El camión lleva desde {destino.camion_minimo_sacos} sacos de {KG_POR_SACO} kg por comprador "
+                  f"({destino.camion_minimo_sacos * KG_POR_SACO} kg) y este pedido es de {sacos}.")
+    elif sacos > destino.camion_capacidad_sacos:
+        motivo = (f"Este pedido ({sacos} sacos) no entra en un solo camión (hasta {destino.camion_capacidad_sacos} sacos): "
+                  "divídelo en dos pedidos o escríbenos.")
+    costo = round(sacos * precio, 2) if sacos else None
+    total = round(subtotal + costo, 2) if costo is not None else None
+    adelanto = round(total * PORCENTAJE_ADELANTO_CAMION / 100, 2) if total is not None else None
+    return {
+        "sacos": sacos,
+        "precio_saco": precio,
+        "minimo_sacos": destino.camion_minimo_sacos,
+        "capacidad_sacos": destino.camion_capacidad_sacos,
+        "porcentaje_salida": destino.camion_porcentaje_salida,
+        "sacos_para_salir": math.ceil(destino.camion_capacidad_sacos * destino.camion_porcentaje_salida / 100),
+        "dias": destino.camion_dias,
+        "costo_envio": costo,
+        "porcentaje_adelanto": PORCENTAJE_ADELANTO_CAMION,
+        "adelanto": adelanto,
+        "saldo": round(total - adelanto, 2) if total is not None else None,
+        "motivo_no_disponible": motivo,
+    }
+
+def destino_publico(destino) -> dict:
+    return {
+        "id": destino.id, "ciudad": destino.ciudad, "departamento": destino.departamento,
+        "latitud": destino.latitud, "longitud": destino.longitud, "radio_km": destino.radio_km, "nota": destino.nota,
+        "agencia": {"nombre": destino.agencia_nombre, "flete_kg": float(destino.agencia_flete_kg) if destino.agencia_flete_kg is not None else None,
+                    "dias": destino.agencia_dias} if destino.agencia_disponible else None,
+        "camion": {"precio_saco": float(destino.camion_precio_saco), "minimo_sacos": destino.camion_minimo_sacos,
+                   "capacidad_sacos": destino.camion_capacidad_sacos, "porcentaje_salida": destino.camion_porcentaje_salida,
+                   "sacos_para_salir": math.ceil(destino.camion_capacidad_sacos * destino.camion_porcentaje_salida / 100),
+                   "dias": destino.camion_dias}
+                  if destino.camion_disponible and destino.camion_precio_saco is not None else None,
+    }
+
+# ---- DNI de quien recibe, consultado en RENIEC (reniec.py) ----
+CONSULTAS_DNI_POR_HORA = 10  # por comprador: el endpoint no debe servir para averiguar nombres de cualquier DNI
+_consultas_dni = {}
+_candado_dni = threading.Lock()
+
+def _puede_consultar_dni(usuario_id: str) -> bool:
+    ahora = time.monotonic()
+    with _candado_dni:
+        recientes = [t for t in _consultas_dni.get(usuario_id, []) if ahora - t < 3600]
+        permitido = len(recientes) < CONSULTAS_DNI_POR_HORA
+        _consultas_dni[usuario_id] = recientes + ([ahora] if permitido else [])
+        return permitido
+
+def nombre_en_reniec(dni: str) -> str:
+    """El nombre oficial del DNI, o la HTTPException con el motivo (422 si RENIEC no lo tiene, 503 si no responde)."""
+    if not (len(dni or "") == 8 and dni.isdigit()):
+        raise HTTPException(status_code=422, detail="El DNI de quien recibe son 8 dígitos.")
+    try:
+        datos = reniec.consultar_dni(dni)
+    except reniec.ReniecNoDisponible as error:
+        logger.warning("No se pudo consultar el DNI en RENIEC (%s)", error)
+        raise HTTPException(status_code=503, detail="No pudimos consultar RENIEC en este momento. Intenta en unos minutos.")
+    if datos is None:
+        raise HTTPException(status_code=422, detail=f"RENIEC no tiene registrado el DNI {dni}. Revisa que esté bien escrito.")
+    return datos["nombre"]
+
+def pedido_para(usuario: dict, pedido) -> dict:
+    """El pedido como lo ve quien lo pide: el comprador ve el nombre de quien recibe ENMASCARADO (si no, crear pedidos
+    serviría para averiguar el nombre de cualquier DNI); el admin y el repartidor del envío lo ven completo."""
+    datos = jsonable_encoder(pedido)
+    if datos.get("receptor_nombre") and usuario.get("rol") not in ("admin", "repartidor"):
+        datos["receptor_nombre"] = reniec.nombre_para_confirmar(datos["receptor_nombre"])
+    return datos
 
 # Topes de un pedido. Sin límite inferior, una línea con cantidad negativa restaba dinero al total (el
 # cargo se calcula sumando cantidad x precio) y "descontaba" stock al revés; con una segunda línea
@@ -261,6 +446,42 @@ class PedidoCrear(BaseModel):
     destino_latitud: float
     destino_longitud: float
     items: list[ItemPedido] = Field(min_length=1, max_length=LINEAS_MAXIMAS_POR_PEDIDO)
+    # Fuera de Ayacucho hay que elegir cómo llega (agencia o camión) y dar el DNI de quien recibe.
+    modalidad_envio: Literal["local", "agencia", "camion"] = "local"
+    receptor_dni: str | None = Field(default=None, max_length=12)
+
+class DestinoLejanoDatos(BaseModel):
+    ciudad: str = Field(min_length=2, max_length=80)
+    departamento: str | None = Field(default=None, max_length=80)
+    latitud: float = Field(ge=-18.5, le=0.2)    # dentro del Perú (aprox.)
+    longitud: float = Field(ge=-81.5, le=-68.5)
+    radio_km: float = Field(default=40, gt=0, le=200)
+    activo: bool = True
+    agencia_disponible: bool = True
+    agencia_nombre: str | None = Field(default=None, max_length=80)
+    agencia_flete_kg: float | None = Field(default=None, ge=0, le=100)
+    agencia_dias: int | None = Field(default=None, ge=0, le=60)
+    camion_disponible: bool = True
+    camion_precio_saco: float | None = Field(default=None, ge=0, le=100000)
+    camion_minimo_sacos: int = Field(default=50, ge=1, le=10000)
+    camion_capacidad_sacos: int = Field(default=100, ge=1, le=10000)
+    camion_porcentaje_salida: int = Field(default=80, ge=1, le=100)
+    camion_dias: int | None = Field(default=None, ge=0, le=60)
+    nota: str | None = Field(default=None, max_length=300)
+
+    @field_validator("ciudad", "departamento", "agencia_nombre", "nota")
+    @classmethod
+    def _texto(cls, valor):
+        if valor is None:
+            return None
+        valor = " ".join(valor.split())
+        if "\x00" in valor:
+            raise ValueError("contiene caracteres no válidos")
+        return valor or None
+
+class AgenciaDespachoActualizar(BaseModel):
+    latitud: float
+    longitud: float
 
 class CotizacionCrear(BaseModel):
     destino_latitud: float
@@ -416,13 +637,19 @@ def _validar_items(client, items):
 
 @app.post("/pedidos")
 def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
-    # Validación 1 (fail-fast, antes de tocar la base de datos): el destino de entrega debe caer
-    # dentro de la región de Ayacucho.
-    validar_destino_en_region(datos.destino_latitud, datos.destino_longitud)
-
-    # El costo de envío se calcula acá (no depende de los items, así que no hace falta esperar a
-    # validarlos) — ver calcular_envio_a_destino.
-    _, costo_envio = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
+    # Validación 1 (fail-fast, antes de tocar la base de datos): el destino es la región de Ayacucho (reparto local) o
+    # una de las ciudades lejanas que el admin habilitó; fuera de eso, 400.
+    destino = destino_lejano_para(db, datos.destino_latitud, datos.destino_longitud)
+    receptor_nombre = None
+    if destino is None:
+        if datos.modalidad_envio != "local":
+            raise HTTPException(status_code=422, detail="Dentro de Ayacucho el pedido va con un repartidor local.")
+        # El costo de envío se calcula acá (no depende de los items) — ver calcular_envio_a_destino.
+        _, costo_envio = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
+    else:
+        if datos.modalidad_envio not in MODALIDADES_LEJANAS:
+            raise HTTPException(status_code=422, detail=f"Para {destino.ciudad} elige cómo llega tu pedido: por agencia de carga o en camión.")
+        receptor_nombre = nombre_en_reniec((datos.receptor_dni or "").strip())
 
     with httpx.Client() as client:
         items_validados = _validar_items(client, datos.items)
@@ -442,6 +669,26 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         umbral_kg = _umbral_pedido_grande_kg(db)
         requiere_vehiculo_grande = peso_total_kg is not None and peso_total_kg > umbral_kg
         recargo_envio_peso = calcular_recargo_por_peso(peso_total_kg, umbral_kg)
+        lejano = {}
+        if destino is not None:
+            if datos.modalidad_envio == "agencia":
+                opcion = opcion_agencia(db, destino, peso_total_kg, umbral_kg)
+                if opcion is None:
+                    raise HTTPException(status_code=422, detail=f"A {destino.ciudad} no se envía por agencia: elige el camión.")
+                costo_envio, recargo_envio_peso = opcion["costo_envio"], opcion["recargo_envio_peso"]
+                lejano = {"flete_destino_estimado": opcion["flete_destino_estimado"]}
+            else:
+                opcion = opcion_camion(destino, subtotal, peso_total_kg)
+                if opcion is None:
+                    raise HTTPException(status_code=422, detail=f"A {destino.ciudad} no va el camión: elige la agencia.")
+                if opcion["motivo_no_disponible"]:
+                    raise HTTPException(status_code=422, detail=opcion["motivo_no_disponible"])
+                costo_envio, recargo_envio_peso = opcion["costo_envio"], 0.0
+                lejano = {"sacos": opcion["sacos"], "monto_adelanto": opcion["adelanto"],
+                          "porcentaje_adelanto": PORCENTAJE_ADELANTO_CAMION}
+            costo_envio -= recargo_envio_peso  # abajo se vuelve a sumar (igual que en el reparto local)
+            lejano.update(modalidad_envio=datos.modalidad_envio, destino_lejano_id=destino.id, destino_ciudad=destino.ciudad,
+                          receptor_dni=datos.receptor_dni.strip(), receptor_nombre=receptor_nombre)
 
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(
@@ -454,6 +701,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             peso_total_kg=peso_total_kg,
             requiere_vehiculo_grande=requiere_vehiculo_grande,
             recargo_envio_peso=recargo_envio_peso,
+            **lejano,
         )
         db.add(nuevo_pedido)
         db.flush()  # genera el id del pedido sin cerrar la transacción todavía
@@ -505,6 +753,9 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
         "usuario_id": str(usuario.get("sub")),
         "comprador_nombre": nuevo_pedido.comprador_nombre,
         "costo_envio": float(nuevo_pedido.costo_envio),
+        # Pagos cobra el adelanto en vez del total cuando el pedido va en camión (el resto al llegar).
+        "modalidad_envio": nuevo_pedido.modalidad_envio or "local",
+        "monto_adelanto": float(nuevo_pedido.monto_adelanto) if nuevo_pedido.monto_adelanto is not None else None,
         # cantidad_base es lo que se descontó del stock (ya convertido a la unidad base del producto: 3 sacos de
         # 10 kg = 30) mientras que cantidad es lo que compró el comprador. Pagos lo necesita para devolver o
         # volver a reservar exactamente ese stock si el pago se rechaza o se reintenta.
@@ -519,7 +770,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             for fila, cantidad_base in filas_con_base
         ],
     })
-    return nuevo_pedido
+    return pedido_para(usuario, nuevo_pedido)
 
 # Público a propósito (mismo criterio que /configuracion/almacen): el comprador ve cuánto le va a
 # costar el envío ANTES de pagar, sin crear todavía el pedido. DEBE declararse antes de
@@ -536,14 +787,29 @@ def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(g
 # compra es por mayor (pasa el umbral de peso) y cuánto suma el recargo por los kg de más.
 @app.post("/pedidos/cotizar")
 def cotizar_pedido(datos: CotizacionCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
-    validar_destino_en_region(datos.destino_latitud, datos.destino_longitud)
-    distancia_km, costo_base = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
+    destino = destino_lejano_para(db, datos.destino_latitud, datos.destino_longitud)
     with httpx.Client() as client:
         items_validados = _validar_items(client, datos.items)
     peso_total_kg = _peso_total(items_validados)
     umbral_kg = _umbral_pedido_grande_kg(db)
+    subtotal = round(sum(precio * item.cantidad for item, _, precio, _, _ in items_validados), 2)
+    if destino is not None:
+        # Fuera de Ayacucho: las dos formas de llegar, con todo lo que el comprador necesita saber para elegir.
+        return {
+            "tipo": "lejano",
+            "destino": destino_publico(destino),
+            "subtotal": subtotal,
+            "peso_total_kg": peso_total_kg,
+            "kg_por_saco": KG_POR_SACO,
+            "opciones": {
+                "agencia": opcion_agencia(db, destino, peso_total_kg, umbral_kg),
+                "camion": opcion_camion(destino, subtotal, peso_total_kg),
+            },
+        }
+    distancia_km, costo_base = calcular_envio_a_destino(db, datos.destino_latitud, datos.destino_longitud)
     recargo = calcular_recargo_por_peso(peso_total_kg, umbral_kg)
     return {
+        "tipo": "local",
         "distancia_km": distancia_km,
         "subtotal": round(sum(precio * item.cantidad for item, _, precio, _, _ in items_validados), 2),
         "peso_total_kg": peso_total_kg,
@@ -567,7 +833,80 @@ def condiciones_de_compra(db: Session = Depends(get_db)):
         "monto_minimo": float(MONTO_MINIMO_PEDIDO),
         "umbral_por_mayor_kg": _umbral_pedido_grande_kg(db),
         "recargo_envio_por_kg": RECARGO_ENVIO_POR_KG_EXTRA,
+        "kg_por_saco": KG_POR_SACO,
+        "porcentaje_adelanto_camion": PORCENTAJE_ADELANTO_CAMION,
     }
+
+
+# ---- Ciudades lejanas: la lista que ve el comprador y que edita el admin ----
+@app.get("/destinos-lejanos")
+def listar_destinos_lejanos(db: Session = Depends(get_db)):
+    activos = db.query(models.DestinoLejano).filter(models.DestinoLejano.activo.is_(True)).order_by(models.DestinoLejano.ciudad).all()
+    return [destino_publico(d) for d in activos]
+
+
+@app.get("/destinos-lejanos/admin")
+def listar_destinos_lejanos_admin(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    return db.query(models.DestinoLejano).order_by(models.DestinoLejano.ciudad).all()
+
+
+def _validar_destino(datos: DestinoLejanoDatos):
+    if dentro_de_ayacucho(datos.latitud, datos.longitud):
+        raise HTTPException(status_code=422, detail="Esa ciudad está en Ayacucho: ahí ya se reparte con repartidores locales.")
+    if datos.camion_capacidad_sacos < datos.camion_minimo_sacos:
+        raise HTTPException(status_code=422, detail="La capacidad del camión no puede ser menor que el mínimo por comprador.")
+    if datos.camion_disponible and datos.camion_precio_saco is None:
+        raise HTTPException(status_code=422, detail="Pon el precio por saco del camión, o desactiva el camión para esta ciudad.")
+
+
+@app.post("/destinos-lejanos")
+def crear_destino_lejano(datos: DestinoLejanoDatos, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    _validar_destino(datos)
+    destino = models.DestinoLejano(**datos.model_dump())
+    db.add(destino)
+    db.commit()
+    db.refresh(destino)
+    return destino
+
+
+@app.put("/destinos-lejanos/{destino_id}")
+def actualizar_destino_lejano(destino_id: uuid.UUID, datos: DestinoLejanoDatos, db: Session = Depends(get_db),
+                              usuario: dict = Depends(requiere_rol("admin"))):
+    destino = db.query(models.DestinoLejano).filter(models.DestinoLejano.id == destino_id).first()
+    if not destino:
+        raise HTTPException(status_code=404, detail="Destino no encontrado")
+    _validar_destino(datos)
+    for campo, valor in datos.model_dump().items():
+        setattr(destino, campo, valor)
+    db.commit()
+    db.refresh(destino)
+    return destino
+
+
+@app.get("/configuracion/agencia-despacho")
+def obtener_agencia_despacho(db: Session = Depends(get_db)):
+    config = _agencia_de_despacho(db)
+    return {"latitud": config.valor_latitud, "longitud": config.valor_longitud, "fecha_actualizacion": config.fecha_actualizacion}
+
+
+@app.patch("/configuracion/agencia-despacho")
+def actualizar_agencia_despacho(datos: AgenciaDespachoActualizar, db: Session = Depends(get_db),
+                                usuario: dict = Depends(requiere_rol("admin"))):
+    if not dentro_de_ayacucho(datos.latitud, datos.longitud):
+        raise HTTPException(status_code=422, detail="La agencia de despacho tiene que estar en Ayacucho (donde el repartidor deja los pedidos).")
+    config = _agencia_de_despacho(db)
+    config.valor_latitud, config.valor_longitud = datos.latitud, datos.longitud
+    db.commit()
+    return {"latitud": config.valor_latitud, "longitud": config.valor_longitud}
+
+
+# El comprador confirma que el DNI de quien recibe es el correcto: se le muestra el nombre ENMASCARADO (reniec.py).
+@app.get("/pedidos/dni/{dni}")
+def consultar_dni_de_quien_recibe(dni: str, usuario: dict = Depends(requiere_rol("comprador"))):
+    if not _puede_consultar_dni(str(usuario.get("sub"))):
+        raise HTTPException(status_code=429, detail="Hiciste muchas consultas de DNI seguidas. Intenta en una hora.")
+    nombre = nombre_en_reniec(dni.strip())
+    return {"dni": dni.strip(), "nombre_para_confirmar": reniec.nombre_para_confirmar(nombre)}
 
 
 def _pedido_o_404(db: Session, pedido_id: uuid.UUID):
@@ -611,6 +950,10 @@ def resumen_de_entrega_interno(
         "peso_total_kg": float(pedido.peso_total_kg) if pedido.peso_total_kg is not None else None,
         "costo_envio": float(pedido.costo_envio),
         "requiere_vehiculo_grande": bool(pedido.requiere_vehiculo_grande),
+        # Fuera de Ayacucho: por agencia (el repartidor lo deja en la agencia) o en camión (viaje compartido).
+        "modalidad_envio": pedido.modalidad_envio or "local",
+        "destino_ciudad": pedido.destino_ciudad,
+        "sacos": pedido.sacos,
     }
 
 
@@ -651,9 +994,9 @@ def obtener_pedido(
     rol = usuario.get("rol")
     es_el_comprador = str(pedido.usuario_id) == str(usuario.get("sub"))
     if es_el_comprador or rol == "admin":
-        return pedido
+        return pedido_para(usuario, pedido)
     if rol == "repartidor" and _repartidor_tiene_el_envio(pedido_id, credenciales.credentials):
-        return pedido
+        return pedido_para(usuario, pedido)
     raise HTTPException(status_code=403, detail="No tienes permiso para ver este pedido")
 
 @app.delete("/pedidos/{pedido_id}")
