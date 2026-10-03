@@ -216,6 +216,24 @@ const Api = {
     obtener: (id) => request('usuarios', `/usuarios/${id}`, { auth: true }),
     // El comprador cambia si compra como persona o como negocio (con RUC y nombre comercial opcionales).
     actualizarComprador: (datos) => request('usuarios', '/usuarios/me/comprador', { method: 'PATCH', body: datos, auth: true }),
+    // Reclamar un RUC que ya está en otra cuenta: datos del dueño o representante + Ficha RUC + foto del DNI.
+    reclamarRuc: ({ ruc, nombreTitular, dni, mensaje, fichaRuc, fotoDni }) => {
+      const formData = new FormData();
+      formData.append('ruc', ruc);
+      formData.append('nombre_titular', nombreTitular);
+      formData.append('dni', dni);
+      formData.append('mensaje', mensaje || '');
+      formData.append('ficha_ruc', fichaRuc);
+      formData.append('foto_dni', fotoDni);
+      return requestFormData('usuarios', '/usuarios/me/reclamos-ruc', formData);
+    },
+    misReclamosRuc: () => request('usuarios', '/usuarios/me/reclamos-ruc', { auth: true }),
+    admin: {
+      reclamosRuc: (estado = 'pendiente') => request('usuarios', `/usuarios/admin/reclamos-ruc?estado=${encodeURIComponent(estado)}`, { auth: true }),
+      documentoReclamo: (id, cual) => requestBlob('usuarios', `/usuarios/admin/reclamos-ruc/${id}/documento/${cual}`),
+      aprobarReclamo: (id) => request('usuarios', `/usuarios/admin/reclamos-ruc/${id}/aprobar`, { method: 'POST', auth: true }),
+      rechazarReclamo: (id, motivo) => request('usuarios', `/usuarios/admin/reclamos-ruc/${id}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
+    },
     // rol solo aplica si el id_token no matchea ninguna cuenta existente (registro nuevo) — mismo
     // filtro de roles que Api.usuarios.registrar(), resuelto del lado del backend (ver POST
     // /usuarios/oauth/google).

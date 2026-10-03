@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=db17e02e">
+<link rel="stylesheet" href="css/style.css?v=05d32e96">
 </head>
 <body>
 
@@ -661,6 +661,7 @@
       <nav class="admin-tabs" aria-label="Secciones del panel">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="transferencias"><i class="ti ti-building-bank"></i> Transferencias <span id="admin-transferencias-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="reclamos-ruc"><i class="ti ti-file-certificate"></i> Reclamos de RUC <span id="admin-reclamos-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
         <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
@@ -708,6 +709,20 @@
           <span class="empty-state-icon"><i class="ti ti-building-bank"></i></span>
           <p><strong>No hay transferencias por revisar</strong></p>
           <p class="muted">Cuando un comprador suba la constancia de su transferencia, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="reclamos-ruc">
+        <div class="section-header inner">
+          <h3><i class="ti ti-file-certificate"></i> Reclamos de RUC por revisar</h3>
+          <button class="btn btn-outline" id="btn-refrescar-reclamos">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Alguien dice que el RUC que tiene otra cuenta es de su negocio. Compara el nombre de su DNI con el de la Ficha RUC y con la razón social de SUNAT. Al aprobar, el RUC pasa a la cuenta que reclamó y la otra queda "Para mi casa"; al rechazar, quien reclamó ve el motivo.</p>
+        <div id="reclamos-ruc-lista" class="grid-admin"></div>
+        <div id="reclamos-ruc-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-file-certificate"></i></span>
+          <p><strong>No hay reclamos de RUC por revisar</strong></p>
+          <p class="muted">Cuando alguien reclame un RUC que está en otra cuenta, aparece acá.</p>
         </div>
       </div>
 
@@ -1115,8 +1130,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=2ce80c3a"></script>
+<script src="js/api.js?v=1caf76ba"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=e32d3564"></script>
+<script src="js/app.js?v=da82a382"></script>
 </body>
 </html>

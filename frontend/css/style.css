@@ -5023,3 +5023,76 @@ body.asistente-abierto { overflow: hidden; }
   background: #e8f5ee; color: #14532d; font-size: 0.92rem; line-height: 1.45;
 }
 .perfil-ruc-verificado i { flex: none; font-size: 1.3rem; color: #1f6f43; }
+
+/* ===== Reclamar un RUC (perfil del comprador) y su revisión (panel del admin) =====
+   ui-ux-pro-max: instrucciones claras antes de pedir documentos, zonas de subida grandes (>= 44px) que muestran el
+   archivo elegido, estado de envío (cargando -> éxito/error) y estados dichos con texto e ícono. 21st.dev ("Identity
+   Verification Dialog"): la revisión pone lado a lado lo declarado y la cuenta que tiene el RUC, con los documentos. */
+.auth-alerta:has(.auth-alerta-accion), .perfil-form-error:has(.btn) { flex-wrap: wrap; }
+.auth-alerta-accion, .perfil-form-error .btn { flex-basis: 100%; margin: 10px 0 0; justify-content: center; }
+.btn-link { background: none; border: none; padding: 0; color: var(--color-primario); font-weight: 700; text-decoration: underline; cursor: pointer; font: inherit; }
+.reclamo-ruc-invitacion { margin: 18px 0 0; font-size: 0.92rem; color: var(--texto-suave); }
+.reclamo-ruc-aviso {
+  display: flex; gap: 10px; align-items: flex-start; margin: 16px 0 0; padding: 12px 14px; border-radius: 12px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.92rem; line-height: 1.45;
+}
+.reclamo-ruc-aviso i { flex: none; font-size: 1.25rem; }
+
+.reclamo-ruc { margin-top: 18px; padding: 20px; border-radius: 16px; border: 2px solid #e2c27a; background: #fffdf7; display: grid; gap: 14px; }
+.reclamo-ruc h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.1rem; color: var(--color-primario); }
+.reclamo-ruc-intro { margin: 0; font-size: 0.92rem; line-height: 1.5; color: var(--texto-suave); }
+#perfil-form-reclamo { display: grid; gap: 14px; }
+.reclamo-ruc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.reclamo-ruc-ancho { grid-column: 1 / -1; }
+.perfil-campo textarea { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--color-borde); font: inherit; font-weight: 500; resize: vertical; }
+.reclamo-archivos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.reclamo-archivo { position: relative; display: block; cursor: pointer; }
+.reclamo-archivo input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.reclamo-archivo-caja {
+  display: grid; justify-items: center; gap: 4px; min-height: 120px; padding: 16px; border-radius: 14px; text-align: center;
+  border: 2px dashed var(--color-borde); background: #fff; transition: border-color 0.15s, background-color 0.15s;
+}
+.reclamo-archivo-caja i { font-size: 1.8rem; color: var(--color-primario); }
+.reclamo-archivo-caja strong { font-size: 1rem; color: var(--texto); }
+.reclamo-archivo-caja small { font-size: 0.82rem; line-height: 1.35; color: var(--texto-suave); overflow-wrap: anywhere; }
+.reclamo-archivo:hover .reclamo-archivo-caja { border-color: var(--color-primario); background: var(--verde-fondo); }
+.reclamo-archivo input:focus-visible + .reclamo-archivo-caja { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+.reclamo-archivo.con-archivo .reclamo-archivo-caja { border-style: solid; border-color: #1f6f43; background: #e8f5ee; }
+.reclamo-archivo.con-archivo small { color: #14532d; font-weight: 700; }
+
+.reclamos-ruc-lista { margin-top: 18px; }
+.reclamos-ruc-lista h4 { margin: 0 0 10px; font-size: 1rem; }
+.reclamos-ruc-lista ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.reclamo-ruc-item { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: var(--color-superficie); }
+.reclamo-ruc-item > i { flex: none; font-size: 1.3rem; margin-top: 1px; }
+.reclamo-ruc-item div { display: grid; gap: 2px; }
+.reclamo-ruc-item small { color: var(--texto-suave); }
+.reclamo-ruc-item.estado-pendiente > i { color: var(--acento-cosecha); }
+.reclamo-ruc-item.estado-aprobado { background: #e8f5ee; }
+.reclamo-ruc-item.estado-aprobado > i { color: #1f6f43; }
+.reclamo-ruc-item.estado-rechazado { background: #fdecec; }
+.reclamo-ruc-item.estado-rechazado > i, .reclamo-ruc-motivo { color: #9b1c1c; }
+
+/* Cada reclamo a todo el ancho: lo declarado y la cuenta que tiene el RUC se comparan lado a lado. */
+#reclamos-ruc-lista { grid-template-columns: minmax(0, 1fr); }
+.reclamo-card { max-width: none; }
+.reclamo-sunat { margin: 0 0 8px; font-size: 0.92rem; }
+.reclamo-pista { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; font-size: 0.86rem; }
+.reclamo-pista.ok { background: #e8f5ee; color: #14532d; }
+.reclamo-pista.alerta { background: #fdecec; color: #9b1c1c; }
+.reclamo-cuentas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 10px; }
+.reclamo-cuenta { padding: 12px; border-radius: 12px; background: var(--color-superficie); }
+.reclamo-cuenta h5 { margin: 0 0 8px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--texto-suave); }
+.reclamo-cuenta dl { margin: 0; display: grid; gap: 6px; }
+.reclamo-cuenta dt { font-size: 0.74rem; font-weight: 700; color: var(--texto-suave); }
+.reclamo-cuenta dd { margin: 0; font-size: 0.9rem; overflow-wrap: anywhere; }
+.reclamo-mensaje { margin: 0 0 10px; font-size: 0.9rem; font-style: italic; color: var(--texto-suave); }
+.reclamo-documentos { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.reclamo-pdf { width: 100%; height: 420px; border: 1px solid var(--color-borde); border-radius: 10px; margin-bottom: 6px; }
+
+@media (max-width: 640px) {
+  .reclamo-ruc-grid, .reclamo-archivos, .reclamo-cuentas { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reclamo-archivo-caja { transition: none; }
+}

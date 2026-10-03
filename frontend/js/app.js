@@ -1106,6 +1106,15 @@ function rucValido(ruc) {
   return Number(ruc[10]) === ({ 10: 0, 11: 1 }[resto] ?? resto);
 }
 
+// El RUC que el comprador quiere ya está en otra cuenta (Usuarios responde 409 con el qué hacer): se ofrece reclamarlo.
+function esErrorRucOcupado(err) {
+  return err?.status === 409 && /ya está registrado en otra cuenta/.test(err.message || '');
+}
+function rucDelError(err) {
+  return (String(err?.message || '').match(/RUC (\d{11})/) || [])[1] || '';
+}
+let rucPorReclamarTrasRegistro = null; // "Registrarme para mi casa y reclamar el RUC": se abre el reclamo al entrar
+
 // Los datos de persona/negocio que se mandan al registrarse (o al guardar el perfil): { datos } o { error }. Un negocio
 // tiene que dar su RUC: Usuarios lo verifica en SUNAT (activo y habido) antes de crear o cambiar la cuenta.
 function datosDeComprador(tipo, nombreComercial, ruc) {
@@ -6189,7 +6198,8 @@ async function iniciarPanelAdmin() {
   }
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
-  await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin()]);
+  await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
+    cargarReclamosRucAdmin()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -6479,6 +6489,144 @@ async function decidirTransferencia(tarjeta, accion, motivo) {
     if (err.status !== 409) return; // 409: otro admin ya la revisó → se recarga la lista igual
   }
   await cargarTransferenciasAdmin();
+}
+
+// ---- Reclamos de RUC por revisar (ver "Reclamar un RUC" en el perfil del comprador) ----
+// Reusa las clases de las tarjetas de transferencia (acciones, confirmación, rechazo y visor de documentos), así
+// mostrarPasoRevision sirve igual; los clics se escuchan en su propia lista.
+function renderCuentaDelReclamo(cuenta, titulo, { declara = null } = {}) {
+  if (!cuenta) {
+    return `<div class="reclamo-cuenta"><h5>${titulo}</h5><p class="muted">Ninguna: la cuenta que lo tenía ya lo soltó.</p></div>`;
+  }
+  return `
+    <div class="reclamo-cuenta">
+      <h5>${titulo}</h5>
+      <dl>
+        <div><dt>Cuenta</dt><dd>${escapeAttr(cuenta.nombre)}<br><small>${escapeAttr(cuenta.email)}</small></dd></div>
+        ${declara ? `
+        <div><dt>Dice ser</dt><dd>${escapeAttr(declara.nombre)}<br><small>DNI ${escapeAttr(declara.dni)}</small></dd></div>` : `
+        <div><dt>Negocio</dt><dd>${escapeAttr(cuenta.nombre_comercial || '—')}</dd></div>
+        <div><dt>RUC verificado en SUNAT</dt><dd>${cuenta.ruc_verificado_en ? formatearFechaServidor(cuenta.ruc_verificado_en) : '—'}</dd></div>`}
+        <div><dt>Cuenta creada</dt><dd>${formatearFechaServidor(cuenta.fecha_registro)}</dd></div>
+      </dl>
+    </div>`;
+}
+
+// En un RUC 10 (persona con negocio) los dígitos 3 a 10 son el DNI: se le dice al admin si coincide con el declarado.
+function pistaDniEnRuc(r) {
+  if (!String(r.ruc).startsWith('10')) return '';
+  const dniDelRuc = String(r.ruc).slice(2, 10);
+  const coincide = dniDelRuc === r.dni;
+  return `<p class="reclamo-pista ${coincide ? 'ok' : 'alerta'}"><i class="ti ti-${coincide ? 'circle-check' : 'alert-triangle'}" aria-hidden="true"></i>
+    En un RUC 10 el DNI va dentro del RUC: ${dniDelRuc}. ${coincide ? 'Coincide con el DNI declarado.' : 'NO coincide con el DNI declarado.'}</p>`;
+}
+
+function renderTarjetaReclamoRuc(r, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  return `
+    <div class="pedido-card reclamo-card" style="animation-delay:${retraso}ms" data-reclamo-id="${escapeAttr(r.id)}">
+      <div class="pedido-card-header">
+        <h4>RUC ${escapeAttr(r.ruc)}</h4>
+        <span class="pill pill-estado pill-pendiente"><i class="ti ti-hourglass"></i> Por revisar</span>
+      </div>
+      <p class="reclamo-sunat"><i class="ti ti-building-bank" aria-hidden="true"></i> SUNAT: <strong>${escapeAttr(r.razon_social || '—')}</strong></p>
+      ${pistaDniEnRuc(r)}
+      <div class="reclamo-cuentas">
+        ${renderCuentaDelReclamo(r.reclamante, 'Quien reclama', { declara: { nombre: r.nombre_titular, dni: r.dni } })}
+        ${renderCuentaDelReclamo(r.titular_actual, 'Cuenta que tiene el RUC')}
+      </div>
+      ${r.mensaje ? `<p class="reclamo-mensaje"><i class="ti ti-message" aria-hidden="true"></i> "${escapeAttr(r.mensaje)}"</p>` : ''}
+      <div class="reclamo-documentos">
+        <button type="button" class="btn btn-outline btn-ver-documento" data-cual="ficha" aria-expanded="false"><i class="ti ti-file-certificate" aria-hidden="true"></i> Ver Ficha RUC</button>
+        <button type="button" class="btn btn-outline btn-ver-documento" data-cual="dni" aria-expanded="false"><i class="ti ti-id" aria-hidden="true"></i> Ver DNI</button>
+      </div>
+      <div class="transferencia-constancia reclamo-documento hidden"></div>
+      <div class="tarjeta-acciones transferencia-acciones">
+        <button type="button" class="btn btn-outline btn-rechazar-reclamo"><i class="ti ti-x" aria-hidden="true"></i> Rechazar</button>
+        <button type="button" class="btn btn-primary btn-aprobar-reclamo"><i class="ti ti-check" aria-hidden="true"></i> Aprobar</button>
+      </div>
+      <div class="transferencia-confirmar hidden" role="group" aria-label="Confirmar aprobación">
+        <p><i class="ti ti-alert-circle" aria-hidden="true"></i> ¿El nombre del DNI coincide con el de la Ficha RUC y con SUNAT? Al aprobar, el RUC
+          ${escapeAttr(r.ruc)} pasa a ${escapeAttr(r.reclamante?.nombre || 'quien reclama')}${r.titular_actual ? ` y ${escapeAttr(r.titular_actual.nombre)} queda "Para mi casa"` : ''}.</p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-confirmar-aprobacion">Sí, aprobar</button>
+        </div>
+      </div>
+      <form class="form-rechazar-transferencia hidden" novalidate>
+        <label>Motivo del rechazo (lo verá quien reclamó)
+          <textarea name="motivo" rows="3" maxlength="300" required placeholder="Ej. El nombre del DNI no coincide con el de la Ficha RUC."></textarea>
+        </label>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="submit" class="btn btn-danger">Rechazar reclamo</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+let reclamosRucActualesAdmin = [];
+
+async function cargarReclamosRucAdmin() {
+  const cont = document.getElementById('reclamos-ruc-lista');
+  const vacio = document.getElementById('reclamos-ruc-empty');
+  const badge = document.getElementById('admin-reclamos-total');
+  cont.innerHTML = renderSkeletonFilas(1);
+  try {
+    reclamosRucActualesAdmin = await Api.usuarios.admin.reclamosRuc();
+  } catch (err) {
+    reclamosRucActualesAdmin = [];
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los reclamos de RUC');
+    return;
+  }
+  cont.innerHTML = reclamosRucActualesAdmin.map(renderTarjetaReclamoRuc).join('');
+  vacio.classList.toggle('hidden', reclamosRucActualesAdmin.length > 0);
+  badge.textContent = reclamosRucActualesAdmin.length;
+  badge.classList.toggle('hidden', !reclamosRucActualesAdmin.length);
+}
+
+async function verDocumentoReclamo(tarjeta, boton) {
+  const caja = tarjeta.querySelector('.reclamo-documento');
+  const cual = boton.dataset.cual;
+  const yaAbierto = !caja.classList.contains('hidden') && caja.dataset.cual === cual;
+  tarjeta.querySelectorAll('.btn-ver-documento').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+  caja.classList.toggle('hidden', yaAbierto);
+  if (yaAbierto) return;
+  boton.setAttribute('aria-expanded', 'true');
+  caja.dataset.cual = cual;
+  const titulo = cual === 'ficha' ? 'Ficha RUC' : 'DNI';
+  caja.innerHTML = `<p class="muted"><i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Cargando ${titulo}…</p>`;
+  try {
+    const blob = await Api.usuarios.admin.documentoReclamo(tarjeta.dataset.reclamoId, cual);
+    const url = URL.createObjectURL(blob);
+    caja.innerHTML = blob.type === 'application/pdf'
+      ? `<iframe src="${url}" title="${titulo} del reclamo" class="reclamo-pdf"></iframe>
+         <a href="${url}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm"><i class="ti ti-external-link"></i> Abrir el PDF en otra pestaña</a>`
+      : `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${titulo} que subió quien reclama"></a>`;
+  } catch (err) {
+    caja.innerHTML = `<p class="form-entrega-mensaje error"><i class="ti ti-alert-circle"></i><span>${escapeAttr(err.message || 'No se pudo cargar el documento.')}</span></p>`;
+  }
+}
+
+async function decidirReclamoRuc(tarjeta, accion, motivo) {
+  const id = tarjeta.dataset.reclamoId;
+  tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    if (accion === 'aprobar') {
+      await Api.usuarios.admin.aprobarReclamo(id);
+      toast('Reclamo aprobado: el RUC pasó a la cuenta que lo reclamó.');
+    } else {
+      await Api.usuarios.admin.rechazarReclamo(id, motivo);
+      toast('Reclamo rechazado: quien reclamó verá el motivo en su perfil.');
+    }
+  } catch (err) {
+    tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    manejarError(err, accion === 'aprobar' ? 'aprobar el reclamo' : 'rechazar el reclamo');
+    if (err.status !== 409) return; // 409: otro admin ya lo revisó → se recarga la lista igual
+  }
+  await cargarReclamosRucAdmin();
 }
 
 // ---- Pedidos esperando vehículo con más capacidad (caso poco frecuente: motivo_pendiente ==
@@ -7115,7 +7263,7 @@ function renderSkeletonPerfil() {
 
 // Cuenta de quien no tiene datos propios de rol (comprador, administrador): lo que sabemos de
 // ella y qué hace ese rol. Productor y repartidor muestran en su lugar sus datos de rol.
-function renderPerfilCuenta(usuario, rolInfo) {
+function renderPerfilCuenta(usuario, rolInfo, reclamos = null) {
   return `
     <section class="card-panel perfil-tarjeta">
       <h3><i class="ti ti-id-badge-2"></i> Tu cuenta</h3>
@@ -7126,11 +7274,11 @@ function renderPerfilCuenta(usuario, rolInfo) {
       </div>
       <p class="perfil-cuenta-descripcion">${rolInfo.descripcion || ''}</p>
     </section>
-    ${usuario.rol === 'comprador' ? renderPerfilComoCompras(usuario) : ''}`;
+    ${usuario.rol === 'comprador' ? renderPerfilComoCompras(usuario, reclamos) : ''}`;
 }
 
 // Persona o negocio: cambia lo que la tienda muestra primero (por kilo o por saco). Ver Api.usuarios.actualizarComprador.
-function renderPerfilComoCompras(usuario) {
+function renderPerfilComoCompras(usuario, reclamos = null) {
   const negocio = usuario.tipo_comprador === 'negocio';
   const opcion = (valor, icono, titulo, detalle) => `
     <label class="auth-rol">
@@ -7160,10 +7308,141 @@ function renderPerfilComoCompras(usuario) {
           <p class="perfil-ruc-verificado"><i class="ti ti-rosette-discount-check" aria-hidden="true"></i>
             <span>Verificado en SUNAT: <strong>${escapeAttr(usuario.razon_social)}</strong> · RUC ${escapeAttr(usuario.ruc)}</span></p>` : ''}
         </div>
-        <p class="perfil-form-error hidden" id="perfil-comprador-error" role="alert"></p>
+        <div class="perfil-form-error hidden" id="perfil-comprador-error" role="alert"></div>
         <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
       </form>
+      ${renderRucsQuePerdi(reclamos?.rucs_que_perdi || [])}
+      ${renderMisReclamosRuc(reclamos?.mis_reclamos || [])}
+      <p class="reclamo-ruc-invitacion">¿Otra cuenta registró el RUC de tu negocio?
+        <button type="button" class="btn-link" data-abrir-reclamo="">Reclámalo</button></p>
+      ${renderFormReclamoRuc()}
     </section>`;
+}
+
+// ---- Reclamar un RUC que está en otra cuenta (decisión del usuario, 2026-10-03) ----
+// El dueño sube su Ficha RUC y el DNI del dueño o representante; el admin compara los nombres con SUNAT y decide.
+const ESTADOS_RECLAMO_RUC = {
+  pendiente: { texto: 'En revisión del admin', icono: 'hourglass' },
+  aprobado: { texto: 'Aprobado: el RUC ya está en tu cuenta', icono: 'circle-check' },
+  rechazado: { texto: 'Rechazado', icono: 'circle-x' },
+};
+
+function renderRucsQuePerdi(perdidos) {
+  return perdidos.map((p) => `
+    <p class="reclamo-ruc-aviso" role="status"><i class="ti ti-info-circle" aria-hidden="true"></i>
+      <span>El admin revisó los documentos de otra cuenta y le asignó el RUC <strong>${escapeAttr(p.ruc)}</strong>
+      ${p.razon_social ? `(${escapeAttr(p.razon_social)})` : ''} el ${formatearFechaServidor(p.fecha_revision)}; por eso tu cuenta quedó
+      "Para mi casa". Si crees que es un error, escríbenos.</span></p>`).join('');
+}
+
+function renderMisReclamosRuc(reclamos) {
+  if (!reclamos.length) return '';
+  return `
+    <div class="reclamos-ruc-lista">
+      <h4>Tus reclamos de RUC</h4>
+      <ul>
+        ${reclamos.map((r) => {
+          const estado = ESTADOS_RECLAMO_RUC[r.estado] || { texto: r.estado, icono: 'file' };
+          return `
+          <li class="reclamo-ruc-item estado-${escapeAttr(r.estado)}">
+            <i class="ti ti-${estado.icono}" aria-hidden="true"></i>
+            <div>
+              <strong>RUC ${escapeAttr(r.ruc)}${r.razon_social ? ` · ${escapeAttr(r.razon_social)}` : ''}</strong>
+              <small>Enviado el ${formatearFechaServidor(r.fecha_creacion)} · ${estado.texto}</small>
+              ${r.estado === 'rechazado' && r.motivo_rechazo ? `<small class="reclamo-ruc-motivo">Motivo: ${escapeAttr(r.motivo_rechazo)}</small>` : ''}
+            </div>
+          </li>`;
+        }).join('')}
+      </ul>
+    </div>`;
+}
+
+function renderFormReclamoRuc() {
+  return `
+    <section class="reclamo-ruc hidden" id="perfil-reclamo-ruc" aria-labelledby="reclamo-ruc-titulo">
+      <h4 id="reclamo-ruc-titulo"><i class="ti ti-file-certificate" aria-hidden="true"></i> Reclamar un RUC</h4>
+      <p class="reclamo-ruc-intro">Si otra cuenta registró el RUC de tu negocio, demuéstranos que es tuyo. El admin compara el nombre
+        de tu DNI con el de la Ficha RUC y con lo que dice SUNAT, y te responde aquí mismo.</p>
+      <form id="perfil-form-reclamo" novalidate>
+        <div class="reclamo-ruc-grid">
+          <label class="perfil-campo"><span>RUC del negocio</span>
+            <input type="text" id="reclamo-ruc" inputmode="numeric" maxlength="11" placeholder="11 dígitos" required></label>
+          <label class="perfil-campo"><span>DNI del dueño o representante</span>
+            <input type="text" id="reclamo-dni" inputmode="numeric" maxlength="8" placeholder="8 dígitos" required></label>
+          <label class="perfil-campo reclamo-ruc-ancho"><span>Nombre completo, como figura en el DNI</span>
+            <input type="text" id="reclamo-nombre" maxlength="120" autocomplete="name" placeholder="Ej. Rosa Quispe Huamán" required></label>
+        </div>
+        <div class="reclamo-archivos">
+          <label class="reclamo-archivo">
+            <input type="file" id="reclamo-ficha" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+            <span class="reclamo-archivo-caja">
+              <i class="ti ti-file-certificate" aria-hidden="true"></i>
+              <strong>Ficha RUC</strong>
+              <small class="reclamo-archivo-nombre" data-vacio="Foto o PDF, hasta 5 MB. La descargas en SUNAT Operaciones en Línea.">Foto o PDF, hasta 5 MB. La descargas en SUNAT Operaciones en Línea.</small>
+            </span>
+          </label>
+          <label class="reclamo-archivo">
+            <input type="file" id="reclamo-foto-dni" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+            <span class="reclamo-archivo-caja">
+              <i class="ti ti-id" aria-hidden="true"></i>
+              <strong>Foto del DNI</strong>
+              <small class="reclamo-archivo-nombre" data-vacio="Del dueño o representante legal, que se lea bien. Hasta 5 MB.">Del dueño o representante legal, que se lea bien. Hasta 5 MB.</small>
+            </span>
+          </label>
+        </div>
+        <label class="perfil-campo"><span>Mensaje para el admin <span class="auth-opcional">(opcional)</span></span>
+          <textarea id="reclamo-mensaje" maxlength="500" rows="2" placeholder="Ej. Soy la dueña del restaurante; no conozco la cuenta que registró mi RUC."></textarea></label>
+        <p class="perfil-form-error hidden" id="reclamo-error" role="alert"></p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-reclamo">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="ti ti-send" aria-hidden="true"></i> Enviar reclamo</button>
+        </div>
+      </form>
+    </section>`;
+}
+
+function abrirReclamoRuc(ruc = '') {
+  const seccion = document.getElementById('perfil-reclamo-ruc');
+  if (!seccion) return;
+  seccion.classList.remove('hidden');
+  const campo = seccion.querySelector('#reclamo-ruc');
+  if (ruc) campo.value = ruc;
+  seccion.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  (ruc ? seccion.querySelector('#reclamo-dni') : campo).focus({ preventScroll: true });
+}
+
+const TAMANO_MAXIMO_DOCUMENTO = 5 * 1024 * 1024;
+
+async function enviarReclamoRuc(form) {
+  const error = form.querySelector('#reclamo-error');
+  const ruc = form.querySelector('#reclamo-ruc').value.replace(/\s+/g, '');
+  const dni = form.querySelector('#reclamo-dni').value.trim();
+  const nombreTitular = form.querySelector('#reclamo-nombre').value.trim();
+  const fichaRuc = form.querySelector('#reclamo-ficha').files[0];
+  const fotoDni = form.querySelector('#reclamo-foto-dni').files[0];
+  const problema = !rucValido(ruc) ? 'El RUC no es válido: son 11 dígitos y empieza con 10 o 20.'
+    : !/^\d{8}$/.test(dni) ? 'El DNI son 8 dígitos.'
+      : nombreTitular.length < 3 ? 'Escribe el nombre completo, como figura en el DNI.'
+        : !fichaRuc ? 'Sube la Ficha RUC (foto o PDF).'
+          : !fotoDni ? 'Sube la foto del DNI.'
+            : [fichaRuc, fotoDni].some((f) => f.size > TAMANO_MAXIMO_DOCUMENTO) ? 'Cada documento puede pesar hasta 5 MB.' : null;
+  error.classList.toggle('hidden', !problema);
+  error.textContent = problema || '';
+  if (problema) return;
+
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  boton.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Enviando…';
+  try {
+    await Api.usuarios.reclamarRuc({ ruc, nombreTitular, dni, mensaje: form.querySelector('#reclamo-mensaje').value, fichaRuc, fotoDni });
+    toast('Reclamo enviado: el admin revisará tus documentos y te responderá en tu perfil.');
+    cargarPerfil();
+  } catch (err) {
+    error.textContent = err.message || 'No se pudo enviar el reclamo. Intenta de nuevo.';
+    error.classList.remove('hidden');
+    boton.disabled = false;
+    boton.innerHTML = '<i class="ti ti-send" aria-hidden="true"></i> Enviar reclamo';
+  }
 }
 
 async function guardarPerfilComprador(form) {
@@ -7189,6 +7468,10 @@ async function guardarPerfilComprador(form) {
     cargarPerfil();
   } catch (err) {
     error.textContent = err.message || 'No se pudo guardar. Intenta de nuevo.';
+    if (esErrorRucOcupado(err)) {
+      error.insertAdjacentHTML('beforeend', ` <button type="button" class="btn btn-primary btn-sm" data-abrir-reclamo="${escapeAttr(rucDelError(err))}">
+        <i class="ti ti-file-certificate" aria-hidden="true"></i> Reclamar este RUC</button>`);
+    }
     error.classList.remove('hidden');
     boton.disabled = false;
     boton.innerHTML = '<i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar';
@@ -7689,7 +7972,7 @@ function renderPerfil(usuario, extra, registrosProduccion) {
   } else if (usuario.rol === 'repartidor') {
     principal = renderPerfilRepartidor(extra);
   } else {
-    principal = renderPerfilCuenta(usuario, rolInfo);
+    principal = renderPerfilCuenta(usuario, rolInfo, extra);
   }
 
   return `
@@ -7728,9 +8011,15 @@ async function cargarPerfil() {
     }
   } else if (usuario.rol === 'repartidor') {
     try { extra = await Api.repartidores.miPerfil(); } catch { /* aún no tiene perfil de repartidor */ }
+  } else if (usuario.rol === 'comprador') {
+    try { extra = await Api.usuarios.misReclamosRuc(); } catch { /* sin la lista, el perfil se muestra igual */ }
   }
 
   cont.innerHTML = renderPerfil(usuario, extra, registrosProduccion);
+  if (Estado.reclamoRucPorAbrir != null) {
+    abrirReclamoRuc(Estado.reclamoRucPorAbrir);
+    Estado.reclamoRucPorAbrir = null;
+  }
 
   if (usuario.rol === 'productor' && extra && hayCoordenadas(extra.latitud, extra.longitud)) {
     crearMapaSoloLectura('mapa-perfil-productor', extra.latitud, extra.longitud, '<i class="ti ti-map-pin"></i>', '#2d6a4f', escapeAttr(extra.nombre || 'Tu chakra'));
@@ -7858,13 +8147,28 @@ async function manejarRegistro(e) {
     document.getElementById('form-registro').reset();
     sincronizarTarjetasRol(); // el reset vuelve el <select> a "comprador" — resincroniza las tarjetas
     cerrarModal('modal-auth');
+    if (rucPorReclamarTrasRegistro) {
+      Estado.reclamoRucPorAbrir = rucPorReclamarTrasRegistro;
+      rucPorReclamarTrasRegistro = null;
+      cambiarVista('perfil');
+      toast('¡Cuenta creada para tu casa! Ahora reclama tu RUC con tu Ficha RUC y tu DNI.');
+      return;
+    }
     cambiarVista(vistaInicialPara(Estado.rol));
     toast(creado.razon_social
       ? `¡Cuenta creada! Negocio verificado en SUNAT: ${creado.razon_social}`
       : `¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     console.error('crear la cuenta', err);
+    rucPorReclamarTrasRegistro = null;
     mostrarErrorAuth('registro-alerta', mensajeErrorAuth(err, 'No se pudo crear la cuenta. Revisa los datos e inténtalo de nuevo.'));
+    if (esErrorRucOcupado(err)) {
+      const alerta = document.getElementById('registro-alerta');
+      alerta.insertAdjacentHTML('beforeend', `
+        <button type="button" class="btn btn-primary btn-sm auth-alerta-accion" data-registrar-y-reclamar="${escapeAttr(rucDelError(err))}">
+          <i class="ti ti-file-certificate" aria-hidden="true"></i> Registrarme para mi casa y reclamar el RUC
+        </button>`);
+    }
   } finally {
     marcarEnviandoAuth(btn, false);
   }
@@ -8107,6 +8411,13 @@ function inicializarEventos() {
     if (cambio) {
       cambiarTabAuth(cambio.dataset.cambiarTab);
       enfocarPrimerCampoAuth();
+    }
+    const registrarYReclamar = e.target.closest('[data-registrar-y-reclamar]');
+    if (registrarYReclamar) {
+      rucPorReclamarTrasRegistro = registrarYReclamar.dataset.registrarYReclamar;
+      document.querySelector('input[name="registro-tipo-comprador"][value="persona"]').checked = true;
+      sincronizarTipoComprador();
+      document.getElementById('form-registro').requestSubmit();
     }
   });
   document.querySelectorAll('input[name="registro-rol-opcion"]').forEach((radio) => {
@@ -8548,6 +8859,28 @@ function inicializarEventos() {
   document.getElementById('admin-resumen').addEventListener('click', irDesdeResumenAdmin);
   document.getElementById('admin-resumen').addEventListener('keydown', irDesdeResumenAdmin);
   document.getElementById('btn-refrescar-transferencias').addEventListener('click', cargarTransferenciasAdmin);
+  document.getElementById('btn-refrescar-reclamos').addEventListener('click', cargarReclamosRucAdmin);
+  const listaReclamos = document.getElementById('reclamos-ruc-lista');
+  listaReclamos.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.reclamo-card');
+    if (!tarjeta) return;
+    const ver = e.target.closest('.btn-ver-documento');
+    if (ver) { verDocumentoReclamo(tarjeta, ver); return; }
+    if (e.target.closest('.btn-aprobar-reclamo')) { mostrarPasoRevision(tarjeta, 'aprobar'); return; }
+    if (e.target.closest('.btn-rechazar-reclamo')) { mostrarPasoRevision(tarjeta, 'rechazar'); return; }
+    if (e.target.closest('.btn-cancelar-revision')) { mostrarPasoRevision(tarjeta, 'acciones'); return; }
+    if (e.target.closest('.btn-confirmar-aprobacion')) decidirReclamoRuc(tarjeta, 'aprobar');
+  });
+  listaReclamos.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-rechazar-transferencia');
+    if (!form) return;
+    e.preventDefault();
+    const motivo = form.querySelector('textarea').value.trim();
+    const aviso = form.querySelector('.form-entrega-mensaje');
+    aviso.classList.toggle('hidden', Boolean(motivo));
+    aviso.textContent = motivo ? '' : 'Escribe el motivo: quien reclamó lo va a ver.';
+    if (motivo) decidirReclamoRuc(form.closest('.reclamo-card'), 'rechazar', motivo);
+  });
   const listaTransferencias = document.getElementById('transferencias-lista');
   listaTransferencias.addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.transferencia-card');
@@ -8623,9 +8956,19 @@ function inicializarEventos() {
   });
 
   document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
-    if (e.target.id !== 'perfil-form-comprador') return;
-    e.preventDefault();
-    guardarPerfilComprador(e.target);
+    if (e.target.id === 'perfil-form-comprador') { e.preventDefault(); guardarPerfilComprador(e.target); }
+    if (e.target.id === 'perfil-form-reclamo') { e.preventDefault(); enviarReclamoRuc(e.target); }
+  });
+  document.getElementById('perfil-contenido').addEventListener('change', (e) => {
+    const archivo = e.target.closest('.reclamo-archivo input[type="file"]');
+    if (!archivo) return;
+    const nombre = archivo.closest('.reclamo-archivo').querySelector('.reclamo-archivo-nombre');
+    const elegido = archivo.files[0];
+    const tamano = !elegido ? '' : elegido.size < 1024 * 1024
+      ? `${Math.max(1, Math.round(elegido.size / 1024))} KB`
+      : `${(elegido.size / 1024 / 1024).toLocaleString('es-PE', { maximumFractionDigits: 1 })} MB`;
+    nombre.textContent = elegido ? `${elegido.name} · ${tamano}` : nombre.dataset.vacio;
+    archivo.closest('.reclamo-archivo').classList.toggle('con-archivo', Boolean(elegido));
   });
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
     if (e.target.name !== 'perfil-tipo-comprador') return;
@@ -8635,6 +8978,9 @@ function inicializarEventos() {
   });
   document.getElementById('perfil-contenido').addEventListener('click', (e) => {
     if (e.target.closest('#btn-perfil-logout')) { cerrarSesion(); return; }
+    const abrirReclamo = e.target.closest('[data-abrir-reclamo]');
+    if (abrirReclamo) { abrirReclamoRuc(abrirReclamo.dataset.abrirReclamo); return; }
+    if (e.target.closest('.btn-cancelar-reclamo')) { document.getElementById('perfil-reclamo-ruc')?.classList.add('hidden'); return; }
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
     if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
     const acceso = e.target.closest('[data-perfil-ir]');
