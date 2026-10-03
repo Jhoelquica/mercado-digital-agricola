@@ -104,6 +104,20 @@ spec:
                   name: credenciales-app
                   key: SUNAT_RUC_TOKEN
                   optional: true
+            # Documentos de los reclamos de RUC (Ficha RUC y DNI): bucket PRIVADO usuarios-reclamos-ruc, mismas
+            # credenciales de MinIO que los demás servicios.
+            - name: MINIO_ENDPOINT
+              value: minio:9000
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
 ---
 apiVersion: v1
 kind: Service

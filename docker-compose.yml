@@ -370,9 +370,15 @@ services:
       # Verificación del RUC en SUNAT (ver k8s/usuarios.yaml). El token es opcional (en .env).
       SUNAT_RUC_URL: https://api.apis.net.pe/v2/sunat/ruc
       SUNAT_RUC_TOKEN: ${SUNAT_RUC_TOKEN:-}
+      # Documentos de los reclamos de RUC (bucket privado usuarios-reclamos-ruc)
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${DB_USER}
+      MINIO_SECRET_KEY: ${DB_PASSWORD}
     depends_on:
       db-usuarios:
         condition: service_healthy
+      minio:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8006/salud', timeout=3)"]
       interval: 10s

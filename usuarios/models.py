@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Index
+from sqlalchemy import Column, String, DateTime, Integer, Index, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -50,3 +50,32 @@ class IntentoLogin(Base):
     fallos = Column(Integer, nullable=False, default=0)
     ultimo_fallo = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     bloqueado_hasta = Column(DateTime, nullable=True)
+
+
+
+class ReclamoRuc(Base):
+    """Alguien dice que el RUC que otra cuenta registró es de SU negocio (un RUC va en una sola cuenta, así que el primero
+    que lo registra se quedaba con él). Sube la Ficha RUC y el DNI del dueño o representante legal, y el admin compara los
+    nombres y decide: si lo aprueba, el RUC pasa a su cuenta y la otra queda "para mi casa". Ver los endpoints
+    /usuarios/me/reclamos-ruc y /usuarios/admin/reclamos-ruc."""
+    __tablename__ = "reclamos_ruc"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ruc = Column(String(11), nullable=False, index=True)
+    razon_social = Column(String, nullable=True)  # lo que dijo SUNAT al reclamar
+    reclamante_id = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=False, index=True)
+    titular_id = Column(UUID(as_uuid=True), ForeignKey("usuarios.id"), nullable=True)  # quien tenía el RUC
+    # Los datos del dueño o representante legal, como figuran en su DNI (el admin los compara con los documentos).
+    nombre_titular = Column(String, nullable=False)
+    dni_numero = Column(String(8), nullable=False)
+    mensaje = Column(String, nullable=True)
+    # Documentos en el bucket PRIVADO usuarios-reclamos-ruc (ver minio_client.py)
+    ficha_objeto = Column(String, nullable=False)
+    ficha_tipo = Column(String, nullable=False)
+    dni_objeto = Column(String, nullable=False)
+    dni_tipo = Column(String, nullable=False)
+    estado = Column(String, nullable=False, default="pendiente")  # pendiente | aprobado | rechazado
+    motivo_rechazo = Column(String, nullable=True)
+    revisado_por = Column(UUID(as_uuid=True), nullable=True)
+    fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
+    fecha_revision = Column(DateTime, nullable=True)

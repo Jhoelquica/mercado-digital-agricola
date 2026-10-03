@@ -4,7 +4,8 @@ import uuid
 from datetime import datetime
 
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException, Header, Response
+from fastapi import FastAPI, Depends, HTTPException, Header, Response, UploadFile, File, Form
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -14,13 +15,15 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
-from auth import verificar_token
+from auth import verificar_token, requiere_rol
 from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
 import models
 from migraciones import agregar_columnas_faltantes, crear_indices_faltantes
 import sunat
+from documentos import leer_documento_validado, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from minio_client import subir_documento_reclamo, leer_documento_reclamo
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
 
@@ -84,6 +87,16 @@ def sembrar_admin_inicial():
     finally:
         db.close()
 
+@app.middleware("http")
+async def limitar_el_tamano_de_los_documentos(request, call_next):
+    """Rechaza por su Content-Length un documento de reclamo demasiado grande ANTES de leer el cuerpo (mismo criterio que
+    Pagos con las constancias). Va antes del middleware de CORS (queda por dentro) para que el 413 lleve sus cabeceras."""
+    if request.method == "POST" and request.url.path.endswith("/usuarios/me/reclamos-ruc"):
+        longitud = request.headers.get("content-length", "")
+        if longitud.isdigit() and int(longitud) > LIMITE_CUERPO_BYTES:
+            return JSONResponse(status_code=413, content={"detail": MENSAJE_MUY_GRANDE})
+    return await call_next(request)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -141,7 +154,15 @@ class _DatosDeComprador(BaseModel):
 logger = logging.getLogger("usuarios")
 
 
-MENSAJE_RUC_OCUPADO = "Ese RUC ya está registrado en otra cuenta de Chakra Shop. Si es tu negocio, entra con esa cuenta."
+def mensaje_ruc_ocupado(ruc: str, en_registro: bool) -> str:
+    """Qué hacer si el RUC ya está en otra cuenta. Al registrarse, primero hay que tener una cuenta (para la casa) desde
+    la cual reclamarlo; desde el perfil se reclama directamente."""
+    if en_registro:
+        return (f"El RUC {ruc} ya está registrado en otra cuenta de Chakra Shop. Si el negocio es tuyo, regístrate "
+                "'Para mi casa' y reclama tu RUC desde tu perfil, con tu Ficha RUC y el DNI del dueño o representante: "
+                "el admin lo revisa.")
+    return (f"El RUC {ruc} ya está registrado en otra cuenta de Chakra Shop. Si el negocio es tuyo, reclámalo con tu "
+            "Ficha RUC y el DNI del dueño o representante: el admin lo revisa.")
 
 
 def _ruc_ocupado(db: Session, ruc: str, usuario_id=None) -> bool:
@@ -152,11 +173,11 @@ def _ruc_ocupado(db: Session, ruc: str, usuario_id=None) -> bool:
     return consulta.first() is not None
 
 
-def _conflicto_al_guardar(error: IntegrityError) -> HTTPException:
+def _conflicto_al_guardar(error: IntegrityError, ruc=None, en_registro=True) -> HTTPException:
     """El índice único del RUC (uq_usuarios_ruc) o el del correo: dos registros a la vez pueden pasar los chequeos
     previos, y la base deja entrar solo al primero."""
     if "uq_usuarios_ruc" in str(error.orig):
-        return HTTPException(status_code=409, detail=MENSAJE_RUC_OCUPADO)
+        return HTTPException(status_code=409, detail=mensaje_ruc_ocupado(ruc or "", en_registro))
     return HTTPException(status_code=409, detail="Ese email ya está registrado")
 
 
@@ -169,9 +190,15 @@ def _verificar_negocio_en_sunat(datos: _DatosDeComprador, db: Session, usuario_i
     if not datos.ruc:
         raise HTTPException(status_code=422, detail="Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT.")
     if _ruc_ocupado(db, datos.ruc, usuario_id):
-        raise HTTPException(status_code=409, detail=MENSAJE_RUC_OCUPADO)
+        raise HTTPException(status_code=409, detail=mensaje_ruc_ocupado(datos.ruc, en_registro=usuario_id is None))
+    return _ruc_en_regla_en_sunat(datos.ruc)
+
+
+def _ruc_en_regla_en_sunat(ruc: str) -> dict:
+    """Lo que dice SUNAT del RUC si está ACTIVO y HABIDO; si no, la HTTPException con el motivo (422) o 503 si no se pudo
+    consultar."""
     try:
-        en_sunat = sunat.consultar_ruc(datos.ruc)
+        en_sunat = sunat.consultar_ruc(ruc)
     except sunat.SunatNoDisponible as error:
         logger.warning("No se pudo consultar el RUC en SUNAT (%s)", error)
         raise HTTPException(
@@ -180,16 +207,16 @@ def _verificar_negocio_en_sunat(datos: _DatosDeComprador, db: Session, usuario_i
                    "a negocio desde tu perfil.",
         )
     if en_sunat is None:
-        raise HTTPException(status_code=422, detail=f"SUNAT no tiene registrado el RUC {datos.ruc}. Revisa que esté bien escrito.")
+        raise HTTPException(status_code=422, detail=f"SUNAT no tiene registrado el RUC {ruc}. Revisa que esté bien escrito.")
     if en_sunat["estado"] != "ACTIVO":
         raise HTTPException(
             status_code=422,
-            detail=f"El RUC {datos.ruc} figura en SUNAT como {en_sunat['estado'].lower()}: solo un negocio activo puede comprar como negocio.",
+            detail=f"El RUC {ruc} figura en SUNAT como {en_sunat['estado'].lower()}: solo un negocio activo puede comprar como negocio.",
         )
     if en_sunat["condicion"] != "HABIDO":
         raise HTTPException(
             status_code=422,
-            detail=f"El RUC {datos.ruc} figura en SUNAT como {en_sunat['condicion'].lower() or 'sin condición'} (su domicilio "
+            detail=f"El RUC {ruc} figura en SUNAT como {en_sunat['condicion'].lower() or 'sin condición'} (su domicilio "
                    f"fiscal no está confirmado): solo un negocio habido puede comprar como negocio.",
         )
     return en_sunat
@@ -286,7 +313,7 @@ def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
         db.flush()  # ejecuta el INSERT (asigna nuevo.id); acá salta el dup de email (o de RUC)
     except IntegrityError as error:
         db.rollback()
-        raise _conflicto_al_guardar(error)
+        raise _conflicto_al_guardar(error, datos.ruc, en_registro=True)
 
     db.commit()
     db.refresh(nuevo)
@@ -424,9 +451,227 @@ def actualizar_perfil_comprador(datos: PerfilCompradorActualizar, db: Session = 
         db.commit()
     except IntegrityError as error:
         db.rollback()
-        raise _conflicto_al_guardar(error)
+        raise _conflicto_al_guardar(error, datos.ruc, en_registro=False)
     db.refresh(usuario)
     return _perfil(usuario)
+
+# ============ Reclamar un RUC que ya está en otra cuenta ============
+# Un RUC va en una sola cuenta, así que el primero que lo registra se queda con él: si alguien registró el RUC de un
+# negocio antes que su dueño, el dueño lo reclama con la Ficha RUC y el DNI del dueño o representante legal, y el admin
+# compara los nombres y decide (pedido del usuario, 2026-10-03). Revisar el DNI contra el RUC de forma automática no
+# servía: en un RUC 10 el DNI va dentro del propio RUC, y los representantes de un RUC 20 son públicos en SUNAT.
+# Aprobar pasa el RUC a quien reclamó y deja la otra cuenta "para mi casa".
+MENSAJE_MAXIMO_RECLAMO = 500
+MOTIVO_MAXIMO_RECHAZO = 300
+NOMBRE_TITULAR_MAXIMO = 120
+DOCUMENTOS_DE_RECLAMO = ("ficha", "dni")
+
+
+class RechazoReclamo(BaseModel):
+    motivo: str
+
+    @field_validator("motivo")
+    @classmethod
+    def _motivo(cls, valor):
+        valor = " ".join((valor or "").split())
+        if not valor:
+            raise ValueError("Escribe el motivo del rechazo: quien reclamó lo va a ver")
+        if len(valor) > MOTIVO_MAXIMO_RECHAZO or "\x00" in valor:
+            raise ValueError(f"El motivo no puede superar {MOTIVO_MAXIMO_RECHAZO} caracteres")
+        return valor
+
+
+def _reclamo_para_su_autor(r: models.ReclamoRuc) -> dict:
+    return {"id": r.id, "ruc": r.ruc, "razon_social": r.razon_social, "estado": r.estado, "motivo_rechazo": r.motivo_rechazo,
+            "fecha_creacion": r.fecha_creacion, "fecha_revision": r.fecha_revision}
+
+
+def _datos_de_cuenta(usuario) -> dict | None:
+    if usuario is None:
+        return None
+    return {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "tipo_comprador": usuario.tipo_comprador,
+            "ruc": usuario.ruc, "nombre_comercial": usuario.nombre_comercial, "fecha_registro": usuario.fecha_registro,
+            "ruc_verificado_en": usuario.ruc_verificado_en}
+
+
+def _texto_del_formulario(valor: str, maximo: int, campo: str, *, obligatorio: bool) -> str:
+    valor = " ".join((valor or "").split())
+    if obligatorio and not valor:
+        raise HTTPException(status_code=422, detail=f"Falta {campo}.")
+    if len(valor) > maximo or "\x00" in valor:
+        raise HTTPException(status_code=422, detail=f"{campo[0].upper()}{campo[1:]} no puede superar {maximo} caracteres.")
+    return valor
+
+
+@app.post("/usuarios/me/reclamos-ruc")
+def reclamar_ruc(
+    ruc: str = Form(...),
+    nombre_titular: str = Form(...),
+    dni: str = Form(...),
+    mensaje: str = Form(""),
+    ficha_ruc: UploadFile = File(...),
+    foto_dni: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    solicitante: dict = Depends(verificar_token),
+):
+    if solicitante.get("rol") != "comprador":
+        raise HTTPException(status_code=403, detail="Solo una cuenta de comprador puede reclamar un RUC")
+    ruc = (ruc or "").strip().replace(" ", "")
+    if not ruc_valido(ruc):
+        raise HTTPException(status_code=422, detail="El RUC no es válido: son 11 dígitos y empieza con 10 o 20.")
+    nombre_titular = _texto_del_formulario(nombre_titular, NOMBRE_TITULAR_MAXIMO, "el nombre del dueño o representante",
+                                           obligatorio=True)
+    dni = (dni or "").strip()
+    if not (len(dni) == 8 and dni.isdigit()):
+        raise HTTPException(status_code=422, detail="El DNI son 8 dígitos.")
+    mensaje = _texto_del_formulario(mensaje, MENSAJE_MAXIMO_RECLAMO, "el mensaje", obligatorio=False)
+
+    reclamante = db.query(models.Usuario).filter(models.Usuario.id == solicitante.get("sub")).first()
+    if not reclamante:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    titular = db.query(models.Usuario).filter(models.Usuario.ruc == ruc).first()
+    if titular is None:
+        raise HTTPException(status_code=409, detail="Ese RUC no está en ninguna cuenta: ponlo como tu negocio en \"¿Cómo compras?\".")
+    if titular.id == reclamante.id:
+        raise HTTPException(status_code=409, detail="Ese RUC ya está en tu cuenta.")
+    pendiente = db.query(models.ReclamoRuc).filter(
+        models.ReclamoRuc.ruc == ruc, models.ReclamoRuc.reclamante_id == reclamante.id, models.ReclamoRuc.estado == "pendiente",
+    ).first()
+    if pendiente:
+        raise HTTPException(status_code=409, detail="Ya reclamaste ese RUC: el admin lo está revisando.")
+
+    en_sunat = _ruc_en_regla_en_sunat(ruc)  # se reclama un negocio real, activo y habido
+    ficha, ficha_tipo = leer_documento_validado(ficha_ruc)
+    foto, foto_tipo = leer_documento_validado(foto_dni)
+    try:
+        ficha_objeto = subir_documento_reclamo(ficha, ficha_tipo)
+        dni_objeto = subir_documento_reclamo(foto, foto_tipo)
+    except Exception:
+        logger.error("No se pudieron guardar los documentos de un reclamo de RUC", exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudieron guardar los documentos. Intenta de nuevo en unos momentos.")
+
+    reclamo = models.ReclamoRuc(
+        ruc=ruc, razon_social=en_sunat["razon_social"], reclamante_id=reclamante.id, titular_id=titular.id,
+        nombre_titular=nombre_titular, dni_numero=dni, mensaje=mensaje or None,
+        ficha_objeto=ficha_objeto, ficha_tipo=ficha_tipo, dni_objeto=dni_objeto, dni_tipo=foto_tipo,
+    )
+    db.add(reclamo)
+    db.commit()
+    db.refresh(reclamo)
+    return _reclamo_para_su_autor(reclamo)
+
+
+@app.get("/usuarios/me/reclamos-ruc")
+def mis_reclamos_ruc(db: Session = Depends(get_db), solicitante: dict = Depends(verificar_token)):
+    """Los reclamos que hizo la cuenta y, si a esta cuenta le quitaron su RUC por un reclamo aprobado, ese aviso."""
+    yo = solicitante.get("sub")
+    mios = db.query(models.ReclamoRuc).filter(models.ReclamoRuc.reclamante_id == yo).order_by(models.ReclamoRuc.fecha_creacion.desc()).all()
+    perdidos = db.query(models.ReclamoRuc).filter(
+        models.ReclamoRuc.titular_id == yo, models.ReclamoRuc.estado == "aprobado",
+    ).order_by(models.ReclamoRuc.fecha_revision.desc()).all()
+    return {
+        "mis_reclamos": [_reclamo_para_su_autor(r) for r in mios],
+        "rucs_que_perdi": [{"ruc": r.ruc, "razon_social": r.razon_social, "fecha_revision": r.fecha_revision} for r in perdidos],
+    }
+
+
+def _reclamo_pendiente(db: Session, reclamo_id: uuid.UUID) -> models.ReclamoRuc:
+    reclamo = db.query(models.ReclamoRuc).filter(models.ReclamoRuc.id == reclamo_id).first()
+    if not reclamo:
+        raise HTTPException(status_code=404, detail="Reclamo no encontrado")
+    if reclamo.estado != "pendiente":
+        raise HTTPException(status_code=409, detail=f"Este reclamo ya fue {reclamo.estado}.")
+    return reclamo
+
+
+@app.get("/usuarios/admin/reclamos-ruc")
+def listar_reclamos_ruc(estado: str = "pendiente", db: Session = Depends(get_db), admin: dict = Depends(requiere_rol("admin"))):
+    consulta = db.query(models.ReclamoRuc)
+    if estado != "todos":
+        consulta = consulta.filter(models.ReclamoRuc.estado == estado)
+    reclamos = consulta.order_by(models.ReclamoRuc.fecha_creacion).all()
+    ids = {r.reclamante_id for r in reclamos}
+    cuentas = {u.id: u for u in db.query(models.Usuario).filter(models.Usuario.id.in_(ids)).all()} if ids else {}
+    # Quién tiene el RUC AHORA (puede no ser quien lo tenía al reclamar: lo pudo soltar o perder por otro reclamo)
+    rucs = {r.ruc for r in reclamos}
+    actuales = {u.ruc: u for u in db.query(models.Usuario).filter(models.Usuario.ruc.in_(rucs)).all()} if rucs else {}
+    return [{
+        **_reclamo_para_su_autor(r),
+        "nombre_titular": r.nombre_titular,
+        "dni": r.dni_numero,
+        "mensaje": r.mensaje,
+        "documentos": {"ficha": r.ficha_tipo, "dni": r.dni_tipo},
+        "reclamante": _datos_de_cuenta(cuentas.get(r.reclamante_id)),
+        "titular_actual": _datos_de_cuenta(actuales.get(r.ruc)),
+    } for r in reclamos]
+
+
+@app.get("/usuarios/admin/reclamos-ruc/{reclamo_id}/documento/{cual}")
+def ver_documento_de_reclamo(reclamo_id: uuid.UUID, cual: str, db: Session = Depends(get_db),
+                             admin: dict = Depends(requiere_rol("admin"))):
+    if cual not in DOCUMENTOS_DE_RECLAMO:
+        raise HTTPException(status_code=404, detail="El documento es 'ficha' o 'dni'")
+    reclamo = db.query(models.ReclamoRuc).filter(models.ReclamoRuc.id == reclamo_id).first()
+    if not reclamo:
+        raise HTTPException(status_code=404, detail="Reclamo no encontrado")
+    objeto, tipo = (reclamo.ficha_objeto, reclamo.ficha_tipo) if cual == "ficha" else (reclamo.dni_objeto, reclamo.dni_tipo)
+    try:
+        datos = leer_documento_reclamo(objeto)
+    except Exception:
+        logger.error("No se pudo leer el documento %s del reclamo %s", cual, reclamo_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo leer el documento. Intenta de nuevo en unos momentos.")
+    return Response(content=datos, media_type=tipo, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/usuarios/admin/reclamos-ruc/{reclamo_id}/aprobar")
+def aprobar_reclamo_ruc(reclamo_id: uuid.UUID, db: Session = Depends(get_db), admin: dict = Depends(requiere_rol("admin"))):
+    reclamo = _reclamo_pendiente(db, reclamo_id)
+    reclamante = db.query(models.Usuario).filter(models.Usuario.id == reclamo.reclamante_id).first()
+    if reclamante is None or reclamante.rol != "comprador":
+        raise HTTPException(status_code=409, detail="La cuenta que reclamó ya no es de comprador: rechaza el reclamo.")
+    ahora = datetime.utcnow()
+
+    # Primero se le quita el RUC a quien lo tenga ahora (el índice único no deja que esté en dos cuentas a la vez).
+    titular = db.query(models.Usuario).filter(models.Usuario.ruc == reclamo.ruc, models.Usuario.id != reclamante.id).first()
+    if titular is not None:
+        titular.tipo_comprador = "persona"
+        titular.ruc = titular.nombre_comercial = titular.razon_social = titular.ruc_verificado_en = None
+        reclamo.titular_id = titular.id  # el aviso de "perdiste tu RUC" le llega a quien lo tenía de verdad
+        db.flush()
+    reclamante.tipo_comprador = "negocio"
+    reclamante.ruc = reclamo.ruc
+    reclamante.razon_social = reclamo.razon_social
+    reclamante.ruc_verificado_en = ahora
+
+    reclamo.estado = "aprobado"
+    reclamo.revisado_por = admin.get("sub")
+    reclamo.fecha_revision = ahora
+    # Los demás reclamos pendientes del mismo RUC quedan resueltos: el RUC ya tiene dueño revisado por el admin.
+    for otro in db.query(models.ReclamoRuc).filter(models.ReclamoRuc.ruc == reclamo.ruc, models.ReclamoRuc.estado == "pendiente",
+                                                    models.ReclamoRuc.id != reclamo.id).all():
+        otro.estado = "rechazado"
+        otro.motivo_rechazo = "El admin revisó otro reclamo de este RUC y se lo asignó a esa cuenta."
+        otro.revisado_por = admin.get("sub")
+        otro.fecha_revision = ahora
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise _conflicto_al_guardar(error, reclamo.ruc, en_registro=False)
+    return _reclamo_para_su_autor(reclamo)
+
+
+@app.post("/usuarios/admin/reclamos-ruc/{reclamo_id}/rechazar")
+def rechazar_reclamo_ruc(reclamo_id: uuid.UUID, datos: RechazoReclamo, db: Session = Depends(get_db),
+                         admin: dict = Depends(requiere_rol("admin"))):
+    reclamo = _reclamo_pendiente(db, reclamo_id)
+    reclamo.estado = "rechazado"
+    reclamo.motivo_rechazo = datos.motivo
+    reclamo.revisado_por = admin.get("sub")
+    reclamo.fecha_revision = datetime.utcnow()
+    db.commit()
+    return _reclamo_para_su_autor(reclamo)
+
 
 @app.delete("/usuarios/{usuario_id}")
 def eliminar_usuario(usuario_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):

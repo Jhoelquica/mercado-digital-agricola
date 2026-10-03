@@ -949,7 +949,8 @@ def test_un_ruc_solo_puede_estar_en_una_cuenta_y_no_se_consulta_sunat_de_nuevo()
     email = _email()
     resp = _registro_negocio(ruc, email)
     assert resp.status_code == 409, resp.text
-    assert resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO
+    assert resp.json()["detail"] == main.mensaje_ruc_ocupado(ruc, en_registro=True)
+    assert "regístrate 'Para mi casa' y reclama tu RUC" in resp.json()["detail"]
     assert _sunat_simulado.consultas == [ruc]  # el segundo se rechaza antes de consultar SUNAT
     assert client.post("/usuarios/login", json={"email": email, "password": "test1234"}).status_code == 401
 
@@ -961,7 +962,8 @@ def test_no_se_puede_cambiar_al_ruc_de_otra_cuenta_pero_si_volver_a_guardar_el_p
     otra_id = _registrar_comprador().json()["id"]
     _auth(otra_id, "comprador")
     resp = client.patch("/usuarios/me/comprador", json={"tipo_comprador": "negocio", "ruc": ruc})
-    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO
+    assert resp.status_code == 409 and resp.json()["detail"] == main.mensaje_ruc_ocupado(ruc, en_registro=False)
+    assert "reclámalo con tu Ficha RUC" in resp.json()["detail"]
     assert _perfil_comprador_de(otra_id)["tipo_comprador"] == "persona"
 
     _auth(duena_id, "comprador")
@@ -1000,4 +1002,173 @@ def test_si_dos_registros_con_el_mismo_ruc_llegan_a_la_vez_el_segundo_recibe_el_
     assert _registro_negocio(ruc).status_code == 200
     monkeypatch.setattr(main, "_ruc_ocupado", lambda *a, **k: False)  # como si el chequeo previo no lo hubiera visto
     resp = _registro_negocio(ruc)
-    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_RUC_OCUPADO
+    assert resp.status_code == 409 and resp.json()["detail"] == main.mensaje_ruc_ocupado(ruc, en_registro=True)
+
+
+
+# ============ Reclamar un RUC que ya está en otra cuenta ============
+
+PDF_FALSO = b"%PDF-1.7 ficha ruc de prueba"
+JPEG_FALSO = b"\xff\xd8\xff\xe0 foto del dni"
+
+
+@pytest.fixture(autouse=True)
+def _documentos_simulados(monkeypatch):
+    """Ningún test toca MinIO: los documentos se guardan en un diccionario."""
+    guardados = {}
+
+    def subir(datos, tipo):
+        nombre = f"doc-{len(guardados)}-{uuid.uuid4().hex[:6]}"
+        guardados[nombre] = datos
+        return nombre
+
+    monkeypatch.setattr(main, "subir_documento_reclamo", subir)
+    monkeypatch.setattr(main, "leer_documento_reclamo", lambda nombre: guardados[nombre])
+    _documentos_simulados.guardados = guardados
+
+
+def _reclamar(ruc, *, ficha=PDF_FALSO, dni_foto=JPEG_FALSO, nombre="Rosa Quispe Huamán", dni="45678912", mensaje="Es mi restaurante"):
+    return client.post("/usuarios/me/reclamos-ruc", data={"ruc": ruc, "nombre_titular": nombre, "dni": dni, "mensaje": mensaje},
+                       files={"ficha_ruc": ("ficha.pdf", ficha, "application/pdf"), "foto_dni": ("dni.jpg", dni_foto, "image/jpeg")})
+
+
+def _ruc_tomado_y_quien_reclama():
+    """Una cuenta A tiene el RUC; una cuenta B (para su casa) es la que reclama y queda autenticada."""
+    ruc = _ruc_nuevo()
+    titular_id = _registro_negocio(ruc).json()["id"]
+    reclamante_id = _registrar_comprador().json()["id"]
+    _auth(reclamante_id, "comprador")
+    return ruc, titular_id, reclamante_id
+
+
+def test_reclamar_un_ruc_y_que_el_admin_lo_apruebe():
+    ruc, titular_id, reclamante_id = _ruc_tomado_y_quien_reclama()
+    resp = _reclamar(ruc)
+    assert resp.status_code == 200, resp.text
+    reclamo = resp.json()
+    assert reclamo["estado"] == "pendiente" and reclamo["razon_social"] == "EMPRESA DE PRUEBA S.A.C."
+    assert "dni" not in reclamo  # quien reclama no recibe de vuelta datos de documentos
+    assert client.get("/usuarios/me/reclamos-ruc").json()["mis_reclamos"][0]["id"] == reclamo["id"]
+
+    _admin_autenticado()
+    [fila] = [r for r in client.get("/usuarios/admin/reclamos-ruc").json() if r["id"] == reclamo["id"]]
+    assert fila["nombre_titular"] == "Rosa Quispe Huamán" and fila["dni"] == "45678912"
+    assert fila["mensaje"] == "Es mi restaurante" and fila["documentos"] == {"ficha": "application/pdf", "dni": "image/jpeg"}
+    assert fila["reclamante"]["id"] == reclamante_id and fila["titular_actual"]["id"] == titular_id
+    ficha = client.get(f"/usuarios/admin/reclamos-ruc/{reclamo['id']}/documento/ficha")
+    assert ficha.status_code == 200 and ficha.content == PDF_FALSO and ficha.headers["content-type"] == "application/pdf"
+    foto = client.get(f"/usuarios/admin/reclamos-ruc/{reclamo['id']}/documento/dni")
+    assert foto.content == JPEG_FALSO and foto.headers["cache-control"] == "no-store"
+
+    resp = client.post(f"/usuarios/admin/reclamos-ruc/{reclamo['id']}/aprobar")
+    assert resp.status_code == 200 and resp.json()["estado"] == "aprobado"
+
+    nuevo_dueno = _perfil_comprador_de(reclamante_id)
+    assert nuevo_dueno["tipo_comprador"] == "negocio" and nuevo_dueno["ruc"] == ruc
+    assert nuevo_dueno["razon_social"] == "EMPRESA DE PRUEBA S.A.C." and nuevo_dueno["ruc_verificado_en"]
+    antes = _perfil_comprador_de(titular_id)
+    assert antes["tipo_comprador"] == "persona" and antes["ruc"] is None and antes["razon_social"] is None
+    _auth(titular_id, "comprador")
+    assert client.get("/usuarios/me/reclamos-ruc").json()["rucs_que_perdi"][0]["ruc"] == ruc
+
+
+def test_el_admin_rechaza_un_reclamo_con_su_motivo_y_nada_cambia():
+    ruc, titular_id, reclamante_id = _ruc_tomado_y_quien_reclama()
+    reclamo_id = _reclamar(ruc).json()["id"]
+
+    _admin_autenticado()
+    assert client.post(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/rechazar", json={"motivo": "   "}).status_code == 422
+    resp = client.post(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/rechazar",
+                       json={"motivo": "El nombre del DNI no coincide con el de la Ficha RUC"})
+    assert resp.status_code == 200 and resp.json()["estado"] == "rechazado"
+    assert client.post(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/aprobar").status_code == 409  # ya se decidió
+
+    _auth(reclamante_id, "comprador")
+    mio = client.get("/usuarios/me/reclamos-ruc").json()["mis_reclamos"][0]
+    assert mio["motivo_rechazo"] == "El nombre del DNI no coincide con el de la Ficha RUC"
+    assert _perfil_comprador_de(titular_id)["ruc"] == ruc
+
+
+def test_aprobar_un_reclamo_cierra_los_otros_pendientes_del_mismo_ruc():
+    ruc, _, primero_id = _ruc_tomado_y_quien_reclama()
+    primero = _reclamar(ruc).json()["id"]
+    _auth(_registrar_comprador().json()["id"], "comprador")
+    segundo = _reclamar(ruc).json()["id"]
+
+    _admin_autenticado()
+    client.post(f"/usuarios/admin/reclamos-ruc/{primero}/aprobar")
+    [fila] = [r for r in client.get("/usuarios/admin/reclamos-ruc?estado=todos").json() if r["id"] == segundo]
+    assert fila["estado"] == "rechazado" and "otro reclamo de este RUC" in fila["motivo_rechazo"]
+    assert fila["titular_actual"]["id"] == primero_id
+
+
+def test_si_el_titular_ya_solto_el_ruc_el_reclamo_igual_se_aprueba():
+    ruc, titular_id, reclamante_id = _ruc_tomado_y_quien_reclama()
+    reclamo_id = _reclamar(ruc).json()["id"]
+    _auth(titular_id, "comprador")
+    client.patch("/usuarios/me/comprador", json={"tipo_comprador": "persona"})
+
+    _admin_autenticado()
+    assert client.post(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/aprobar").status_code == 200
+    assert _perfil_comprador_de(reclamante_id)["ruc"] == ruc
+
+
+@pytest.mark.parametrize("cambio, codigo, texto", [
+    ({"ruc": "20131312954"}, 422, "El RUC no es válido"),
+    ({"dni": "1234567"}, 422, "El DNI son 8 dígitos"),
+    ({"nombre": "   "}, 422, "Falta el nombre del dueño o representante"),
+    ({"mensaje": "x" * 501}, 422, "no puede superar 500"),
+    ({"ficha": b"<html>no soy un pdf</html>"}, 422, "tiene que ser una foto (JPEG, PNG o WEBP) o un PDF"),
+    ({"dni_foto": b"GIF89a"}, 422, "tiene que ser una foto"),
+], ids=["ruc-mal", "dni-corto", "sin-nombre", "mensaje-largo", "ficha-html", "dni-gif"])
+def test_un_reclamo_con_datos_que_no_sirven_falla_422_y_no_guarda_nada(cambio, codigo, texto):
+    ruc, _, _ = _ruc_tomado_y_quien_reclama()
+    argumentos = {"ruc": ruc, **cambio}
+    resp = _reclamar(argumentos.pop("ruc"), **argumentos)
+    assert resp.status_code == codigo, resp.text
+    assert texto in resp.json()["detail"]
+    assert client.get("/usuarios/me/reclamos-ruc").json()["mis_reclamos"] == []
+
+
+def test_un_documento_de_mas_de_5_mb_falla_413():
+    ruc, _, _ = _ruc_tomado_y_quien_reclama()
+    resp = _reclamar(ruc, ficha=b"%PDF-" + b"0" * (5 * 1024 * 1024))
+    assert resp.status_code == 413
+
+
+def test_no_se_reclama_un_ruc_libre_el_propio_ni_dos_veces():
+    ruc_libre = _ruc_nuevo()
+    _auth(_registrar_comprador().json()["id"], "comprador")
+    assert _reclamar(ruc_libre).status_code == 409
+
+    ruc, titular_id, _ = _ruc_tomado_y_quien_reclama()
+    assert _reclamar(ruc).status_code == 200
+    resp = _reclamar(ruc)
+    assert resp.status_code == 409 and "Ya reclamaste ese RUC" in resp.json()["detail"]
+
+    _auth(titular_id, "comprador")
+    assert _reclamar(ruc).json()["detail"] == "Ese RUC ya está en tu cuenta."
+
+
+def test_se_reclama_solo_un_negocio_en_regla_en_sunat():
+    ruc, _, _ = _ruc_tomado_y_quien_reclama()
+    _sunat_simulado.respuestas[ruc] = {"razon_social": "X", "estado": "BAJA DE OFICIO", "condicion": "HABIDO"}
+    assert _reclamar(ruc).status_code == 422
+    _sunat_simulado.respuestas[ruc] = main.sunat.SunatNoDisponible("HTTP 503")
+    assert _reclamar(ruc).status_code == 503
+    assert _documentos_simulados.guardados == {}  # no se guardó ningún documento
+
+
+def test_solo_un_comprador_reclama_y_solo_el_admin_revisa():
+    ruc, _, _ = _ruc_tomado_y_quien_reclama()
+    reclamo_id = _reclamar(ruc).json()["id"]
+
+    _auth(_crear_usuario("productor"), "productor")
+    assert _reclamar(ruc).status_code == 403
+    for ruta in ("/usuarios/admin/reclamos-ruc", f"/usuarios/admin/reclamos-ruc/{reclamo_id}/documento/ficha"):
+        assert client.get(ruta).status_code == 403
+    assert client.post(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/aprobar").status_code == 403
+
+    _admin_autenticado()
+    assert client.get(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/documento/otro").status_code == 404
+    assert client.post(f"/usuarios/admin/reclamos-ruc/{uuid.uuid4()}/aprobar").status_code == 404
