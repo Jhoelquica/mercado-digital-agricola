@@ -1106,14 +1106,15 @@ function rucValido(ruc) {
   return Number(ruc[10]) === ({ 10: 0, 11: 1 }[resto] ?? resto);
 }
 
-// Los datos de persona/negocio que se mandan al registrarse (o al guardar el perfil). null si hay un error que mostrar.
+// Los datos de persona/negocio que se mandan al registrarse (o al guardar el perfil): { datos } o { error }. Un negocio
+// tiene que dar su RUC: Usuarios lo verifica en SUNAT (activo y habido) antes de crear o cambiar la cuenta.
 function datosDeComprador(tipo, nombreComercial, ruc) {
-  if (tipo !== 'negocio') return { tipo_comprador: 'persona' };
+  if (tipo !== 'negocio') return { datos: { tipo_comprador: 'persona' } };
   const rucLimpio = ruc.replace(/\s+/g, '');
-  if (rucLimpio && !rucValido(rucLimpio)) return null;
-  return { tipo_comprador: 'negocio', nombre_comercial: nombreComercial.trim() || null, ruc: rucLimpio || null };
+  if (!rucLimpio) return { error: 'Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT.' };
+  if (!rucValido(rucLimpio)) return { error: 'El RUC no es válido: son 11 dígitos y empieza con 10 o 20. Revisa que esté bien escrito.' };
+  return { datos: { tipo_comprador: 'negocio', nombre_comercial: nombreComercial.trim() || null, ruc: rucLimpio } };
 }
-const MENSAJE_RUC_INVALIDO = 'El RUC no es válido: son 11 dígitos y empieza con 10 o 20. Revisa que esté bien escrito, o déjalo vacío.';
 
 // ============ MODALES ============
 let focoPrevioModalAuth = null; // quién tenía el foco antes de abrir el modal de acceso: se lo devolvemos al cerrarlo
@@ -7151,9 +7152,13 @@ function renderPerfilComoCompras(usuario) {
           <label class="perfil-campo"><span>Nombre del negocio <span class="auth-opcional">(opcional)</span></span>
             <input type="text" id="perfil-nombre-comercial" maxlength="120" value="${escapeAttr(usuario.nombre_comercial || '')}" placeholder="Ej. Restaurante El Ayacuchano">
           </label>
-          <label class="perfil-campo"><span>RUC <span class="auth-opcional">(opcional)</span></span>
-            <input type="text" id="perfil-ruc" inputmode="numeric" maxlength="11" value="${escapeAttr(usuario.ruc || '')}" placeholder="11 dígitos">
+          <label class="perfil-campo"><span>RUC del negocio</span>
+            <input type="text" id="perfil-ruc" inputmode="numeric" maxlength="11" value="${escapeAttr(usuario.ruc || '')}" placeholder="11 dígitos" aria-describedby="perfil-ruc-ayuda">
+            <small class="auth-ayuda" id="perfil-ruc-ayuda"><i class="ti ti-shield-check" aria-hidden="true"></i> Lo verificamos en SUNAT: tiene que estar activo y habido.</small>
           </label>
+          ${negocio && usuario.razon_social ? `
+          <p class="perfil-ruc-verificado"><i class="ti ti-rosette-discount-check" aria-hidden="true"></i>
+            <span>Verificado en SUNAT: <strong>${escapeAttr(usuario.razon_social)}</strong> · RUC ${escapeAttr(usuario.ruc)}</span></p>` : ''}
         </div>
         <p class="perfil-form-error hidden" id="perfil-comprador-error" role="alert"></p>
         <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
@@ -7164,25 +7169,29 @@ function renderPerfilComoCompras(usuario) {
 async function guardarPerfilComprador(form) {
   const error = form.querySelector('#perfil-comprador-error');
   const tipo = form.querySelector('input[name="perfil-tipo-comprador"]:checked')?.value || 'persona';
-  const datos = datosDeComprador(tipo, form.querySelector('#perfil-nombre-comercial').value, form.querySelector('#perfil-ruc').value);
-  error.classList.toggle('hidden', Boolean(datos));
-  if (!datos) {
-    error.textContent = MENSAJE_RUC_INVALIDO;
+  const { datos, error: mensaje } = datosDeComprador(tipo, form.querySelector('#perfil-nombre-comercial').value, form.querySelector('#perfil-ruc').value);
+  error.classList.toggle('hidden', !mensaje);
+  if (mensaje) {
+    error.textContent = mensaje;
     form.querySelector('#perfil-ruc').focus();
     return;
   }
   const boton = form.querySelector('button[type="submit"]');
   boton.disabled = true;
+  if (datos.tipo_comprador === 'negocio') boton.innerHTML = '<i class="ti ti-loader-2" aria-hidden="true"></i> Verificando en SUNAT…';
   try {
     const perfil = await Api.usuarios.actualizarComprador(datos);
     Estado.tipoComprador = perfil.tipo_comprador;
     guardarSesion();
-    toast(perfil.tipo_comprador === 'negocio' ? 'Listo: te mostraremos primero el precio por mayor.' : 'Listo: te mostraremos primero el precio por kilo.');
+    toast(perfil.tipo_comprador === 'negocio'
+      ? `Negocio verificado en SUNAT: ${perfil.razon_social}. Te mostraremos primero el precio por mayor.`
+      : 'Listo: te mostraremos primero el precio por kilo.');
     cargarPerfil();
   } catch (err) {
     error.textContent = err.message || 'No se pudo guardar. Intenta de nuevo.';
     error.classList.remove('hidden');
     boton.disabled = false;
+    boton.innerHTML = '<i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar';
   }
 }
 
@@ -7830,16 +7839,18 @@ async function manejarRegistro(e) {
     const rol = document.getElementById('registro-rol').value;
     let comprador = {};
     if (rol === 'comprador') {
-      comprador = datosDeComprador(tipoCompradorElegido(), document.getElementById('registro-nombre-comercial').value,
+      const { datos, error } = datosDeComprador(tipoCompradorElegido(), document.getElementById('registro-nombre-comercial').value,
         document.getElementById('registro-ruc').value);
-      if (!comprador) {
-        mostrarErrorAuth('registro-alerta', MENSAJE_RUC_INVALIDO);
+      if (error) {
+        mostrarErrorAuth('registro-alerta', error);
         document.getElementById('registro-ruc').focus();
         return;
       }
+      comprador = datos;
+      if (comprador.tipo_comprador === 'negocio') btn.querySelector('.auth-enviar-texto').textContent = 'Verificando el RUC en SUNAT…';
     }
 
-    await Api.usuarios.registrar({ nombre, email, password, rol, ...comprador });
+    const creado = await Api.usuarios.registrar({ nombre, email, password, rol, ...comprador });
     const resp = await Api.usuarios.login({ email, password });
     Estado.nombre = nombre;
     await iniciarSesionConToken(resp.access_token);
@@ -7848,7 +7859,9 @@ async function manejarRegistro(e) {
     sincronizarTarjetasRol(); // el reset vuelve el <select> a "comprador" — resincroniza las tarjetas
     cerrarModal('modal-auth');
     cambiarVista(vistaInicialPara(Estado.rol));
-    toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
+    toast(creado.razon_social
+      ? `¡Cuenta creada! Negocio verificado en SUNAT: ${creado.razon_social}`
+      : `¡Cuenta creada! Bienvenido a Chakra Shop, ${nombre} 🎉`);
   } catch (err) {
     console.error('crear la cuenta', err);
     mostrarErrorAuth('registro-alerta', mensajeErrorAuth(err, 'No se pudo crear la cuenta. Revisa los datos e inténtalo de nuevo.'));
@@ -7929,12 +7942,12 @@ async function manejarLoginGoogle(credential) {
 async function manejarRegistroGoogle(credential) {
   const rol = document.getElementById('registro-rol').value;
   const datos = { id_token: credential, rol };
-  const comprador = rol === 'comprador'
+  const { datos: comprador, error } = rol === 'comprador'
     ? datosDeComprador(tipoCompradorElegido(), document.getElementById('registro-nombre-comercial').value,
       document.getElementById('registro-ruc').value)
-    : null;
-  if (rol === 'comprador' && !comprador) {
-    mostrarErrorAuth('registro-alerta', MENSAJE_RUC_INVALIDO);
+    : { datos: null };
+  if (error) {
+    mostrarErrorAuth('registro-alerta', error);
     return;
   }
 
@@ -7947,8 +7960,10 @@ async function manejarRegistroGoogle(credential) {
         const perfil = await Api.usuarios.actualizarComprador(comprador);
         Estado.tipoComprador = perfil.tipo_comprador;
         guardarSesion();
+        toast(`Negocio verificado en SUNAT: ${perfil.razon_social}`);
       } catch (err) {
-        manejarError(err, 'guardar los datos de tu negocio (puedes hacerlo desde tu perfil)');
+        // La cuenta ya quedó creada (como persona): el motivo de SUNAT se muestra y se puede reintentar desde el perfil.
+        toast(`Tu cuenta quedó para tu casa: ${err.message || 'no se pudo verificar el RUC'}. Puedes cambiarla a negocio desde tu perfil.`, 'error');
       }
     }
     document.getElementById('form-registro').reset();

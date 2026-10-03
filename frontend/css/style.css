@@ -5004,12 +5004,22 @@ body.asistente-abierto { overflow: hidden; }
 
 .perfil-como-compras form { display: grid; gap: 16px; }
 .perfil-como-compras .btn { justify-self: start; min-height: 48px; }
-.perfil-datos-negocio { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-.perfil-campo { display: grid; gap: 6px; font-size: 0.92rem; font-weight: 700; color: var(--texto); }
-.perfil-campo input { padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--color-borde); font-size: 1rem; font-family: inherit; }
+.perfil-datos-negocio { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+@media (max-width: 560px) { .perfil-datos-negocio { grid-template-columns: 1fr; } }
+.perfil-campo { display: grid; align-content: start; gap: 6px; font-size: 0.92rem; font-weight: 700; color: var(--texto); }
+.perfil-campo input { width: 100%; min-width: 0; padding: 12px 14px; border-radius: 12px; border: 1.5px solid var(--color-borde); font-size: 1rem; font-family: inherit; }
 .perfil-campo input:focus { outline: none; border-color: var(--color-primario); box-shadow: 0 0 0 3px rgba(45, 59, 42, 0.15); }
 .perfil-form-error { margin: 0; padding: 10px 14px; border-radius: 12px; background: #fdecec; color: #9b1c1c; font-size: 0.9rem; }
 
 @media (prefers-reduced-motion: reduce) {
   .detalle-unidad-caja { transition: none; }
 }
+
+/* RUC verificado en SUNAT (registro y perfil del comprador negocio). */
+.auth-ayuda { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 0.8rem; font-weight: 500; color: var(--texto-suave); }
+.auth-ayuda i { color: #1f6f43; font-size: 0.95rem; }
+.perfil-ruc-verificado {
+  grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 14px; border-radius: 12px;
+  background: #e8f5ee; color: #14532d; font-size: 0.92rem; line-height: 1.45;
+}
+.perfil-ruc-verificado i { flex: none; font-size: 1.3rem; color: #1f6f43; }

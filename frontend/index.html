@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=89fa42ff">
+<link rel="stylesheet" href="css/style.css?v=db17e02e">
 </head>
 <body>
 
@@ -890,11 +890,12 @@
               </div>
             </div>
             <div class="auth-grupo">
-              <label for="registro-ruc">RUC <span class="auth-opcional">(opcional)</span></label>
+              <label for="registro-ruc">RUC del negocio</label>
               <div class="auth-campo">
                 <i class="ti ti-id" aria-hidden="true"></i>
-                <input type="text" id="registro-ruc" inputmode="numeric" maxlength="11" placeholder="11 dígitos, empieza con 10 o 20" autocomplete="off">
+                <input type="text" id="registro-ruc" inputmode="numeric" maxlength="11" placeholder="11 dígitos, empieza con 10 o 20" autocomplete="off" aria-describedby="registro-ruc-ayuda">
               </div>
+              <small class="auth-ayuda" id="registro-ruc-ayuda"><i class="ti ti-shield-check" aria-hidden="true"></i> Lo verificamos en SUNAT: tiene que estar activo y habido.</small>
             </div>
           </div>
         </fieldset>
@@ -1116,6 +1117,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=2ce80c3a"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=15516dd3"></script>
+<script src="js/app.js?v=e32d3564"></script>
 </body>
 </html>
