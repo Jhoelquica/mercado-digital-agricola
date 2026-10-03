@@ -4645,7 +4645,7 @@ async function pintarPrecioReferenciaAsistente(cultivo, destino) {
 }
 
 // ---- Sugerencia de la fecha de cosecha (observación de la presentación del 2026-10-01) ----
-// Productores la calcula con IA (Claude) para el cultivo y la zona de la chacra, o con una tabla de ciclos típicos si la
+// Productores la calcula con IA (Gemini) para el cultivo y la zona de la chacra, o con una tabla de ciclos típicos si la
 // IA no está disponible (ver productores/sugerencia_cosecha.py). Es solo una ayuda: el agricultor la usa con un toque o
 // elige otra fecha.
 function claveSugerenciaCosecha(estado) {

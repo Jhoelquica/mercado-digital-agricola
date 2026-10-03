@@ -117,7 +117,7 @@ services:
       MINIO_SECRET_KEY: ${DB_PASSWORD}
       MINIO_PUBLIC_URL: http://localhost:9000
       # Opcional (en .env): sin ella, la sugerencia de la fecha de cosecha sale de la tabla de ciclos típicos.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     depends_on:
       db-productores:
         condition: service_healthy

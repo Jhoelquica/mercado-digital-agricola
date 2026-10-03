@@ -7,7 +7,7 @@ Las claves salen de k8s/secret.yaml (el de desarrollo, ignorado por git) para qu
   - QA_LIMPIEZA_SECRETO: también al azar y nadie lo conoce, así que los DELETE de limpieza de pruebas quedan cerrados.
   - CULQI_*: las que pases con --culqi-public/--culqi-secret; si no, se copian las de PRUEBA del Secret de desarrollo.
   - ADMIN_BOOTSTRAP_EMAIL / _PASSWORD: el primer admin (lo crea Usuarios al arrancar si todavía no hay ninguno).
-  - ANTHROPIC_API_KEY (opcional): la IA que sugiere la fecha de cosecha. Se copia la del Secret de desarrollo si la
+  - GEMINI_API_KEY (opcional): la IA que sugiere la fecha de cosecha (plan gratuito de Gemini). Se copia la del Secret de desarrollo si la
     tiene; si no, Productores usa la tabla de ciclos típicos.
 
 Ningún valor se imprime. Lo único que necesitas saber (el correo y la contraseña del admin) se guarda en
@@ -85,7 +85,7 @@ def main():
             valores[clave] = args.email_admin
         elif clave == "ADMIN_BOOTSTRAP_PASSWORD":
             valores[clave] = password_admin
-        elif clave == "ANTHROPIC_API_KEY":
+        elif clave == "GEMINI_API_KEY":
             if locales[clave]:
                 valores[clave] = locales[clave]
         else:
@@ -96,8 +96,8 @@ def main():
     print(f"Claves ({len(valores)}): {', '.join(sorted(valores))}")
     if culqi_de_prueba:
         print("Culqi: se usan las llaves de PRUEBA (pk_test/sk_test): los pagos son simulados.")
-    if "ANTHROPIC_API_KEY" not in valores:
-        print("Sin ANTHROPIC_API_KEY: la fecha de cosecha se sugiere con la tabla de ciclos típicos, sin IA.")
+    if "GEMINI_API_KEY" not in valores:
+        print("Sin GEMINI_API_KEY: la fecha de cosecha se sugiere con la tabla de ciclos típicos, sin IA.")
     if args.dry_run:
         print("--dry-run: no se creó nada.")
         return

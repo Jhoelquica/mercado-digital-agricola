@@ -1,13 +1,14 @@
 """Sugerencia de la fecha de cosecha (observación de la presentación del 2026-10-01: "IA para sugerir la fecha de
 cosecha").
 
-Claude estima cuántos días pasan de la siembra a la cosecha de ese cultivo en la zona de la chacra, y el servidor
-calcula las fechas con esos días (la fecha no la inventa el modelo). Si no hay clave de API, Claude no responde a
-tiempo, se niega o devuelve algo fuera de lo razonable, la sugerencia sale de una tabla de ciclos típicos de los
-cultivos de la sierra. La respuesta siempre dice de dónde salió: fuente "ia" o "tabla".
+Gemini (Google, plan gratuito de la API) estima cuántos días pasan de la siembra a la cosecha de ese cultivo en la zona
+de la chacra, y el servidor calcula las fechas con esos días (la fecha no la inventa el modelo). Si no hay clave de API,
+se acabó la cuota gratis, Gemini no responde a tiempo, bloquea la respuesta o devuelve algo fuera de lo razonable, la
+sugerencia sale de una tabla de ciclos típicos de los cultivos de la sierra. La respuesta siempre dice de dónde salió:
+fuente "ia" o "tabla".
 
-A Claude solo se le manda el cultivo, la fecha de siembra y la zona aproximada de la chacra (coordenadas redondeadas a
-0,1°, unos 11 km): nada del agricultor.
+En el plan gratuito Google puede usar lo que se le manda para mejorar sus productos: por eso solo va el cultivo, la
+fecha de siembra y la zona aproximada de la chacra (coordenadas redondeadas a 0,1°, unos 11 km), nada del agricultor.
 """
 import json
 import logging
@@ -17,20 +18,23 @@ import time
 import unicodedata
 from datetime import datetime, timedelta
 
-import anthropic
+import httpx
+from google import genai
+from google.genai import errors as errores_gemini
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
-# Sonnet 5.5 y no Opus: para estimar un ciclo de cultivo alcanza, y cuesta la mitad (US$ 2 / 10 por millón de tokens de
-# entrada / salida). Con esfuerzo bajo casi no "piensa" antes de responder, así que cada consulta sale muy barata.
-MODELO = "claude-sonnet-5-5"
-# Si Claude se niega por sus políticas, la API reintenta sola con el modelo de respaldo que Anthropic recomienda.
-BETA_RESPALDO = "server-side-fallback-2026-07-01"
+# El Flash más reciente que está en el plan gratuito (2026-10-03, ai.google.dev/gemini-api/docs/pricing). Se puede
+# cambiar sin tocar el código con la variable GEMINI_MODELO (p. ej. "gemini-3.5-flash-lite", que deja más consultas
+# gratis por día).
+MODELO_POR_DEFECTO = "gemini-3.8-flash"
 TIEMPO_MAXIMO_SEGUNDOS = 20  # el agricultor está esperando en el asistente: pasado esto, la tabla
 DECIMALES_ZONA = 1           # 0,1° ≈ 11 km: la zona (altura, clima), no la chacra
 DIAS_MINIMOS, DIAS_MAXIMOS = 20, 730
 LARGO_MAXIMO_EXPLICACION = 300
-# Cada consulta a Claude cuesta: por productor, a lo más estas por hora (las repetidas salen del caché y no cuentan).
+# La cuota gratis de Gemini es por día y para todo el proyecto: por productor, a lo más estas consultas por hora (las
+# repetidas salen del caché y no cuentan), para que nadie la gaste sola.
 CONSULTAS_IA_POR_HORA = 30
 TAMANO_CACHE = 500
 
@@ -86,7 +90,6 @@ ESQUEMA = {
         "explicacion": {"type": "string"},
     },
     "required": ["es_cultivo", "dias_min", "dias_probable", "dias_max", "explicacion"],
-    "additionalProperties": False,
 }
 
 _cliente = None
@@ -110,14 +113,23 @@ def ciclo_de_la_tabla(cultivo: str):
     return None
 
 
-def _cliente_claude():
-    """El cliente se crea la primera vez que se usa y solo si hay clave (si no, no hay IA y punto)."""
+def _cliente_ia():
+    """El cliente se crea la primera vez que se usa y solo si hay clave (si no, no hay IA y punto). Sin reintentos: el
+    agricultor está esperando, y si falla está la tabla."""
     global _cliente
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    clave = os.getenv("GEMINI_API_KEY")
+    if not clave:
         return None
     if _cliente is None:
-        _cliente = anthropic.Anthropic(timeout=TIEMPO_MAXIMO_SEGUNDOS, max_retries=1)
+        _cliente = genai.Client(api_key=clave, http_options=types.HttpOptions(
+            timeout=TIEMPO_MAXIMO_SEGUNDOS * 1000,  # en milisegundos
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ))
     return _cliente
+
+
+def _modelo():
+    return os.getenv("GEMINI_MODELO") or MODELO_POR_DEFECTO
 
 
 def _puede_consultar(clave_productor: str) -> bool:
@@ -138,33 +150,39 @@ def _guardar_en_cache(clave, valor):
         _cache[clave] = valor
 
 
-def _preguntar_a_claude(cliente, cultivo: str, fecha_siembra: datetime, latitud: float, longitud: float):
-    """(mín, probable, máx, explicación); ("no_es_cultivo",) si Claude dice que eso no se cosecha; None si no sirvió."""
+def _preguntar_a_la_ia(cliente, cultivo: str, fecha_siembra: datetime, latitud: float, longitud: float):
+    """(mín, probable, máx, explicación); ("no_es_cultivo",) si la IA dice que eso no se cosecha; None si no sirvió."""
     pregunta = (
         f'Cultivo: "{cultivo}"\n'
         f"Fecha de siembra: {fecha_siembra.day} de {MESES[fecha_siembra.month - 1]} de {fecha_siembra.year}\n"
         f"Zona de la chacra (aproximada): latitud {latitud:.{DECIMALES_ZONA}f}, longitud {longitud:.{DECIMALES_ZONA}f}"
     )
     try:
-        respuesta = cliente.beta.messages.create(
-            model=MODELO,
-            max_tokens=8000,
-            betas=[BETA_RESPALDO],
-            fallbacks="default",
-            system=SISTEMA,
-            messages=[{"role": "user", "content": pregunta}],
-            output_config={"effort": "low", "format": {"type": "json_schema", "schema": ESQUEMA}},
+        respuesta = cliente.models.generate_content(
+            model=_modelo(),
+            contents=pregunta,
+            config=types.GenerateContentConfig(
+                system_instruction=SISTEMA,
+                response_mime_type="application/json",
+                response_json_schema=ESQUEMA,
+                thinking_config=types.ThinkingConfig(thinking_level=types.ThinkingLevel.LOW),
+                max_output_tokens=4000,
+            ),
         )
-        if respuesta.stop_reason != "end_turn":  # se negó ("refusal") o se quedó sin espacio ("max_tokens")
-            logger.warning("Sugerencia de cosecha: Claude terminó con %s; se usa la tabla", respuesta.stop_reason)
+        candidato = (respuesta.candidates or [None])[0]
+        motivo = candidato.finish_reason if candidato is not None else None
+        if motivo != types.FinishReason.STOP:  # bloqueada (SAFETY...), sin espacio (MAX_TOKENS) o sin respuesta
+            bloqueo = getattr(respuesta.prompt_feedback, "block_reason", None)
+            logger.warning("Sugerencia de cosecha: Gemini terminó con %s (%s); se usa la tabla", motivo, bloqueo)
             return None
-        datos = json.loads(next(b.text for b in respuesta.content if b.type == "text"))
+        datos = json.loads(respuesta.text)
         if not datos["es_cultivo"]:
             return ("no_es_cultivo",)
         dias_min, probable, dias_max = (int(datos[k]) for k in ("dias_min", "dias_probable", "dias_max"))
         explicacion = " ".join(str(datos["explicacion"]).split())[:LARGO_MAXIMO_EXPLICACION]
-    except (anthropic.APIError, StopIteration, ValueError, KeyError, TypeError) as error:
-        logger.warning("Sugerencia de cosecha: Claude no respondió bien (%s); se usa la tabla", type(error).__name__)
+    except (errores_gemini.APIError, httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        # APIError incluye el 429 de cuota gratis agotada; httpx.HTTPError, la falta de red y el tiempo agotado.
+        logger.warning("Sugerencia de cosecha: Gemini no respondió bien (%s); se usa la tabla", type(error).__name__)
         return None
 
     if not (DIAS_MINIMOS <= dias_min <= probable <= dias_max <= DIAS_MAXIMOS) or not explicacion:
@@ -198,9 +216,9 @@ def sugerir(cultivo: str, fecha_siembra: datetime, latitud: float, longitud: flo
 
     ia = _cache.get(clave)
     if ia is None:
-        cliente = _cliente_claude()
+        cliente = _cliente_ia()
         if cliente is not None and _puede_consultar(clave_productor):
-            ia = _preguntar_a_claude(cliente, cultivo, fecha_siembra, *zona)
+            ia = _preguntar_a_la_ia(cliente, cultivo, fecha_siembra, *zona)
             if ia is not None:
                 _guardar_en_cache(clave, ia)
     if ia is not None and ia[0] != "no_es_cultivo":
