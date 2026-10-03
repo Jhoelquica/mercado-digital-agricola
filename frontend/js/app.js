@@ -2707,6 +2707,7 @@ function irPasoCheckout(paso) {
 function resetCheckout() {
   irPasoCheckout(1);
   resetearBotonPago();
+  ocultarPagoPorTransferencia();
   pedidoReintento = null;
   document.querySelectorAll('input[name="metodo-pago"]').forEach((r) => { r.checked = r.value === 'tarjeta'; });
   document.querySelectorAll('.metodo-pago-card').forEach((c) => {
@@ -2740,6 +2741,7 @@ async function manejarClickPagar() {
     btn.disabled = true;
     btn.textContent = 'Enviando pedido...';
     pedidoReintento = null;
+    if (metodo === 'transferencia') { mostrarPagoPorTransferencia({ pedidoId: id, monto, envio }); return; }
     abrirCheckoutCulqi(id, monto, metodo, envio);
     return;
   }
@@ -2877,8 +2879,11 @@ async function pintarNotaEnvioCheckout(envio) {
 
 // Yape permite hasta S/ 500 por operación (el límite lo da Pagos, que también lo exige): con un total mayor la
 // opción se apaga y se dice por qué y qué usar, en vez de dejar que la pasarela lo rechace después.
-async function actualizarDisponibilidadYape(total) {
+async function actualizarMetodosDePago(total) {
   const condiciones = await obtenerCondicionesPago();
+  // La transferencia solo se ofrece si Pagos tiene una cuenta configurada.
+  const hayTransferencia = Boolean(condiciones?.transferencia);
+  document.getElementById('metodo-transferencia-card')?.classList.toggle('hidden', !hayTransferencia);
   const maximo = condiciones?.yape_maximo_por_operacion;
   const radio = document.querySelector('input[name="metodo-pago"][value="yape"]');
   const aviso = document.getElementById('metodo-pago-aviso');
@@ -2897,13 +2902,14 @@ async function actualizarDisponibilidadYape(total) {
   aviso.classList.toggle('hidden', !excede);
   aviso.innerHTML = excede
     ? `<i class="ti ti-info-circle" aria-hidden="true"></i><span>Yape permite pagar hasta ${formatearMoneda(maximo)} por operación `
-      + `(y por día, entre S/ 500 y S/ 2,000 según tu banco). Para este total de ${formatearMoneda(total)}, paga con tarjeta.</span>`
+      + `(y por día, entre S/ 500 y S/ 2,000 según tu banco). Para este total de ${formatearMoneda(total)}, paga con tarjeta`
+      + `${hayTransferencia ? ' o por transferencia bancaria' : ''}.</span>`
     : '';
 }
 
 function pintarTotalesPaso2(subtotal, envio, distanciaKm = null) {
   pintarNotaEnvioCheckout(envio);
-  actualizarDisponibilidadYape(subtotal + envio);
+  actualizarMetodosDePago(subtotal + envio);
   document.getElementById('checkout-subtotal-paso2').textContent = formatearMoneda(subtotal);
   document.getElementById('checkout-envio-etiqueta').textContent =
     Number.isFinite(distanciaKm) ? `Envío · ${distanciaKm.toFixed(1)} km` : 'Envío';
@@ -3007,10 +3013,141 @@ async function confirmarYPagar() {
       toast(`El costo de envío cambió a ${formatearMoneda(envio)}. Revisa el monto antes de pagar.`);
     }
     envioCotizado = null;
+    if (metodo === 'transferencia') { mostrarPagoPorTransferencia({ pedidoId: pedido.id, monto: subtotal + envio, envio }); return; }
     abrirCheckoutCulqi(pedido.id, subtotal + envio, metodo, envio);
   } catch (err) {
     manejarError(err, 'crear el pedido');
     resetearBotonPago();
+  }
+}
+
+// ============ PAGO POR TRANSFERENCIA BANCARIA ============
+// La alternativa a Culqi (presentación del 2026-10-01: "¿y si no pueden pagar por Yape?"): el comprador transfiere el
+// monto exacto a la cuenta de Chakra Shop y sube la foto o captura de la constancia con el número de operación. El
+// pago queda "en revisión" hasta que un admin la confirma; el pedido ya está reservado, así que puede subirla después
+// desde Mis Pedidos.
+function filaCopiable(etiqueta, valor) {
+  return `
+    <div><dt>${escapeAttr(etiqueta)}</dt>
+      <dd><span>${escapeAttr(valor)}</span>
+        <button type="button" class="btn btn-ghost btn-copiar" data-copiar="${escapeAttr(valor)}" aria-label="Copiar ${escapeAttr(etiqueta)}"><i class="ti ti-copy" aria-hidden="true"></i> Copiar</button>
+      </dd>
+    </div>`;
+}
+
+function ocultarPagoPorTransferencia() {
+  document.getElementById('checkout-transferencia')?.classList.add('hidden');
+  const confirmacion = document.getElementById('checkout-confirmacion');
+  if (confirmacion) { confirmacion.classList.remove('hidden'); confirmacion.innerHTML = ''; }
+}
+
+async function mostrarPagoPorTransferencia({ pedidoId, monto }) {
+  const condiciones = await obtenerCondicionesPago();
+  const cuenta = condiciones?.transferencia;
+  resetearBotonPago();
+  if (!cuenta) {
+    toast('El pago por transferencia no está disponible ahora. Paga tu pedido con tarjeta desde Mis Pedidos.', 'error');
+    return;
+  }
+  const idCorto = String(pedidoId).slice(0, 8);
+  const montoTexto = Number(monto).toFixed(2);
+  const panel = document.getElementById('checkout-transferencia');
+  panel.innerHTML = `
+    <span class="checkout-exito-icono es-banco"><i class="ti ti-building-bank" aria-hidden="true"></i></span>
+    <h3>Transfiere y sube tu constancia</h3>
+    <p>Tu pedido <strong>#${idCorto}</strong> ya está reservado. Transfiere el monto exacto a esta cuenta:</p>
+    <div class="transferencia-monto">
+      <span>Monto exacto a transferir</span>
+      <strong>${formatearMoneda(monto)}</strong>
+      <button type="button" class="btn btn-ghost btn-copiar" data-copiar="${montoTexto}" aria-label="Copiar el monto"><i class="ti ti-copy" aria-hidden="true"></i> Copiar</button>
+    </div>
+    <dl class="transferencia-cuenta">
+      <div><dt>Banco</dt><dd><span>${escapeAttr(cuenta.banco)}</span></dd></div>
+      <div><dt>Titular</dt><dd><span>${escapeAttr(cuenta.titular)}</span></dd></div>
+      ${filaCopiable('Número de cuenta', cuenta.cuenta)}
+      ${filaCopiable('CCI (desde otro banco)', cuenta.cci)}
+    </dl>
+    <form class="form-transferencia" data-pedido-id="${escapeAttr(pedidoId)}" novalidate>
+      <div class="foto-entrega" data-estado="vacia">
+        <span class="foto-entrega-titulo" id="foto-titulo-constancia">Foto o captura de la constancia</span>
+        <input class="foto-entrega-input" id="foto-constancia" type="file" name="foto" accept="image/jpeg,image/png,image/webp" aria-labelledby="foto-titulo-constancia" aria-describedby="foto-ayuda-constancia">
+        <label class="foto-entrega-zona" for="foto-constancia">
+          <span class="foto-entrega-icono"><i class="ti ti-receipt" aria-hidden="true"></i></span>
+          <span class="foto-entrega-texto"><strong>Elegir la constancia</strong><small>Captura del app del banco o foto del voucher · máx. 5 MB</small></span>
+        </label>
+        <div class="foto-entrega-previa">
+          <img alt="Vista previa de la constancia">
+          <div class="foto-entrega-datos"><strong class="foto-nombre"></strong><small class="foto-peso"></small></div>
+          <div class="foto-entrega-botones">
+            <button type="button" class="btn btn-ghost btn-sm foto-cambiar"><i class="ti ti-refresh" aria-hidden="true"></i> Cambiar</button>
+            <button type="button" class="btn btn-ghost btn-sm foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
+          </div>
+        </div>
+        <p class="foto-entrega-ayuda" id="foto-ayuda-constancia" role="status" aria-live="polite"></p>
+      </div>
+      <label class="transferencia-operacion" for="numero-operacion">Número de operación
+        <input type="text" id="numero-operacion" name="numero_operacion" maxlength="30" autocomplete="off" inputmode="text"
+          placeholder="Está en tu constancia, p. ej. 12345678" aria-describedby="numero-operacion-ayuda">
+        <small id="numero-operacion-ayuda">De 4 a 30 letras o números, sin espacios.</small>
+      </label>
+      <p class="form-entrega-mensaje hidden" role="alert"></p>
+      <button type="submit" class="btn btn-primary btn-block">Enviar constancia</button>
+      <p class="transferencia-despues"><i class="ti ti-clock" aria-hidden="true"></i> ¿La harás después? Tu pedido queda reservado: sube la constancia desde Mis Pedidos.</p>
+    </form>`;
+  panel.classList.remove('hidden');
+  document.getElementById('checkout-confirmacion').classList.add('hidden');
+  irPasoCheckout(3);
+}
+
+async function enviarConstanciaTransferencia(form) {
+  const pedidoId = form.dataset.pedidoId;
+  const contenedorFoto = form.querySelector('.foto-entrega');
+  const archivo = form.querySelector('.foto-entrega-input').files[0];
+  const numero = form.numero_operacion.value.trim();
+  const mensaje = form.querySelector('.form-entrega-mensaje');
+  mensaje.classList.add('hidden');
+  if (!archivo) {
+    pintarFotoEntrega(contenedorFoto, 'error', { mensaje: 'Falta la foto o captura de la constancia.' });
+    form.querySelector('.foto-entrega-input').focus();
+    return;
+  }
+  if (!/^[A-Za-z0-9-]{4,30}$/.test(numero)) {
+    mostrarMensajeEntrega(form, 'Escribe el número de operación tal como aparece en tu constancia (de 4 a 30 letras o números, sin espacios).', 'error');
+    form.numero_operacion.focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  boton.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Enviando la constancia…';
+  try {
+    await Api.pagos.enviarTransferencia(pedidoId, numero, archivo);
+  } catch (err) {
+    console.error('enviar la constancia', err);
+    mostrarMensajeEntrega(form, err.message || 'No se pudo enviar la constancia. Intenta de nuevo.', 'error');
+    boton.disabled = false;
+    boton.textContent = 'Enviar constancia';
+    return;
+  }
+  document.getElementById('checkout-transferencia').classList.add('hidden');
+  const confirmacion = document.getElementById('checkout-confirmacion');
+  confirmacion.classList.remove('hidden');
+  confirmacion.innerHTML = `
+    <span class="checkout-exito-icono"><i class="ti ti-receipt" aria-hidden="true"></i></span>
+    <h3>¡Recibimos tu constancia!</h3>
+    <p>Tu pedido <strong>#${String(pedidoId).slice(0, 8)}</strong> queda reservado mientras revisamos tu transferencia (operación ${escapeAttr(numero)}).</p>
+    <ol class="checkout-siguientes">
+      <li><i class="ti ti-building-bank" aria-hidden="true"></i><div><strong>Revisamos que llegó el dinero</strong><span>Normalmente en unas horas. Te avisamos en Notificaciones.</span></div></li>
+      <li><i class="ti ti-truck-delivery" aria-hidden="true"></i><div><strong>Un repartidor lleva tu pedido</strong><span>Te llamará al teléfono que indicaste para coordinar.</span></div></li>
+      <li><i class="ti ti-key" aria-hidden="true"></i><div><strong>Confirma la entrega con tu código</strong><span>Lo verás en Mis Pedidos cuando el pedido salga.</span></div></li>
+    </ol>`;
+}
+
+async function copiarAlPortapapeles(valor) {
+  try {
+    await navigator.clipboard.writeText(valor);
+    toast(`Copiado: ${valor}`);
+  } catch {
+    toast('No se pudo copiar. Selecciónalo y cópialo a mano.', 'error');
   }
 }
 
@@ -3472,6 +3609,16 @@ function pagoConfirmadoPedido(d) {
   return d.pago?.estado === 'aprobado' || ['confirmado', 'entregado'].includes(d.pedido.estado) || esPedidoEntregado(d);
 }
 
+const ETIQUETAS_ESTADO_PAGO = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado' };
+const ETIQUETAS_METODO_PAGO = { tarjeta: 'tarjeta', yape: 'Yape', transferencia: 'transferencia' };
+
+function textoEstadoPago(pago) {
+  if (!pago) return '—';
+  const estado = ETIQUETAS_ESTADO_PAGO[pago.estado] || pago.estado;
+  // El método solo se sabe cuando hubo un intento (un pago pendiente todavía no tiene uno elegido).
+  return pago.estado === 'pendiente' ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
+}
+
 function pagoRechazadoPedido(d) {
   return d.pago?.estado === 'rechazado' && !pagoConfirmadoPedido(d);
 }
@@ -3481,8 +3628,11 @@ function pagoRechazadoPedido(d) {
 function estadoGeneralPedido(d) {
   const { pedido, envio } = d;
   if (esPedidoEntregado(d)) return { clave: 'entregado', etiqueta: 'Entregado', icono: 'circle-check', pill: 'entregado' };
-  if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
+  // Una transferencia en revisión puede ser el reintento de un pago rechazado (pedido "cancelado" hasta que se apruebe).
+  if (d.pago?.estado === 'en_revision') return { clave: 'pendiente', etiqueta: 'Transferencia en revisión', icono: 'building-bank', pill: 'pendiente' };
+  // Pedidos solo cancela un pedido cuando su pago se rechaza, y ese pago se puede reintentar: "Pago rechazado" lo dice mejor.
   if (pagoRechazadoPedido(d)) return { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
+  if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
   if (envio?.estado === 'en_camino') return { clave: 'en_curso', etiqueta: 'En camino', icono: 'truck', pill: 'en_camino' };
   if (envio?.estado === 'asignado') return { clave: 'en_curso', etiqueta: 'Repartidor asignado', icono: 'user-check', pill: 'asignado' };
   if (envio?.estado === 'propuesto') return { clave: 'en_curso', etiqueta: 'Esperando repartidor', icono: 'hourglass', pill: 'propuesto' };
@@ -3497,14 +3647,17 @@ function pasosPedido(d) {
   const { pedido, envio } = d;
   const entregado = esPedidoEntregado(d);
   const pagoOk = pagoConfirmadoPedido(d);
-  const pagoMal = !pagoOk && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado');
+  // Una transferencia en revisión no es un fallo, aunque sea el reintento de un pedido que quedó cancelado.
+  const enRevision = d.pago?.estado === 'en_revision';
+  const pagoMal = !pagoOk && !enRevision && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado');
   const enCamino = envio?.estado === 'en_camino' || entregado;
 
   const pasos = [
     { icono: 'receipt', titulo: 'Pedido', hecho: true, detalle: 'Realizado' },
     {
       icono: 'credit-card', titulo: 'Pago', hecho: pagoOk, error: pagoMal,
-      detalle: pagoOk ? 'Confirmado' : pagoMal ? (pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
+      detalle: pagoOk ? 'Confirmado' : enRevision ? 'En revisión'
+        : pagoMal ? (pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
     },
     {
       icono: 'truck', titulo: 'En camino', hecho: enCamino,
@@ -3605,15 +3758,33 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
     <dl class="mp-kv">
       ${pedido.comprador_nombre ? `<div><dt><i class="ti ti-user"></i> Recibe</dt><dd>${escapeAttr(pedido.comprador_nombre)}</dd></div>` : ''}
       ${pedido.comprador_telefono ? `<div><dt><i class="ti ti-phone"></i> Teléfono</dt><dd>${escapeAttr(formatearTelefono(pedido.comprador_telefono))}</dd></div>` : ''}
-      <div><dt><i class="ti ti-credit-card"></i> Pago</dt><dd class="mp-kv-capital">${escapeAttr(pago?.estado || '—')}</dd></div>
+      <div><dt><i class="ti ti-credit-card"></i> Pago</dt><dd>${escapeAttr(textoEstadoPago(pago))}</dd></div>
     </dl>`;
 
-  const alertaPago = pagoRechazadoPedido(d) ? `
+  const botonPagar = (texto) => `<button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}" data-envio="${costoEnvio}">${texto}</button>`;
+  let alertaPago = '';
+  if (pagoRechazadoPedido(d)) {
+    const motivo = pago?.motivo_rechazo ? `Motivo: ${escapeAttr(pago.motivo_rechazo.replace(/[.\s]+$/, ''))}. ` : '';
+    alertaPago = `
     <div class="mp-alerta" role="alert">
       <i class="ti ti-alert-triangle"></i>
-      <div><strong>Tu pago fue rechazado</strong><span>Puedes volver a intentarlo sin perder tu pedido.</span></div>
-      <button type="button" class="btn btn-primary btn-reintentar-pago" data-pedido-id="${pedido.id}" data-monto="${total}" data-envio="${costoEnvio}">Reintentar pago</button>
-    </div>` : '';
+      <div><strong>${pago?.metodo === 'transferencia' ? 'Tu transferencia no se aprobó' : 'Tu pago fue rechazado'}</strong><span>${motivo}Puedes volver a pagar sin perder tu pedido.</span></div>
+      ${botonPagar('Reintentar pago')}
+    </div>`;
+  } else if (pago?.estado === 'en_revision') {
+    alertaPago = `
+    <div class="mp-alerta mp-alerta-info" role="status">
+      <i class="ti ti-building-bank"></i>
+      <div><strong>Estamos revisando tu transferencia</strong><span>Operación ${escapeAttr(pago.numero_operacion || '—')}. Cuando confirmemos que llegó el dinero, tu pedido sale a reparto.</span></div>
+    </div>`;
+  } else if (pago?.estado === 'pendiente' && pedido.estado === 'pendiente') {
+    alertaPago = `
+    <div class="mp-alerta mp-alerta-info" role="status">
+      <i class="ti ti-wallet"></i>
+      <div><strong>Falta pagar este pedido</strong><span>Está reservado: págalo con tarjeta, Yape o transferencia.</span></div>
+      ${botonPagar('Pagar ahora')}
+    </div>`;
+  }
 
   const pin = activo && envio.pin_entrega ? renderPinEntrega(envio.pin_entrega) : '';
 
@@ -5749,7 +5920,7 @@ async function iniciarPanelAdmin() {
   }
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
-  await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin()]);
+  await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -5880,12 +6051,13 @@ function refrescarResumenAdmin() {
     productosTransitoActualesAdmin.length,
     enviosPorCapacidadActualesAdmin.length,
     productoresAdmin.length,
+    transferenciasActualesAdmin.length,
   );
   animarContadoresResumen(document.getElementById('admin-resumen'));
 }
 
 // ---- Resumen / dashboard de "Panel Admin": lo que espera una acción del admin, primero. ----
-function renderResumenAdmin(totalProductosTransito = 0, totalPendientesPorCapacidad = 0, totalProductores = 0) {
+function renderResumenAdmin(totalProductosTransito = 0, totalPendientesPorCapacidad = 0, totalProductores = 0, totalTransferencias = 0) {
   const plural = (n, singular, varios) => `${n === 1 ? singular : varios}`;
   return `
     <div class="card-panel resumen-panel">
@@ -5912,6 +6084,11 @@ function renderResumenAdmin(totalProductosTransito = 0, totalPendientesPorCapaci
           </div>
         </div>
       </div>
+      ${totalTransferencias ? `
+      <div class="resumen-destacado resumen-destacado-urgente resumen-destacado-clicable" id="btn-resumen-transferencias" role="button" tabindex="0">
+        <i class="ti ti-building-bank"></i>
+        ${totalTransferencias} ${plural(totalTransferencias, 'transferencia espera', 'transferencias esperan')} tu revisión: hasta entonces el pedido no sale a reparto
+      </div>` : ''}
       ${totalProductosTransito ? `
       <div class="resumen-destacado resumen-destacado-clicable" id="btn-resumen-transito" role="button" tabindex="0">
         <i class="ti ti-scale"></i>
@@ -5926,6 +6103,113 @@ function renderResumenAdmin(totalProductosTransito = 0, totalPendientesPorCapaci
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-ir-transito"><i class="ti ti-building-warehouse"></i> Confirmar llegadas al almacén</button>
       </div>
     </div>`;
+}
+
+// ---- Transferencias bancarias por revisar (ver "PAGO POR TRANSFERENCIA BANCARIA") ----
+let transferenciasActualesAdmin = [];
+
+function renderTarjetaTransferencia(t, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  const id = escapeAttr(t.pedido_id);
+  return `
+    <div class="pedido-card transferencia-card" style="animation-delay:${retraso}ms" data-pedido-id="${id}">
+      <div class="pedido-card-header">
+        <h4>Pedido #${escapeAttr(String(t.pedido_id).slice(0, 8))}</h4>
+        <span class="pill pill-estado pill-pendiente"><i class="ti ti-hourglass"></i> En revisión</span>
+      </div>
+      <div class="transferencia-card-monto"><span>Monto del pedido</span><strong>${formatearMoneda(t.monto)}</strong></div>
+      <div class="perfil-datos-grid">
+        <div class="perfil-dato"><span class="perfil-dato-label">N.º de operación</span><span class="perfil-dato-valor perfil-dato-mono">${escapeAttr(t.numero_operacion || '—')}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">Enviada</span><span class="perfil-dato-valor">${formatearFechaServidor(t.fecha_constancia)}</span></div>
+      </div>
+      <button type="button" class="btn btn-outline btn-ver-constancia" aria-expanded="false"><i class="ti ti-receipt" aria-hidden="true"></i> Ver constancia</button>
+      <div class="transferencia-constancia hidden"></div>
+      <div class="tarjeta-acciones transferencia-acciones">
+        <button type="button" class="btn btn-outline btn-rechazar-transferencia"><i class="ti ti-x" aria-hidden="true"></i> Rechazar</button>
+        <button type="button" class="btn btn-primary btn-aprobar-transferencia"><i class="ti ti-check" aria-hidden="true"></i> Aprobar</button>
+      </div>
+      <div class="transferencia-confirmar hidden" role="group" aria-label="Confirmar aprobación">
+        <p><i class="ti ti-alert-circle" aria-hidden="true"></i> ¿Ya verificaste en el banco que llegaron ${formatearMoneda(t.monto)} con la operación ${escapeAttr(t.numero_operacion || '—')}? Al aprobar, el pedido sale a reparto.</p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-confirmar-aprobacion">Sí, aprobar</button>
+        </div>
+      </div>
+      <form class="form-rechazar-transferencia hidden" novalidate>
+        <label>Motivo del rechazo (lo verá el comprador)
+          <textarea name="motivo" rows="3" maxlength="300" required placeholder="Ej. El monto transferido no coincide con el total del pedido."></textarea>
+        </label>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="submit" class="btn btn-danger">Rechazar transferencia</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+async function cargarTransferenciasAdmin() {
+  const cont = document.getElementById('transferencias-lista');
+  const vacio = document.getElementById('transferencias-empty');
+  const badge = document.getElementById('admin-transferencias-total');
+  cont.innerHTML = renderSkeletonFilas(1);
+  try {
+    transferenciasActualesAdmin = await Api.pagos.admin.transferencias();
+  } catch (err) {
+    transferenciasActualesAdmin = [];
+    cont.innerHTML = '';
+    manejarError(err, 'cargar las transferencias');
+    return;
+  }
+  cont.innerHTML = transferenciasActualesAdmin.map(renderTarjetaTransferencia).join('');
+  vacio.classList.toggle('hidden', transferenciasActualesAdmin.length > 0);
+  badge.textContent = transferenciasActualesAdmin.length;
+  badge.classList.toggle('hidden', !transferenciasActualesAdmin.length);
+  refrescarResumenAdmin();
+}
+
+async function verConstanciaTransferencia(tarjeta, boton) {
+  const caja = tarjeta.querySelector('.transferencia-constancia');
+  const abrir = caja.classList.contains('hidden');
+  caja.classList.toggle('hidden', !abrir);
+  boton.setAttribute('aria-expanded', String(abrir));
+  if (!abrir || caja.dataset.cargada) return;
+  caja.innerHTML = '<p class="muted"><i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Cargando la constancia…</p>';
+  try {
+    const blob = await Api.pagos.admin.constancia(tarjeta.dataset.pedidoId);
+    const url = URL.createObjectURL(blob);
+    caja.innerHTML = `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="Constancia de la transferencia del pedido #${escapeAttr(String(tarjeta.dataset.pedidoId).slice(0, 8))}"></a>`;
+    caja.dataset.cargada = '1';
+  } catch (err) {
+    caja.innerHTML = `<p class="form-entrega-mensaje error"><i class="ti ti-alert-circle"></i><span>${escapeAttr(err.message || 'No se pudo cargar la constancia.')}</span></p>`;
+  }
+}
+
+function mostrarPasoRevision(tarjeta, cual) {
+  tarjeta.querySelector('.transferencia-acciones').classList.toggle('hidden', cual !== 'acciones');
+  tarjeta.querySelector('.transferencia-confirmar').classList.toggle('hidden', cual !== 'aprobar');
+  tarjeta.querySelector('.form-rechazar-transferencia').classList.toggle('hidden', cual !== 'rechazar');
+  if (cual === 'rechazar') tarjeta.querySelector('textarea').focus();
+  if (cual === 'aprobar') tarjeta.querySelector('.btn-confirmar-aprobacion').focus();
+}
+
+async function decidirTransferencia(tarjeta, accion, motivo) {
+  const pedidoId = tarjeta.dataset.pedidoId;
+  tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    if (accion === 'aprobar') {
+      await Api.pagos.admin.aprobar(pedidoId);
+      toast('Transferencia aprobada: el pedido sale a reparto 🚚');
+    } else {
+      await Api.pagos.admin.rechazar(pedidoId, motivo);
+      toast('Transferencia rechazada: se devolvió el stock y el comprador verá el motivo.');
+    }
+  } catch (err) {
+    tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    manejarError(err, accion === 'aprobar' ? 'aprobar la transferencia' : 'rechazar la transferencia');
+    if (err.status !== 409) return; // 409: otro admin ya la revisó → se recarga la lista igual
+  }
+  await cargarTransferenciasAdmin();
 }
 
 // ---- Pedidos esperando vehículo con más capacidad (caso poco frecuente: motivo_pendiente ==
@@ -7591,6 +7875,24 @@ function inicializarEventos() {
   document.getElementById('btn-checkout-paso1-siguiente').addEventListener('click', irAPaso2);
   document.getElementById('btn-checkout-paso2-volver').addEventListener('click', () => irPasoCheckout(1));
   document.getElementById('btn-checkout-pagar').addEventListener('click', manejarClickPagar);
+  const panelTransferencia = document.getElementById('checkout-transferencia');
+  panelTransferencia.addEventListener('click', (e) => {
+    const copiar = e.target.closest('.btn-copiar');
+    if (copiar) { copiarAlPortapapeles(copiar.dataset.copiar); return; }
+    const quitar = e.target.closest('.foto-quitar');
+    if (quitar) { quitarFotoEntrega(quitar.closest('.foto-entrega')); return; }
+    const cambiar = e.target.closest('.foto-cambiar');
+    if (cambiar) cambiar.closest('.foto-entrega').querySelector('.foto-entrega-input').click();
+  });
+  panelTransferencia.addEventListener('change', (e) => {
+    if (e.target.matches('.foto-entrega-input')) alElegirFotoEntrega(e.target);
+  });
+  panelTransferencia.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-transferencia');
+    if (!form) return;
+    e.preventDefault();
+    enviarConstanciaTransferencia(form);
+  });
   document.getElementById('btn-checkout-finalizar').addEventListener('click', () => {
     cerrarModal('modal-pedido');
     resetCheckout();
@@ -7859,10 +8161,39 @@ function inicializarEventos() {
     if (e.target.closest('#btn-resumen-pendientes-capacidad')) {
       if (e.type === 'keydown') e.preventDefault();
       activarTabAdmin('capacidad');
+      return;
+    }
+    if (e.target.closest('#btn-resumen-transferencias')) {
+      if (e.type === 'keydown') e.preventDefault();
+      activarTabAdmin('transferencias');
     }
   };
   document.getElementById('admin-resumen').addEventListener('click', irDesdeResumenAdmin);
   document.getElementById('admin-resumen').addEventListener('keydown', irDesdeResumenAdmin);
+  document.getElementById('btn-refrescar-transferencias').addEventListener('click', cargarTransferenciasAdmin);
+  const listaTransferencias = document.getElementById('transferencias-lista');
+  listaTransferencias.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.transferencia-card');
+    if (!tarjeta) return;
+    const ver = e.target.closest('.btn-ver-constancia');
+    if (ver) { verConstanciaTransferencia(tarjeta, ver); return; }
+    if (e.target.closest('.btn-aprobar-transferencia')) { mostrarPasoRevision(tarjeta, 'aprobar'); return; }
+    if (e.target.closest('.btn-rechazar-transferencia')) { mostrarPasoRevision(tarjeta, 'rechazar'); return; }
+    if (e.target.closest('.btn-cancelar-revision')) { mostrarPasoRevision(tarjeta, 'acciones'); return; }
+    if (e.target.closest('.btn-confirmar-aprobacion')) decidirTransferencia(tarjeta, 'aprobar');
+  });
+  listaTransferencias.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-rechazar-transferencia');
+    if (!form) return;
+    e.preventDefault();
+    const motivo = form.motivo.value.trim();
+    if (motivo.length < 3) {
+      mostrarMensajeEntrega(form, 'Escribe el motivo: el comprador lo va a leer para corregir su pago.', 'error');
+      form.motivo.focus();
+      return;
+    }
+    decidirTransferencia(form.closest('.transferencia-card'), 'rechazar', motivo);
+  });
   document.getElementById('btn-refrescar-productores').addEventListener('click', cargarProductoresAdmin);
   document.getElementById('admin-productores-buscar').addEventListener('input', pintarProductoresAdmin);
   document.getElementById('btn-refrescar-productos-transito').addEventListener('click', cargarProductosEnTransito);

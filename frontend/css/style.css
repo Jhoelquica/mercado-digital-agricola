@@ -2813,9 +2813,10 @@ input, select { font-family: inherit; }
 .checkout-recap-reintento i { font-size: 1.4rem; }
 .checkout-actions { display: flex; flex-direction: column; gap: 10px; }
 
-.metodo-pago-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 0; }
+/* Una opción por fila: con tres métodos (y sus descripciones) en columnas el texto se partía palabra por palabra. */
+.metodo-pago-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 0; }
 .metodo-pago-card {
-  position: relative; display: flex; flex-direction: row; align-items: center; gap: 16px; padding: 22px;
+  position: relative; display: flex; flex-direction: row; align-items: center; gap: 16px; padding: 16px 20px;
   background: white; border: 2px solid var(--borde); border-radius: 20px; cursor: pointer;
   transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
@@ -2857,6 +2858,7 @@ input, select { font-family: inherit; }
   box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-primario) 12%, transparent);
   animation: checkoutPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
+.checkout-exito-icono.es-banco { background: var(--acento-cosecha); box-shadow: 0 0 0 8px color-mix(in srgb, var(--acento-cosecha) 14%, transparent); }
 .checkout-exito-icono.es-alerta { background: var(--acento-cosecha); box-shadow: 0 0 0 8px color-mix(in srgb, var(--acento-cosecha) 14%, transparent); }
 @keyframes checkoutPop { from { transform: scale(0.4); opacity: 0; } to { transform: none; opacity: 1; } }
 .checkout-confirmacion h3 { margin-bottom: 6px; font-size: 1.85rem; }
@@ -3797,6 +3799,8 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 .mp-alerta > div { flex: 1 1 200px; display: flex; flex-direction: column; gap: 2px; }
 .mp-alerta span { font-size: 0.9rem; }
 .mp-alerta .btn { min-height: 46px; padding: 10px 22px; margin-left: 0; }
+/* Aviso informativo (transferencia en revisión, falta pagar): mismo formato que el de error, en dorado y sin alarma. */
+.mp-alerta.mp-alerta-info { background: var(--acento-cosecha-suave); border-color: #e6d3a3; color: var(--acento-cosecha-texto); }
 
 /* ---- Código de entrega (PIN) ---- */
 .mp-pin {
@@ -4845,3 +4849,52 @@ body.asistente-abierto { overflow: hidden; }
 .siembra-cta p { margin: 0; font-size: 1rem; line-height: 1.55; color: var(--texto); }
 .siembra-cta-voz { display: flex; align-items: center; gap: 8px; font-size: 0.95rem; font-weight: 700; color: var(--acento-cosecha-texto); }
 .siembra-cta .btn { min-height: 60px; font-size: 1.15rem; border-radius: 16px; display: inline-flex; align-items: center; justify-content: center; gap: 10px; }
+
+/* ---------- Pago por transferencia bancaria (checkout, paso 3) ----------
+   El monto exacto destacado y cada dato de la cuenta con su botón "Copiar" (44px, con aviso al copiar); la constancia
+   usa el mismo selector de foto que la entrega del repartidor, y el número de operación tiene su ayuda visible. */
+.checkout-confirmacion.transferencia { text-align: left; }
+.checkout-confirmacion.transferencia > h3, .checkout-confirmacion.transferencia > p { text-align: center; }
+.transferencia-monto {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px 14px; margin: 16px auto;
+  padding: 14px 20px; border-radius: 18px; background: var(--color-superficie); width: fit-content; max-width: 100%;
+}
+.transferencia-monto span { font-size: 0.9rem; color: var(--texto-suave); }
+.transferencia-monto strong { font-family: var(--font-titulo); font-size: 1.9rem; color: var(--color-primario); font-variant-numeric: tabular-nums; }
+.transferencia-cuenta { display: flex; flex-direction: column; gap: 10px; margin: 0 0 18px; padding: 0; }
+.transferencia-cuenta > div {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border: 1px solid var(--borde); border-radius: 14px; background: #fff;
+}
+.transferencia-cuenta dt { font-size: 0.85rem; font-weight: 700; color: var(--texto-suave); }
+.transferencia-cuenta dd { display: flex; align-items: center; gap: 10px; margin: 0; font-weight: 700; color: var(--texto); overflow-wrap: anywhere; }
+.transferencia-cuenta dd span { font-variant-numeric: tabular-nums; }
+.btn-copiar { min-height: 44px; padding: 6px 12px; display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.form-transferencia { display: flex; flex-direction: column; gap: 14px; padding-top: 16px; border-top: 1px solid var(--borde); }
+.form-transferencia .foto-entrega { flex: none; }
+.form-transferencia .foto-entrega-zona {
+  display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 12px 16px;
+  border: 2px dashed #b9c8bd; border-radius: 14px; background: #fff; cursor: pointer;
+}
+.form-transferencia .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
+.transferencia-operacion { display: flex; flex-direction: column; gap: 6px; font-weight: 700; color: var(--texto); }
+.transferencia-operacion input { min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1.5px solid var(--borde); font-size: 1rem; }
+.transferencia-operacion small { font-weight: 500; font-size: 0.82rem; color: var(--texto-suave); }
+.transferencia-despues { display: flex; align-items: flex-start; gap: 8px; margin: 0; font-size: 0.88rem; color: var(--texto-suave); }
+
+/* ---------- Panel admin: transferencias por revisar ----------
+   Tarjeta de aprobación: lo que se pide (monto, operación, fecha), la evidencia (la constancia, a pedido) y las dos
+   salidas. Aprobar pide una confirmación en la misma tarjeta; rechazar exige el motivo que verá el comprador. */
+.admin-nota { margin: -4px 0 16px; max-width: 760px; }
+.transferencia-card { display: flex; flex-direction: column; gap: 12px; }
+.transferencia-card-monto { display: flex; flex-direction: column; gap: 2px; }
+.transferencia-card-monto span { font-size: 0.8rem; font-weight: 700; color: var(--texto-suave); text-transform: uppercase; letter-spacing: 0.04em; }
+.transferencia-card-monto strong { font-family: var(--font-titulo); font-size: 1.6rem; color: var(--color-primario); font-variant-numeric: tabular-nums; }
+.transferencia-card .btn-ver-constancia { align-self: flex-start; min-height: 44px; margin: 0; }
+.transferencia-constancia img { display: block; width: 100%; max-height: 420px; object-fit: contain; border-radius: 12px; border: 1px solid var(--borde); background: #f6f7f4; }
+.transferencia-confirmar { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--acento-cosecha-suave); }
+.transferencia-confirmar p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--acento-cosecha-texto); line-height: 1.45; }
+.form-rechazar-transferencia { display: flex; flex-direction: column; gap: 10px; }
+.form-rechazar-transferencia label { display: flex; flex-direction: column; gap: 6px; font-size: 0.88rem; font-weight: 700; color: var(--texto); }
+.form-rechazar-transferencia textarea { padding: 10px 12px; border-radius: 12px; border: 1.5px solid var(--borde); font: inherit; font-weight: 400; resize: vertical; }
+.transferencia-card .tarjeta-acciones .btn { min-height: 44px; }

@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=bb67d1c4">
+<link rel="stylesheet" href="css/style.css?v=0f77aaed">
 </head>
 <body>
 
@@ -660,6 +660,7 @@
     <div class="admin-shell">
       <nav class="admin-tabs" aria-label="Secciones del panel">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
+        <button type="button" class="admin-tab-btn" data-admintab="transferencias"><i class="ti ti-building-bank"></i> Transferencias <span id="admin-transferencias-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
         <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
@@ -693,6 +694,20 @@
           <span class="empty-state-icon"><i class="ti ti-tractor"></i></span>
           <p><strong>No hay productores para mostrar</strong></p>
           <p class="muted">Cuando alguien complete su perfil de productor, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="transferencias">
+        <div class="section-header inner">
+          <h3><i class="ti ti-building-bank"></i> Transferencias por revisar</h3>
+          <button class="btn btn-outline" id="btn-refrescar-transferencias">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Antes de aprobar, revisa en el banco que el dinero llegó, con el número de operación y el monto. Al aprobar, el pedido se confirma y sale a reparto; al rechazar, se devuelve el stock y el comprador ve el motivo.</p>
+        <div id="transferencias-lista" class="grid-admin"></div>
+        <div id="transferencias-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-building-bank"></i></span>
+          <p><strong>No hay transferencias por revisar</strong></p>
+          <p class="muted">Cuando un comprador suba la constancia de su transferencia, aparece acá.</p>
         </div>
       </div>
 
@@ -954,7 +969,7 @@
           <div class="checkout-principal">
             <section class="checkout-bloque">
               <h3><i class="ti ti-credit-card"></i> Método de pago</h3>
-              <p class="muted">El cobro se procesa de forma segura con Culqi.</p>
+              <p class="muted">Tarjeta y Yape se cobran de forma segura con Culqi; la transferencia la confirma Chakra Shop.</p>
               <div class="metodo-pago-grid" role="radiogroup" aria-label="Método de pago">
                 <label class="metodo-pago-card seleccionado">
                   <input type="radio" name="metodo-pago" value="tarjeta" checked>
@@ -966,6 +981,13 @@
                   <input type="radio" name="metodo-pago" value="yape">
                   <span class="metodo-pago-icon"><i class="ti ti-device-mobile"></i></span>
                   <span class="metodo-pago-texto"><span class="metodo-pago-nombre">Yape</span><small id="metodo-yape-detalle">Paga desde tu celular</small></span>
+                  <span class="metodo-pago-check" aria-hidden="true"><i class="ti ti-check"></i></span>
+                </label>
+                <!-- Se muestra solo si Pagos tiene una cuenta configurada (GET /pagos/condiciones). -->
+                <label class="metodo-pago-card hidden" id="metodo-transferencia-card">
+                  <input type="radio" name="metodo-pago" value="transferencia">
+                  <span class="metodo-pago-icon"><i class="ti ti-building-bank"></i></span>
+                  <span class="metodo-pago-texto"><span class="metodo-pago-nombre">Transferencia</span><small>Cualquier monto · se confirma en horas</small></span>
                   <span class="metodo-pago-check" aria-hidden="true"><i class="ti ti-check"></i></span>
                 </label>
               </div>
@@ -1005,6 +1027,8 @@
       <!-- PASO 3: CONFIRMACIÓN -->
       <div class="checkout-panel" id="checkout-panel-3">
         <div class="checkout-final">
+          <!-- Pago por transferencia: los datos de la cuenta y el formulario de la constancia (los pinta app.js). -->
+          <div id="checkout-transferencia" class="checkout-confirmacion transferencia hidden"></div>
           <div id="checkout-confirmacion" class="checkout-confirmacion" role="status" aria-live="polite"></div>
           <button type="button" class="btn btn-primary btn-block" id="btn-checkout-finalizar">Ver mis pedidos</button>
         </div>
@@ -1058,8 +1082,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=2a1c9c5d"></script>
+<script src="js/api.js?v=f926c46d"></script>
 <script src="js/asistente.js?v=5a9e1b24"></script>
-<script src="js/app.js?v=f6c79cbd"></script>
+<script src="js/app.js?v=01730789"></script>
 </body>
 </html>

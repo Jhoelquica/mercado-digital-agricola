@@ -186,6 +186,29 @@ async function requestFormData(baseKey, path, formData) {
   return data;
 }
 
+// Un archivo protegido (la constancia de una transferencia, que solo ve el admin): se pide con el token y se devuelve
+// como Blob para mostrarlo con URL.createObjectURL, sin exponer el almacenamiento.
+async function requestBlob(baseKey, path) {
+  const token = Estado.token;
+  if (!token) throw new ApiError('Debes iniciar sesión para continuar.', 401);
+  let resp;
+  try {
+    resp = await fetch(`${API_BASE[baseKey]}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  } catch (err) {
+    throw new ApiError(`No se pudo conectar con el servicio de ${baseKey}. ¿Está corriendo?`, 0);
+  }
+  if (!resp.ok) {
+    if (resp.status === 401) {
+      if (alExpirarSesion) alExpirarSesion(token);
+      throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
+    }
+    let detalle = null;
+    try { detalle = (await resp.json()).detail; } catch { /* sin cuerpo JSON */ }
+    throw new ApiError(detalle ? mensajeDeDetalle(detalle) : `Error ${resp.status} en ${baseKey}`, resp.status);
+  }
+  return resp.blob();
+}
+
 const Api = {
   usuarios: {
     registrar: (datos) => request('usuarios', '/usuarios/registro', { method: 'POST', body: datos }),
@@ -301,8 +324,22 @@ const Api = {
   pagos: {
     procesar: (datos) => request('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
     obtener: (pedidoId) => request('pagos', `/pagos/${pedidoId}`, { auth: true }),
-    // Público: la comisión de la plataforma (y lo demás que el comprador y el repartidor ven sobre el dinero).
+    // Público: la comisión de la plataforma, el límite de Yape y la cuenta para transferir (null si no hay).
     condiciones: () => request('pagos', '/pagos/condiciones'),
+    // El comprador sube la constancia de su transferencia: el pago queda "en revisión" hasta que un admin la revisa.
+    enviarTransferencia: (pedidoId, numeroOperacion, archivo) => {
+      const formData = new FormData();
+      formData.append('pedido_id', pedidoId);
+      formData.append('numero_operacion', numeroOperacion);
+      formData.append('archivo', archivo);
+      return requestFormData('pagos', '/pagos/transferencia', formData);
+    },
+    admin: {
+      transferencias: () => request('pagos', '/pagos/admin/transferencias', { auth: true }),
+      constancia: (pedidoId) => requestBlob('pagos', `/pagos/admin/transferencias/${pedidoId}/constancia`),
+      aprobar: (pedidoId) => request('pagos', `/pagos/admin/transferencias/${pedidoId}/aprobar`, { method: 'POST', auth: true }),
+      rechazar: (pedidoId, motivo) => request('pagos', `/pagos/admin/transferencias/${pedidoId}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
+    },
   },
   certificacion: {
     verificar: (productoId) => request('certificacion', `/certificacion/${productoId}/verificar`),
