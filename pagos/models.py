@@ -28,6 +28,16 @@ class Pago(Base):
     motivo_rechazo = Column(String, nullable=True)
     revisado_por = Column(UUID(as_uuid=True), nullable=True)  # el admin que la aprobó o rechazó
     fecha_revision = Column(DateTime, nullable=True)
+    # ---- Pedidos en camión (compradores lejanos, decisión del usuario 2026-10-03): adelanto al pedir, saldo al llegar ----
+    # Con monto_adelanto, el primer cobro es ese adelanto (estado -> "adelanto_pagado": el pedido se confirma y sube al
+    # camión) y el segundo es el saldo (estado -> "aprobado"). Sin él, un solo cobro por el total, como siempre.
+    monto_adelanto = Column(Numeric(10, 2), nullable=True)
+    fecha_adelanto = Column(DateTime, nullable=True)
+    metodo_saldo = Column(String, nullable=True)
+    culqi_charge_id_saldo = Column(String, nullable=True)
+    fecha_saldo = Column(DateTime, nullable=True)
+    # Qué parte está esperando la revisión de una transferencia: "total", "adelanto" o "saldo".
+    parte_en_revision = Column(String, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

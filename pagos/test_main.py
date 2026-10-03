@@ -1104,3 +1104,146 @@ def test_una_constancia_de_mas_de_5_mb_falla_413(transferencia):
     resp = _enviar_constancia(pago, datos=b"\xff\xd8\xff" + b"0" * (5 * 1024 * 1024))
     assert resp.status_code == 413
     assert _fila_pago(pago).estado == "pendiente"
+
+
+
+# ============ Pedidos en camión: adelanto al pedir (70%) y saldo al llegar (30%) ============
+
+import rabbitmq_consumer  # noqa: E402
+
+
+def _pago_en_camion(total=1000.0, adelanto=700.0, estado="pendiente"):
+    producto = str(uuid.uuid4())
+    items = [{"producto_id": producto, "cantidad": 1, "precio_unitario": total}]
+    db = main.SessionLocal()
+    try:
+        pago = main.models.Pago(pedido_id=uuid.uuid4(), monto=total, monto_adelanto=adelanto, estado=estado, items=json.dumps(items))
+        db.add(pago)
+        db.commit()
+        db.refresh(pago)
+        db.expunge(pago)
+        return pago, producto
+    finally:
+        db.close()
+
+
+def _capturar(monkeypatch):
+    cobros, eventos, compensar = [], [], MagicMock()
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": f"chr_{len(cobros)}"}})
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    return cobros, eventos, compensar
+
+
+def test_el_primer_cobro_es_el_adelanto_y_el_segundo_el_saldo(monkeypatch):
+    pago, producto = _pago_en_camion()
+    cobros, eventos, _ = _capturar(monkeypatch)
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+
+    primero = _procesar(pago)
+    assert primero.status_code == 200 and primero.json()["parte"] == "adelanto"
+    assert cobros[0]["monto_soles"] == 700.0 and "(adelanto)" in cobros[0]["descripcion"]
+    assert _estado_del_pago(pago) == "adelanto_pagado"
+    assert eventos == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True}]
+    assert _liquidaciones_de(pago.pedido_id) == []  # todavía no está pagado entero
+
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        visto = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN).json()
+    finally:
+        _restaurar_sesion_por_defecto()
+    assert (visto["parte_a_pagar"], visto["monto_a_pagar"]) == ("saldo", 300.0)
+
+    segundo = _procesar(pago)
+    assert segundo.status_code == 200 and segundo.json()["parte"] == "saldo"
+    assert cobros[1]["monto_soles"] == 300.0
+    fila = _fila_pago(pago)
+    assert fila.estado == "aprobado" and fila.culqi_charge_id == "chr_1" and fila.culqi_charge_id_saldo == "chr_2"
+    assert eventos[-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)}
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+    assert _procesar(pago).status_code == 409  # ya está todo pagado
+
+
+def test_si_el_saldo_se_rechaza_el_pedido_sigue_en_el_camion_y_no_se_devuelve_stock(monkeypatch):
+    pago, _ = _pago_en_camion(estado="adelanto_pagado")
+    _, eventos, compensar = _capturar(monkeypatch)
+    _mockear_cargo_rechazado(monkeypatch)
+
+    resp = _procesar(pago)
+    assert resp.status_code == 402
+    assert _estado_del_pago(pago) == "adelanto_pagado"
+    compensar.assert_not_called()
+    assert eventos == []  # ni pago_rechazado: el pedido no se cancela
+
+
+def test_el_limite_de_yape_se_mira_en_la_parte_que_se_paga(monkeypatch):
+    pago, _ = _pago_en_camion(total=1000.0, adelanto=700.0)
+    cobros, _, _ = _capturar(monkeypatch)
+    assert _procesar_con(pago, "yape").status_code == 422  # adelanto de S/ 700 > S/ 500
+    assert cobros == []
+
+    con_adelanto, _ = _pago_en_camion(total=1000.0, adelanto=700.0, estado="adelanto_pagado")
+    assert _procesar_con(con_adelanto, "yape").status_code == 200  # saldo de S/ 300
+    assert cobros[0]["monto_soles"] == 300.0
+    assert _fila_pago(con_adelanto).metodo_saldo == "yape"
+
+
+def test_adelanto_y_saldo_tambien_por_transferencia(transferencia, monkeypatch):
+    pago, producto = _pago_en_camion()
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+
+    enviada = _enviar_constancia(pago, numero="OP-ADELANTO")
+    assert enviada.status_code == 200 and enviada.json()["parte"] == "adelanto"
+    _sesion_con_rol("admin")
+    try:
+        [item] = [t for t in client.get("/pagos/admin/transferencias").json() if t["pedido_id"] == str(pago.pedido_id)]
+        assert (item["parte"], item["monto"], item["monto_total"]) == ("adelanto", 700.0, 1000.0)
+        assert client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/aprobar").status_code == 200
+    finally:
+        _sesion_con_rol("comprador")
+    assert _estado_del_pago(pago) == "adelanto_pagado"
+    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True}]
+
+    assert _enviar_constancia(pago, numero="OP-SALDO-1").json()["parte"] == "saldo"
+    _sesion_con_rol("admin")
+    try:
+        rechazo = client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/rechazar", json={"motivo": "El monto no coincide"})
+        assert rechazo.status_code == 200 and rechazo.json()["parte"] == "saldo"
+    finally:
+        _sesion_con_rol("comprador")
+    assert _estado_del_pago(pago) == "adelanto_pagado"  # vuelve a esperar el saldo
+    transferencia["compensar"].assert_not_called()
+    assert all(e["evento"] != "pago_rechazado" for e in transferencia["eventos"])
+
+    assert _enviar_constancia(pago, numero="OP-SALDO-2").status_code == 200
+    _sesion_con_rol("admin")
+    try:
+        assert client.post(f"/pagos/admin/transferencias/{pago.pedido_id}/aprobar").status_code == 200
+    finally:
+        _sesion_con_rol("comprador")
+    fila = _fila_pago(pago)
+    assert fila.estado == "aprobado" and fila.metodo_saldo == "transferencia"
+    assert transferencia["eventos"][-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)}
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+
+
+def test_un_pedido_en_camion_crea_su_pago_con_el_adelanto():
+    def recibir(evento):
+        canal = MagicMock()
+        rabbitmq_consumer._procesar_mensaje(canal, MagicMock(), None, json.dumps(evento).encode())
+        canal.basic_ack.assert_called_once()
+
+    item = [{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 500.0}]
+    camion, local = str(uuid.uuid4()), str(uuid.uuid4())
+    recibir({"evento": "pedido_creado", "pedido_id": camion, "items": item, "costo_envio": 200.0,
+             "modalidad_envio": "camion", "monto_adelanto": 840.0})
+    recibir({"evento": "pedido_creado", "pedido_id": local, "items": item, "costo_envio": 5.0,
+             "modalidad_envio": "local", "monto_adelanto": None})
+    db = main.SessionLocal()
+    try:
+        pago_camion = db.query(main.models.Pago).filter(main.models.Pago.pedido_id == camion).one()
+        pago_local = db.query(main.models.Pago).filter(main.models.Pago.pedido_id == local).one()
+    finally:
+        db.close()
+    assert float(pago_camion.monto) == 1200.0 and float(pago_camion.monto_adelanto) == 840.0
+    assert pago_local.monto_adelanto is None

@@ -1,4 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -257,7 +258,12 @@ def obtener_pago(
     pago = db.query(models.Pago).filter(models.Pago.pedido_id == pedido_id).first()
     if not pago:
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
-    return pago
+    datos = jsonable_encoder(pago)
+    parte = parte_a_cobrar(pago)
+    # Lo que el comprador tiene que pagar ahora (nada si ya está todo pagado).
+    datos["parte_a_pagar"] = None if pago.estado == "aprobado" else parte
+    datos["monto_a_pagar"] = None if pago.estado == "aprobado" else float(monto_de(pago, parte))
+    return datos
 
 @app.delete("/pagos/{pago_id}")
 def eliminar_pago(pago_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
@@ -289,6 +295,69 @@ def liquidar_repartidor(
     crear_liquidacion_repartidor(db, datos.pedido_id, datos.repartidor_id, datos.costo_envio)
     return {"mensaje": "Liquidación de repartidor registrada"}
 
+def parte_a_cobrar(pago) -> str:
+    """"total" (un solo cobro, como siempre), "adelanto" (pedido en camión sin nada pagado) o "saldo" (en camión, con el
+    adelanto ya pagado). Mientras una transferencia está en revisión, la parte es la que se mandó a revisar."""
+    if pago.estado == "en_revision" and pago.parte_en_revision:
+        return pago.parte_en_revision
+    if pago.monto_adelanto is None:
+        return "total"
+    return "saldo" if pago.estado == "adelanto_pagado" else "adelanto"
+
+
+def monto_de(pago, parte: str) -> Decimal:
+    total = Decimal(str(pago.monto))
+    if parte == "adelanto":
+        return Decimal(str(pago.monto_adelanto))
+    if parte == "saldo":
+        return total - Decimal(str(pago.monto_adelanto))
+    return total
+
+
+def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id=None) -> None:
+    """Un cobro aprobado (Culqi o transferencia que aprobó un admin), según la parte:
+    - total: como siempre -> aprobado, pago_confirmado y liquidaciones.
+    - adelanto: el pedido se confirma y sube al camión (pago_confirmado con adelanto=True); las liquidaciones esperan
+      al saldo, porque el pedido todavía no está pagado entero.
+    - saldo: aprobado, evento saldo_pagado (el chofer ya puede descargar) y recién ahí las liquidaciones."""
+    ahora = datetime.utcnow()
+    if parte == "adelanto":
+        pago.estado = "adelanto_pagado"
+        pago.fecha_adelanto = ahora
+        pago.culqi_charge_id = cargo_id or pago.culqi_charge_id
+        pago.parte_en_revision = None
+        db.commit()
+        publicar_evento({"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True})
+        return
+    if parte == "saldo":
+        pago.estado = "aprobado"
+        pago.metodo_saldo = metodo
+        pago.culqi_charge_id_saldo = cargo_id
+        pago.fecha_saldo = ahora
+        pago.parte_en_revision = None
+        db.commit()
+        publicar_evento({"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)})
+        _crear_liquidaciones_sin_romper(db, pago)
+        return
+    pago.estado = "aprobado"
+    pago.culqi_charge_id = cargo_id or pago.culqi_charge_id
+    pago.parte_en_revision = None
+    _confirmar_pago_aprobado(db, pago)
+
+
+def _crear_liquidaciones_sin_romper(db: Session, pago) -> None:
+    try:
+        crear_liquidaciones(db, pago)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.error(
+            "No se pudieron crear las liquidaciones del pedido %s (el pago ya quedó aprobado — revisar manualmente)",
+            pago.pedido_id,
+            exc_info=True,
+        )
+
+
 def _confirmar_pago_aprobado(db: Session, pago) -> None:
     """Lo que sigue a un pago aprobado, venga de Culqi o de una transferencia que aprobó un admin: se guarda, se
     avisa (pago_confirmado: Pedidos lo marca confirmado y Transporte crea el envío) y se crean las liquidaciones."""
@@ -301,16 +370,7 @@ def _confirmar_pago_aprobado(db: Session, pago) -> None:
     # Separado del commit de arriba a propósito — ver el docstring de crear_liquidaciones: el
     # pago ya quedó "aprobado", así que un fallo acá no debe deshacer ni ocultar eso. Se degrada
     # a "faltan liquidaciones, revisar a mano" en vez de fingir que el pago no se confirmó.
-    try:
-        crear_liquidaciones(db, pago)
-        db.commit()
-    except Exception:
-        db.rollback()
-        logger.error(
-            "No se pudieron crear las liquidaciones del pedido %s (el pago ya quedó aprobado — revisar manualmente)",
-            pago.pedido_id,
-            exc_info=True,
-        )
+    _crear_liquidaciones_sin_romper(db, pago)
 
 
 @app.post("/pagos/procesar")
@@ -332,13 +392,17 @@ def procesar_pago(
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste la constancia de una transferencia para este pedido: está en revisión.")
+    parte = parte_a_cobrar(pago)
+    monto = monto_de(pago, parte)
     # Antes de reservar stock o llamar a Culqi: un Yape por encima del límite lo rechazaría la pasarela igual.
-    if datos.metodo == "yape" and Decimal(str(pago.monto)) > YAPE_MAXIMO_POR_OPERACION:
+    if datos.metodo == "yape" and monto > YAPE_MAXIMO_POR_OPERACION:
         raise HTTPException(
             status_code=422,
-            detail=f"Yape permite pagar hasta S/ {YAPE_MAXIMO_POR_OPERACION:.2f} por operación y este pedido es de "
-                   f"S/ {Decimal(str(pago.monto)):.2f}. Paga con tarjeta.",
+            detail=f"Yape permite pagar hasta S/ {YAPE_MAXIMO_POR_OPERACION:.2f} por operación y este pago es de "
+                   f"S/ {monto:.2f}. Paga con tarjeta.",
         )
+    if parte == "saldo":
+        return _cobrar_saldo(db, pago, datos, monto)
     pago.metodo = datos.metodo
 
     # Un pago "rechazado" ya devolvió su stock (compensar_stock). Reintentarlo vuelve a reservarlo ANTES de
@@ -352,9 +416,9 @@ def procesar_pago(
     try:
         resultado = crear_cargo(
             token=datos.token_culqi,
-            monto_soles=float(pago.monto),
+            monto_soles=float(monto),
             email=datos.email,
-            descripcion=f"Pedido {pago.pedido_id}",
+            descripcion=f"Pedido {pago.pedido_id}" + (" (adelanto)" if parte == "adelanto" else ""),
         )
     except (httpx.RequestError, ValueError):
         # La pasarela no respondió (o respondió algo ilegible): no se cobró nada, el pago queda como estaba.
@@ -364,10 +428,8 @@ def procesar_pago(
         raise HTTPException(status_code=502, detail="No se pudo comunicar con la pasarela de pagos. Inténtalo de nuevo en unos momentos.")
 
     if resultado["status_code"] == 201:
-        pago.estado = "aprobado"
-        pago.culqi_charge_id = resultado["data"].get("id")
-        _confirmar_pago_aprobado(db, pago)
-        return {"estado": "aprobado", "detalle": resultado["data"]}
+        _registrar_parte_pagada(db, pago, parte, datos.metodo, resultado["data"].get("id"))
+        return {"estado": pago.estado, "parte": parte, "detalle": resultado["data"]}
     else:
         if not es_reintento:
             pago.estado = "rechazado"
@@ -381,6 +443,22 @@ def procesar_pago(
         status_code=402,
         detail=resultado["data"].get("user_message", "El pago fue rechazado"),
     )
+
+
+def _cobrar_saldo(db: Session, pago, datos, monto: Decimal):
+    """El 30% de un pedido en camión. Si falla NO se toca el stock ni se cancela nada: el pedido ya va en el camión y el
+    comprador solo tiene que volver a intentar."""
+    try:
+        resultado = crear_cargo(token=datos.token_culqi, monto_soles=float(monto), email=datos.email,
+                                descripcion=f"Pedido {pago.pedido_id} (saldo)")
+    except (httpx.RequestError, ValueError):
+        logger.error("La pasarela de pagos no respondió al cobrar el saldo del pedido %s", pago.pedido_id, exc_info=True)
+        raise HTTPException(status_code=502, detail="No se pudo comunicar con la pasarela de pagos. Inténtalo de nuevo en unos momentos.")
+    if resultado["status_code"] == 201:
+        _registrar_parte_pagada(db, pago, "saldo", datos.metodo, resultado["data"].get("id"))
+        return {"estado": pago.estado, "parte": "saldo", "detalle": resultado["data"]}
+    db.rollback()
+    raise HTTPException(status_code=402, detail=resultado["data"].get("user_message", "El pago del saldo fue rechazado"))
 
 
 # ============ Transferencia bancaria (presentación del 2026-10-01: "¿y si no pueden pagar por Yape?") ============
@@ -421,6 +499,7 @@ def enviar_constancia_de_transferencia(
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste una constancia para este pedido: está en revisión.")
 
+    parte = parte_a_cobrar(pago)
     # Un pago rechazado ya devolvió su stock: se vuelve a reservar antes (mismo criterio que reintentar con tarjeta).
     es_reintento = pago.estado == "rechazado"
     if es_reintento:
@@ -433,8 +512,12 @@ def enviar_constancia_de_transferencia(
         logger.error("No se pudo guardar la constancia del pedido %s", pedido_id, exc_info=True)
         raise HTTPException(status_code=502, detail="No se pudo guardar la constancia. Intenta de nuevo en unos momentos.")
 
-    pago.metodo = "transferencia"
+    if parte == "saldo":
+        pago.metodo_saldo = "transferencia"
+    else:
+        pago.metodo = "transferencia"
     pago.estado = "en_revision"
+    pago.parte_en_revision = parte
     pago.numero_operacion = numero
     pago.constancia_objeto = objeto
     pago.constancia_tipo = tipo
@@ -443,13 +526,17 @@ def enviar_constancia_de_transferencia(
     pago.revisado_por = None
     pago.fecha_revision = None
     db.commit()
-    return {"estado": "en_revision", "pedido_id": str(pago.pedido_id), "numero_operacion": numero}
+    return {"estado": "en_revision", "pedido_id": str(pago.pedido_id), "numero_operacion": numero, "parte": parte}
 
 
-def _transferencia_resumen(pago) -> dict:
+def _transferencia_resumen(pago, parte=None) -> dict:
+    parte = parte or parte_a_cobrar(pago)
     return {
         "pedido_id": str(pago.pedido_id),
-        "monto": float(pago.monto),
+        # Lo que se tiene que ver en el banco: el total, o solo el adelanto o el saldo de un pedido en camión.
+        "monto": float(monto_de(pago, parte)),
+        "parte": parte,
+        "monto_total": float(pago.monto),
         "estado": pago.estado,
         "numero_operacion": pago.numero_operacion,
         "fecha_constancia": pago.fecha_constancia,
@@ -489,11 +576,11 @@ def ver_constancia(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario:
 @app.post("/pagos/admin/transferencias/{pedido_id}/aprobar")
 def aprobar_transferencia(pedido_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
     pago = _pago_en_revision(db, pedido_id)
-    pago.estado = "aprobado"
+    parte = parte_a_cobrar(pago)
     pago.revisado_por = usuario.get("sub")
     pago.fecha_revision = datetime.utcnow()
-    _confirmar_pago_aprobado(db, pago)
-    return _transferencia_resumen(pago)
+    _registrar_parte_pagada(db, pago, parte, "transferencia")
+    return _transferencia_resumen(pago, parte)
 
 
 class RechazarTransferencia(BaseModel):
@@ -520,12 +607,19 @@ def rechazar_transferencia(
     """Mismo efecto que un pago rechazado por Culqi (se devuelve el stock, el pedido queda cancelado hasta que vuelva a
     pagar), más el motivo, que el comprador ve en Mis Pedidos."""
     pago = _pago_en_revision(db, pedido_id)
-    pago.estado = "rechazado"
+    parte = parte_a_cobrar(pago)
     pago.motivo_rechazo = datos.motivo
     pago.revisado_por = usuario.get("sub")
     pago.fecha_revision = datetime.utcnow()
+    pago.parte_en_revision = None
+    if parte == "saldo":
+        # El pedido ya va en el camión con su adelanto: solo vuelve a esperar el saldo (sin tocar stock ni cancelar).
+        pago.estado = "adelanto_pagado"
+        db.commit()
+        return _transferencia_resumen(pago, parte)
+    pago.estado = "rechazado"
     db.commit()
     compensar_stock(pago.items)
     publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id)})
-    return _transferencia_resumen(pago)
+    return _transferencia_resumen(pago, parte)
 

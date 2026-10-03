@@ -32,6 +32,8 @@ def _procesar_mensaje(ch, method, properties, body):
                 monto=monto,
                 estado="pendiente",
                 items=json.dumps(datos.get("items", [])),
+                # Pedido en camión: primero se cobra el adelanto, el resto al llegar (ver Pago.monto_adelanto).
+                monto_adelanto=datos.get("monto_adelanto") if datos.get("modalidad_envio") == "camion" else None,
             )
             db.add(nuevo_pago)
             db.commit()
