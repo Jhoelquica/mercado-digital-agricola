@@ -10,7 +10,7 @@ from typing import Literal
 import uuid
 from datetime import datetime
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -830,6 +830,20 @@ def cotizar_costo_envio(latitud: float, longitud: float, db: Session = Depends(g
     validar_destino_en_region(latitud, longitud)
     distancia_km, costo_envio = calcular_envio_a_destino(db, latitud, longitud)
     return {"costo_envio": costo_envio, "distancia_km": distancia_km}
+
+
+# Recojo de una cosecha en la chacra (tramo chacra -> almacén; decisión del usuario 2026-10-03): la misma tarifa que el
+# envío a un comprador (por distancia al almacén + recargo por los kg sobre el umbral), así el agricultor paga lo mismo
+# que pagaría un comprador por mover ese peso esa distancia. Lo pide Transporte al cotizar y al crear el recojo; es
+# público como /pedidos/costo-envio porque es solo una calculadora.
+@app.get("/pedidos/costo-recojo")
+def cotizar_costo_recojo(latitud: float, longitud: float, peso_kg: float = Query(gt=0, le=100000), db: Session = Depends(get_db)):
+    if not dentro_de_ayacucho(latitud, longitud):
+        raise HTTPException(status_code=422, detail="El recojo es solo dentro de la región de Ayacucho: revisa la ubicación de tu chacra.")
+    distancia_km, tarifa = calcular_envio_a_destino(db, latitud, longitud)
+    recargo = calcular_recargo_por_peso(peso_kg, _umbral_pedido_grande_kg(db))
+    return {"distancia_km": distancia_km, "peso_kg": peso_kg, "tarifa_distancia": tarifa, "recargo_peso": recargo,
+            "total": round(tarifa + recargo, 2)}
 
 
 # El envío EXACTO de este carrito a este destino, antes de pagar: misma validación de productos y mismas fórmulas que

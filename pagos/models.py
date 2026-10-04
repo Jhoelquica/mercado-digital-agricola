@@ -68,9 +68,30 @@ class Liquidacion(Base):
     comision_plataforma = Column(Numeric(10, 2), nullable=False)
     monto_neto = Column(Numeric(10, 2), nullable=False)
     estado = Column(String, nullable=False, default="pendiente")  # pendiente | pagado (sub-entrega siguiente)
+    # "recojo": lo que gana el repartidor por recoger una cosecha en la chacra (pedido_id lleva entonces el id del recojo).
+    # NULL en las de siempre (la venta de un pedido o su envío).
+    concepto = Column(String, nullable=True)
+    # Lo que se le cobró al productor de esta venta por recojos de sus cosechas (ver DescuentoProductor): monto_neto ya
+    # viene con el descuento hecho.
+    descuento_recojo = Column(Numeric(10, 2), nullable=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     # Calculada en la aplicación como fecha_creacion + 24h (ver crear_liquidaciones), no con un
     # default de columna propio: dos defaults independientes llamarían datetime.utcnow() por
     # separado y podrían desincronizarse por microsegundos del valor real de fecha_creacion.
     fecha_limite = Column(DateTime, nullable=False)
     fecha_pago = Column(DateTime, nullable=True)
+
+
+class DescuentoProductor(Base):
+    """Lo que el agricultor debe por el recojo de una cosecha en su chacra (decisión del usuario 2026-10-03): ChakraShop
+    le paga el recojo al repartidor y se lo descuenta al productor de sus siguientes liquidaciones, de a poco, sin dejar
+    ninguna en negativo (ver logica_liquidaciones.crear_liquidaciones)."""
+    __tablename__ = "descuentos_productor"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    productor_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    producto_id = Column(UUID(as_uuid=True), nullable=True)
+    recojo_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    monto = Column(Numeric(10, 2), nullable=False)
+    aplicado = Column(Numeric(10, 2), nullable=False, default=0)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)

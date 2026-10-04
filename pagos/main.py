@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 import os
 import re
 import json
@@ -35,7 +35,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from culqi_client import crear_cargo
 from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
 from rabbitmq_publisher import publicar_evento
-from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, pagos_sin_liquidaciones
+from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, crear_liquidacion_recojo, pagos_sin_liquidaciones
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 from migraciones import agregar_columnas_faltantes
@@ -193,6 +193,14 @@ class LiquidarRepartidor(BaseModel):
     repartidor_id: str
     costo_envio: float
 
+
+class LiquidarRecojo(BaseModel):
+    recojo_id: uuid.UUID
+    repartidor_id: uuid.UUID
+    productor_id: uuid.UUID
+    producto_id: uuid.UUID | None = None
+    costo: float = Field(gt=0, le=100000)
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "pagos"}
@@ -297,6 +305,16 @@ def liquidar_repartidor(
 
     crear_liquidacion_repartidor(db, datos.pedido_id, datos.repartidor_id, datos.costo_envio)
     return {"mensaje": "Liquidación de repartidor registrada"}
+
+
+@app.post("/pagos/interno/liquidar-recojo")
+def liquidar_recojo(datos: LiquidarRecojo, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    """Transporte, cuando el admin ya pesó en el almacén una cosecha que recogió un repartidor en la chacra: se le
+    liquida el recojo al repartidor y se le anota al productor para descontarlo de sus ventas (idempotente)."""
+    if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_PAGOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    crear_liquidacion_recojo(db, datos.recojo_id, datos.repartidor_id, datos.productor_id, datos.producto_id, datos.costo)
+    return {"mensaje": "Recojo liquidado"}
 
 def parte_a_cobrar(pago) -> str:
     """"total" (un solo cobro, como siempre), "adelanto" (pedido en camión sin nada pagado) o "saldo" (en camión, con el

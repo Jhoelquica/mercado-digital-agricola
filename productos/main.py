@@ -1172,6 +1172,19 @@ def confirmar_llegada_almacen(
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
 
+    # La cosecha ya está pesada en el almacén: Transporte cierra su recojo en la chacra (si lo hubo) y recién ahí se le
+    # liquida al repartidor. Si RabbitMQ no responde la llegada ya quedó confirmada igual: el admin ve el recojo
+    # "en el almacén" y Transporte lo cierra con el siguiente aviso.
+    try:
+        publicar_evento({
+            "evento": "llegada_almacen",
+            "producto_id": str(producto.id),
+            "productor_id": str(producto.productor_id),
+            "cantidad_recibida": datos.cantidad_recibida,
+        })
+    except Exception:
+        logging.getLogger(__name__).error("No se pudo avisar la llegada al almacén del producto %s", producto.id, exc_info=True)
+
     # Un evento por cada reserva (fanout, mismo patrón que pedidos/transporte con
     # eventos_pedidos/eventos_envios) — Notificaciones lo consume y crea el aviso; acá no hace
     # falta saber nada de Notificaciones, solo publicar.

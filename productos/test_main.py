@@ -483,8 +483,10 @@ def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
     resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
 
-    assert mock_publicar.call_count == 2
-    eventos = [llamada.args[0] for llamada in mock_publicar.call_args_list]
+    assert mock_publicar.call_count == 3
+    llegada, *eventos = [llamada.args[0] for llamada in mock_publicar.call_args_list]
+    assert llegada == {"evento": "llegada_almacen", "producto_id": str(producto.id), "productor_id": str(producto.productor_id),
+                       "cantidad_recibida": producto.stock}
     for evento in eventos:
         assert evento["evento"] == "producto_disponible"
         assert evento["producto_id"] == str(producto.id)
@@ -492,7 +494,7 @@ def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
     assert {e["usuario_id"] for e in eventos} == {comprador_1, comprador_2}
 
 
-def test_confirmar_llegada_sin_reservas_no_publica_nada(monkeypatch):
+def test_confirmar_llegada_sin_reservas_solo_avisa_la_llegada(monkeypatch):
     producto = _crear_producto_directo(estado="en_transito")
 
     mock_publicar = MagicMock()
@@ -502,7 +504,8 @@ def test_confirmar_llegada_sin_reservas_no_publica_nada(monkeypatch):
     _auth(str(uuid.uuid4()), rol="admin")
     resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
-    mock_publicar.assert_not_called()
+    [llamada] = mock_publicar.call_args_list
+    assert llamada.args[0]["evento"] == "llegada_almacen"
 
 
 # ============ POST /productos/{id}/reservar ============

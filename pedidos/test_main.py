@@ -1408,3 +1408,17 @@ def test_un_pedido_normal_deja_su_evento_marcado_como_enviado():
     assert mock_publicar.call_args.args[0]["pedido_id"] == pedido_id
     [evento] = _eventos_salientes_del(pedido_id)
     assert evento.fecha_envio is not None
+
+
+# ============ Costo del recojo en la chacra ============
+
+def test_el_recojo_cuesta_lo_mismo_que_un_envio_de_ese_peso_y_solo_dentro_de_ayacucho():
+    envio = client.get("/pedidos/costo-envio", params={"latitud": -13.1588, "longitud": -74.2239}).json()
+    umbral = main._umbral_pedido_grande_kg(main.SessionLocal())
+    resp = client.get("/pedidos/costo-recojo", params={"latitud": -13.1588, "longitud": -74.2239, "peso_kg": umbral + 100})
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["tarifa_distancia"] == envio["costo_envio"] and cuerpo["recargo_peso"] == 10.0
+    assert cuerpo["total"] == round(envio["costo_envio"] + 10.0, 2)
+    assert client.get("/pedidos/costo-recojo", params={"latitud": -12.05, "longitud": -77.04, "peso_kg": 50}).status_code == 422
+    assert client.get("/pedidos/costo-recojo", params={"latitud": -13.1588, "longitud": -74.2239, "peso_kg": 0}).status_code == 422

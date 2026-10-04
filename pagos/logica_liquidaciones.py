@@ -77,17 +77,68 @@ def crear_liquidaciones(db: Session, pago: models.Pago):
     ahora = datetime.utcnow()
     for productor_id, monto_bruto in subtotal_por_productor.items():
         monto_bruto, comision, monto_neto = calcular_comision_y_neto(monto_bruto)
+        descuento = _cobrar_recojos_pendientes(db, productor_id, monto_neto)
         db.add(models.Liquidacion(
             pedido_id=pago.pedido_id,
             beneficiario_tipo="productor",
             beneficiario_id=productor_id,
             monto_bruto=monto_bruto,
             comision_plataforma=comision,
-            monto_neto=monto_neto,
+            monto_neto=monto_neto - descuento,
+            descuento_recojo=descuento or None,
             estado="pendiente",
             fecha_creacion=ahora,
             fecha_limite=ahora + timedelta(hours=24),
         ))
+
+
+def _cobrar_recojos_pendientes(db: Session, productor_id, disponible: Decimal) -> Decimal:
+    """Descuenta de esta venta lo que el productor debe por recojos de sus cosechas (los más antiguos primero), sin
+    dejar la liquidación en negativo; lo que no alcanza se cobra de la siguiente. Bloquea las deudas (FOR UPDATE) para que
+    dos ventas a la vez no cobren dos veces lo mismo. Mismo commit que la liquidación: si algo falla, no se cobra nada."""
+    deudas = (
+        db.query(models.DescuentoProductor)
+        .filter(models.DescuentoProductor.productor_id == productor_id,
+                models.DescuentoProductor.aplicado < models.DescuentoProductor.monto)
+        .order_by(models.DescuentoProductor.fecha_creacion)
+        .with_for_update()
+        .all()
+    )
+    cobrado = Decimal("0")
+    for deuda in deudas:
+        if disponible <= 0:
+            break
+        falta = Decimal(str(deuda.monto)) - Decimal(str(deuda.aplicado))
+        cobro = min(falta, disponible)
+        deuda.aplicado = Decimal(str(deuda.aplicado)) + cobro
+        disponible -= cobro
+        cobrado += cobro
+    return cobrado
+
+
+def crear_liquidacion_recojo(db: Session, recojo_id, repartidor_id, productor_id, producto_id, costo) -> None:
+    """El recojo de una cosecha ya pesada en el almacén: el repartidor cobra como en un envío (el costo menos la comisión
+    de la plataforma) y el productor queda debiendo el costo, que se le descuenta de sus siguientes ventas. Idempotente
+    por recojo_id (UniqueConstraint de la liquidación y unique del descuento): un reintento no cobra dos veces."""
+    monto_bruto, comision, monto_neto = calcular_comision_y_neto(Decimal(str(costo)))
+    ahora = datetime.utcnow()
+    db.add(models.Liquidacion(
+        pedido_id=recojo_id,
+        beneficiario_tipo="repartidor",
+        beneficiario_id=repartidor_id,
+        monto_bruto=monto_bruto,
+        comision_plataforma=comision,
+        monto_neto=monto_neto,
+        estado="pendiente",
+        fecha_creacion=ahora,
+        fecha_limite=ahora + timedelta(hours=24),
+        concepto="recojo",
+    ))
+    db.add(models.DescuentoProductor(productor_id=productor_id, producto_id=producto_id, recojo_id=recojo_id, monto=monto_bruto))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
 
 
 def crear_liquidacion_repartidor(db: Session, pedido_id: str, repartidor_id: str, costo_envio) -> None:

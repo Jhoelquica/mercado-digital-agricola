@@ -1317,3 +1317,36 @@ def test_un_pedido_sin_pagar_vence_devuelve_su_stock_y_avisa(monkeypatch):
     assert _estado_del_pago(al_dia) == "pendiente"
     assert _estado_del_pago(de_antes) == "pendiente"
     assert _estado_del_pago(en_revision) == "en_revision"
+
+
+# ============ Recojo en la chacra: lo cobra el repartidor y se descuenta de las ventas del productor ============
+
+def test_el_recojo_se_liquida_al_repartidor_y_se_descuenta_de_las_ventas_del_productor(monkeypatch):
+    monkeypatch.setattr(main, "TRANSPORTE_A_PAGOS_SECRETO", "secreto-recojo")
+    recojo_id, repartidor_id, productor_id, producto_id = (str(uuid.uuid4()) for _ in range(4))
+    cuerpo = {"recojo_id": recojo_id, "repartidor_id": repartidor_id, "productor_id": productor_id,
+              "producto_id": producto_id, "costo": 30.0}
+    assert client.post("/pagos/interno/liquidar-recojo", json=cuerpo).status_code == 403
+    for _ in range(2):  # un reintento no cobra dos veces
+        assert client.post("/pagos/interno/liquidar-recojo", json=cuerpo, headers={"X-Servicio-Secreto": "secreto-recojo"}).status_code == 200
+    [del_repartidor] = _liquidaciones_de(recojo_id)
+    assert (del_repartidor.concepto, float(del_repartidor.monto_bruto), float(del_repartidor.monto_neto)) == ("recojo", 30.0, 27.0)
+
+    # primera venta: el productor gana S/ 18 (20 - 10%) y se le cobran los 18 de los 30 que debe
+    _mockear_productos(monkeypatch, {producto_id: productor_id})
+    db = main.SessionLocal()
+    try:
+        for precio in (20.0, 50.0):
+            pago = _crear_pago_directo([{"producto_id": producto_id, "cantidad": 1, "precio_unitario": precio}])
+            fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+            main.crear_liquidaciones(db, fila)
+            db.commit()
+            [venta] = _liquidaciones_de(pago.pedido_id)
+            if precio == 20.0:
+                assert (float(venta.monto_neto), float(venta.descuento_recojo)) == (0.0, 18.0)
+            else:  # segunda venta: gana 45 y se cobra lo que faltaba (12)
+                assert (float(venta.monto_neto), float(venta.descuento_recojo)) == (33.0, 12.0)
+        deuda = db.query(main.models.DescuentoProductor).filter(main.models.DescuentoProductor.recojo_id == recojo_id).one()
+        assert (float(deuda.monto), float(deuda.aplicado)) == (30.0, 30.0)
+    finally:
+        db.close()
