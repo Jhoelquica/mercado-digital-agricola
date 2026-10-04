@@ -1512,6 +1512,7 @@ input, select { font-family: inherit; }
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
 .form-confirmar-entrega .foto-entrega-zona,
+.form-despacho-agencia .foto-entrega-zona,
 .asistente .foto-entrega-zona {
   display: flex; flex-direction: row; align-items: center; gap: 14px; min-height: 64px; padding: 12px 16px;
   border: 2px dashed #b9c8bd; border-radius: 14px; background: #fff; cursor: pointer;
@@ -1519,6 +1520,7 @@ input, select { font-family: inherit; }
   transition: border-color 0.2s, background-color 0.2s;
 }
 .form-confirmar-entrega .foto-entrega-zona:hover,
+.form-despacho-agencia .foto-entrega-zona:hover,
 .asistente .foto-entrega-zona:hover { border-color: var(--color-primario); background: var(--verde-fondo); }
 .foto-entrega:focus-within .foto-entrega-zona { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
 .foto-entrega-icono {
@@ -1860,7 +1862,11 @@ input, select { font-family: inherit; }
 @media (min-width: 760px) { .propuestas-grid { display: grid; grid-template-columns: repeat(2, 1fr); } }
 
 .envios-grid { display: flex; flex-direction: column; gap: 14px; }
-@media (min-width: 760px) { .envios-grid { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
+@media (min-width: 760px) { .envios-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+/* La tarjeta mide la mitad del panel: el código y la foto de la entrega se apilan cuando la tarjeta es angosta (antes
+   dependía del ancho de la ventana y una tarjeta angosta ensanchaba su columna). */
+#envios-list .pedido-card { container-type: inline-size; }
+@container (max-width: 520px) { .form-confirmar-entrega-campos { flex-direction: column; } }
 
 /* ---------- NOTIFICACIONES — rediseño premium ---------- */
 /* Criterios del skill ui-ux-pro-max: los avisos se agrupan por día y se distinguen por tipo con ícono + título
@@ -5166,4 +5172,133 @@ body.asistente-abierto { overflow: hidden; }
 
 @media (prefers-reduced-motion: reduce) {
   .opcion-lejana-caja, .mp-viaje-barra span, .lejanos-reglas summary::after { transition: none; }
+}
+
+/* ===== Compradores lejanos: panel del repartidor (agencia de carga, camión compartido, documentos y viajes) =====
+   Referencias de 21st.dev: "Tracker Card" (etapas del viaje), "API Usage Meter" (barra de carga con la marca de salida),
+   "Onboarding Checklist" y "Attachment States" (documentos y su estado). Estados con texto + ícono, no solo color. */
+.pill-en_agencia { background: #fdf0d5; color: #7a4b06; }
+.pill-en_destino { background: #d5f2ea; color: #0f5e4c; }
+.pill-esperando_camion { background: #fff3cd; color: #8a6d1a; }
+
+.envio-lejano-ruta { display: inline-flex; align-items: center; gap: 8px; margin: 12px 0 0; padding: 6px 14px; border-radius: 999px; font-size: 0.86rem; font-weight: 600; }
+.envio-lejano-ruta i { font-size: 1.05rem; }
+.envio-lejano-ruta.agencia { background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); }
+.envio-lejano-ruta.camion { background: var(--verde-pastel); color: var(--color-primario); }
+
+.envio-receptor { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--color-borde); background: #fff; }
+.envio-receptor-icono { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.25rem; }
+.envio-receptor div { display: grid; gap: 1px; min-width: 0; }
+.envio-receptor-etiqueta { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--texto-suave); }
+.envio-receptor strong { font-size: 0.98rem; color: var(--texto); overflow-wrap: anywhere; }
+.envio-receptor small { font-size: 0.8rem; color: var(--texto-suave); }
+
+.envio-pasos-agencia { list-style: none; counter-reset: paso; margin: 16px 0 0; padding: 0; display: grid; gap: 12px; }
+.envio-pasos-agencia li { counter-increment: paso; position: relative; min-height: 28px; padding-left: 40px; font-size: 0.9rem; line-height: 1.5; color: var(--texto-suave); }
+.envio-pasos-agencia li::before {
+  content: counter(paso); position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 50%; background: var(--color-primario); color: #fff; font-size: 0.85rem; font-weight: 800;
+}
+.envio-pasos-agencia strong { color: var(--texto); }
+.envio-pasos-agencia a { font-weight: 700; color: var(--color-primario); white-space: nowrap; }
+
+.envio-aviso { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin: 12px 0 0; padding: 12px 14px; border-radius: 12px; font-size: 0.88rem; line-height: 1.45; }
+.envio-aviso > i { flex: none; font-size: 1.3rem; }
+.envio-aviso > div, .envio-aviso > span { flex: 1; min-width: 200px; display: grid; gap: 2px; }
+.envio-aviso > span { display: block; }
+.envio-aviso strong { font-size: 0.95rem; }
+.envio-aviso .btn { align-self: center; }
+.envio-aviso.ok { background: #e8f5ee; color: #14532d; }
+.envio-aviso.espera { background: #fff3cd; color: #6b5212; }
+.envio-aviso.info { background: var(--color-superficie); color: var(--texto); }
+.envio-aviso.error { background: #fdecec; color: #9b1c1c; }
+
+.form-despacho-agencia { display: grid; gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--borde); }
+.form-despacho-campos { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-despacho-campos label { display: grid; gap: 6px; font-size: 0.82rem; font-weight: 600; color: var(--texto-suave); }
+.form-despacho-campos input {
+  width: 100%; min-width: 0; padding: 10px 14px; border-radius: 10px; border: 1.5px solid var(--borde);
+  font-size: 1rem; font-family: inherit; color: var(--texto); background: #fff;
+}
+.form-despacho-campos input:focus { outline: none; border-color: var(--color-primario); box-shadow: 0 0 0 3px rgba(45, 59, 42, 0.15); }
+.form-despacho-agencia .form-confirmar-entrega-acciones { margin-top: 0; }
+
+/* Mis viajes en camión */
+.viajes-section { margin: 0 0 28px; }
+.viajes-section .section-header.inner { margin-top: 0; margin-bottom: 14px; }
+.viajes-section h3 { display: flex; align-items: center; gap: 8px; }
+.viajes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.viaje-card {
+  display: grid; gap: 18px; align-content: start; padding: 20px 22px; border-radius: var(--radio); background: #fff;
+  border: 1px solid var(--borde); border-left: 5px solid var(--color-primario); box-shadow: var(--sombra);
+}
+.viaje-cabecera h4 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 1.15rem; color: var(--color-primario); }
+.viaje-cabecera small { display: block; margin-top: 2px; font-size: 0.82rem; color: var(--texto-suave); }
+.viaje-etapas { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.viaje-etapas li { position: relative; display: grid; justify-items: center; gap: 6px; text-align: center; font-size: 0.78rem; font-weight: 600; color: var(--texto-suave); }
+.viaje-etapas li::before { content: ''; position: absolute; top: 8px; right: 50%; width: 100%; height: 3px; background: #e3e8dd; }
+.viaje-etapas li:first-child::before { display: none; }
+.viaje-etapas li.hecho::before, .viaje-etapas li.actual::before { background: var(--color-primario); }
+.viaje-paso-punto { position: relative; z-index: 1; width: 19px; height: 19px; border-radius: 50%; background: #fff; border: 3px solid #cfd8c8; }
+.viaje-etapas li.hecho .viaje-paso-punto { background: var(--color-primario); border-color: var(--color-primario); }
+.viaje-etapas li.actual { color: var(--color-primario); }
+.viaje-etapas li.actual .viaje-paso-punto { border-color: var(--acento-cosecha); background: var(--acento-cosecha-suave); box-shadow: 0 0 0 4px rgba(161, 98, 7, 0.16); }
+
+.viaje-medidor { display: grid; gap: 8px; }
+.viaje-medidor-texto { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 0.86rem; color: var(--texto-suave); }
+.viaje-medidor-texto strong { font-size: 1.05rem; color: var(--texto); }
+.viaje-medidor-barra { position: relative; height: 14px; border-radius: 999px; background: #e3e8dd; }
+.viaje-medidor-relleno { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 999px; background: linear-gradient(90deg, var(--color-primario), #4c7a3d); transition: width 0.4s; }
+.viaje-medidor-marca { position: absolute; top: -5px; bottom: -5px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--acento-cosecha); }
+.viaje-medidor-leyenda { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--texto-suave); }
+.viaje-medidor-leyenda::before { content: ''; flex: none; width: 3px; height: 13px; border-radius: 2px; background: var(--acento-cosecha); }
+
+.viaje-envios { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.viaje-envios li { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--color-superficie); font-size: 0.88rem; }
+.viaje-envio-id { margin-right: auto; font-weight: 700; color: var(--texto); }
+.viaje-saldo { padding: 2px 10px; border-radius: 999px; font-size: 0.76rem; font-weight: 700; }
+.viaje-saldo.ok { background: #e8f5ee; color: #14532d; }
+.viaje-saldo.espera { background: #fff3cd; color: #6b5212; }
+.viaje-nota { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.88rem; line-height: 1.45; color: var(--texto-suave); }
+.viaje-nota i { flex: none; font-size: 1.1rem; margin-top: 1px; }
+.viaje-acciones .btn { width: 100%; min-height: 48px; justify-content: center; font-size: 1rem; }
+.viaje-confirmar { display: grid; gap: 10px; padding: 14px; border-radius: 12px; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); }
+.viaje-confirmar p { margin: 0; font-size: 0.9rem; line-height: 1.45; font-weight: 600; }
+.viaje-confirmar div { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+
+/* Viajes largos: documentos del transportista */
+.carga-section { margin-top: 28px; }
+.carga-panel { display: grid; gap: 16px; }
+.carga-cabecera { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.carga-cabecera-icono { flex: none; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.5rem; }
+.carga-cabecera > div { flex: 1; min-width: 180px; }
+.carga-cabecera h3 { margin: 0; font-size: 1.15rem; }
+.carga-cabecera p { margin: 2px 0 0; font-size: 0.85rem; color: var(--texto-suave); }
+.carga-estado { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 700; }
+.carga-estado.pendiente { background: #fff3cd; color: #6b5212; }
+.carga-estado.rechazado { background: #fdecec; color: #9b1c1c; }
+.carga-estado.verificado { background: #e8f5ee; color: #14532d; }
+.carga-intro { margin: 0; font-size: 0.92rem; line-height: 1.55; color: var(--texto-suave); }
+.carga-requisitos { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.carga-requisitos li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--color-superficie); font-size: 0.86rem; font-weight: 600; }
+.carga-requisitos i { font-size: 1.3rem; color: var(--color-primario); }
+.btn-abrir-carga { justify-self: start; }
+.form-carga { display: grid; gap: 14px; padding-top: 14px; border-top: 1px dashed var(--borde); }
+.form-carga-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.carga-archivos { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.reclamo-archivo.con-error .reclamo-archivo-caja { border-color: #b3401f; background: #fdf1ec; }
+.reclamo-archivo.con-error small { color: #9b1c1c; font-weight: 700; }
+.carga-privacidad { display: flex; gap: 8px; align-items: center; margin: 0; font-size: 0.82rem; color: var(--texto-suave); }
+.form-carga-acciones { display: flex; justify-content: flex-end; }
+.carga-datos { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.carga-datos div { padding: 10px 12px; border-radius: 12px; background: var(--color-superficie); }
+.carga-datos dt { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--texto-suave); }
+.carga-datos dd { margin: 2px 0 0; font-weight: 700; color: var(--texto); }
+
+@media (max-width: 640px) {
+  .form-despacho-campos, .form-carga-grid, .carga-archivos, .carga-requisitos, .carga-datos { grid-template-columns: 1fr; }
+  .viaje-etapas li { font-size: 0.7rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .viaje-medidor-relleno { transition: none; }
 }

@@ -502,13 +502,16 @@ const ICONOS_ESTADO = {
   cancelado: 'circle-x',
   rechazado: 'circle-x',
   aprobado: 'circle-check',
+  en_agencia: 'building-warehouse',
+  en_destino: 'map-pin',
+  esperando_camion: 'hourglass',
   error: 'alert-triangle',
 };
 
 const ESTADOS_BADGE_CONOCIDOS = new Set([
   'pendiente', 'pendiente_asignacion', 'propuesto', 'confirmado', 'asignado',
   'en_camino', 'en_transito', 'en_ruta', 'entregado', 'aprobado',
-  'cancelado', 'rechazado', 'error',
+  'cancelado', 'rechazado', 'error', 'en_agencia', 'en_destino', 'esperando_camion',
 ]);
 
 function badgeEstadoEnvio(estado) {
@@ -6374,6 +6377,11 @@ async function marcarEntregaDirectaComoEntregada(envioId) {
 }
 
 // ============ GESTIÓN DE ENVÍOS (repartidor) ============
+// Envíos que siguen a cargo del repartidor. "en_destino": el camión ya está en la ciudad del comprador, esperando el
+// saldo (30%) y el código para descargar.
+const ESTADOS_ENVIO_EN_CURSO = ['asignado', 'en_camino', 'en_destino'];
+// Su parte ya terminó: "en_agencia" es un pedido que dejó en la agencia de carga (el comprador lo recoge en su ciudad).
+const ESTADOS_ENVIO_CUMPLIDOS = ['entregado', 'en_agencia'];
 // icono queda como un punto de color dibujado en CSS (.disponibilidad-punto), no un ícono de
 // Tabler: el set outline no trae una variante de círculo sólido/relleno, y un anillo hueco
 // comunica mucho más débil el "semáforo de estado" que un punto de color lleno.
@@ -6434,6 +6442,7 @@ async function cargarGestionEnvios() {
 
   await cargarListaEnvios(miRepartidor.id);
   pintarResumenYDisponibilidadRepartidor(miRepartidor.estado_disponibilidad);
+  cargarCargaYViajes(miRepartidor);
   iniciarSeguimientoRepartidor();
 }
 
@@ -6441,7 +6450,7 @@ async function cargarGestionEnvios() {
 // y Estado.propuestasRepartidor, que llena cargarListaEnvios).
 function pintarResumenYDisponibilidadRepartidor(estadoDisponibilidad) {
   if (estadoDisponibilidad !== undefined) Estado.disponibilidadRepartidor = estadoDisponibilidad;
-  const activos = (Estado.enviosRepartidor || []).filter((e) => ['asignado', 'en_camino'].includes(e.estado)).length;
+  const activos = (Estado.enviosRepartidor || []).filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado)).length;
   document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(
     Estado.disponibilidadRepartidor,
     { propuestas: (Estado.propuestasRepartidor || []).length, activos },
@@ -6456,12 +6465,13 @@ function pintarResumenYDisponibilidadRepartidor(estadoDisponibilidad) {
 // quedaban desactualizados ("0 pendientes" con un envío recién aceptado) hasta pulsar "Refrescar".
 async function refrescarPanelRepartidor() {
   if (!Estado.repartidorId) return;
-  let disponibilidad;
+  let perfil = null;
   try {
-    disponibilidad = (await Api.repartidores.miPerfil()).estado_disponibilidad;
-  } catch { /* el banner queda como estaba */ }
+    perfil = await Api.repartidores.miPerfil();
+  } catch { /* el banner y la sección de viajes quedan como estaban */ }
   await cargarListaEnvios(Estado.repartidorId);
-  pintarResumenYDisponibilidadRepartidor(disponibilidad);
+  pintarResumenYDisponibilidadRepartidor(perfil?.estado_disponibilidad);
+  if (perfil) cargarCargaYViajes(perfil);
 }
 
 let chartEnviosRepartidor = null;
@@ -6474,8 +6484,8 @@ function dibujarGraficoEnviosRepartidor() {
   if (!canvas || typeof Chart === 'undefined') return;
 
   const envios = Estado.enviosRepartidor || [];
-  const pendientes = envios.filter((e) => ['asignado', 'en_camino'].includes(e.estado)).length;
-  const entregados = envios.filter((e) => e.estado === 'entregado').length;
+  const pendientes = envios.filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado)).length;
+  const entregados = envios.filter((e) => ESTADOS_ENVIO_CUMPLIDOS.includes(e.estado)).length;
   const otros = envios.filter((e) => ['cancelado', 'rechazado'].includes(e.estado)).length;
 
   chartEnviosRepartidor?.destroy();
@@ -6493,8 +6503,8 @@ function dibujarGraficoEnviosRepartidor() {
 // por cargarListaEnvios() (no incluye las propuestas pendientes, que son una cosa aparte). ----
 function renderResumenRepartidor() {
   const envios = Estado.enviosRepartidor || [];
-  const pendientes = envios.filter((e) => ['asignado', 'en_camino'].includes(e.estado));
-  const entregados = envios.filter((e) => e.estado === 'entregado');
+  const pendientes = envios.filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado));
+  const entregados = envios.filter((e) => ESTADOS_ENVIO_CUMPLIDOS.includes(e.estado));
   const enCamino = envios.filter((e) => e.estado === 'en_camino');
 
   return `
@@ -7225,51 +7235,25 @@ function renderContactoComprador(pedido) {
       </div>`;
 }
 
-function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
-  const activo = ['asignado', 'en_camino'].includes(envio.estado);
-  const finalizado = ['entregado', 'cancelado', 'rechazado'].includes(envio.estado);
-  const retraso = Math.min(indice, 12) * 35;
+// Zona táctil para tomar o elegir una foto (entrega con PIN, guía de la agencia): vista previa, nombre y peso, y
+// validación al momento (ver alElegirFotoEntrega).
+function renderSelectorFoto(id, titulo, detalle, textoAlternativo) {
   return `
-    <div class="pedido-card ${activo ? 'pedido-card-activo' : ''}" style="animation-delay:${retraso}ms">
-      <div class="pedido-card-header">
-        <div>
-          <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
-          <div class="pedido-fecha">${formatearFechaServidor(envio.fecha_creacion)}</div>
-        </div>
-        ${badgeEstadoEnvio(envio.estado)}
-      </div>
-      ${activo ? renderContactoComprador(pedido) : ''}
-      ${activo ? renderBloqueRuta(envio, ruta) : ''}
-      ${!finalizado ? `
-      <div class="envio-actualizar">
-        <select class="select-estado-envio" data-envio-id="${envio.id}">
-          <option value="asignado" ${envio.estado === 'asignado' ? 'selected' : ''}>Asignado</option>
-          <option value="en_camino" ${envio.estado === 'en_camino' ? 'selected' : ''}>En camino</option>
-          <option value="entregado" ${envio.estado === 'entregado' ? 'selected' : ''}>Entregado</option>
-        </select>
-        <button class="btn btn-primary btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
-      </div>
-      <form class="form-confirmar-entrega hidden" data-envio-id="${envio.id}">
-        <p class="muted"><i class="ti ti-shield-check"></i> Pídele al comprador el código de 4 dígitos de su pedido.</p>
-        <div class="form-confirmar-entrega-campos">
-          <label>Código del comprador
-            <input type="text" name="pin" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required placeholder="0000">
-          </label>
           <div class="foto-entrega" data-estado="vacia">
-            <span class="foto-entrega-titulo" id="foto-titulo-${envio.id}">Foto de la entrega</span>
+            <span class="foto-entrega-titulo" id="foto-titulo-${id}">${titulo}</span>
             <!-- El input nativo queda oculto pero operable con teclado (el foco se ve en la zona, ver :focus-within);
                  en el celular "capture" abre la cámara directamente. Sin "required": la falta de foto se avisa en
-                 el propio formulario (confirmarEntregaConPin), no con la burbuja del navegador. -->
-            <input class="foto-entrega-input" id="foto-${envio.id}" type="file" name="foto" accept="image/jpeg,image/png,image/webp" capture="environment" aria-labelledby="foto-titulo-${envio.id}" aria-describedby="foto-ayuda-${envio.id}">
-            <label class="foto-entrega-zona" for="foto-${envio.id}">
+                 el propio formulario, no con la burbuja del navegador. -->
+            <input class="foto-entrega-input" id="foto-${id}" type="file" name="foto" accept="image/jpeg,image/png,image/webp" capture="environment" aria-labelledby="foto-titulo-${id}" aria-describedby="foto-ayuda-${id}">
+            <label class="foto-entrega-zona" for="foto-${id}">
               <span class="foto-entrega-icono"><i class="ti ti-camera" aria-hidden="true"></i></span>
               <span class="foto-entrega-texto">
                 <strong>Tomar o elegir foto</strong>
-                <small>Del paquete entregado · JPG, PNG o WEBP · máx. 5 MB</small>
+                <small>${detalle}</small>
               </span>
             </label>
             <div class="foto-entrega-previa">
-              <img alt="Vista previa de la foto de la entrega">
+              <img alt="${textoAlternativo}">
               <div class="foto-entrega-datos">
                 <strong class="foto-nombre"></strong>
                 <small class="foto-peso"></small>
@@ -7279,15 +7263,191 @@ function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
                 <button type="button" class="btn btn-ghost btn-sm foto-quitar"><i class="ti ti-trash" aria-hidden="true"></i> Quitar</button>
               </div>
             </div>
-            <p class="foto-entrega-ayuda" id="foto-ayuda-${envio.id}" role="status" aria-live="polite"></p>
-          </div>
+            <p class="foto-entrega-ayuda" id="foto-ayuda-${id}" role="status" aria-live="polite"></p>
+          </div>`;
+}
+
+const ETIQUETAS_CAMBIO_ESTADO = { asignado: 'Asignado', en_camino: 'En camino', entregado: 'Entregado' };
+
+function renderCambioEstadoEnvio(envio, estados, { claseBoton = 'btn-primary', extra = '' } = {}) {
+  return `
+      <div class="envio-actualizar">
+        <select class="select-estado-envio" data-envio-id="${envio.id}" aria-label="Estado del envío">
+          ${estados.map((e) => `<option value="${e}" ${envio.estado === e ? 'selected' : ''}>${ETIQUETAS_CAMBIO_ESTADO[e]}</option>`).join('')}
+        </select>
+        <button class="btn ${claseBoton} btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
+        ${extra}
+      </div>`;
+}
+
+function renderFormEntrega(envio, ayuda = 'Pídele al comprador el código de 4 dígitos de su pedido.') {
+  return `
+      <form class="form-confirmar-entrega hidden" data-envio-id="${envio.id}">
+        <p class="muted"><i class="ti ti-shield-check"></i> ${ayuda}</p>
+        <div class="form-confirmar-entrega-campos">
+          <label>Código del comprador
+            <input type="text" name="pin" inputmode="numeric" maxlength="4" pattern="[0-9]{4}" required placeholder="0000">
+          </label>
+          ${renderSelectorFoto(envio.id, 'Foto de la entrega', 'Del paquete entregado · JPG, PNG o WEBP · máx. 5 MB', 'Vista previa de la foto de la entrega')}
         </div>
         <p class="form-entrega-mensaje hidden" role="alert"></p>
         <div class="form-confirmar-entrega-acciones">
           <button type="button" class="btn btn-ghost btn-sm btn-cancelar-entrega">Cancelar</button>
           <button type="submit" class="btn btn-primary btn-sm">Confirmar entrega</button>
         </div>
-      </form>` : ''}
+      </form>`;
+}
+
+// ---- Compradores lejanos en la tarjeta del repartidor ----
+// Dónde se dejan los pedidos que van por agencia (lo configura el admin): se pide una vez y se reusa.
+let agenciaDespacho = null;
+async function obtenerAgenciaDespacho() {
+  if (agenciaDespacho) return agenciaDespacho;
+  try {
+    agenciaDespacho = await Api.pedidos.agenciaDespacho();
+  } catch { /* la tarjeta se muestra sin el enlace al mapa */ }
+  return agenciaDespacho;
+}
+
+function enlaceMapaOsm(latitud, longitud) {
+  const lat = encodeURIComponent(latitud);
+  const lng = encodeURIComponent(longitud);
+  return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=17/${lat}/${lng}`;
+}
+
+function renderRutaLejana(envio) {
+  const modalidad = envio.modalidad_envio;
+  if (modalidad !== 'agencia' && modalidad !== 'camion') return '';
+  const ciudad = escapeAttr(envio.destino_ciudad || 'otra ciudad');
+  const sacos = envio.sacos ? ` · ${envio.sacos} sacos` : '';
+  return modalidad === 'camion'
+    ? `<p class="envio-lejano-ruta camion"><i class="ti ti-truck" aria-hidden="true"></i> Camión compartido a <b>${ciudad}</b>${sacos}</p>`
+    : `<p class="envio-lejano-ruta agencia"><i class="ti ti-building-warehouse" aria-hidden="true"></i> Por agencia de carga a <b>${ciudad}</b>${sacos}</p>`;
+}
+
+// Quien recibe un pedido lejano (su DNI se confirmó en RENIEC al comprar): a su nombre va la guía de la agencia, y es
+// quien muestra el DNI cuando el camión descarga. El repartidor del envío lo ve completo (ver pedido_para en Pedidos).
+function renderQuienRecibe(pedido) {
+  if (!pedido?.receptor_nombre && !pedido?.receptor_dni) return '';
+  return `
+      <div class="envio-receptor">
+        <span class="envio-receptor-icono"><i class="ti ti-id" aria-hidden="true"></i></span>
+        <div>
+          <span class="envio-receptor-etiqueta">Recibe</span>
+          <strong>${escapeAttr(pedido.receptor_nombre || 'Sin nombre registrado')}</strong>
+          <small>DNI ${escapeAttr(pedido.receptor_dni || '—')} · confirmado en RENIEC</small>
+        </div>
+      </div>`;
+}
+
+function renderFormDespachoAgencia(envio) {
+  return `
+      <form class="form-despacho-agencia hidden" data-envio-id="${envio.id}" novalidate>
+        <div class="form-despacho-campos">
+          <label>Agencia
+            <input type="text" name="agencia" list="agencias-sugeridas" maxlength="60" autocomplete="off" placeholder="Ej. Shalom" required>
+          </label>
+          <label>N.º de guía
+            <input type="text" name="numero_guia" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Está en el comprobante" required>
+          </label>
+        </div>
+        ${renderSelectorFoto(`guia-${envio.id}`, 'Foto de la guía', 'El comprobante que te dio la agencia · JPG, PNG o WEBP · máx. 5 MB', 'Vista previa de la foto de la guía')}
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="form-confirmar-entrega-acciones">
+          <button type="button" class="btn btn-ghost btn-sm btn-cancelar-entrega">Cancelar</button>
+          <button type="submit" class="btn btn-primary btn-sm">Registrar despacho</button>
+        </div>
+      </form>`;
+}
+
+// Por agencia: el repartidor recoge el pedido en el almacén, lo deja en la agencia de carga de Huamanga a nombre de
+// quien recibe (flete pagado en destino) y registra la guía; con eso su parte termina y se le liquida su tramo.
+function renderEnvioPorAgencia(envio, pedido, activo) {
+  if (ESTADOS_ENVIO_CUMPLIDOS.includes(envio.estado)) {
+    const fecha = envio.fecha_despacho ? ` el ${formatearFechaServidor(envio.fecha_despacho)}` : '';
+    return `
+      <div class="envio-aviso ok">
+        <i class="ti ti-circle-check" aria-hidden="true"></i>
+        <div>
+          <strong>Lo dejaste en ${escapeAttr(envio.agencia_nombre || 'la agencia')}${fecha}</strong>
+          <span>Guía N.º ${escapeAttr(envio.numero_guia || '—')}. ${envio.estado === 'entregado' ? 'El comprador ya lo recogió.' : 'El comprador lo recoge en la agencia de su ciudad.'}</span>
+        </div>
+      </div>`;
+  }
+  if (!activo) return '';
+  const ciudad = escapeAttr(envio.destino_ciudad || pedido?.destino_ciudad || 'su ciudad');
+  const receptor = escapeAttr(pedido?.receptor_nombre || 'quien recibe');
+  const mapa = agenciaDespacho?.latitud != null
+    ? ` <a href="${enlaceMapaOsm(agenciaDespacho.latitud, agenciaDespacho.longitud)}" target="_blank" rel="noopener">Ver el punto en el mapa <i class="ti ti-external-link" aria-hidden="true"></i></a>`
+    : '';
+  const botonDespacho = `<button type="button" class="btn btn-primary btn-abrir-despacho" data-envio-id="${envio.id}" aria-expanded="false"><i class="ti ti-building-warehouse" aria-hidden="true"></i> Dejé el pedido en la agencia</button>`;
+  return `
+      ${renderContactoComprador(pedido)}
+      ${renderQuienRecibe(pedido)}
+      <ol class="envio-pasos-agencia">
+        <li><strong>Recógelo en el almacén y llévalo a la agencia de carga en Huamanga</strong> que viaje a ${ciudad}.${mapa}</li>
+        <li><strong>Mándalo a nombre de ${receptor}</strong> con destino ${ciudad} y el flete <b>pagado en destino</b>: lo paga el comprador al recoger.</li>
+        <li><strong>Registra aquí la guía</strong>: la agencia, el número y una foto del comprobante, para que el comprador lo siga.</li>
+      </ol>
+      ${renderCambioEstadoEnvio(envio, ['asignado', 'en_camino'], { claseBoton: 'btn-outline', extra: botonDespacho })}
+      ${renderFormDespachoAgencia(envio)}`;
+}
+
+// En camión: el envío llega al transportista cuando su viaje sale (Mis viajes). Al llegar a la ciudad, se descarga
+// solo con el saldo pagado (30%) y con el código del comprador.
+function renderEnvioEnCamion(envio, ruta, pedido) {
+  const ciudad = escapeAttr(envio.destino_ciudad || pedido?.destino_ciudad || 'la ciudad de destino');
+  if (envio.estado === 'en_camino') {
+    return `
+      <p class="envio-aviso info"><i class="ti ti-road" aria-hidden="true"></i>
+        <span>Va en tu viaje a ${ciudad}. Al llegar, marca <b>"Llegué a ${ciudad}"</b> en Mis viajes: recién ahí cada comprador paga su saldo.</span></p>
+      ${renderBloqueRuta(envio, ruta)}`;
+  }
+  if (envio.estado !== 'en_destino') return '';
+  const saldo = envio.saldo_pagado
+    ? `<div class="envio-aviso ok" role="status"><i class="ti ti-circle-check" aria-hidden="true"></i>
+         <div><strong>Saldo pagado: ya puedes descargar</strong><span>El sistema confirmó el 30% restante del comprador.</span></div></div>`
+    : `<div class="envio-aviso espera" role="status"><i class="ti ti-hourglass" aria-hidden="true"></i>
+         <div><strong>Esperando el saldo (30%)</strong><span>No descargues todavía. El comprador lo paga desde su cuenta y aquí verás cuando el sistema lo confirme.</span></div>
+         <button type="button" class="btn btn-outline btn-sm btn-consultar-saldo"><i class="ti ti-refresh" aria-hidden="true"></i> Volver a consultar</button></div>`;
+  return `
+      ${renderContactoComprador(pedido)}
+      ${renderQuienRecibe(pedido)}
+      ${saldo}
+      ${renderBloqueRuta(envio, ruta)}
+      ${envio.saldo_pagado ? `
+      <div class="envio-actualizar">
+        <button type="button" class="btn btn-primary btn-abrir-entrega" data-envio-id="${envio.id}" aria-expanded="false"><i class="ti ti-package" aria-hidden="true"></i> Descargar y entregar</button>
+      </div>
+      ${renderFormEntrega(envio, 'Revisa el DNI de quien recibe y pídele el código de 4 dígitos del pedido.')}` : ''}`;
+}
+
+function renderTarjetaEnvio(envio, ruta, indice = 0, pedido = null) {
+  const activo = ESTADOS_ENVIO_EN_CURSO.includes(envio.estado);
+  const finalizado = ['entregado', 'cancelado', 'rechazado', 'en_agencia'].includes(envio.estado);
+  const retraso = Math.min(indice, 12) * 35;
+  let cuerpo;
+  if (envio.modalidad_envio === 'agencia') {
+    cuerpo = renderEnvioPorAgencia(envio, pedido, activo);
+  } else if (envio.modalidad_envio === 'camion') {
+    cuerpo = renderEnvioEnCamion(envio, ruta, pedido);
+  } else {
+    cuerpo = `
+      ${activo ? renderContactoComprador(pedido) : ''}
+      ${activo ? renderBloqueRuta(envio, ruta) : ''}
+      ${!finalizado ? `${renderCambioEstadoEnvio(envio, ['asignado', 'en_camino', 'entregado'])}${renderFormEntrega(envio)}` : ''}`;
+  }
+  return `
+    <div class="pedido-card ${activo ? 'pedido-card-activo' : ''}" style="animation-delay:${retraso}ms">
+      <div class="pedido-card-header">
+        <div>
+          <div class="pedido-id">Envío #${String(envio.id).slice(0, 8)} · Pedido #${String(envio.pedido_id).slice(0, 8)}</div>
+          <div class="pedido-fecha">${formatearFechaServidor(envio.fecha_creacion)}</div>
+        </div>
+        ${badgeEstadoEnvio(envio.estado)}
+      </div>
+      ${renderRutaLejana(envio)}
+      ${cuerpo}
     </div>
   `;
 }
@@ -7343,16 +7503,21 @@ async function cargarListaEnvios(miRepartidorId) {
     return;
   }
 
-  const activos = mios.filter((e) => ['asignado', 'en_camino'].includes(e.estado));
+  const activos = mios.filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado));
   const rutasPorEnvio = {};
   const pedidosPorEnvio = {};
   // Ruta (seguimiento en mapa) y pedido (nombre + teléfono de contacto del comprador) son
-  // independientes y opcionales: si alguna falla, la tarjeta se pinta igual sin ese bloque.
-  await Promise.all(activos.map(async (e) => {
-    const [ruta, pedido] = await Promise.allSettled([Api.transporte.ruta(e.id), Api.pedidos.obtener(e.pedido_id)]);
-    if (ruta.status === 'fulfilled') rutasPorEnvio[e.id] = ruta.value;
+  // independientes y opcionales: si alguna falla, la tarjeta se pinta igual sin ese bloque. Un pedido por agencia no
+  // lleva mapa (el repartidor va a la agencia, no a la ciudad del comprador) sino el punto de despacho.
+  const hayAgencia = activos.some((e) => e.modalidad_envio === 'agencia');
+  await Promise.all([hayAgencia ? obtenerAgenciaDespacho() : null, ...activos.map(async (e) => {
+    const [ruta, pedido] = await Promise.allSettled([
+      e.modalidad_envio === 'agencia' ? Promise.resolve(null) : Api.transporte.ruta(e.id),
+      Api.pedidos.obtener(e.pedido_id),
+    ]);
+    if (ruta.status === 'fulfilled' && ruta.value) rutasPorEnvio[e.id] = ruta.value;
     if (pedido.status === 'fulfilled') pedidosPorEnvio[e.id] = pedido.value;
-  }));
+  })]);
 
   cont.innerHTML = mios.map((e, i) => renderTarjetaEnvio(e, rutasPorEnvio[e.id], i, pedidosPorEnvio[e.id])).join('');
   activos.forEach((e) => {
@@ -7412,6 +7577,304 @@ async function confirmarEntregaConPin(form) {
         form.foto.focus();
       }
     }
+  }
+}
+
+function abrirFormularioDeEnvio(boton) {
+  const clase = boton.classList.contains('btn-abrir-despacho') ? '.form-despacho-agencia' : '.form-confirmar-entrega';
+  const form = boton.closest('.pedido-card')?.querySelector(clase);
+  if (!form) return;
+  form.classList.remove('hidden');
+  boton.setAttribute('aria-expanded', 'true');
+  boton.classList.add('hidden'); // vuelve a aparecer con "Cancelar"
+  form.querySelector('input:not([type="file"])')?.focus();
+}
+
+async function despacharEnAgencia(form) {
+  const agencia = form.agencia.value.trim().replace(/\s+/g, ' ');
+  const numeroGuia = form.numero_guia.value.trim();
+  const foto = form.foto.files[0];
+  let problema = null;
+  if (agencia.length < 2) problema = ['Escribe el nombre de la agencia (por ejemplo, Shalom).', form.agencia];
+  else if (!/^[A-Za-z0-9-]{3,40}$/.test(numeroGuia)) problema = ['El número de guía tiene de 3 a 40 letras, números o guiones: cópialo tal como está en el comprobante.', form.numero_guia];
+  else if (!foto) problema = ['Agrega la foto de la guía antes de registrar el despacho.', form.foto];
+  if (problema) {
+    mostrarMensajeEntrega(form, problema[0], 'error');
+    problema[1].focus();
+    return;
+  }
+
+  const boton = form.querySelector('button[type="submit"]');
+  form.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
+  boton.textContent = 'Registrando...';
+  try {
+    await Api.transporte.despacharAgencia(form.dataset.envioId, agencia, numeroGuia, foto);
+    toast('Despacho registrado: el comprador ya tiene la guía para seguir su pedido 📦');
+    refrescarPanelRepartidor();
+  } catch (err) {
+    manejarError(err, 'registrar el despacho en la agencia');
+    mostrarMensajeEntrega(form, err.message, 'error');
+    form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+    boton.textContent = 'Registrar despacho';
+  }
+}
+
+// ---- Viajes largos en camión: documentos del transportista y sus viajes compartidos ----
+const KG_MINIMOS_CAMION = 2500; // 50 sacos de 50 kg: lo mínimo que pide un comprador lejano (mismo tope que Transporte)
+const DOCUMENTOS_CARGA = [
+  { campo: 'licencia', icono: 'id', titulo: 'Licencia de conducir', detalle: 'Foto o PDF, hasta 5 MB' },
+  { campo: 'tarjeta_propiedad', icono: 'file-certificate', titulo: 'Tarjeta de propiedad', detalle: 'Del vehículo · foto o PDF, hasta 5 MB' },
+  { campo: 'soat', icono: 'shield-check', titulo: 'SOAT vigente', detalle: 'Del mismo vehículo · foto o PDF, hasta 5 MB' },
+];
+const DOCUMENTO_TIPOS_VALIDOS = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const ESTADO_CARGA_INFO = {
+  pendiente: { texto: 'En revisión', icono: 'hourglass' },
+  rechazado: { texto: 'Observado', icono: 'alert-circle' },
+  verificado: { texto: 'Verificado', icono: 'circle-check' },
+};
+
+function renderFormCarga(perfil, oculto) {
+  const archivo = (d) => `
+          <label class="reclamo-archivo">
+            <input type="file" name="${d.campo}" accept="image/jpeg,image/png,image/webp,application/pdf" required>
+            <span class="reclamo-archivo-caja">
+              <i class="ti ti-${d.icono}" aria-hidden="true"></i>
+              <strong>${d.titulo}</strong>
+              <small class="reclamo-archivo-nombre" data-vacio="${d.detalle}">${d.detalle}</small>
+            </span>
+          </label>`;
+  return `
+      <form id="form-carga" class="form-carga${oculto ? ' hidden' : ''}" novalidate>
+        <div class="form-carga-grid">
+          <label class="perfil-campo">Placa del vehículo
+            <input type="text" name="placa" maxlength="7" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC-123" value="${escapeAttr(perfil.placa || '')}" required>
+          </label>
+          <label class="perfil-campo">N.º de licencia de conducir
+            <input type="text" name="licencia_numero" maxlength="15" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Ej. Q12345678" value="${escapeAttr(perfil.licencia_numero || '')}" required>
+          </label>
+        </div>
+        <div class="reclamo-archivos carga-archivos">${DOCUMENTOS_CARGA.map(archivo).join('')}</div>
+        <p class="carga-privacidad"><i class="ti ti-lock" aria-hidden="true"></i> Solo el admin ve estos documentos, para comprobar que el vehículo y quien maneja están en regla.</p>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="form-carga-acciones">
+          <button type="submit" class="btn btn-primary"><i class="ti ti-send" aria-hidden="true"></i> Enviar documentos</button>
+        </div>
+      </form>`;
+}
+
+function renderSeccionCarga(perfil) {
+  const capacidad = Number(perfil.capacidad_maxima_kg) || 0;
+  const numero = (n) => Number(n).toLocaleString('es-PE', { maximumFractionDigits: 0 });
+  const estado = perfil.transportista_carga ? perfil.verificacion_estado : null;
+  const info = ESTADO_CARGA_INFO[estado];
+  const intro = `<p class="carga-intro">ChakraShop lleva pedidos de <b>50 sacos o más</b> a Lima y otras ciudades en <b>camiones compartidos</b>.
+    Cada viaje sale cuando junta el 80% de su carga; cada comprador paga el 70% al pedir y el 30% al llegar, <b>antes de descargar</b>.</p>`;
+  const datos = `
+      <dl class="carga-datos">
+        <div><dt>Placa</dt><dd>${escapeAttr(perfil.placa || '—')}</dd></div>
+        <div><dt>Licencia</dt><dd>${escapeAttr(perfil.licencia_numero || '—')}</dd></div>
+        <div><dt>Carga hasta</dt><dd>${numero(capacidad)} kg · ${Math.floor(capacidad / 50)} sacos</dd></div>
+      </dl>`;
+  let cuerpo;
+  if (!estado && capacidad < KG_MINIMOS_CAMION) {
+    cuerpo = `${intro}
+      <p class="envio-aviso info"><i class="ti ti-info-circle" aria-hidden="true"></i>
+        <span>Para estos viajes el vehículo debe cargar al menos <b>${numero(KG_MINIMOS_CAMION)} kg</b> (50 sacos). El tuyo está registrado con ${numero(capacidad)} kg.</span></p>`;
+  } else if (!estado) {
+    cuerpo = `${intro}
+      <ul class="carga-requisitos" aria-label="Lo que vas a necesitar">
+        ${DOCUMENTOS_CARGA.map((d) => `<li><i class="ti ti-${d.icono}" aria-hidden="true"></i> ${d.titulo}</li>`).join('')}
+      </ul>
+      <button type="button" class="btn btn-primary btn-abrir-carga" aria-expanded="false" aria-controls="form-carga"><i class="ti ti-upload" aria-hidden="true"></i> Enviar mis documentos</button>
+      ${renderFormCarga(perfil, true)}`;
+  } else if (estado === 'pendiente') {
+    const fecha = perfil.fecha_documentos ? `Los enviaste el ${formatearFechaServidor(perfil.fecha_documentos)} ` : '';
+    cuerpo = `
+      <div class="envio-aviso espera"><i class="ti ti-hourglass" aria-hidden="true"></i>
+        <div><strong>Tus documentos están en revisión</strong>
+          <span>${fecha}El admin revisa que la licencia, la tarjeta de propiedad y el SOAT estén vigentes y correspondan a este vehículo; el resultado aparece aquí.</span></div></div>
+      ${datos}`;
+  } else if (estado === 'rechazado') {
+    cuerpo = `
+      <div class="envio-aviso error"><i class="ti ti-alert-circle" aria-hidden="true"></i>
+        <div><strong>El admin observó tus documentos</strong>
+          <span>${escapeAttr(perfil.verificacion_motivo || 'Revisa que se lean bien y estén vigentes.')} Corrige lo que te indica y vuelve a enviarlos.</span></div></div>
+      ${renderFormCarga(perfil, false)}`;
+  } else {
+    cuerpo = `
+      <div class="envio-aviso ok"><i class="ti ti-circle-check" aria-hidden="true"></i>
+        <div><strong>Ya puedes hacer viajes largos</strong>
+          <span>Cuando el admin te asigne un viaje, aparece en «Mis viajes en camión», arriba de tus envíos.</span></div></div>
+      ${datos}`;
+  }
+  return `
+    <div class="card-panel carga-panel">
+      <div class="carga-cabecera">
+        <span class="carga-cabecera-icono"><i class="ti ti-truck" aria-hidden="true"></i></span>
+        <div>
+          <h3 id="carga-titulo">Viajes largos en camión</h3>
+          <p>Lima y otras ciudades, con documentos verificados</p>
+        </div>
+        ${info ? `<span class="carga-estado ${estado}"><i class="ti ti-${info.icono}" aria-hidden="true"></i> ${info.texto}</span>` : ''}
+      </div>
+      ${cuerpo}
+    </div>`;
+}
+
+function pintarDocumentoElegido(input) {
+  const caja = input.closest('.reclamo-archivo');
+  const nombre = caja.querySelector('.reclamo-archivo-nombre');
+  const archivo = input.files[0];
+  let error = '';
+  if (archivo && !DOCUMENTO_TIPOS_VALIDOS.includes(archivo.type)) error = 'Tiene que ser una foto (JPG, PNG o WEBP) o un PDF.';
+  else if (archivo && archivo.size > FOTO_TAMANO_MAXIMO) error = `Pesa ${formatearTamanoArchivo(archivo.size)} y el máximo es 5 MB.`;
+  if (error) input.value = '';
+  caja.classList.toggle('con-archivo', Boolean(archivo) && !error);
+  caja.classList.toggle('con-error', Boolean(error));
+  nombre.textContent = error || (archivo ? `${archivo.name} · ${formatearTamanoArchivo(archivo.size)}` : nombre.dataset.vacio);
+}
+
+async function enviarDocumentosCarga(form) {
+  const placa = form.placa.value.toUpperCase().replace(/\s+/g, '');
+  const licenciaNumero = form.licencia_numero.value.toUpperCase().replace(/\s+/g, '');
+  const archivos = Object.fromEntries(DOCUMENTOS_CARGA.map((d) => [d.campo, form.elements[d.campo].files[0]]));
+  const falta = DOCUMENTOS_CARGA.find((d) => !archivos[d.campo]);
+  let problema = null;
+  if (!/^[A-Z0-9]{3}-?[A-Z0-9]{3}$/.test(placa)) problema = ['La placa son 6 letras o números, por ejemplo ABC-123.', form.placa];
+  else if (!/^[A-Z0-9-]{6,15}$/.test(licenciaNumero)) problema = ['Escribe el número de tu licencia de conducir (6 a 15 letras o números).', form.licencia_numero];
+  else if (falta) problema = [`Falta subir: ${falta.titulo}.`, form.elements[falta.campo]];
+  if (problema) {
+    mostrarMensajeEntrega(form, problema[0], 'error');
+    problema[1].focus();
+    return;
+  }
+
+  const boton = form.querySelector('button[type="submit"]');
+  const textoBoton = boton.innerHTML;
+  form.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
+  boton.textContent = 'Enviando...';
+  try {
+    await Api.repartidores.enviarDocumentosCarga({
+      placa, licenciaNumero, licencia: archivos.licencia, tarjetaPropiedad: archivos.tarjeta_propiedad, soat: archivos.soat,
+    });
+    toast('Documentos enviados: el admin los revisa y el resultado aparece aquí 🚛');
+    cargarCargaYViajes(await Api.repartidores.miPerfil());
+  } catch (err) {
+    manejarError(err, 'enviar tus documentos');
+    mostrarMensajeEntrega(form, err.message, 'error');
+    form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+    boton.innerHTML = textoBoton;
+  }
+}
+
+const ETAPAS_VIAJE = [
+  { estado: 'abierto', texto: 'Juntando carga' },
+  { estado: 'listo', texto: 'Listo para salir' },
+  { estado: 'en_ruta', texto: 'En ruta' },
+  { estado: 'llegado', texto: 'En destino' },
+];
+
+function renderTarjetaViaje(v, indice = 0) {
+  const ciudad = escapeAttr(v.destino_ciudad || 'su destino');
+  const actual = Math.max(0, ETAPAS_VIAJE.findIndex((e) => e.estado === v.estado));
+  const capacidad = Number(v.capacidad_sacos) || 0;
+  const cargados = Number(v.sacos_cargados) || 0;
+  const paraSalir = Number(v.sacos_para_salir) || 0;
+  const porcentaje = (n) => (capacidad ? Math.min(100, (n / capacidad) * 100) : 0);
+  const llegado = v.estado === 'llegado';
+  const etapas = ETAPAS_VIAJE.map((e, i) => `
+          <li class="${i < actual ? 'hecho' : i === actual ? 'actual' : ''}"${i === actual ? ' aria-current="step"' : ''}>
+            <span class="viaje-paso-punto" aria-hidden="true"></span>${e.texto}
+          </li>`).join('');
+  const saldoDe = (e) => {
+    if (!llegado) return '';
+    if (e.estado === 'entregado') return '<span class="viaje-saldo ok">Entregado</span>';
+    return e.saldo_pagado ? '<span class="viaje-saldo ok">Saldo pagado</span>' : '<span class="viaje-saldo espera">Falta el saldo</span>';
+  };
+  const envios = (v.envios || []).map((e) => `
+          <li>
+            <span class="viaje-envio-id">Pedido #${escapeAttr(String(e.pedido_id).slice(0, 8))}</span>
+            <span>${e.sacos ?? '—'} sacos</span>
+            ${saldoDe(e)}
+          </li>`).join('');
+  const boton = (accion, icono, texto, pregunta, confirmar) => `
+      <div class="viaje-acciones">
+        <button type="button" class="btn btn-primary btn-viaje-accion"><i class="ti ti-${icono}" aria-hidden="true"></i> ${texto}</button>
+      </div>
+      <div class="viaje-confirmar hidden" role="group" aria-label="${texto}">
+        <p>${pregunta}</p>
+        <div>
+          <button type="button" class="btn btn-ghost btn-sm btn-viaje-cancelar">Todavía no</button>
+          <button type="button" class="btn btn-primary btn-sm btn-viaje-confirmar" data-accion="${accion}" data-viaje-id="${escapeAttr(v.id)}">${confirmar}</button>
+        </div>
+      </div>`;
+  const acciones = {
+    abierto: `<p class="viaje-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> Sale al juntar ${paraSalir} sacos: faltan ${Math.max(0, paraSalir - cargados)}. Si hace falta salir antes, lo decide el admin.</p>`,
+    listo: boton('salir', 'truck-delivery', `Salir hacia ${ciudad}`,
+      `¿Ya cargaste los ${cargados} sacos? Al salir, cada comprador ve que su pedido va en camino a ${ciudad}.`, 'Sí, salir ahora'),
+    en_ruta: boton('llegar', 'map-pin', `Llegué a ${ciudad}`,
+      `¿Ya estás en ${ciudad}? Cada comprador recibe el aviso para pagar su saldo (30%) antes de que descargues.`, 'Sí, ya llegué'),
+    llegado: `<p class="viaje-nota"><i class="ti ti-wallet" aria-hidden="true"></i> Cobra antes de descargar: entrega cada pedido en «Mis envíos» cuando su saldo figure pagado, con el código del comprador.</p>`,
+  }[v.estado] || '';
+  return `
+    <article class="viaje-card" style="animation-delay:${Math.min(indice, 8) * 50}ms">
+      <div class="viaje-cabecera">
+        <div>
+          <h4><i class="ti ti-route" aria-hidden="true"></i> Huamanga → ${ciudad}</h4>
+          <small>Viaje #${escapeAttr(String(v.id).slice(0, 8))}${v.fecha_salida ? ` · salió el ${formatearFechaServidor(v.fecha_salida)}` : ''}</small>
+        </div>
+      </div>
+      <ol class="viaje-etapas" aria-label="Etapas del viaje">${etapas}</ol>
+      <div class="viaje-medidor">
+        <div class="viaje-medidor-texto"><strong>${cargados} sacos cargados</strong><span>de ${capacidad} · sale con ${paraSalir}</span></div>
+        <div class="viaje-medidor-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${capacidad}" aria-valuenow="${Math.min(cargados, capacidad)}" aria-label="Sacos en el camión">
+          <span class="viaje-medidor-relleno" style="width:${porcentaje(cargados)}%"></span>
+          <span class="viaje-medidor-marca" style="left:${porcentaje(paraSalir)}%"></span>
+        </div>
+        <span class="viaje-medidor-leyenda">Sale al llegar a esta marca (${paraSalir} sacos)</span>
+      </div>
+      ${envios ? `<ul class="viaje-envios" aria-label="Pedidos en este viaje">${envios}</ul>` : ''}
+      ${acciones}
+    </article>`;
+}
+
+async function cargarCargaYViajes(perfil) {
+  const seccionCarga = document.getElementById('carga-section');
+  const seccionViajes = document.getElementById('viajes-section');
+  if (!seccionCarga || !seccionViajes || !perfil) return;
+  seccionCarga.innerHTML = renderSeccionCarga(perfil);
+  seccionCarga.classList.remove('hidden');
+  if (!perfil.transportista_carga) {
+    seccionViajes.classList.add('hidden');
+    return;
+  }
+  let viajes = [];
+  try {
+    viajes = await Api.transporte.viajesMios();
+  } catch { /* sin la lista de viajes; los envíos de camión siguen en "Mis envíos" */ }
+  document.getElementById('viajes-list').innerHTML = viajes.map((v, i) => renderTarjetaViaje(v, i)).join('');
+  seccionViajes.classList.toggle('hidden', !viajes.length);
+}
+
+function mostrarConfirmacionViaje(tarjeta, mostrar) {
+  tarjeta.querySelector('.viaje-acciones')?.classList.toggle('hidden', mostrar);
+  tarjeta.querySelector('.viaje-confirmar')?.classList.toggle('hidden', !mostrar);
+  tarjeta.querySelector(mostrar ? '.btn-viaje-confirmar' : '.btn-viaje-accion')?.focus();
+}
+
+async function moverViaje(boton) {
+  const { accion, viajeId } = boton.dataset;
+  const tarjeta = boton.closest('.viaje-card');
+  tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    const viaje = accion === 'salir' ? await Api.transporte.salirViaje(viajeId) : await Api.transporte.llegarViaje(viajeId);
+    toast(accion === 'salir'
+      ? `¡Buen viaje! Los compradores ya ven que su pedido va a ${viaje.destino_ciudad} 🚛`
+      : `Llegaste a ${viaje.destino_ciudad}: descarga cada pedido cuando su saldo figure pagado.`);
+    refrescarPanelRepartidor();
+  } catch (err) {
+    manejarError(err, accion === 'salir' ? 'marcar la salida del viaje' : 'marcar la llegada del viaje');
+    tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -7532,7 +7995,7 @@ function iniciarSeguimientoRepartidor() {
 
 async function enviarUbicacionActual() {
   if (!ultimaPosicionRepartidor) return;
-  const trackeables = (Estado.enviosRepartidor || []).filter((e) => ['asignado', 'en_camino'].includes(e.estado));
+  const trackeables = (Estado.enviosRepartidor || []).filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado));
   if (!trackeables.length) return;
 
   for (const envio of trackeables) {
@@ -9288,6 +9751,12 @@ function inicializarEventos() {
   document.getElementById('envios-list').addEventListener('change', (e) => {
     if (e.target.matches('.foto-entrega-input')) alElegirFotoEntrega(e.target);
   });
+  // El aviso de un dato que faltaba se va en cuanto se corrige (no queda un error viejo junto al dato ya bueno).
+  const ocultarAvisoAlCorregir = (e) => {
+    e.target.closest('.form-despacho-agencia, #form-carga')?.querySelector('.form-entrega-mensaje')?.classList.add('hidden');
+  };
+  document.getElementById('envios-list').addEventListener('input', ocultarAvisoAlCorregir);
+  document.getElementById('carga-section').addEventListener('input', ocultarAvisoAlCorregir);
   document.getElementById('envios-list').addEventListener('click', (e) => {
     const btnQuitarFoto = e.target.closest('.foto-quitar');
     if (btnQuitarFoto) { quitarFotoEntrega(btnQuitarFoto.closest('.foto-entrega')); return; }
@@ -9295,7 +9764,17 @@ function inicializarEventos() {
     if (btnCambiarFoto) { btnCambiarFoto.closest('.foto-entrega').querySelector('.foto-entrega-input').click(); return; }
 
     const btnCancelar = e.target.closest('.btn-cancelar-entrega');
-    if (btnCancelar) { btnCancelar.closest('.form-confirmar-entrega').classList.add('hidden'); return; }
+    if (btnCancelar) {
+      const form = btnCancelar.closest('form');
+      form.classList.add('hidden');
+      const abridor = form.closest('.pedido-card')?.querySelector('[aria-expanded="true"]');
+      abridor?.setAttribute('aria-expanded', 'false');
+      abridor?.classList.remove('hidden');
+      return;
+    }
+    const btnAbrir = e.target.closest('.btn-abrir-despacho, .btn-abrir-entrega');
+    if (btnAbrir) { abrirFormularioDeEnvio(btnAbrir); return; }
+    if (e.target.closest('.btn-consultar-saldo')) { refrescarPanelRepartidor(); return; }
 
     const btn = e.target.closest('.btn-actualizar-envio');
     if (!btn) return;
@@ -9310,10 +9789,38 @@ function inicializarEventos() {
     actualizarEstadoEnvio(envioId, select.value);
   });
   document.getElementById('envios-list').addEventListener('submit', (e) => {
+    const despacho = e.target.closest('.form-despacho-agencia');
+    if (despacho) { e.preventDefault(); despacharEnAgencia(despacho); return; }
     const form = e.target.closest('.form-confirmar-entrega');
     if (!form) return;
     e.preventDefault();
     confirmarEntregaConPin(form);
+  });
+  document.getElementById('viajes-list').addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.viaje-card');
+    if (!tarjeta) return;
+    if (e.target.closest('.btn-viaje-accion')) { mostrarConfirmacionViaje(tarjeta, true); return; }
+    if (e.target.closest('.btn-viaje-cancelar')) { mostrarConfirmacionViaje(tarjeta, false); return; }
+    const confirmar = e.target.closest('.btn-viaje-confirmar');
+    if (confirmar) moverViaje(confirmar);
+  });
+  const seccionCarga = document.getElementById('carga-section');
+  seccionCarga.addEventListener('change', (e) => {
+    const input = e.target.closest('.reclamo-archivo input[type="file"]');
+    if (input) pintarDocumentoElegido(input);
+  });
+  seccionCarga.addEventListener('click', (e) => {
+    const abrir = e.target.closest('.btn-abrir-carga');
+    if (!abrir) return;
+    const form = document.getElementById('form-carga');
+    const abierto = !form.classList.toggle('hidden');
+    abrir.setAttribute('aria-expanded', String(abierto));
+    if (abierto) form.placa.focus();
+  });
+  seccionCarga.addEventListener('submit', (e) => {
+    if (e.target.id !== 'form-carga') return;
+    e.preventDefault();
+    enviarDocumentosCarga(e.target);
   });
   document.getElementById('propuestas-list').addEventListener('click', (e) => {
     const aceptar = e.target.closest('.btn-aceptar-propuesta');

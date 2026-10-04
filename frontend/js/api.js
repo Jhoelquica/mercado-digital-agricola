@@ -310,6 +310,8 @@ const Api = {
     // Compradores lejanos: las ciudades a las que se llega (público) y el DNI de quien recibe (nombre enmascarado).
     destinosLejanos: () => request('pedidos', '/destinos-lejanos'),
     consultarDni: (dni) => request('pedidos', `/pedidos/dni/${encodeURIComponent(dni)}`, { auth: true }),
+    // Dónde deja el repartidor los pedidos que van por agencia de carga (público; lo cambia el admin).
+    agenciaDespacho: () => request('pedidos', '/configuracion/agencia-despacho'),
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`, { auth: true }),
@@ -340,10 +342,33 @@ const Api = {
     // capacidad (no "nadie disponible en absoluto", que se resuelve solo) — ver
     // motivo_pendiente en transporte/models.py.
     pendientesPorCapacidad: () => request('transporte', '/envios/pendientes-por-capacidad', { auth: true }),
+    // Compradores lejanos (repartidor): dejó el pedido en la agencia de carga de Huamanga, con la guía y su foto.
+    despacharAgencia: (envioId, agencia, numeroGuia, archivoFoto) => {
+      exigirImagenLiviana(archivoFoto);
+      const formData = new FormData();
+      formData.append('agencia', agencia);
+      formData.append('numero_guia', numeroGuia);
+      formData.append('foto', archivoFoto);
+      return requestFormData('transporte', `/envios/${envioId}/despachar-agencia`, formData);
+    },
+    // Viajes compartidos en camión del transportista: él marca la salida (cuando el viaje juntó su carga) y la llegada.
+    viajesMios: () => request('transporte', '/viajes/mios', { auth: true }),
+    salirViaje: (viajeId) => request('transporte', `/viajes/${viajeId}/salir`, { method: 'POST', body: {}, auth: true }),
+    llegarViaje: (viajeId) => request('transporte', `/viajes/${viajeId}/llegar`, { method: 'POST', auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),
     crear: (datos) => request('transporte', '/repartidores', { method: 'POST', body: datos, auth: true }),
+    // Transportista de carga: placa, licencia y los documentos (licencia, tarjeta de propiedad, SOAT) que revisa el admin.
+    enviarDocumentosCarga: ({ placa, licenciaNumero, licencia, tarjetaPropiedad, soat }) => {
+      const formData = new FormData();
+      formData.append('placa', placa);
+      formData.append('licencia_numero', licenciaNumero);
+      formData.append('licencia', licencia);
+      formData.append('tarjeta_propiedad', tarjetaPropiedad);
+      formData.append('soat', soat);
+      return requestFormData('transporte', '/repartidores/me/carga', formData);
+    },
   },
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),

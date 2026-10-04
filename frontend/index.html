@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=329d1944">
+<link rel="stylesheet" href="css/style.css?v=e54736f6">
 </head>
 <body>
 
@@ -638,6 +638,14 @@
         <div id="propuestas-list" class="propuestas-grid"></div>
       </div>
 
+      <!-- Transportista de carga: sus viajes compartidos a otras ciudades (salir cuando juntó la carga, llegar). -->
+      <div id="viajes-section" class="viajes-section hidden">
+        <div class="section-header inner">
+          <h3><i class="ti ti-truck"></i> Mis viajes en camión</h3>
+        </div>
+        <div id="viajes-list" class="viajes-grid"></div>
+      </div>
+
       <div class="section-header inner">
         <h3><i class="ti ti-clipboard-list"></i> Mis envíos</h3>
       </div>
@@ -647,6 +655,14 @@
         <p><strong>Todo tranquilo por ahora</strong></p>
         <p class="muted">No tienes propuestas ni envíos activos en este momento.</p>
       </div>
+
+      <!-- Viajes largos en camión: documentos del transportista (licencia, tarjeta de propiedad, SOAT) y su verificación. -->
+      <section id="carga-section" class="carga-section hidden" aria-labelledby="carga-titulo"></section>
+      <datalist id="agencias-sugeridas">
+        <option value="Shalom"></option>
+        <option value="Marvisur"></option>
+        <option value="Olva Courier"></option>
+      </datalist>
     </div>
   </section>
 
@@ -1135,8 +1151,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=e8fe7b4a"></script>
+<script src="js/api.js?v=29ff0507"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=53ae468e"></script>
+<script src="js/app.js?v=f431127d"></script>
 </body>
 </html>
