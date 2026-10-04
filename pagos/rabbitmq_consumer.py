@@ -2,6 +2,8 @@ import os
 import json
 import time
 import threading
+from datetime import datetime, timedelta
+
 import pika
 
 from database import SessionLocal
@@ -10,6 +12,8 @@ import models
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
+# Cuánto tiempo se guarda el stock de un pedido sin pagar (main.vencer_pagos_sin_pagar lo devuelve al vencer).
+PLAZO_PARA_PAGAR_MINUTOS = int(os.getenv("PLAZO_PARA_PAGAR_MINUTOS", "60"))
 
 
 def _calcular_monto(items: list, costo_envio: float = 0) -> float:
@@ -23,6 +27,12 @@ def _procesar_mensaje(ch, method, properties, body):
     if datos.get("evento") == "pedido_creado":
         db = SessionLocal()
         try:
+            # RabbitMQ entrega "al menos una vez" y Pedidos reenvía su bandeja de salida: un pedido_creado repetido no
+            # crea un segundo pago.
+            if db.query(models.Pago).filter(models.Pago.pedido_id == datos["pedido_id"]).first():
+                print(f"[Pagos] El pedido {datos['pedido_id']} ya tiene su registro de pago, no se crea otro")
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
             # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del
             # almacén, ver calcular_costo_envio en pedidos/main.py) — el default 0 es solo para
             # no romper si algún día llega un evento viejo sin esa clave.
@@ -34,6 +44,7 @@ def _procesar_mensaje(ch, method, properties, body):
                 items=json.dumps(datos.get("items", [])),
                 # Pedido en camión: primero se cobra el adelanto, el resto al llegar (ver Pago.monto_adelanto).
                 monto_adelanto=datos.get("monto_adelanto") if datos.get("modalidad_envio") == "camion" else None,
+                vence_en=datetime.utcnow() + timedelta(minutes=PLAZO_PARA_PAGAR_MINUTOS),
             )
             db.add(nuevo_pago)
             db.commit()

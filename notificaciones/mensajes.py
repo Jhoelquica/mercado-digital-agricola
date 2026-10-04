@@ -100,6 +100,9 @@ def mensaje_pago(datos):
         return f"Recibimos tu pago{de_monto}. Tu pedido está confirmado y ya buscamos quién lo lleve."
     if evento == "saldo_pagado":
         return f"Recibimos tu saldo{de_monto}. Ya pueden descargar tu pedido: dale tu código de entrega al chofer."
+    if evento == "pago_rechazado" and datos.get("vencido"):
+        return ("Venció el plazo para pagar tu pedido y los productos volvieron al catálogo. Si siguen disponibles, "
+                "puedes pagarlo desde Mis Pedidos.")
     if evento == "pago_rechazado":
         return _con_motivo("Tu pago no se completó", datos.get("motivo")) + " Puedes volver a pagar tu pedido desde Mis Pedidos."
     if evento == "saldo_rechazado":

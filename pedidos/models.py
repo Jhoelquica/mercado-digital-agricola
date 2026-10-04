@@ -1,9 +1,23 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from database import Base
+
+class EventoSaliente(Base):
+    """Bandeja de salida (patrón outbox): el evento pedido_creado se guarda en la MISMA transacción que el pedido y se
+    publica después. Si RabbitMQ no responde, el pedido queda creado igual y reintento_eventos.py lo reenvía; antes el
+    pedido quedaba guardado pero Pagos nunca se enteraba (y el comprador no podía pagarlo)."""
+    __tablename__ = "eventos_salientes"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tipo = Column(String, nullable=False)
+    cuerpo = Column(Text, nullable=False)  # el evento en JSON, tal cual se publica
+    fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    fecha_envio = Column(DateTime, nullable=True)  # NULL = todavía no llegó a RabbitMQ
+    intentos = Column(Integer, nullable=False, default=0)
+
 
 class Pedido(Base):
     __tablename__ = "pedidos"

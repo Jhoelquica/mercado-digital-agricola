@@ -1,4 +1,5 @@
 from prometheus_fastapi_instrumentator import Instrumentator
+import json
 import logging
 import os
 import re
@@ -7,6 +8,7 @@ import threading
 import time
 from typing import Literal
 import uuid
+from datetime import datetime
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.security import HTTPAuthorizationCredentials
@@ -18,6 +20,7 @@ from rabbitmq_publisher import publicar_evento
 from auth import verificar_token
 from auth import secreto_de_servicio_valido
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
+from reintento_eventos import lanzar_reintento_eventos_en_hilo
 from auth import verificar_token, requiere_rol, security
 
 from database import Base, engine, SessionLocal
@@ -39,6 +42,7 @@ Instrumentator().instrument(app).expose(app)
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    lanzar_reintento_eventos_en_hilo()
 
 CLAVE_ALMACEN = "almacen_ubicacion"
 # Aproximación del Mercado Nery García Zárate, en Ayacucho — valor inicial hasta que el Admin lo
@@ -744,10 +748,27 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             db.add(nuevo_item)
             filas_con_base.append((nuevo_item, cantidad_base))
 
-    db.commit()
+        # El evento va a la bandeja de salida en la MISMA transacción que el pedido (ver models.EventoSaliente).
+        saliente = models.EventoSaliente(tipo="pedido_creado", cuerpo=json.dumps(_evento_pedido_creado(nuevo_pedido, usuario, filas_con_base)))
+        db.add(saliente)
+        try:
+            db.commit()
+        except Exception:
+            # El stock ya salió de Productos pero el pedido no quedó guardado: se devuelve (compensación de la saga).
+            db.rollback()
+            logger.error("No se pudo guardar el pedido después de descontar el stock: se devuelve", exc_info=True)
+            _devolver_stock(client, [(item.producto_id, cantidad_base) for item, _, _, cantidad_base, _ in items_validados])
+            raise HTTPException(status_code=503, detail="No se pudo registrar tu pedido y no se te cobró nada. Intenta de nuevo en unos momentos.")
+
+    _publicar_saliente(db, saliente)
+    # Después de publicar: marcar el evento enviado hace commit y vence los atributos del pedido ya cargados.
     db.refresh(nuevo_pedido)
-    nuevo_pedido.items  # fuerza la carga de la relación: sin esto la respuesta sale sin "items" (antes la cargaba, de paso, el armado del evento)
-    publicar_evento({
+    nuevo_pedido.items  # fuerza la carga de la relación: sin esto la respuesta sale sin "items"
+    return pedido_para(usuario, nuevo_pedido)
+
+
+def _evento_pedido_creado(nuevo_pedido, usuario: dict, filas_con_base) -> dict:
+    return {
         "evento": "pedido_creado",
         "pedido_id": str(nuevo_pedido.id),
         "usuario_id": str(usuario.get("sub")),
@@ -769,8 +790,37 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             }
             for fila, cantidad_base in filas_con_base
         ],
-    })
-    return pedido_para(usuario, nuevo_pedido)
+    }
+
+
+def _devolver_stock(client, lineas) -> None:
+    """Compensación de la saga del pedido: devuelve a Productos lo que se descontó para un pedido que no se pudo guardar.
+    Si tampoco se puede devolver, queda en el log para corregirlo a mano (con las cantidades exactas)."""
+    try:
+        resp = client.post(
+            f"{PRODUCTOS_URL}/productos/interno/reponer-stock-lote",
+            json={"lineas": [{"producto_id": str(producto_id), "cantidad": cantidad} for producto_id, cantidad in lineas]},
+            headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO or ""},
+            timeout=5,
+        )
+    except httpx.RequestError:
+        logger.error("Productos no respondió al devolver el stock de un pedido que no se guardó. REVISAR A MANO: %s", lineas, exc_info=True)
+        return
+    if resp.status_code != 200:
+        logger.error("Productos no devolvió el stock (HTTP %s). REVISAR A MANO: %s", resp.status_code, lineas)
+
+
+def _publicar_saliente(db: Session, saliente) -> None:
+    """Publica un evento de la bandeja de salida y lo marca enviado. Si RabbitMQ no responde, el pedido ya está creado
+    igual: el evento sigue en la bandeja y reintento_eventos.py lo reenvía."""
+    try:
+        publicar_evento(json.loads(saliente.cuerpo))
+    except Exception:
+        logger.warning("RabbitMQ no respondió al publicar %s: queda en la bandeja de salida", saliente.tipo, exc_info=True)
+        return
+    saliente.fecha_envio = datetime.utcnow()
+    saliente.intentos = (saliente.intentos or 0) + 1
+    db.commit()
 
 # Público a propósito (mismo criterio que /configuracion/almacen): el comprador ve cuánto le va a
 # costar el envío ANTES de pagar, sin crear todavía el pedido. DEBE declararse antes de

@@ -780,6 +780,32 @@ def descontar_stock_lote(datos: DescontarLote, x_servicio_secreto: str = Header(
     cache.invalidar(cache.CLAVE_CATALOGO, *[cache.clave_detalle(str(pid)) for pid in ids])
     return {"descontados": len(ids)}
 
+
+# La compensación del descuento de arriba (saga del pedido): Pedidos devuelve lo que descontó si al final no pudo guardar
+# el pedido. Mismas claves y mismo redondeo hacia arriba que al descontar, así vuelve exactamente lo que salió. Un
+# producto que ya no existe se informa y no frena a los demás.
+@app.post("/productos/interno/reponer-stock-lote")
+def reponer_stock_lote(datos: DescontarLote, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
+    if not (
+        secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO)
+        or secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PRODUCTOS_SECRETO)
+    ):
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    por_producto = {}
+    for linea in datos.lineas:
+        por_producto[linea.producto_id] = por_producto.get(linea.producto_id, 0) + linea.cantidad
+    ids = sorted(por_producto, key=str)
+    productos = db.query(models.Producto).filter(
+        models.Producto.id.in_(ids)
+    ).order_by(models.Producto.id).with_for_update().all()
+    por_id = {p.id: p for p in productos}
+    for producto_id, producto in por_id.items():
+        producto.stock += math.ceil(por_producto[producto_id])
+    db.commit()
+    cache.invalidar(cache.CLAVE_CATALOGO, *[cache.clave_detalle(str(pid)) for pid in por_id])
+    return {"repuestos": len(por_id), "no_encontrados": [str(pid) for pid in ids if pid not in por_id]}
+
 @app.patch("/productos/{producto_id}/stock")
 def descontar_stock(producto_id: str, datos: DescontarStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):
     if not secreto_de_servicio_valido(x_servicio_secreto, PEDIDOS_A_PRODUCTOS_SECRETO):

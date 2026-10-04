@@ -18,6 +18,7 @@ context manager `with`) no dispara eventos de startup en esta versión de FastAP
 llama a mano una vez acá abajo para que el almacén exista antes del primer test, igual que
 pasaría en un arranque real.
 """
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -1349,3 +1350,61 @@ def test_el_resumen_para_transporte_dice_la_modalidad(monkeypatch):
 def test_las_condiciones_dicen_el_saco_y_el_adelanto():
     c = client.get("/pedidos/condiciones").json()
     assert c["kg_por_saco"] == 50 and c["porcentaje_adelanto_camion"] == 70
+
+
+# ============ Saga del pedido: compensar el stock y bandeja de salida ============
+
+def _eventos_salientes_del(pedido_id):
+    db = main.SessionLocal()
+    try:
+        return [e for e in db.query(main.models.EventoSaliente).all() if json.loads(e.cuerpo)["pedido_id"] == pedido_id]
+    finally:
+        db.close()
+
+
+def test_si_el_pedido_no_se_puede_guardar_se_devuelve_el_stock_descontado():
+    mock_client = _mock_httpx_client(precio=50.0)
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2)
+    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar, \
+         patch("sqlalchemy.orm.Session.commit", side_effect=RuntimeError("la base no respondió")):
+        resp = client.post("/pedidos", json=payload)
+
+    assert resp.status_code == 503 and "no se te cobró nada" in resp.json()["detail"]
+    urls = [llamada.args[0] for llamada in mock_client.post.call_args_list]
+    assert urls[0].endswith("/productos/interno/descontar-stock-lote")
+    assert urls[1].endswith("/productos/interno/reponer-stock-lote")
+    assert mock_client.post.call_args_list[1].kwargs["json"] == {"lineas": [{"producto_id": payload["items"][0]["producto_id"], "cantidad": 2}]}
+    mock_publicar.assert_not_called()
+
+
+def test_si_rabbitmq_no_responde_el_pedido_se_crea_y_el_evento_se_reenvia_despues():
+    import reintento_eventos
+    from datetime import datetime, timedelta
+
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
+         patch("main.publicar_evento", side_effect=ConnectionError("RabbitMQ caído")):
+        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+    assert resp.status_code == 200, resp.text
+    pedido_id = resp.json()["id"]
+    [pendiente] = _eventos_salientes_del(pedido_id)
+    assert pendiente.fecha_envio is None and pendiente.tipo == "pedido_creado"
+
+    db = main.SessionLocal()
+    try:
+        with patch("reintento_eventos.publicar_evento") as publicar:
+            reintento_eventos.reenviar_eventos_pendientes(db, ahora=datetime.utcnow() + timedelta(minutes=1))
+    finally:
+        db.close()
+    reenviados = [llamada.args[0] for llamada in publicar.call_args_list if llamada.args[0]["pedido_id"] == pedido_id]
+    assert len(reenviados) == 1 and reenviados[0]["evento"] == "pedido_creado" and reenviados[0]["items"]
+    [enviado] = _eventos_salientes_del(pedido_id)
+    assert enviado.fecha_envio is not None and enviado.intentos == 1
+
+
+def test_un_pedido_normal_deja_su_evento_marcado_como_enviado():
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento") as mock_publicar:
+        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+    pedido_id = resp.json()["id"]
+    assert mock_publicar.call_args.args[0]["pedido_id"] == pedido_id
+    [evento] = _eventos_salientes_del(pedido_id)
+    assert evento.fecha_envio is not None

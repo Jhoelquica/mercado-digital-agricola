@@ -1094,6 +1094,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
         ("POST", f"/productos/{_uuid.uuid4()}/stock/reponer", {"cantidad": 1}, "PAGOS_A_PRODUCTOS_SECRETO"),
         ("PATCH", f"/productos/{_uuid.uuid4()}/stock", {"cantidad": 1}, "PEDIDOS_A_PRODUCTOS_SECRETO"),
         ("POST", "/productos/interno/descontar-stock-lote", {"lineas": [{"producto_id": str(_uuid.uuid4()), "cantidad": 1}]}, "PEDIDOS_A_PRODUCTOS_SECRETO"),
+        ("POST", "/productos/interno/reponer-stock-lote", {"lineas": [{"producto_id": str(_uuid.uuid4()), "cantidad": 1}]}, "PEDIDOS_A_PRODUCTOS_SECRETO"),
         ("POST", "/productos/interno/crear-desde-cosecha", {"productor_id": str(_uuid.uuid4()), "productor_nombre": "x", "nombre": "x", "stock": 1, "registro_produccion_id": str(_uuid.uuid4())}, "PRODUCTORES_A_PRODUCTOS_SECRETO"),
     ]
     for metodo, ruta, cuerpo, variable in protegidos:
@@ -1660,3 +1661,20 @@ def test_el_arranque_no_se_cae_si_minio_todavia_no_responde(monkeypatch):
 
     monkeypatch.setattr(minio_client, "client", _MinioCaido())
     main.preparar_almacen_de_imagenes()  # solo avisa: subir_imagen lo vuelve a intentar en la primera subida
+
+
+def test_reponer_lote_devuelve_exactamente_lo_que_se_desconto(monkeypatch):
+    """La compensación de la saga del pedido: mismo redondeo que al descontar (11,5 kg salen como 12 y vuelven 12)."""
+    producto = _crear_producto_directo(stock=20)
+    otro_id = uuid.uuid4()  # ya no existe: se informa y no frena al resto
+    assert _descontar_lote(monkeypatch, [(producto.id, 11.5)]).status_code == 200
+    assert _stock_de(producto.id) == 8
+
+    resp = client.post(
+        "/productos/interno/reponer-stock-lote",
+        json={"lineas": [{"producto_id": str(producto.id), "cantidad": 11.5}, {"producto_id": str(otro_id), "cantidad": 1}]},
+        headers={"X-Servicio-Secreto": SECRETO_PEDIDOS},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"repuestos": 1, "no_encontrados": [str(otro_id)]}
+    assert _stock_de(producto.id) == 20

@@ -1252,3 +1252,68 @@ def test_un_pedido_en_camion_crea_su_pago_con_el_adelanto():
         db.close()
     assert float(pago_camion.monto) == 1200.0 and float(pago_camion.monto_adelanto) == 840.0
     assert pago_local.monto_adelanto is None
+
+
+# ============ Saga del pedido: pago idempotente y plazo para pagar ============
+
+def test_el_mismo_pedido_creado_dos_veces_no_crea_dos_pagos_y_trae_su_plazo():
+    from datetime import datetime, timedelta
+    import rabbitmq_consumer
+
+    pedido_id = str(uuid.uuid4())
+    evento = {"evento": "pedido_creado", "pedido_id": pedido_id, "costo_envio": 5,
+              "items": [{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 10.0, "cantidad_base": 2}]}
+    for _ in range(2):  # RabbitMQ entrega "al menos una vez" y Pedidos reenvía su bandeja de salida
+        canal = MagicMock()
+        rabbitmq_consumer._procesar_mensaje(canal, MagicMock(), None, json.dumps(evento).encode())
+        canal.basic_ack.assert_called_once()
+    db = main.SessionLocal()
+    try:
+        pagos = db.query(main.models.Pago).filter(main.models.Pago.pedido_id == pedido_id).all()
+    finally:
+        db.close()
+    assert len(pagos) == 1
+    plazo = pagos[0].vence_en - datetime.utcnow()
+    assert timedelta(minutes=rabbitmq_consumer.PLAZO_PARA_PAGAR_MINUTOS - 1) < plazo <= timedelta(minutes=rabbitmq_consumer.PLAZO_PARA_PAGAR_MINUTOS)
+
+
+def _con_vencimiento(pago, vence_en, estado="pendiente"):
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).first()
+        fila.vence_en, fila.estado = vence_en, estado
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_un_pedido_sin_pagar_vence_devuelve_su_stock_y_avisa(monkeypatch):
+    from datetime import datetime, timedelta
+
+    items = [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0, "cantidad_base": 1}]
+    vencido = _crear_pago_directo(items)
+    al_dia = _crear_pago_directo(items)
+    de_antes = _crear_pago_directo(items)  # sin plazo: los pagos de antes no vencen solos
+    en_revision = _crear_pago_directo(items)
+    ahora = datetime.utcnow()
+    _con_vencimiento(vencido, ahora - timedelta(minutes=1))
+    _con_vencimiento(al_dia, ahora + timedelta(minutes=30))
+    _con_vencimiento(en_revision, ahora - timedelta(minutes=1), estado="en_revision")
+    eventos, compensar = [], MagicMock()
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+
+    db = main.SessionLocal()
+    try:
+        main.vencer_pagos_sin_pagar(db, ahora=ahora)
+    finally:
+        db.close()
+
+    fila = _fila_pago(vencido)
+    assert fila.estado == "rechazado" and fila.vencido_en is not None and "volvieron al catálogo" in fila.motivo_rechazo
+    compensar.assert_called_once_with(fila.items)
+    assert [e for e in eventos if e["pedido_id"] == str(vencido.pedido_id)] == [
+        {"evento": "pago_rechazado", "pedido_id": str(vencido.pedido_id), "motivo": main.MOTIVO_VENCIDO, "vencido": True}]
+    assert _estado_del_pago(al_dia) == "pendiente"
+    assert _estado_del_pago(de_antes) == "pendiente"
+    assert _estado_del_pago(en_revision) == "en_revision"

@@ -4032,6 +4032,7 @@ const ETIQUETAS_METODO_PAGO = { tarjeta: 'tarjeta', yape: 'Yape', transferencia:
 
 function textoEstadoPago(pago) {
   if (!pago) return '—';
+  if (pago.estado === 'rechazado' && pago.vencido_en) return 'Plazo para pagar vencido';
   const estado = ETIQUETAS_ESTADO_PAGO[pago.estado] || pago.estado;
   // El método solo se sabe cuando hubo un intento (un pago pendiente todavía no tiene uno elegido).
   return pago.estado === 'pendiente' || !pago.metodo ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
@@ -4049,7 +4050,11 @@ function estadoGeneralPedido(d) {
   // Una transferencia en revisión puede ser el reintento de un pago rechazado (pedido "cancelado" hasta que se apruebe).
   if (d.pago?.estado === 'en_revision') return { clave: 'pendiente', etiqueta: 'Transferencia en revisión', icono: 'building-bank', pill: 'pendiente' };
   // Pedidos solo cancela un pedido cuando su pago se rechaza, y ese pago se puede reintentar: "Pago rechazado" lo dice mejor.
-  if (pagoRechazadoPedido(d)) return { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
+  if (pagoRechazadoPedido(d)) {
+    return d.pago.vencido_en
+      ? { clave: 'pago_rechazado', etiqueta: 'Plazo vencido', icono: 'clock-x', pill: 'rechazado' }
+      : { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
+  }
   if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
   if (envio?.estado === 'en_agencia') return { clave: 'en_curso', etiqueta: 'En la agencia de tu ciudad', icono: 'building-warehouse', pill: 'en_camino' };
   if (envio?.estado === 'en_destino') return { clave: 'en_curso', etiqueta: 'El camión llegó a tu ciudad', icono: 'truck', pill: 'en_camino' };
@@ -4245,7 +4250,12 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
   let alertaPago = '';
   if (pagoRechazadoPedido(d)) {
     const motivo = pago?.motivo_rechazo ? `Motivo: ${escapeAttr(pago.motivo_rechazo.replace(/[.\s]+$/, ''))}. ` : '';
-    alertaPago = `
+    alertaPago = pago?.vencido_en ? `
+    <div class="mp-alerta" role="alert">
+      <i class="ti ti-clock-x"></i>
+      <div><strong>Venció el plazo para pagar</strong><span>Los productos volvieron al catálogo. Si siguen disponibles, puedes pagar este pedido ahora.</span></div>
+      ${botonPagar('Pagar ahora')}
+    </div>` : `
     <div class="mp-alerta" role="alert">
       <i class="ti ti-alert-triangle"></i>
       <div><strong>${pago?.metodo === 'transferencia' ? 'Tu transferencia no se aprobó' : 'Tu pago fue rechazado'}</strong><span>${motivo}Puedes volver a pagar sin perder tu pedido.</span></div>
@@ -4259,11 +4269,15 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
     </div>`;
   } else if (pago?.estado === 'pendiente' && pedido.estado === 'pendiente') {
     const esAdelanto = pago.parte_a_pagar === 'adelanto';
+    const vence = pago.vence_en ? parsearFechaServidor(pago.vence_en) : null;
+    const plazo = vence && !isNaN(vence)
+      ? ` Lo guardamos hasta las ${vence.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}; si no se paga, los productos vuelven al catálogo.`
+      : '';
     alertaPago = `
     <div class="mp-alerta mp-alerta-info" role="status">
       <i class="ti ti-wallet"></i>
       <div><strong>${esAdelanto ? `Falta pagar el adelanto (70%): ${formatearMoneda(montoAhora)}` : 'Falta pagar este pedido'}</strong>
-        <span>${esAdelanto ? 'Con el adelanto reservas tu lugar en el camión; el 30% se paga cuando llegue.' : 'Está reservado: págalo con tarjeta, Yape o transferencia.'}</span></div>
+        <span>${esAdelanto ? 'Con el adelanto reservas tu lugar en el camión; el 30% se paga cuando llegue.' : 'Está reservado: págalo con tarjeta, Yape o transferencia.'}${plazo}</span></div>
       ${botonPagar(esAdelanto ? 'Pagar el adelanto' : 'Pagar ahora')}
     </div>`;
   } else if (pago?.estado === 'adelanto_pagado' && envio?.estado === 'en_destino') {

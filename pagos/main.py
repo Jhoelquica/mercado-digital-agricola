@@ -13,6 +13,8 @@ import json
 import math
 import uuid
 from datetime import datetime
+import threading
+import time
 import httpx
 import logging
 
@@ -31,7 +33,7 @@ from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from culqi_client import crear_cargo
-from rabbitmq_consumer import lanzar_consumidor_en_hilo
+from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
 from rabbitmq_publisher import publicar_evento
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, pagos_sin_liquidaciones
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
@@ -95,6 +97,7 @@ app.add_middleware(
 def iniciar():
     lanzar_consumidor_en_hilo()
     lanzar_reintento_liquidaciones_en_hilo()
+    threading.Thread(target=_bucle_vencimientos, daemon=True).start()
 
 def get_db():
     db = SessionLocal()
@@ -317,6 +320,53 @@ def monto_de(pago, parte: str) -> Decimal:
     if parte == "saldo":
         return total - Decimal(str(pago.monto_adelanto))
     return total
+
+
+# ---- Pedidos que nadie paga: al vencer el plazo el stock vuelve al catálogo (último paso de la saga del pedido) ----
+INTERVALO_VENCIMIENTOS_SEGUNDOS = 60
+MOTIVO_VENCIDO = f"Pasaron {PLAZO_PARA_PAGAR_MINUTOS} minutos sin pagar y los productos volvieron al catálogo"
+
+
+def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
+    """Los pagos "pendiente" cuyo plazo venció pasan a "rechazado" (como un pago rechazado: el comprador puede volver a
+    pagar si el stock sigue ahí, ver reservar_stock), se devuelve su stock y se avisa (pago_rechazado: Pedidos lo cancela y
+    Notificaciones le escribe al comprador). SKIP LOCKED: un cobro en curso tiene la fila bloqueada (procesar_pago y la
+    transferencia la toman con FOR UPDATE), así que nunca se vence un pedido mientras se está pagando. Una transferencia
+    en revisión no está "pendiente" y no vence."""
+    ahora = ahora or datetime.utcnow()
+    vencidos = (
+        db.query(models.Pago)
+        .filter(models.Pago.estado == "pendiente", models.Pago.vence_en.isnot(None), models.Pago.vence_en < ahora)
+        .with_for_update(skip_locked=True)
+        .all()
+    )
+    for pago in vencidos:
+        pago.estado = "rechazado"
+        pago.motivo_rechazo = MOTIVO_VENCIDO
+        pago.vencido_en = ahora
+    db.commit()
+    for pago in vencidos:
+        compensar_stock(pago.items)
+        try:
+            publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": MOTIVO_VENCIDO, "vencido": True})
+        except Exception:
+            logger.error("No se pudo avisar que venció el pago del pedido %s", pago.pedido_id, exc_info=True)
+    if vencidos:
+        logger.info("Vencieron %d pedido(s) sin pagar: su stock volvió al catálogo", len(vencidos))
+    return len(vencidos)
+
+
+def _bucle_vencimientos():
+    while True:
+        db = SessionLocal()
+        try:
+            vencer_pagos_sin_pagar(db)
+        except Exception:
+            db.rollback()
+            logger.error("El ciclo de vencimiento de pagos falló, reintenta en %ds", INTERVALO_VENCIMIENTOS_SEGUNDOS, exc_info=True)
+        finally:
+            db.close()
+        time.sleep(INTERVALO_VENCIMIENTOS_SEGUNDOS)
 
 
 def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id=None) -> None:

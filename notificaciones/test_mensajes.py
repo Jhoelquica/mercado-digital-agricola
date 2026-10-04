@@ -46,3 +46,8 @@ def test_el_aviso_del_pedido_depende_de_como_viaja():
     assert "flete de la agencia lo pagas al recoger" in mensaje_pedido_creado({"modalidad_envio": "agencia"})
     assert mensaje_pedido_creado({"modalidad_envio": "camion"}).startswith("Registramos tu pedido en camión compartido")
     assert soles(None) is None and soles("x") is None
+
+
+def test_un_pedido_que_vencio_sin_pagar_lo_dice_asi():
+    texto = mensaje_pago({"evento": "pago_rechazado", "vencido": True, "motivo": "Pasaron 60 minutos sin pagar"})
+    assert texto.startswith("Venció el plazo para pagar tu pedido") and "Mis Pedidos" in texto

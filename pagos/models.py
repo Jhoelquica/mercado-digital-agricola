@@ -38,6 +38,10 @@ class Pago(Base):
     fecha_saldo = Column(DateTime, nullable=True)
     # Qué parte está esperando la revisión de una transferencia: "total", "adelanto" o "saldo".
     parte_en_revision = Column(String, nullable=True)
+    # Plazo para pagar: un pedido que nadie paga ya no retiene el stock para siempre (ver vencer_pagos_sin_pagar en
+    # main.py). NULL en los pagos de antes, que no vencen solos.
+    vence_en = Column(DateTime, nullable=True)
+    vencido_en = Column(DateTime, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega
