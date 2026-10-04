@@ -5412,3 +5412,22 @@ body.asistente-abierto { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .admin-filtro, .interruptor input, .interruptor input::after { transition: none; }
 }
+
+/* ===== Corregir o anular una siembra planificada (Mi perfil del productor) =====
+   ui-ux-pro-max: etiquetas visibles en cada campo, campos grandes para agricultores mayores, confirmación antes de
+   anular (no se deshace) y aviso de éxito. 21st.dev "Inline Edit Settings": se edita en la misma tarjeta. */
+.produccion-acciones { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.produccion-acciones .btn { min-height: 48px; font-size: 1rem; }
+.produccion-card .produccion-acciones .btn-completar-cosecha { align-self: auto; }
+.form-corregir-siembra { display: grid; gap: 14px; margin-top: 4px; padding: 16px; border-radius: 14px; border: 2px solid var(--color-primario); background: #fff; }
+.form-corregir-siembra h5 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; color: var(--color-primario); }
+.form-corregir-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.form-corregir-grid .perfil-campo input { min-height: 48px; font-size: 1.05rem; }
+.form-corregir-nota { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.86rem; color: var(--texto-suave); }
+.form-corregir-siembra .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+.anular-siembra-confirmar { display: grid; gap: 10px; padding: 14px; border-radius: 14px; background: #fdecec; }
+.anular-siembra-confirmar p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.95rem; font-weight: 600; color: #9b1c1c; line-height: 1.45; }
+.anular-siembra-confirmar .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+/* Sobre el fondo rojo claro, el botón de peligro va lleno (el suave de siempre casi no se distinguía). */
+.anular-siembra-confirmar .btn-danger { background: #b42318; color: #fff; min-height: 44px; }
+.anular-siembra-confirmar .btn-danger:hover { background: #912018; }

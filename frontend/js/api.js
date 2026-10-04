@@ -251,6 +251,9 @@ const Api = {
       sugerirCosecha: (datos) => request('productores', '/productores/produccion/sugerir-cosecha', { method: 'POST', body: datos, auth: true }),
       listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
+      // Mientras no se cosecha: corregir un dato mal puesto o anular la siembra (no se borra, queda su rastro).
+      corregir: (id, datos) => request('productores', `/productores/produccion/${id}`, { method: 'PUT', body: datos, auth: true }),
+      anular: (id) => request('productores', `/productores/produccion/${id}/anular`, { method: 'POST', auth: true }),
       // La foto de la cosecha va antes que completarCosecha (que la exige) y aparte, para que esa siga siendo JSON.
       subirFotoCosecha: (id, archivo) => {
         const formData = new FormData();

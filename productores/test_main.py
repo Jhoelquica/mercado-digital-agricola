@@ -935,3 +935,75 @@ def test_un_id_de_productor_mal_formado_falla_422_no_500():
     assert client.get(f"/productores/{uuid.uuid4()}").status_code == 404
 
 
+
+
+# ============ Corregir o anular una siembra; la chacra con cosechas no se mueve ============
+
+def _datos_corregidos(**cambios):
+    siembra = datetime(2026, 2, 1)
+    return {"cultivo": "papa amarilla", "numero_parcelas": 3, "costo_semillas": 120.0, "costo_insumos": 40.0,
+            "unidad_medida": "kg", "fecha_siembra": siembra.isoformat(),
+            "fecha_cosecha_estimada": (siembra + timedelta(days=150)).isoformat(), **cambios}
+
+
+def test_el_productor_corrige_una_siembra_planificada_sin_tocar_su_evidencia():
+    registro_id = _crear_registro_planificado(latitud=-13.16, longitud=-74.22)
+    antes = _fila(registro_id)
+
+    resp = client.put(f"/productores/produccion/{registro_id}", json=_datos_corregidos())
+
+    assert resp.status_code == 200, resp.text
+    fila = _fila(registro_id)
+    assert (fila.cultivo, fila.numero_parcelas, float(fila.costo_semillas)) == ("papa amarilla", 3, 120.0)
+    assert fila.fecha_siembra == datetime(2026, 2, 1)
+    assert (fila.chacra_id, fila.siembra_latitud, fila.siembra_longitud) == (antes.chacra_id, antes.siembra_latitud, antes.siembra_longitud)
+    assert client.put(f"/productores/produccion/{registro_id}",
+                      json=_datos_corregidos(fecha_cosecha_estimada=datetime(2025, 1, 1).isoformat())).status_code == 422
+
+
+def test_una_siembra_anulada_desaparece_de_la_lista_y_no_se_puede_cosechar():
+    registro_id = _crear_registro_planificado()
+
+    resp = client.post(f"/productores/produccion/{registro_id}/anular")
+
+    assert resp.status_code == 200 and resp.json()["estado"] == "anulado"
+    assert registro_id not in [r["id"] for r in client.get("/productores/produccion/me").json()]
+    assert _completar_cosecha(registro_id).status_code == 409
+    assert client.put(f"/productores/produccion/{registro_id}", json=_datos_corregidos()).status_code == 404
+
+
+def test_una_siembra_cosechada_no_se_corrige_ni_se_anula():
+    registro_id = _crear_registro_planificado()
+    _poner_estado(registro_id, "cosechado")
+
+    assert client.put(f"/productores/produccion/{registro_id}", json=_datos_corregidos()).status_code == 409
+    assert client.post(f"/productores/produccion/{registro_id}/anular").status_code == 409
+
+
+def test_otro_productor_no_corrige_ni_anula_una_siembra_ajena():
+    registro_id = _crear_registro_planificado()
+    _nuevo_productor()
+
+    assert client.put(f"/productores/produccion/{registro_id}", json=_datos_corregidos()).status_code == 403
+    assert client.post(f"/productores/produccion/{registro_id}/anular").status_code == 403
+    assert _fila(registro_id).estado == "planificado"
+
+
+def test_una_chacra_con_cosechas_no_cambia_de_lugar_ni_de_codigo_pero_si_de_nombre():
+    registro_id = _crear_registro_planificado()
+    chacra_id = _fila(registro_id).chacra_id
+    actual = client.get(f"/chacras/{chacra_id}").json()
+    movida = {**actual, "ubicacion_latitud": -13.30}
+    del movida["id"], movida["productor_id"]
+
+    # todavía sin cosechas: se puede corregir el lugar
+    assert client.put(f"/chacras/{chacra_id}", json=movida).status_code == 200
+    _poner_estado(registro_id, "cosechado")
+
+    otra_vez = {**movida, "ubicacion_latitud": -13.10}
+    resp = client.put(f"/chacras/{chacra_id}", json=otra_vez)
+    assert resp.status_code == 409 and "cadena de certificación" in resp.json()["detail"]
+    assert client.put(f"/chacras/{chacra_id}", json={**movida, "codigo": "OTRO-1"}).status_code == 409
+    renombrada = client.put(f"/chacras/{chacra_id}", json={**movida, "nombre": "Chacra de abajo"})
+    assert renombrada.status_code == 200 and renombrada.json()["nombre"] == "Chacra de abajo"
+    assert client.get(f"/chacras/{chacra_id}").json()["ubicacion_latitud"] == -13.30

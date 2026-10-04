@@ -187,6 +187,18 @@ class RegistroProduccionCrear(_ConUbicacionGps):
     fecha_siembra: Fecha
     fecha_cosecha_estimada: Fecha
 
+class RegistroProduccionEditar(BaseModel):
+    """Lo que el productor puede corregir de una siembra todavía planificada. La chacra y dónde estaba al registrarla
+    (siembra_latitud/longitud) no: son la evidencia en origen que después queda sellada en la cadena."""
+    cultivo: Cultivo
+    numero_parcelas: Parcelas
+    costo_semillas: Monto = 0
+    costo_insumos: Monto = 0
+    unidad_medida: UnidadMedida = "kg"
+    equivalencia_kg: Equivalencia | None = None
+    fecha_siembra: Fecha
+    fecha_cosecha_estimada: Fecha
+
 class SugerirCosechaDatos(BaseModel):
     chacra_id: uuid.UUID
     cultivo: Cultivo
@@ -429,6 +441,20 @@ def editar_chacra(
                 detail=f"Ya tienes una chacra registrada con el código '{datos.codigo}'.",
             )
 
+    # Con cosechas ya registradas, la ubicación y el código de la chacra quedaron en la cadena de certificación (y la
+    # distancia de cada cosecha se midió contra ese punto): moverla cambiaría la historia. El nombre sí se corrige.
+    if (datos.ubicacion_latitud, datos.ubicacion_longitud, datos.codigo) != (chacra.ubicacion_latitud, chacra.ubicacion_longitud, chacra.codigo):
+        cosechada = db.query(models.RegistroProduccion).filter(
+            models.RegistroProduccion.chacra_id == chacra.id,
+            models.RegistroProduccion.estado.notin_(("planificado", "anulado")),
+        ).first()
+        if cosechada:
+            raise HTTPException(
+                status_code=409,
+                detail="Esta chacra ya tiene cosechas registradas: su ubicación y su código quedaron en la cadena de "
+                       "certificación y no se cambian. Si la marcaste mal, registra una chacra nueva.",
+            )
+
     chacra.codigo = datos.codigo
     chacra.nombre = datos.nombre
     chacra.ubicacion_latitud = datos.ubicacion_latitud
@@ -636,20 +662,8 @@ def _validar_fecha_siembra(fecha_siembra: datetime):
         )
 
 
-@app.post("/productores/produccion")
-def crear_registro_produccion(
-    datos: RegistroProduccionCrear,
-    db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("productor")),
-):
-    productor = _obtener_productor_del_token(usuario, db)
-
-    # La chacra debe pertenecer al productor autenticado — que exista no alcanza (podría ser
-    # de otro productor). Mismo trato para "no existe" y "no es tuya": 403, sin filtrar cuál.
-    chacra = db.query(models.Chacra).filter(models.Chacra.id == datos.chacra_id).first()
-    if not chacra or str(chacra.productor_id) != str(productor.id):
-        raise HTTPException(status_code=403, detail="La chacra especificada no pertenece a tu cuenta.")
-
+def _validar_datos_de_siembra(datos) -> None:
+    """Las reglas de una siembra, al crearla y al corregirla."""
     if datos.numero_parcelas <= 0:
         raise HTTPException(status_code=422, detail="El número de parcelas debe ser mayor a 0")
     if datos.fecha_cosecha_estimada < datos.fecha_siembra:
@@ -668,6 +682,23 @@ def crear_registro_produccion(
             status_code=422,
             detail="Cuando la unidad de medida no es 'kg', debes indicar la equivalencia a kg (ej. 1 litro = X kg)",
         )
+
+
+@app.post("/productores/produccion")
+def crear_registro_produccion(
+    datos: RegistroProduccionCrear,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    productor = _obtener_productor_del_token(usuario, db)
+
+    # La chacra debe pertenecer al productor autenticado — que exista no alcanza (podría ser
+    # de otro productor). Mismo trato para "no existe" y "no es tuya": 403, sin filtrar cuál.
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == datos.chacra_id).first()
+    if not chacra or str(chacra.productor_id) != str(productor.id):
+        raise HTTPException(status_code=403, detail="La chacra especificada no pertenece a tu cuenta.")
+
+    _validar_datos_de_siembra(datos)
 
     nuevo = models.RegistroProduccion(
         productor_id=productor.id,
@@ -699,7 +730,8 @@ def listar_mi_produccion(
 ):
     productor = _obtener_productor_del_token(usuario, db)
     registros = db.query(models.RegistroProduccion).filter(
-        models.RegistroProduccion.productor_id == productor.id
+        models.RegistroProduccion.productor_id == productor.id,
+        models.RegistroProduccion.estado != "anulado",
     ).order_by(models.RegistroProduccion.fecha_registro.desc()).all()
 
     # Un solo cache de precios de referencia por cultivo, compartido entre todos los registros
@@ -707,6 +739,50 @@ def listar_mi_produccion(
     # un registro con el mismo cultivo.
     cache_precios = {}
     return [_serializar_registro(r, cache_precios, db) for r in registros]
+
+
+def _siembra_propia_planificada(registro_id, productor, db: Session) -> models.RegistroProduccion:
+    registro = db.query(models.RegistroProduccion).filter(models.RegistroProduccion.id == registro_id).first()
+    if not registro or registro.estado == "anulado":
+        raise HTTPException(status_code=404, detail="Siembra no encontrada")
+    if str(registro.productor_id) != str(productor.id):
+        raise HTTPException(status_code=403, detail="Esta siembra no te pertenece")
+    if registro.estado != "planificado":
+        raise HTTPException(status_code=409, detail="Esta siembra ya se cosechó: lo que se registró quedó en la cadena de certificación y no se cambia.")
+    return registro
+
+
+@app.put("/productores/produccion/{registro_id}")
+def corregir_siembra(
+    registro_id: uuid.UUID,
+    datos: RegistroProduccionEditar,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """El productor corrige un dato mal puesto (cultivo, parcelas, fechas, costos) mientras la siembra no se cosecha."""
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _siembra_propia_planificada(registro_id, productor, db)
+    _validar_datos_de_siembra(datos)
+    for campo, valor in datos.model_dump().items():
+        setattr(registro, campo, valor)
+    db.commit()
+    db.refresh(registro)
+    return _serializar_registro(registro, {}, db)
+
+
+@app.post("/productores/produccion/{registro_id}/anular")
+def anular_siembra(
+    registro_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """Una siembra que no va (se registró por error, se perdió el cultivo): se anula, no se borra, para que quede su
+    rastro. Deja de aparecer en la lista y ya no se puede cosechar."""
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _siembra_propia_planificada(registro_id, productor, db)
+    registro.estado = "anulado"
+    db.commit()
+    return {"id": str(registro.id), "estado": "anulado"}
 
 
 @app.post("/productores/produccion/sugerir-cosecha")

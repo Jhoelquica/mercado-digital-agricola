@@ -9272,6 +9272,87 @@ function renderEvidenciaRegistro(r) {
     </div>`;
 }
 
+// Corregir una siembra todavía planificada: lo que se escribió (cultivo, parcelas, fechas, costos). La chacra y el lugar
+// donde se marcó la siembra no: son la evidencia de origen.
+function renderFormCorregirSiembra(r) {
+  const fecha = (valor) => (valor ? String(valor).slice(0, 10) : '');
+  const campo = (etiqueta, atributos) => `<label class="perfil-campo">${etiqueta}<input ${atributos}></label>`;
+  return `
+      <form class="form-corregir-siembra hidden" data-id="${r.id}" data-unidad="${escapeAttr(r.unidad_medida || 'kg')}" data-equivalencia="${escapeAttr(r.equivalencia_kg ?? '')}" novalidate>
+        <h5><i class="ti ti-pencil" aria-hidden="true"></i> Corregir la siembra</h5>
+        <div class="form-corregir-grid">
+          ${campo('Cultivo', `name="cultivo" type="text" maxlength="80" required value="${escapeAttr(r.cultivo)}"`)}
+          ${campo('Parcelas', `name="numero_parcelas" type="number" min="1" step="1" required value="${escapeAttr(r.numero_parcelas)}"`)}
+          ${campo('Fecha de siembra', `name="fecha_siembra" type="date" required value="${fecha(r.fecha_siembra)}"`)}
+          ${campo('Cosecha estimada', `name="fecha_cosecha_estimada" type="date" required value="${fecha(r.fecha_cosecha_estimada)}"`)}
+          ${campo('Semillas (S/)', `name="costo_semillas" type="number" min="0" step="0.01" value="${escapeAttr(Number(r.costo_semillas) || 0)}"`)}
+          ${campo('Insumos (S/)', `name="costo_insumos" type="number" min="0" step="0.01" value="${escapeAttr(Number(r.costo_insumos) || 0)}"`)}
+        </div>
+        <p class="form-corregir-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> La chacra y el lugar donde marcaste la siembra no se cambian: son la prueba de origen de tu cosecha.</p>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-corregir">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar cambios</button>
+        </div>
+      </form>`;
+}
+
+function mostrarPasoSiembra(tarjeta, paso) {
+  tarjeta.querySelector('.produccion-acciones')?.classList.toggle('hidden', paso !== 'acciones');
+  tarjeta.querySelector('.form-corregir-siembra')?.classList.toggle('hidden', paso !== 'corregir');
+  tarjeta.querySelector('.anular-siembra-confirmar')?.classList.toggle('hidden', paso !== 'anular');
+  tarjeta.querySelector('.btn-corregir-siembra')?.setAttribute('aria-expanded', String(paso === 'corregir'));
+  if (paso === 'corregir') tarjeta.querySelector('.form-corregir-siembra input')?.focus();
+  if (paso === 'anular') tarjeta.querySelector('.btn-cancelar-anular')?.focus();
+  if (paso === 'acciones') tarjeta.querySelector('.btn-completar-cosecha')?.focus();
+}
+
+async function guardarCorreccionSiembra(form) {
+  const valor = (nombre) => form.elements[nombre].value.trim();
+  const datos = {
+    cultivo: valor('cultivo'),
+    numero_parcelas: Number(valor('numero_parcelas')),
+    fecha_siembra: valor('fecha_siembra') ? `${valor('fecha_siembra')}T00:00:00` : '',
+    fecha_cosecha_estimada: valor('fecha_cosecha_estimada') ? `${valor('fecha_cosecha_estimada')}T00:00:00` : '',
+    costo_semillas: Number(valor('costo_semillas') || 0),
+    costo_insumos: Number(valor('costo_insumos') || 0),
+    unidad_medida: form.dataset.unidad,
+    equivalencia_kg: form.dataset.equivalencia === '' ? null : Number(form.dataset.equivalencia),
+  };
+  let problema = null;
+  if (!datos.cultivo) problema = ['Escribe el cultivo.', 'cultivo'];
+  else if (!Number.isInteger(datos.numero_parcelas) || datos.numero_parcelas < 1) problema = ['Las parcelas son un número entero desde 1.', 'numero_parcelas'];
+  else if (!datos.fecha_siembra || !datos.fecha_cosecha_estimada) problema = ['Pon la fecha de siembra y la de cosecha estimada.', datos.fecha_siembra ? 'fecha_cosecha_estimada' : 'fecha_siembra'];
+  else if (datos.fecha_cosecha_estimada < datos.fecha_siembra) problema = ['La cosecha estimada no puede ser antes de la siembra.', 'fecha_cosecha_estimada'];
+  if (problema) {
+    mostrarMensajeEntrega(form, problema[0], 'error');
+    form.elements[problema[1]].focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    await Api.productores.produccion.corregir(form.dataset.id, datos);
+    toast('Siembra corregida ✅');
+    await cargarPerfil();
+  } catch (err) {
+    boton.disabled = false;
+    mostrarMensajeEntrega(form, err.message, 'error');
+  }
+}
+
+async function anularSiembra(boton) {
+  boton.disabled = true;
+  try {
+    await Api.productores.produccion.anular(boton.dataset.id);
+    toast('Siembra anulada.');
+    await cargarPerfil();
+  } catch (err) {
+    boton.disabled = false;
+    manejarError(err, 'anular la siembra');
+  }
+}
+
 function renderTarjetaRegistroProduccion(r, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   const porCompletar = ESTADOS_POR_COMPLETAR.includes(r.estado);
@@ -9290,9 +9371,23 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
   let bloqueEstado;
   if (porCompletar) {
     const aMedioCamino = r.estado !== 'planificado';
-    bloqueEstado = `
-      ${aMedioCamino ? '<p class="produccion-sin-calculo"><i class="ti ti-camera"></i> Esta cosecha quedó pendiente de revisión. Ya no hace falta: complétala con la foto de tu cosecha.</p>' : ''}
-      <button type="button" class="btn btn-primary btn-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>`;
+    const completar = `<button type="button" class="btn btn-primary btn-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>`;
+    bloqueEstado = aMedioCamino ? `
+      <p class="produccion-sin-calculo"><i class="ti ti-camera"></i> Esta cosecha quedó pendiente de revisión. Ya no hace falta: complétala con la foto de tu cosecha.</p>
+      ${completar}` : `
+      <div class="produccion-acciones">
+        ${completar}
+        <button type="button" class="btn btn-outline btn-corregir-siembra" aria-expanded="false"><i class="ti ti-pencil" aria-hidden="true"></i> Corregir datos</button>
+        <button type="button" class="btn btn-ghost btn-anular-siembra"><i class="ti ti-trash" aria-hidden="true"></i> Anular</button>
+      </div>
+      ${renderFormCorregirSiembra(r)}
+      <div class="anular-siembra-confirmar hidden" role="group" aria-label="Confirmar anulación">
+        <p><i class="ti ti-alert-triangle" aria-hidden="true"></i> ¿Anular la siembra de ${escapeAttr(r.cultivo)}? Deja de aparecer en tu lista y ya no se podrá cosechar. No se puede deshacer.</p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-anular">No, dejarla</button>
+          <button type="button" class="btn btn-danger btn-confirmar-anular" data-id="${r.id}">Sí, anular</button>
+        </div>
+      </div>`;
   } else if (r.ingreso_estimado != null) {
     bloqueEstado = `
       <div class="perfil-datos-grid">
@@ -10509,6 +10604,7 @@ function inicializarEventos() {
   document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
     if (e.target.id === 'perfil-form-comprador') { e.preventDefault(); guardarPerfilComprador(e.target); }
     if (e.target.id === 'perfil-form-reclamo') { e.preventDefault(); enviarReclamoRuc(e.target); }
+    if (e.target.matches('.form-corregir-siembra')) { e.preventDefault(); guardarCorreccionSiembra(e.target); }
   });
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
     const archivo = e.target.closest('.reclamo-archivo input[type="file"]');
@@ -10549,6 +10645,14 @@ function inicializarEventos() {
     // Siembra y cosecha se registran con el asistente paso a paso (ver js/asistente.js).
     const btnCompletar = e.target.closest('.btn-completar-cosecha');
     if (btnCompletar) { abrirAsistenteCosecha(btnCompletar.dataset.id); return; }
+    const tarjetaSiembra = e.target.closest('.produccion-card');
+    if (tarjetaSiembra) {
+      if (e.target.closest('.btn-corregir-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'corregir'); return; }
+      if (e.target.closest('.btn-anular-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'anular'); return; }
+      if (e.target.closest('.btn-cancelar-corregir, .btn-cancelar-anular')) { mostrarPasoSiembra(tarjetaSiembra, 'acciones'); return; }
+      const confirmar = e.target.closest('.btn-confirmar-anular');
+      if (confirmar) anularSiembra(confirmar);
+    }
   });
 }
 
