@@ -1009,7 +1009,7 @@ def test_la_transferencia_va_a_revision_y_el_admin_la_aprueba_como_un_pago_de_cu
     assert constancia.headers["content-type"] == "image/jpeg" and constancia.headers["cache-control"] == "no-store"
     assert aprobada.status_code == 200, aprobada.text
     assert _fila_pago(pago).estado == "aprobado" and _fila_pago(pago).revisado_por is not None
-    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id)}]
+    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "monto": "800.00"}]
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
     assert otra_vez.status_code == 409  # dos admins a la vez: el segundo ve que ya no está en revisión
     transferencia["compensar"].assert_not_called()
@@ -1032,7 +1032,8 @@ def test_rechazada_devuelve_el_stock_deja_el_motivo_y_el_comprador_puede_volver_
     fila = _fila_pago(pago)
     assert (fila.estado, fila.motivo_rechazo) == ("rechazado", "El monto transferido no coincide con el total")
     transferencia["compensar"].assert_called_once_with(fila.items)
-    assert transferencia["eventos"] == [{"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id)}]
+    assert transferencia["eventos"] == [{"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id),
+                                         "motivo": "El monto transferido no coincide con el total"}]
 
     # el comprador corrige y vuelve a enviar: se reserva otra vez el stock y vuelve a revisión, sin el motivo viejo
     otra = _enviar_constancia(pago, numero="OP999000", datos=JPEG_CONSTANCIA + b"nueva")
@@ -1144,7 +1145,8 @@ def test_el_primer_cobro_es_el_adelanto_y_el_segundo_el_saldo(monkeypatch):
     assert primero.status_code == 200 and primero.json()["parte"] == "adelanto"
     assert cobros[0]["monto_soles"] == 700.0 and "(adelanto)" in cobros[0]["descripcion"]
     assert _estado_del_pago(pago) == "adelanto_pagado"
-    assert eventos == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True}]
+    assert eventos == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
+                        "monto": "700.00", "saldo": "300.00"}]
     assert _liquidaciones_de(pago.pedido_id) == []  # todavía no está pagado entero
 
     _como(str(uuid.uuid4()), "admin")
@@ -1159,7 +1161,7 @@ def test_el_primer_cobro_es_el_adelanto_y_el_segundo_el_saldo(monkeypatch):
     assert cobros[1]["monto_soles"] == 300.0
     fila = _fila_pago(pago)
     assert fila.estado == "aprobado" and fila.culqi_charge_id == "chr_1" and fila.culqi_charge_id_saldo == "chr_2"
-    assert eventos[-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)}
+    assert eventos[-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id), "monto": "300.00"}
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
     assert _procesar(pago).status_code == 409  # ya está todo pagado
 
@@ -1202,7 +1204,8 @@ def test_adelanto_y_saldo_tambien_por_transferencia(transferencia, monkeypatch):
     finally:
         _sesion_con_rol("comprador")
     assert _estado_del_pago(pago) == "adelanto_pagado"
-    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True}]
+    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
+                                         "monto": "700.00", "saldo": "300.00"}]
 
     assert _enviar_constancia(pago, numero="OP-SALDO-1").json()["parte"] == "saldo"
     _sesion_con_rol("admin")
@@ -1214,6 +1217,8 @@ def test_adelanto_y_saldo_tambien_por_transferencia(transferencia, monkeypatch):
     assert _estado_del_pago(pago) == "adelanto_pagado"  # vuelve a esperar el saldo
     transferencia["compensar"].assert_not_called()
     assert all(e["evento"] != "pago_rechazado" for e in transferencia["eventos"])
+    # el comprador sí recibe un aviso con el motivo (saldo_rechazado no cancela nada)
+    assert transferencia["eventos"][-1] == {"evento": "saldo_rechazado", "pedido_id": str(pago.pedido_id), "motivo": "El monto no coincide"}
 
     assert _enviar_constancia(pago, numero="OP-SALDO-2").status_code == 200
     _sesion_con_rol("admin")
@@ -1223,7 +1228,7 @@ def test_adelanto_y_saldo_tambien_por_transferencia(transferencia, monkeypatch):
         _sesion_con_rol("comprador")
     fila = _fila_pago(pago)
     assert fila.estado == "aprobado" and fila.metodo_saldo == "transferencia"
-    assert transferencia["eventos"][-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)}
+    assert transferencia["eventos"][-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id), "monto": "300.00"}
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
 
 

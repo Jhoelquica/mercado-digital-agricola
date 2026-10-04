@@ -175,6 +175,21 @@ class PropuestaSalida(EnvioSalida):
     resumen: ResumenEntrega | None = None
 
 
+def evento_envio_actualizado(envio) -> dict:
+    """envio_actualizado con lo que Notificaciones necesita para escribirle al comprador un aviso claro (la ciudad, si
+    va por agencia o en camión, la guía de la agencia): "en_destino" solo no le dice que tiene que pagar su saldo."""
+    return {
+        "evento": "envio_actualizado",
+        "pedido_id": str(envio.pedido_id),
+        "estado": envio.estado,
+        "modalidad_envio": envio.modalidad_envio or "local",
+        "destino_ciudad": envio.destino_ciudad,
+        "sacos": envio.sacos,
+        "agencia_nombre": envio.agencia_nombre,
+        "numero_guia": envio.numero_guia,
+    }
+
+
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "servicio": "transporte"}
@@ -376,11 +391,7 @@ def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dic
     db.commit()
     db.refresh(envio)
 
-    publicar_evento({
-        "evento": "envio_actualizado",
-        "pedido_id": str(envio.pedido_id),
-        "estado": envio.estado,
-    })
+    publicar_evento(evento_envio_actualizado(envio))
     return envio
 
 
@@ -579,11 +590,7 @@ def actualizar_estado(
     db.commit()
     db.refresh(envio)
 
-    publicar_evento({
-        "evento": "envio_actualizado",
-        "pedido_id": str(envio.pedido_id),
-        "estado": envio.estado,
-    })
+    publicar_evento(evento_envio_actualizado(envio))
 
     if datos.estado == "entregado":
         _efectos_post_entrega(db, envio)
@@ -673,11 +680,7 @@ def confirmar_entrega(
     db.commit()
     db.refresh(envio)
 
-    publicar_evento({
-        "evento": "envio_actualizado",
-        "pedido_id": str(envio.pedido_id),
-        "estado": envio.estado,
-    })
+    publicar_evento(evento_envio_actualizado(envio))
 
     _efectos_post_entrega(db, envio)
 
@@ -733,7 +736,7 @@ def despachar_en_agencia(
     envio.fecha_despacho = datetime.utcnow()
     db.commit()
     db.refresh(envio)
-    publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    publicar_evento(evento_envio_actualizado(envio))
     # Su parte terminó: queda libre para otro envío y se le liquida su tramo.
     repartidor.estado_disponibilidad = "disponible"
     db.commit()
@@ -757,7 +760,7 @@ def confirmar_que_lo_recogi(envio_id: uuid.UUID, db: Session = Depends(get_db), 
     envio.fecha_recibido = datetime.utcnow()
     db.commit()
     db.refresh(envio)
-    publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+    publicar_evento(evento_envio_actualizado(envio))
     try:
         notificar_entrega_a_certificacion(db, envio)
         db.commit()
@@ -964,7 +967,7 @@ def salir_de_viaje(viaje_id: uuid.UUID, datos: SalidaDeViaje = SalidaDeViaje(), 
         envio.estado = "en_camino"
     db.commit()
     for envio in envios:
-        publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+        publicar_evento(evento_envio_actualizado(envio))
     return _viaje_para_mostrar(db, viaje)
 
 
@@ -983,7 +986,7 @@ def llegar_a_destino(viaje_id: uuid.UUID, db: Session = Depends(get_db), usuario
         envio.estado = "en_destino"
     db.commit()
     for envio in envios:
-        publicar_evento({"evento": "envio_actualizado", "pedido_id": str(envio.pedido_id), "estado": envio.estado})
+        publicar_evento(evento_envio_actualizado(envio))
     return _viaje_para_mostrar(db, viaje)
 
 

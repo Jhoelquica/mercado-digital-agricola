@@ -4456,6 +4456,10 @@ const NOTIF_TIPOS = {
   pedido_creado: { grupo: 'pedido', icono: 'package', titulo: 'Pedido registrado' },
   envio_actualizado: { grupo: 'envio', icono: 'truck', titulo: 'Envío actualizado' },
   producto_disponible: { grupo: 'producto', icono: 'basket', titulo: 'Producto disponible' },
+  pago_confirmado: { grupo: 'pedido', icono: 'wallet', titulo: 'Pago recibido' },
+  saldo_pagado: { grupo: 'pedido', icono: 'wallet', titulo: 'Saldo recibido' },
+  pago_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Pago no completado' },
+  saldo_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Saldo no aprobado' },
 };
 const NOTIF_FILTROS = [
   { clave: 'todas', etiqueta: 'Todas' },
@@ -4594,10 +4598,14 @@ function renderNotifCard(n, i) {
   const tipo = tipoNotificacion(n.tipo);
   const fecha = parsearFechaServidor(n.fecha_envio);
   const nueva = notifNuevas.has(n.id);
-  const estado = n.tipo === 'envio_actualizado' ? /estado a:\s*([a-z_]+)/i.exec(n.mensaje || '')?.[1] : null;
-  const mensaje = estado
-    ? `<p class="notif-msg">Tu envío cambió de estado.</p><div class="notif-estado-envio">${pillEstadoNotificacion(estado)}</div>`
-    : `<p class="notif-msg">${escapeAttr(n.mensaje)}</p>`;
+  // Los avisos nuevos traen el estado aparte y un texto que ya explica qué hacer; los de antes lo traían dentro del
+  // mensaje ("...cambió de estado a: en_camino.") y se siguen mostrando como antes.
+  const estadoViejo = n.tipo === 'envio_actualizado' && !n.estado ? /estado a:\s*([a-z_]+)/i.exec(n.mensaje || '')?.[1] : null;
+  const mensaje = n.estado
+    ? `<p class="notif-msg">${escapeAttr(n.mensaje)}</p><div class="notif-estado-envio">${pillEstadoNotificacion(n.estado)}</div>`
+    : estadoViejo
+      ? `<p class="notif-msg">Tu envío cambió de estado.</p><div class="notif-estado-envio">${pillEstadoNotificacion(estadoViejo)}</div>`
+      : `<p class="notif-msg">${escapeAttr(n.mensaje)}</p>`;
 
   const acciones = [];
   if (n.pedido_id) {

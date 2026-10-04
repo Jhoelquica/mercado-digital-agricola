@@ -305,6 +305,11 @@ def parte_a_cobrar(pago) -> str:
     return "saldo" if pago.estado == "adelanto_pagado" else "adelanto"
 
 
+def _dinero(valor) -> str:
+    """Un monto en un evento: texto con 2 decimales (Notificaciones lo pone en el aviso al comprador)."""
+    return f"{Decimal(str(valor)):.2f}"
+
+
 def monto_de(pago, parte: str) -> Decimal:
     total = Decimal(str(pago.monto))
     if parte == "adelanto":
@@ -327,7 +332,8 @@ def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id
         pago.culqi_charge_id = cargo_id or pago.culqi_charge_id
         pago.parte_en_revision = None
         db.commit()
-        publicar_evento({"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True})
+        publicar_evento({"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
+                         "monto": _dinero(monto_de(pago, "adelanto")), "saldo": _dinero(monto_de(pago, "saldo"))})
         return
     if parte == "saldo":
         pago.estado = "aprobado"
@@ -336,7 +342,7 @@ def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id
         pago.fecha_saldo = ahora
         pago.parte_en_revision = None
         db.commit()
-        publicar_evento({"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id)})
+        publicar_evento({"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id), "monto": _dinero(monto_de(pago, "saldo"))})
         _crear_liquidaciones_sin_romper(db, pago)
         return
     pago.estado = "aprobado"
@@ -365,6 +371,7 @@ def _confirmar_pago_aprobado(db: Session, pago) -> None:
     publicar_evento({
         "evento": "pago_confirmado",
         "pedido_id": str(pago.pedido_id),
+        "monto": _dinero(pago.monto),
     })
 
     # Separado del commit de arriba a propósito — ver el docstring de crear_liquidaciones: el
@@ -438,7 +445,8 @@ def procesar_pago(
         publicar_evento({
             "evento": "pago_rechazado",
             "pedido_id": str(pago.pedido_id),
-    })
+            "motivo": resultado["data"].get("user_message"),
+        })
     raise HTTPException(
         status_code=402,
         detail=resultado["data"].get("user_message", "El pago fue rechazado"),
@@ -614,12 +622,14 @@ def rechazar_transferencia(
     pago.parte_en_revision = None
     if parte == "saldo":
         # El pedido ya va en el camión con su adelanto: solo vuelve a esperar el saldo (sin tocar stock ni cancelar).
+        # saldo_rechazado y no pago_rechazado: este último cancela el pedido en Pedidos.
         pago.estado = "adelanto_pagado"
         db.commit()
+        publicar_evento({"evento": "saldo_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
         return _transferencia_resumen(pago, parte)
     pago.estado = "rechazado"
     db.commit()
     compensar_stock(pago.items)
-    publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id)})
+    publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
     return _transferencia_resumen(pago, parte)
 

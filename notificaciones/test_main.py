@@ -17,8 +17,10 @@ from unittest.mock import MagicMock
 from database import Base, engine, SessionLocal
 import models
 from rabbitmq_consumer import _procesar_mensaje
+from migraciones import agregar_columnas_faltantes
 
 Base.metadata.create_all(bind=engine)
+agregar_columnas_faltantes(engine, Base)  # la base de pruebas puede venir de antes de la columna `estado`
 
 
 def _procesar(evento: dict):
@@ -109,3 +111,37 @@ def test_el_historial_de_un_pedido_solo_devuelve_los_avisos_del_usuario_que_lo_p
     assert len(propios) == 1 and str(propios[0].usuario_id) == dueno
     assert ajenos == []
     assert len(admin) == 1
+
+
+# ============ Avisos claros al comprador ============
+
+def _avisos_de(pedido_id):
+    db = SessionLocal()
+    try:
+        return db.query(models.Notificacion).filter(models.Notificacion.pedido_id == pedido_id).order_by(models.Notificacion.fecha_envio).all()
+    finally:
+        db.close()
+
+
+def test_el_camion_que_llega_le_pide_al_comprador_su_saldo_y_guarda_el_estado():
+    dueno, pedido_id = str(uuid.uuid4()), str(uuid.uuid4())
+    _procesar({"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": dueno, "comprador_nombre": "Rosa",
+               "modalidad_envio": "camion"})
+    _procesar({"evento": "pago_confirmado", "pedido_id": pedido_id, "adelanto": True, "monto": "700.00", "saldo": "300.00"})
+    _procesar({"evento": "envio_actualizado", "pedido_id": pedido_id, "estado": "en_destino", "modalidad_envio": "camion",
+               "destino_ciudad": "Lima", "sacos": 60})
+    _procesar({"evento": "saldo_pagado", "pedido_id": pedido_id, "monto": "300.00"})
+
+    creado, adelanto, llegada, saldo = _avisos_de(pedido_id)
+    assert "camión compartido" in creado.mensaje and "70%" in creado.mensaje
+    assert adelanto.tipo == "pago_confirmado" and "S/ 700.00" in adelanto.mensaje and "S/ 300.00" in adelanto.mensaje
+    assert llegada.estado == "en_destino" and "llegó a Lima" in llegada.mensaje and "saldo (30%)" in llegada.mensaje
+    assert saldo.tipo == "saldo_pagado" and "S/ 300.00" in saldo.mensaje and "código de entrega" in saldo.mensaje
+    # los avisos de Pagos no traen el usuario: se toma del aviso del pedido
+    assert {str(a.usuario_id) for a in (adelanto, llegada, saldo)} == {dueno}
+
+
+def test_un_evento_de_pagos_que_no_es_para_el_comprador_no_crea_aviso():
+    pedido_id = str(uuid.uuid4())
+    _procesar({"evento": "liquidacion_creada", "pedido_id": pedido_id})
+    assert _avisos_de(pedido_id) == []

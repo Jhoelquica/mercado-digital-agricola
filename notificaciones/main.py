@@ -11,8 +11,10 @@ from auth import secreto_de_servicio_valido
 from database import Base, engine, SessionLocal
 import models
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
+from migraciones import agregar_columnas_faltantes
 
 Base.metadata.create_all(bind=engine)
+agregar_columnas_faltantes(engine, Base)
 
 app = FastAPI()
 
