@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 import pika
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
 import logica_viajes
+import logica_recojos
 from database import SessionLocal
 import models
 
@@ -87,6 +88,13 @@ def _procesar_mensaje(ch, method, properties, body):
         crear_envio_si_falta(datos["pedido_id"], adelanto=bool(datos.get("adelanto")))
     elif datos.get("evento") == "saldo_pagado":
         marcar_saldo_pagado(datos["pedido_id"])
+    elif datos.get("evento") == "llegada_almacen" and datos.get("producto_id"):
+        # El admin pesó la cosecha: se cierra (y se liquida) su recojo en la chacra, si lo hubo.
+        db = SessionLocal()
+        try:
+            logica_recojos.cerrar_por_llegada(db, datos["producto_id"])
+        finally:
+            db.close()
 
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
@@ -116,7 +124,11 @@ def _iniciar_consumo():
             channel.queue_bind(exchange="eventos_pagos", queue=COLA)
 
             channel.basic_consume(queue=COLA, on_message_callback=_procesar_mensaje)
-            print("[Transporte] Escuchando eventos de pagos...")
+            channel.exchange_declare(exchange="eventos_productos", exchange_type="fanout", durable=True)
+            channel.queue_declare(queue="transporte_productos", durable=True)
+            channel.queue_bind(exchange="eventos_productos", queue="transporte_productos")
+            channel.basic_consume(queue="transporte_productos", on_message_callback=_procesar_mensaje)
+            print("[Transporte] Escuchando eventos de pagos y de productos...")
             channel.start_consuming()
 
         except Exception as e:

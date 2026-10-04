@@ -18,6 +18,7 @@ from database import SessionLocal
 import models
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
 import logica_viajes
+import logica_recojos
 
 INTERVALO_SEGUNDOS = 60
 
@@ -27,6 +28,9 @@ def _revisar_envios_huerfanos():
     try:
         # Envíos en camión que no se pudieron subir a un viaje (Pedidos no respondió al crearlos).
         logica_viajes.asignar_envios_de_camion_sin_viaje(db, _obtener_pedido)
+        # Recojos en chacras sin repartidor y los ya completados cuya liquidación no llegó a Pagos.
+        logica_recojos.asignar_recojos_pendientes(db)
+        logica_recojos.reintentar_liquidaciones(db)
         huerfanos = (
             db.query(models.Envio)
             .filter(models.Envio.estado == "pendiente_asignacion")

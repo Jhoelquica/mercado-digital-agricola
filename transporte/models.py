@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric, Integer, Float
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -139,3 +139,45 @@ class EnvioRechazo(Base):
     repartidor_id = Column(UUID(as_uuid=True), ForeignKey("repartidores.id"), nullable=False)
     fecha_rechazo = Column(DateTime, default=datetime.utcnow)
 
+
+
+
+class Recojo(Base):
+    """El tramo chacra -> almacén de una cosecha publicada (ver logica_recojos.py). modalidad "repartidor": se le
+    propone a un repartidor y lo cobra; "productor": la lleva el agricultor (fecha_estimada), sin costo."""
+    __tablename__ = "recojos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    producto_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    productor_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    producto_nombre = Column(String, nullable=True)
+    modalidad = Column(String, nullable=False)  # repartidor | productor
+    # repartidor: pendiente_asignacion -> propuesto -> asignado -> recogido -> en_almacen -> completado
+    # productor: en_camino -> completado. Cualquiera: cancelado.
+    estado = Column(String, nullable=False)
+    latitud = Column(Float, nullable=True)   # dónde recoger (por defecto, la chacra)
+    longitud = Column(Float, nullable=True)
+    referencia = Column(String, nullable=True)  # cómo llegar ("al lado del puente")
+    telefono = Column(String, nullable=True)    # el que deja el agricultor para este recojo
+    fecha_estimada = Column(DateTime, nullable=True)  # productor: cuándo la lleva
+    peso_kg = Column(Float, nullable=True)
+    distancia_km = Column(Float, nullable=True)
+    costo = Column(Numeric(10, 2), nullable=True)
+    repartidor_id = Column(UUID(as_uuid=True), nullable=True)
+    motivo_cancelacion = Column(String, nullable=True)
+    liquidacion_confirmada = Column(Boolean, nullable=False, default=False)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_aceptado = Column(DateTime, nullable=True)
+    fecha_recogido = Column(DateTime, nullable=True)
+    fecha_en_almacen = Column(DateTime, nullable=True)
+    fecha_completado = Column(DateTime, nullable=True)
+
+
+class RecojoRechazo(Base):
+    """Quién ya rechazó un recojo: no se le vuelve a ofrecer (mismo criterio que EnvioRechazo)."""
+    __tablename__ = "recojo_rechazos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recojo_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    repartidor_id = Column(UUID(as_uuid=True), nullable=False)
+    fecha = Column(DateTime, default=datetime.utcnow)

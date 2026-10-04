@@ -18,7 +18,8 @@ from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, F
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
 from pedidos_interno import cabecera_pedidos
@@ -33,6 +34,7 @@ from documentos import leer_documento_validado, LIMITE_CUERPO_DOCUMENTOS_BYTES
 from fastapi import Response
 import re
 import logica_viajes
+import logica_recojos
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
@@ -1079,3 +1081,190 @@ def actualizar_ubicacion(envio_id: str, datos: UbicacionActualizar, db: Session 
     return envio
 
 
+
+
+
+# ============ Recojo de cosechas en la chacra (tramo chacra -> almacén, ver logica_recojos.py) ============
+class RecojoCrear(BaseModel):
+    producto_id: uuid.UUID
+    modalidad: Literal["repartidor", "productor"]
+    latitud: float | None = Field(default=None, ge=-90, le=90)
+    longitud: float | None = Field(default=None, ge=-180, le=180)
+    referencia: str | None = Field(default=None, max_length=200)
+    telefono: str | None = Field(default=None, max_length=15)
+    fecha_estimada: datetime | None = None
+
+
+def _producto_propio_en_transito(producto_id, productor: dict) -> dict:
+    producto = logica_recojos.pedir_producto(producto_id)
+    if str(producto.get("productor_id")) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="Esta cosecha no es tuya")
+    if producto.get("estado") != "en_transito":
+        raise HTTPException(status_code=409, detail="Solo se coordina cómo llega al almacén una cosecha publicada que todavía no llegó.")
+    return producto
+
+
+def _peso_conocido(producto: dict) -> float:
+    peso = logica_recojos.peso_kg_de(producto)
+    if not peso:
+        raise HTTPException(status_code=422, detail="No sabemos cuánto pesa esta cosecha (su unidad no tiene equivalencia en kg): llévala tú.")
+    return peso
+
+
+@app.get("/recojos/cotizacion")
+def cotizar_recojo(producto_id: uuid.UUID, latitud: float, longitud: float,
+                   usuario: dict = Depends(requiere_rol("productor")),
+                   credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    """Cuánto costaría que un repartidor recoja esta cosecha en ese punto (se le descuenta al agricultor al venderla)."""
+    productor = _resolver_productor_autenticado(credenciales.credentials)
+    producto = _producto_propio_en_transito(producto_id, productor)
+    return logica_recojos.cotizar(latitud, longitud, _peso_conocido(producto))
+
+
+@app.post("/recojos")
+def pedir_recojo(datos: RecojoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor")),
+                 credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    productor = _resolver_productor_autenticado(credenciales.credentials)
+    producto = _producto_propio_en_transito(datos.producto_id, productor)
+    en_curso = db.query(models.Recojo).filter(models.Recojo.producto_id == datos.producto_id,
+                                              models.Recojo.estado.in_(logica_recojos.ESTADOS_EN_CURSO)).first()
+    if en_curso:
+        raise HTTPException(status_code=409, detail="Esta cosecha ya tiene cómo llegar al almacén. Anúlalo primero si quieres cambiarlo.")
+    recojo = models.Recojo(producto_id=datos.producto_id, productor_id=productor["id"], producto_nombre=producto.get("nombre"),
+                           modalidad=datos.modalidad, referencia=(datos.referencia or "").strip() or None)
+    if datos.modalidad == "productor":
+        hoy = datetime.utcnow().date()
+        if not datos.fecha_estimada or not (hoy - timedelta(days=1) <= datos.fecha_estimada.date() <= hoy + timedelta(days=60)):
+            raise HTTPException(status_code=422, detail="Di qué día la llevas al almacén (desde hoy y hasta dentro de dos meses).")
+        recojo.fecha_estimada = datos.fecha_estimada
+        recojo.estado = "en_camino"
+        db.add(recojo)
+        db.commit()
+        return logica_recojos.recojo_para_mostrar(db, recojo)
+
+    if datos.latitud is None or datos.longitud is None:
+        raise HTTPException(status_code=422, detail="Marca dónde recoger la cosecha.")
+    telefono = re.sub(r"\D", "", datos.telefono or "")
+    if not re.fullmatch(r"9\d{8}", telefono):
+        raise HTTPException(status_code=422, detail="Deja un celular de 9 dígitos para que el repartidor te avise cuando llegue.")
+    peso = _peso_conocido(producto)
+    cotizacion = logica_recojos.cotizar(datos.latitud, datos.longitud, peso)
+    recojo.latitud, recojo.longitud, recojo.telefono = datos.latitud, datos.longitud, telefono
+    recojo.peso_kg, recojo.distancia_km, recojo.costo = peso, cotizacion["distancia_km"], cotizacion["total"]
+    recojo.estado = "pendiente_asignacion"
+    db.add(recojo)
+    db.flush()
+    logica_recojos.proponer_recojo(db, recojo)
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+@app.get("/recojos/mios")
+def mis_recojos(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor")),
+                credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    productor = _resolver_productor_autenticado(credenciales.credentials)
+    recojos = (db.query(models.Recojo).filter(models.Recojo.productor_id == productor["id"])
+               .order_by(models.Recojo.fecha_creacion.desc()).limit(100).all())
+    return [logica_recojos.recojo_para_mostrar(db, r) for r in recojos]
+
+
+def _recojo_o_404(db: Session, recojo_id) -> models.Recojo:
+    recojo = db.query(models.Recojo).filter(models.Recojo.id == recojo_id).with_for_update().first()
+    if not recojo:
+        raise HTTPException(status_code=404, detail="Recojo no encontrado")
+    return recojo
+
+
+@app.post("/recojos/{recojo_id}/cancelar")
+def cancelar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor")),
+                    credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    productor = _resolver_productor_autenticado(credenciales.credentials)
+    recojo = _recojo_o_404(db, recojo_id)
+    if str(recojo.productor_id) != str(productor["id"]):
+        raise HTTPException(status_code=403, detail="Este recojo no es tuyo")
+    if recojo.estado not in logica_recojos.ESTADOS_CANCELABLES:
+        raise HTTPException(status_code=409, detail="El repartidor ya recogió tu cosecha: ya no se puede anular.")
+    liberado = recojo.repartidor_id if recojo.estado in ("propuesto", "asignado") else None
+    logica_recojos.liberar_repartidor(db, liberado)
+    recojo.estado = "cancelado"
+    recojo.motivo_cancelacion = "Lo anuló el agricultor."
+    db.commit()
+    if liberado:
+        intentar_resolver_envio_huerfano(db)
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+def _recojo_del_repartidor(db: Session, recojo_id, usuario: dict, estado_esperado: str) -> tuple:
+    repartidor = _repartidor_de(usuario, db)
+    recojo = _recojo_o_404(db, recojo_id)
+    if str(recojo.repartidor_id) != str(repartidor.id):
+        raise HTTPException(status_code=403, detail="Este recojo no es tuyo")
+    if recojo.estado != estado_esperado:
+        raise HTTPException(status_code=409, detail="Este recojo ya no está en ese paso. Actualiza tu lista.")
+    return recojo, repartidor
+
+
+@app.get("/recojos/propuestas")
+def recojos_propuestos(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    repartidor = _repartidor_de(usuario, db)
+    recojos = db.query(models.Recojo).filter(models.Recojo.repartidor_id == repartidor.id, models.Recojo.estado == "propuesto").all()
+    return [logica_recojos.recojo_para_mostrar(db, r) for r in recojos]
+
+
+@app.get("/recojos/asignados")
+def recojos_asignados(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    repartidor = _repartidor_de(usuario, db)
+    recojos = (db.query(models.Recojo)
+               .filter(models.Recojo.repartidor_id == repartidor.id, models.Recojo.estado.in_(("asignado", "recogido", "en_almacen")))
+               .order_by(models.Recojo.fecha_creacion).all())
+    return [logica_recojos.recojo_para_mostrar(db, r) for r in recojos]
+
+
+@app.post("/recojos/{recojo_id}/aceptar")
+def aceptar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    recojo, _ = _recojo_del_repartidor(db, recojo_id, usuario, "propuesto")
+    recojo.estado = "asignado"
+    recojo.fecha_aceptado = datetime.utcnow()
+    db.commit()
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+@app.post("/recojos/{recojo_id}/rechazar")
+def rechazar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    recojo, repartidor = _recojo_del_repartidor(db, recojo_id, usuario, "propuesto")
+    db.add(models.RecojoRechazo(recojo_id=recojo.id, repartidor_id=repartidor.id))
+    repartidor.estado_disponibilidad = "disponible"
+    db.flush()
+    logica_recojos.proponer_recojo(db, recojo, excluir_id=repartidor.id)
+    intentar_resolver_envio_huerfano(db, excluir_id=repartidor.id)
+    return {"mensaje": "Recojo rechazado"}
+
+
+@app.post("/recojos/{recojo_id}/recogido")
+def marcar_recogido(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    recojo, _ = _recojo_del_repartidor(db, recojo_id, usuario, "asignado")
+    recojo.estado = "recogido"
+    recojo.fecha_recogido = datetime.utcnow()
+    db.commit()
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+@app.post("/recojos/{recojo_id}/en-almacen")
+def dejar_en_almacen(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("repartidor"))):
+    """El repartidor dejó la cosecha en el almacén: queda libre para otro trabajo. El recojo se cobra cuando el admin
+    la pese (llegada_almacen), no antes."""
+    recojo, repartidor = _recojo_del_repartidor(db, recojo_id, usuario, "recogido")
+    recojo.estado = "en_almacen"
+    recojo.fecha_en_almacen = datetime.utcnow()
+    repartidor.estado_disponibilidad = "disponible"
+    db.commit()
+    intentar_resolver_envio_huerfano(db)
+    logica_recojos.asignar_recojos_pendientes(db)
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+@app.get("/recojos")
+def recojos_en_curso(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    """Para "Productos en tránsito" del admin: cómo llega cada cosecha que se espera en el almacén."""
+    recojos = (db.query(models.Recojo).filter(models.Recojo.estado.in_(logica_recojos.ESTADOS_EN_CURSO))
+               .order_by(models.Recojo.fecha_creacion).all())
+    return [logica_recojos.recojo_para_mostrar(db, r) for r in recojos]
