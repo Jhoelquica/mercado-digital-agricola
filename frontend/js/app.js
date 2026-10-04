@@ -6546,7 +6546,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
   await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
-    cargarReclamosRucAdmin()]);
+    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -6664,6 +6664,8 @@ function activarTabAdmin(nombreTab) {
   document.querySelectorAll('.admin-tab-btn').forEach((b) => marcarBotonActivo(b, b.dataset.admintab === nombreTab));
   document.querySelectorAll('.admin-tab-panel').forEach((p) => p.classList.toggle('active', p.dataset.adminPanel === nombreTab));
   if (nombreTab === 'productores') requestAnimationFrame(() => mapasProductoresAdmin.forEach((m) => m.invalidateSize()));
+  // Los mapas de "Destinos lejanos" se crean recién con la pestaña a la vista (Leaflet necesita su tamaño real).
+  if (nombreTab === 'destinos') requestAnimationFrame(iniciarMapaAgenciaDespacho);
 }
 
 // cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad() y cargarProductoresAdmin() corren en paralelo
@@ -6934,7 +6936,8 @@ async function cargarReclamosRucAdmin() {
   badge.classList.toggle('hidden', !reclamosRucActualesAdmin.length);
 }
 
-async function verDocumentoReclamo(tarjeta, boton) {
+// Muestra (o esconde, si ya estaba abierto) un documento privado que se pide con el token: foto o PDF.
+async function mostrarDocumentoPrivado(tarjeta, boton, { titulo, descripcion, cargar }) {
   const caja = tarjeta.querySelector('.reclamo-documento');
   const cual = boton.dataset.cual;
   const yaAbierto = !caja.classList.contains('hidden') && caja.dataset.cual === cual;
@@ -6943,18 +6946,26 @@ async function verDocumentoReclamo(tarjeta, boton) {
   if (yaAbierto) return;
   boton.setAttribute('aria-expanded', 'true');
   caja.dataset.cual = cual;
-  const titulo = cual === 'ficha' ? 'Ficha RUC' : 'DNI';
   caja.innerHTML = `<p class="muted"><i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Cargando ${titulo}…</p>`;
   try {
-    const blob = await Api.usuarios.admin.documentoReclamo(tarjeta.dataset.reclamoId, cual);
+    const blob = await cargar();
     const url = URL.createObjectURL(blob);
     caja.innerHTML = blob.type === 'application/pdf'
-      ? `<iframe src="${url}" title="${titulo} del reclamo" class="reclamo-pdf"></iframe>
+      ? `<iframe src="${url}" title="${descripcion}" class="reclamo-pdf"></iframe>
          <a href="${url}" target="_blank" rel="noopener" class="btn btn-ghost btn-sm"><i class="ti ti-external-link"></i> Abrir el PDF en otra pestaña</a>`
-      : `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${titulo} que subió quien reclama"></a>`;
+      : `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="${descripcion}"></a>`;
   } catch (err) {
     caja.innerHTML = `<p class="form-entrega-mensaje error"><i class="ti ti-alert-circle"></i><span>${escapeAttr(err.message || 'No se pudo cargar el documento.')}</span></p>`;
   }
+}
+
+function verDocumentoReclamo(tarjeta, boton) {
+  const titulo = boton.dataset.cual === 'ficha' ? 'Ficha RUC' : 'DNI';
+  return mostrarDocumentoPrivado(tarjeta, boton, {
+    titulo,
+    descripcion: `${titulo} que subió quien reclama`,
+    cargar: () => Api.usuarios.admin.documentoReclamo(tarjeta.dataset.reclamoId, boton.dataset.cual),
+  });
 }
 
 async function decidirReclamoRuc(tarjeta, accion, motivo) {
@@ -6974,6 +6985,567 @@ async function decidirReclamoRuc(tarjeta, accion, motivo) {
     if (err.status !== 409) return; // 409: otro admin ya lo revisó → se recarga la lista igual
   }
   await cargarReclamosRucAdmin();
+}
+
+// ============ COMPRADORES LEJANOS EN EL PANEL ADMIN ============
+// ---- Transportistas de carga: documentos por revisar (reusa las clases de revisión de las transferencias, así
+// mostrarPasoRevision sirve igual) ----
+const DOCUMENTOS_TRANSPORTISTA = [
+  { cual: 'licencia', icono: 'id', titulo: 'Licencia' },
+  { cual: 'tarjeta', icono: 'file-certificate', titulo: 'Tarjeta de propiedad' },
+  { cual: 'soat', icono: 'shield-check', titulo: 'SOAT' },
+];
+const ESTADO_TRANSPORTISTA = {
+  pendiente: { texto: 'Por revisar', pill: 'pill-pendiente', icono: 'hourglass', vacio: 'No hay documentos por revisar' },
+  verificado: { texto: 'Verificado', pill: 'pill-aprobado', icono: 'circle-check', vacio: 'Todavía no hay transportistas verificados' },
+  rechazado: { texto: 'Observado', pill: 'pill-rechazado', icono: 'alert-circle', vacio: 'No hay documentos observados' },
+};
+let filtroTransportistasAdmin = 'pendiente';
+
+function kgYSacos(kg) {
+  const n = Number(kg) || 0;
+  return `${n.toLocaleString('es-PE', { maximumFractionDigits: 0 })} kg · ${Math.floor(n / 50)} sacos`;
+}
+
+function renderTarjetaTransportista(t, indice = 0) {
+  const retraso = Math.min(indice, 12) * 35;
+  const estado = ESTADO_TRANSPORTISTA[t.verificacion_estado] || ESTADO_TRANSPORTISTA.pendiente;
+  const placa = escapeAttr(t.placa || '—');
+  const dato = (etiqueta, valor, mono = false) => `
+        <div class="perfil-dato"><span class="perfil-dato-label">${etiqueta}</span><span class="perfil-dato-valor${mono ? ' perfil-dato-mono' : ''}">${valor}</span></div>`;
+  return `
+    <div class="pedido-card transportista-card" style="animation-delay:${retraso}ms" data-transportista-id="${escapeAttr(t.id)}">
+      <div class="pedido-card-header">
+        <h4>${escapeAttr(t.nombre || 'Sin nombre')}</h4>
+        <span class="pill pill-estado ${estado.pill}"><i class="ti ti-${estado.icono}"></i> ${estado.texto}</span>
+      </div>
+      <div class="perfil-datos-grid">
+        ${dato('DNI', escapeAttr(t.dni || '—'), true)}
+        ${dato('Placa', placa, true)}
+        ${dato('Licencia', escapeAttr(t.licencia_numero || '—'), true)}
+        ${dato('Vehículo', `${escapeAttr(t.tipo_vehiculo || '—')} · ${kgYSacos(t.capacidad_maxima_kg)}`)}
+        ${dato('Documentos enviados', t.fecha_documentos ? formatearFechaServidor(t.fecha_documentos) : '—')}
+      </div>
+      ${t.verificacion_estado === 'rechazado' && t.verificacion_motivo
+        ? `<p class="reclamo-pista alerta"><i class="ti ti-alert-circle" aria-hidden="true"></i> Le pediste: ${escapeAttr(t.verificacion_motivo)}</p>` : ''}
+      <div class="reclamo-documentos">
+        ${DOCUMENTOS_TRANSPORTISTA.map((d) => `<button type="button" class="btn btn-outline btn-ver-documento" data-cual="${d.cual}" aria-expanded="false"><i class="ti ti-${d.icono}" aria-hidden="true"></i> ${d.titulo}</button>`).join('')}
+      </div>
+      <div class="transferencia-constancia reclamo-documento hidden"></div>
+      <div class="tarjeta-acciones transferencia-acciones">
+        ${t.verificacion_estado !== 'rechazado' ? '<button type="button" class="btn btn-outline btn-rechazar-transportista"><i class="ti ti-alert-circle" aria-hidden="true"></i> Observar</button>' : ''}
+        ${t.verificacion_estado !== 'verificado' ? '<button type="button" class="btn btn-primary btn-aprobar-transportista"><i class="ti ti-check" aria-hidden="true"></i> Verificar</button>' : ''}
+      </div>
+      <div class="transferencia-confirmar hidden" role="group" aria-label="Confirmar verificación">
+        <p><i class="ti ti-alert-circle" aria-hidden="true"></i> ¿La licencia, la tarjeta de propiedad y el SOAT están vigentes, se leen bien y corresponden a la placa ${placa}? Al verificar, ya se le pueden asignar viajes.</p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="button" class="btn btn-primary btn-confirmar-aprobacion">Sí, verificar</button>
+        </div>
+      </div>
+      <form class="form-rechazar-transferencia hidden" novalidate>
+        <label>Qué tiene que corregir (lo verá el transportista)
+          <textarea name="motivo" rows="3" maxlength="300" required placeholder="Ej. El SOAT está vencido: sube el vigente."></textarea>
+        </label>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-revision">Cancelar</button>
+          <button type="submit" class="btn btn-danger">Observar documentos</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+async function cargarTransportistasAdmin() {
+  const cont = document.getElementById('transportistas-lista');
+  const vacio = document.getElementById('transportistas-empty');
+  const filtro = filtroTransportistasAdmin;
+  cont.innerHTML = renderSkeletonFilas(1);
+  let lista;
+  try {
+    lista = await Api.transporte.admin.transportistas(filtro);
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los transportistas');
+    return;
+  }
+  if (filtro !== filtroTransportistasAdmin) return; // se cambió de filtro mientras cargaba
+  cont.innerHTML = lista.map(renderTarjetaTransportista).join('');
+  vacio.classList.toggle('hidden', lista.length > 0);
+  document.getElementById('transportistas-empty-titulo').textContent = ESTADO_TRANSPORTISTA[filtro].vacio;
+  if (filtro === 'pendiente') {
+    const badge = document.getElementById('admin-transportistas-total');
+    badge.textContent = lista.length;
+    badge.classList.toggle('hidden', !lista.length);
+  }
+}
+
+function filtrarTransportistasAdmin(boton) {
+  filtroTransportistasAdmin = boton.dataset.estado;
+  document.querySelectorAll('.admin-filtro').forEach((b) => {
+    const activo = b === boton;
+    b.classList.toggle('active', activo);
+    b.setAttribute('aria-pressed', String(activo));
+  });
+  cargarTransportistasAdmin();
+}
+
+function verDocumentoTransportista(tarjeta, boton) {
+  const doc = DOCUMENTOS_TRANSPORTISTA.find((d) => d.cual === boton.dataset.cual);
+  return mostrarDocumentoPrivado(tarjeta, boton, {
+    titulo: doc.titulo,
+    descripcion: `${doc.titulo} que subió el transportista`,
+    cargar: () => Api.transporte.admin.documentoTransportista(tarjeta.dataset.transportistaId, doc.cual),
+  });
+}
+
+async function decidirTransportista(tarjeta, accion, motivo) {
+  const id = tarjeta.dataset.transportistaId;
+  tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  try {
+    if (accion === 'aprobar') {
+      await Api.transporte.admin.verificarTransportista(id);
+      toast('Transportista verificado: ya se le pueden asignar viajes 🚛');
+    } else {
+      await Api.transporte.admin.rechazarTransportista(id, motivo);
+      toast('Documentos observados: el transportista verá qué corregir.');
+    }
+  } catch (err) {
+    tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+    manejarError(err, accion === 'aprobar' ? 'verificar al transportista' : 'observar los documentos');
+    return;
+  }
+  await Promise.all([cargarTransportistasAdmin(), cargarViajesAdmin()]);
+}
+
+// ---- Viajes en camión: progreso, transportista asignado y salida ----
+let transportistasVerificadosAdmin = [];
+
+function renderAsignacionViaje(v) {
+  if (!['abierto', 'listo'].includes(v.estado)) return '';
+  const sacos = Number(v.sacos_cargados) || 0;
+  const aptos = transportistasVerificadosAdmin.filter((t) => Number(t.capacidad_maxima_kg) >= sacos * 50);
+  if (!aptos.length) {
+    return `<p class="viaje-nota viaje-nota-alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i>
+      No hay transportistas verificados que carguen ${sacos} sacos (${(sacos * 50).toLocaleString('es-PE')} kg). Revisa la pestaña Transportistas.</p>`;
+  }
+  const actual = v.transportista?.id;
+  if (actual && !aptos.some((t) => t.id !== actual)) return ''; // no hay otro a quien pasárselo
+  return `
+      <form class="form-asignar-viaje" data-viaje-id="${escapeAttr(v.id)}">
+        <label>${actual ? 'Cambiar transportista' : 'Transportista'}
+          <select name="transportista" required>
+            ${actual ? '' : '<option value="">Elige uno verificado…</option>'}
+            ${aptos.map((t) => `<option value="${escapeAttr(t.id)}" ${t.id === actual ? 'selected' : ''}>${escapeAttr(t.nombre)} · ${escapeAttr(t.placa || 'sin placa')} · ${kgYSacos(t.capacidad_maxima_kg)}</option>`).join('')}
+          </select>
+        </label>
+        <button type="submit" class="btn btn-outline">${actual ? 'Cambiar' : 'Asignar'}</button>
+      </form>`;
+}
+
+function renderTarjetaViajeAdmin(v, indice = 0) {
+  const ciudad = escapeAttr(v.destino_ciudad || 'su destino');
+  const cargados = Number(v.sacos_cargados) || 0;
+  const paraSalir = Number(v.sacos_para_salir) || 0;
+  const etapa = ETAPAS_VIAJE.find((e) => e.estado === v.estado);
+  const t = v.transportista;
+  const transportista = t
+    ? `<div class="viaje-transportista"><i class="ti ti-steering-wheel" aria-hidden="true"></i>
+         <div><strong>${escapeAttr(t.nombre)}</strong><small>Placa ${escapeAttr(t.placa || '—')} · carga hasta ${kgYSacos(t.capacidad_maxima_kg)}</small></div></div>`
+    : '<p class="viaje-nota viaje-nota-alerta"><i class="ti ti-user-question" aria-hidden="true"></i> Sin transportista asignado.</p>';
+  let acciones = '';
+  if (t && v.estado === 'listo') {
+    acciones = renderBotonViaje(v, 'salir', 'truck-delivery', `Salir hacia ${ciudad}`,
+      `Ya juntó ${cargados} sacos. ¿Sale ahora con ${escapeAttr(t.nombre)}? (El transportista también puede marcar la salida.)`, 'Sí, salir ahora');
+  } else if (t && v.estado === 'abierto') {
+    acciones = renderBotonViaje(v, 'forzar', 'clock-bolt', 'Adelantar la salida',
+      `Lleva ${cargados} de los ${paraSalir} sacos con que sale: el flete juntado puede no cubrir el viaje. ¿Salir igual?`, 'Sí, salir con menos carga', 'btn-outline');
+  } else if (v.estado === 'en_ruta') {
+    acciones = `<p class="viaje-nota"><i class="ti ti-road" aria-hidden="true"></i> El transportista marca la llegada.${v.fecha_salida ? ` Salió el ${formatearFechaServidor(v.fecha_salida)}` : ''}</p>`;
+  } else if (v.estado === 'llegado') {
+    acciones = `<p class="viaje-nota"><i class="ti ti-wallet" aria-hidden="true"></i> Cada pedido se descarga con su saldo pagado y el código del comprador.${v.fecha_llegada ? ` Llegó el ${formatearFechaServidor(v.fecha_llegada)}` : ''}</p>`;
+  }
+  return `
+    <article class="viaje-card viaje-card-admin" style="animation-delay:${Math.min(indice, 8) * 50}ms" data-viaje-id="${escapeAttr(v.id)}">
+      <div class="viaje-cabecera">
+        <div>
+          <h4><i class="ti ti-route" aria-hidden="true"></i> Huamanga → ${ciudad}</h4>
+          <small>Viaje #${escapeAttr(String(v.id).slice(0, 8))}</small>
+        </div>
+        <span class="pill pill-estado ${v.estado === 'listo' ? 'pill-pendiente' : 'pill-en_camino'}">${etapa?.texto || escapeAttr(v.estado)}</span>
+      </div>
+      ${renderEtapasViaje(v)}
+      ${renderMedidorViaje(v)}
+      ${renderEnviosDelViaje(v)}
+      ${transportista}
+      ${renderAsignacionViaje(v)}
+      ${acciones}
+    </article>`;
+}
+
+async function cargarViajesAdmin() {
+  const cont = document.getElementById('viajes-admin-lista');
+  const vacio = document.getElementById('viajes-admin-empty');
+  const badge = document.getElementById('admin-viajes-total');
+  cont.innerHTML = renderSkeletonFilas(1);
+  let viajes;
+  try {
+    [viajes, transportistasVerificadosAdmin] = await Promise.all([
+      Api.transporte.admin.viajes(), Api.transporte.admin.transportistas('verificado'),
+    ]);
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los viajes en camión');
+    return;
+  }
+  cont.innerHTML = viajes.map(renderTarjetaViajeAdmin).join('');
+  vacio.classList.toggle('hidden', viajes.length > 0);
+  // Lo que espera al admin: viajes que ya pueden salir o que no tienen quién los maneje.
+  const porAtender = viajes.filter((v) => v.estado === 'listo' || (v.estado === 'abierto' && !v.transportista)).length;
+  badge.textContent = porAtender;
+  badge.classList.toggle('hidden', !porAtender);
+}
+
+async function asignarTransportistaAViaje(form) {
+  const transportistaId = form.transportista.value;
+  if (!transportistaId) { form.transportista.focus(); return; }
+  form.querySelectorAll('button, select').forEach((el) => { el.disabled = true; });
+  try {
+    const viaje = await Api.transporte.admin.asignarViaje(form.dataset.viajeId, transportistaId);
+    toast(`Viaje a ${viaje.destino_ciudad} asignado a ${viaje.transportista?.nombre || 'el transportista'} 🚛`);
+    await cargarViajesAdmin();
+  } catch (err) {
+    form.querySelectorAll('button, select').forEach((el) => { el.disabled = false; });
+    manejarError(err, 'asignar el transportista');
+  }
+}
+
+async function salirViajeDesdeAdmin(boton) {
+  const tarjeta = boton.closest('.viaje-card');
+  tarjeta.querySelectorAll('button, select').forEach((el) => { el.disabled = true; });
+  try {
+    const viaje = await Api.transporte.admin.salirViaje(boton.dataset.viajeId, boton.dataset.accion === 'forzar');
+    toast(`El viaje a ${viaje.destino_ciudad} salió: los compradores ya lo ven en camino 🚛`);
+    await cargarViajesAdmin();
+  } catch (err) {
+    tarjeta.querySelectorAll('button, select').forEach((el) => { el.disabled = false; });
+    manejarError(err, 'hacer salir el viaje');
+  }
+}
+
+// ---- Destinos lejanos: ciudades, condiciones de agencia y camión, y el punto de despacho a agencias ----
+let destinosAdmin = [];
+let mapaFormDestino = null;
+let mapaAgenciaDespachoAdmin = null;
+let agenciaDespachoElegida = null;
+
+function sacosParaSalir(capacidad, porcentaje) {
+  return Math.ceil((Number(capacidad) || 0) * (Number(porcentaje) || 0) / 100);
+}
+
+function renderTarjetaDestinoAdmin(d, indice = 0) {
+  const numero = (n) => Number(n).toLocaleString('es-PE', { maximumFractionDigits: 2 });
+  const dato = (etiqueta, valor) => `<div><dt>${etiqueta}</dt><dd>${valor}</dd></div>`;
+  const salen = sacosParaSalir(d.camion_capacidad_sacos, d.camion_porcentaje_salida);
+  const agencia = d.agencia_disponible
+    ? `<dl>
+        ${dato('Agencia', escapeAttr(d.agencia_nombre || 'Sin nombre'))}
+        ${dato('Flete aprox.', d.agencia_flete_kg != null ? `${formatearMoneda(d.agencia_flete_kg)} / kg` : '—')}
+        ${dato('Tarda', d.agencia_dias != null ? `${d.agencia_dias} días` : '—')}
+       </dl>`
+    : '<p class="destino-apagado">No se ofrece</p>';
+  const camion = d.camion_disponible
+    ? `<dl>
+        ${dato('Precio por saco', d.camion_precio_saco != null ? formatearMoneda(d.camion_precio_saco) : '—')}
+        ${dato('Mínimo por comprador', `${d.camion_minimo_sacos} sacos`)}
+        ${dato('Sale con', `${salen} de ${d.camion_capacidad_sacos} sacos (${d.camion_porcentaje_salida}%)`)}
+        ${dato('Tarda', d.camion_dias != null ? `${d.camion_dias} días` : '—')}
+       </dl>
+       ${d.camion_precio_saco != null ? `<p class="destino-ingreso">Flete al salir: <b>${formatearMoneda(salen * d.camion_precio_saco)}</b></p>` : ''}`
+    : '<p class="destino-apagado">No se ofrece</p>';
+  return `
+    <article class="destino-card${d.activo ? '' : ' destino-oculto'}" style="animation-delay:${Math.min(indice, 8) * 40}ms" data-destino-id="${escapeAttr(d.id)}">
+      <header class="destino-cabecera">
+        <div>
+          <h4><i class="ti ti-map-pin" aria-hidden="true"></i> ${escapeAttr(d.ciudad)}</h4>
+          <small>${escapeAttr(d.departamento || 'Sin departamento')} · radio de ${numero(d.radio_km)} km</small>
+        </div>
+        <span class="pill pill-estado ${d.activo ? 'pill-aprobado' : 'pill-default'}"><i class="ti ti-${d.activo ? 'eye' : 'eye-off'}" aria-hidden="true"></i> ${d.activo ? 'Visible' : 'Oculta'}</span>
+      </header>
+      <div class="destino-modalidades">
+        <section class="destino-modalidad${d.agencia_disponible ? '' : ' apagada'}">
+          <h5><i class="ti ti-building-warehouse" aria-hidden="true"></i> Agencia de carga</h5>
+          ${agencia}
+        </section>
+        <section class="destino-modalidad${d.camion_disponible ? '' : ' apagada'}">
+          <h5><i class="ti ti-truck" aria-hidden="true"></i> Camión compartido</h5>
+          ${camion}
+        </section>
+      </div>
+      ${d.nota ? `<p class="destino-nota"><i class="ti ti-message" aria-hidden="true"></i> ${escapeAttr(d.nota)}</p>` : ''}
+      <div class="tarjeta-acciones">
+        <button type="button" class="btn btn-outline btn-editar-destino"><i class="ti ti-pencil" aria-hidden="true"></i> Editar ${escapeAttr(d.ciudad)}</button>
+      </div>
+    </article>`;
+}
+
+function renderFormDestino(d = null) {
+  const v = (campo, porDefecto = '') => escapeAttr(d?.[campo] ?? porDefecto);
+  const marcado = (campo, porDefecto = true) => ((d ? d[campo] : porDefecto) ? 'checked' : '');
+  const campo = (etiqueta, nombre, atributos, ayuda = '') => `
+          <label class="perfil-campo">${etiqueta}
+            <input name="${nombre}" ${atributos}>
+            ${ayuda ? `<small class="muted">${ayuda}</small>` : ''}
+          </label>`;
+  const interruptor = (nombre, titulo, descripcion, porDefecto = true) => `
+          <label class="interruptor">
+            <span><strong>${titulo}</strong><small>${descripcion}</small></span>
+            <input type="checkbox" role="switch" name="${nombre}" ${marcado(nombre, porDefecto)}>
+          </label>`;
+  return `
+    <form id="form-destino" class="card-panel form-destino" novalidate data-destino-id="${escapeAttr(d?.id || '')}">
+      <h4><i class="ti ti-${d ? 'pencil' : 'map-pin-plus'}" aria-hidden="true"></i> ${d ? `Editar ${escapeAttr(d.ciudad)}` : 'Agregar una ciudad'}</h4>
+      <div class="form-destino-cuerpo">
+        <div class="form-destino-campos">
+          <fieldset class="form-destino-grupo">
+            <legend>Ciudad</legend>
+            <div class="form-destino-grid">
+              ${campo('Ciudad *', 'ciudad', `type="text" maxlength="80" required value="${v('ciudad')}" placeholder="Ej. Lima"`)}
+              ${campo('Departamento', 'departamento', `type="text" maxlength="80" value="${v('departamento')}" placeholder="Ej. Lima"`)}
+              ${campo('Latitud *', 'latitud', `type="number" step="any" min="-18.5" max="0.2" required value="${v('latitud')}"`)}
+              ${campo('Longitud *', 'longitud', `type="number" step="any" min="-81.5" max="-68.5" required value="${v('longitud')}"`)}
+              ${campo('Radio de entrega (km)', 'radio_km', `type="number" step="1" min="1" max="200" value="${v('radio_km', 40)}"`, 'El comprador puede pedir si entrega dentro de este radio.')}
+            </div>
+            ${interruptor('activo', 'Visible para los compradores', 'Si la apagas, la ciudad deja de aparecer al comprar (los pedidos ya hechos siguen).')}
+          </fieldset>
+          <fieldset class="form-destino-grupo" data-grupo="agencia">
+            <legend>Agencia de carga</legend>
+            ${interruptor('agencia_disponible', 'Ofrecer envío por agencia', 'El repartidor lo deja en una agencia de Huamanga; el comprador paga el flete al recoger.')}
+            <div class="form-destino-grid form-destino-grupo-campos">
+              ${campo('Agencia', 'agencia_nombre', `type="text" maxlength="80" list="agencias-sugeridas" value="${v('agencia_nombre')}" placeholder="Ej. Shalom"`)}
+              ${campo('Flete aprox. (S/ por kg)', 'agencia_flete_kg', `type="number" step="0.01" min="0" max="100" value="${v('agencia_flete_kg')}"`)}
+              ${campo('Días de viaje', 'agencia_dias', `type="number" step="1" min="0" max="60" value="${v('agencia_dias')}"`)}
+            </div>
+          </fieldset>
+          <fieldset class="form-destino-grupo" data-grupo="camion">
+            <legend>Camión compartido</legend>
+            ${interruptor('camion_disponible', 'Ofrecer camión compartido', 'Para 50 sacos o más: 70% al pedir y 30% al llegar, antes de descargar.')}
+            <div class="form-destino-grid form-destino-grupo-campos">
+              ${campo('Precio por saco (S/)', 'camion_precio_saco', `type="number" step="0.01" min="0" value="${v('camion_precio_saco')}"`)}
+              ${campo('Mínimo por comprador (sacos)', 'camion_minimo_sacos', `type="number" step="1" min="1" value="${v('camion_minimo_sacos', 50)}"`)}
+              ${campo('Capacidad del camión (sacos)', 'camion_capacidad_sacos', `type="number" step="1" min="1" value="${v('camion_capacidad_sacos', 100)}"`)}
+              ${campo('Sale al llegar al (%)', 'camion_porcentaje_salida', `type="number" step="1" min="1" max="100" value="${v('camion_porcentaje_salida', 80)}"`)}
+              ${campo('Días de viaje', 'camion_dias', `type="number" step="1" min="0" max="60" value="${v('camion_dias')}"`)}
+            </div>
+            <p class="form-destino-calculo" aria-live="polite"></p>
+          </fieldset>
+          <label class="perfil-campo">Nota para el comprador
+            <textarea name="nota" rows="2" maxlength="300" placeholder="Ej. Entregas en el mercado mayorista de Santa Anita.">${v('nota')}</textarea>
+          </label>
+        </div>
+        <div class="form-destino-mapa">
+          <span class="form-destino-mapa-titulo"><i class="ti ti-click" aria-hidden="true"></i> Toca el mapa para ubicar la ciudad</span>
+          <div id="mapa-form-destino" class="mapa-form-destino"></div>
+          <small class="muted">El círculo es el radio de entrega.</small>
+        </div>
+      </div>
+      <p class="form-entrega-mensaje hidden" role="alert"></p>
+      <div class="tarjeta-acciones form-destino-acciones">
+        <button type="button" class="btn btn-ghost btn-cancelar-destino">Cancelar</button>
+        <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
+      </div>
+    </form>`;
+}
+
+// Prende/apaga los campos de agencia y camión según su interruptor, y escribe lo que resulta del camión.
+function actualizarFormDestino(form) {
+  form.querySelectorAll('.form-destino-grupo[data-grupo]').forEach((grupo) => {
+    const prendido = grupo.querySelector('input[role="switch"]').checked;
+    grupo.classList.toggle('apagado', !prendido);
+    grupo.querySelectorAll('.form-destino-grupo-campos input').forEach((i) => { i.disabled = !prendido; });
+  });
+  const calculo = form.querySelector('.form-destino-calculo');
+  const capacidad = Number(form.camion_capacidad_sacos.value);
+  const porcentaje = Number(form.camion_porcentaje_salida.value);
+  const precio = Number(form.camion_precio_saco.value);
+  if (!form.camion_disponible.checked || !capacidad || !porcentaje) {
+    calculo.textContent = '';
+    return;
+  }
+  const salen = sacosParaSalir(capacidad, porcentaje);
+  calculo.innerHTML = `El camión sale con <b>${salen} sacos</b> (${porcentaje}% de ${capacidad}).`
+    + (precio ? ` Flete al salir: <b>${formatearMoneda(salen * precio)}</b>; lleno: <b>${formatearMoneda(capacidad * precio)}</b>.` : '');
+}
+
+function abrirFormDestino(destino = null) {
+  const envoltura = document.getElementById('destino-form-wrap');
+  mapaFormDestino?.mapa.remove();
+  mapaFormDestino = null;
+  envoltura.innerHTML = renderFormDestino(destino);
+  envoltura.classList.remove('hidden');
+  const form = document.getElementById('form-destino');
+  actualizarFormDestino(form);
+  const radio = () => (Number(form.radio_km.value) || 40) * 1000;
+  let circulo = null;
+  const dibujarCirculo = (lat, lng) => {
+    if (!mapaFormDestino) return;
+    if (circulo) circulo.setLatLng([lat, lng]).setRadius(radio());
+    else circulo = L.circle([lat, lng], { radius: radio(), color: '#2D3B2A', weight: 1.5, fillOpacity: 0.08 }).addTo(mapaFormDestino.mapa);
+  };
+  mapaFormDestino = crearMapaSeleccionable('mapa-form-destino', {
+    latInicial: destino?.latitud, lngInicial: destino?.longitud, color: '#2D3B2A',
+    onSeleccionar: (lat, lng) => {
+      form.latitud.value = lat.toFixed(5);
+      form.longitud.value = lng.toFixed(5);
+      dibujarCirculo(lat, lng);
+    },
+  });
+  if (mapaFormDestino && destino) {
+    dibujarCirculo(destino.latitud, destino.longitud);
+    mapaFormDestino.mapa.fitBounds(circulo.getBounds(), { padding: [12, 12] });
+  }
+  form.addEventListener('input', (e) => {
+    form.querySelector('.form-entrega-mensaje').classList.add('hidden');
+    const encuadrar = () => circulo && mapaFormDestino?.mapa.fitBounds(circulo.getBounds(), { padding: [12, 12] });
+    if (e.target.name === 'radio_km' && circulo) { circulo.setRadius(radio()); encuadrar(); }
+    if ((e.target.name === 'latitud' || e.target.name === 'longitud') && hayCoordenadas(form.latitud.value, form.longitud.value)) {
+      mapaFormDestino?.moverMarcador(Number(form.latitud.value), Number(form.longitud.value));
+      dibujarCirculo(Number(form.latitud.value), Number(form.longitud.value));
+      encuadrar();
+    }
+    actualizarFormDestino(form);
+  });
+  form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  form.ciudad.focus({ preventScroll: true });
+}
+
+function cerrarFormDestino() {
+  mapaFormDestino?.mapa.remove();
+  mapaFormDestino = null;
+  const envoltura = document.getElementById('destino-form-wrap');
+  envoltura.innerHTML = '';
+  envoltura.classList.add('hidden');
+}
+
+async function guardarDestino(form) {
+  const numero = (nombre) => (form[nombre].value === '' ? null : Number(form[nombre].value));
+  const texto = (nombre) => form[nombre].value.trim() || null;
+  const datos = {
+    ciudad: form.ciudad.value.trim(),
+    departamento: texto('departamento'),
+    latitud: numero('latitud'),
+    longitud: numero('longitud'),
+    radio_km: numero('radio_km') ?? 40,
+    activo: form.activo.checked,
+    agencia_disponible: form.agencia_disponible.checked,
+    agencia_nombre: texto('agencia_nombre'),
+    agencia_flete_kg: numero('agencia_flete_kg'),
+    agencia_dias: numero('agencia_dias'),
+    camion_disponible: form.camion_disponible.checked,
+    camion_precio_saco: numero('camion_precio_saco'),
+    camion_minimo_sacos: numero('camion_minimo_sacos') ?? 50,
+    camion_capacidad_sacos: numero('camion_capacidad_sacos') ?? 100,
+    camion_porcentaje_salida: numero('camion_porcentaje_salida') ?? 80,
+    camion_dias: numero('camion_dias'),
+    nota: texto('nota'),
+  };
+  let problema = null;
+  if (datos.ciudad.length < 2) problema = ['Escribe el nombre de la ciudad.', form.ciudad];
+  else if (datos.latitud == null || datos.longitud == null) problema = ['Ubica la ciudad: toca el mapa o escribe su latitud y longitud.', form.latitud];
+  if (problema) {
+    mostrarMensajeEntrega(form, problema[0], 'error');
+    problema[1].focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    const id = form.dataset.destinoId;
+    const guardado = id ? await Api.pedidos.admin.actualizarDestino(id, datos) : await Api.pedidos.admin.crearDestino(datos);
+    toast(guardado.activo ? `${guardado.ciudad} guardada: los compradores ya ven estas condiciones.` : `${guardado.ciudad} guardada (oculta: los compradores no la ven).`);
+    cerrarFormDestino();
+    await cargarDestinosAdmin();
+  } catch (err) {
+    boton.disabled = false;
+    mostrarMensajeEntrega(form, err.message, 'error');
+  }
+}
+
+function renderAgenciaDespachoAdmin(agencia) {
+  const lat = agencia?.latitud;
+  const lng = agencia?.longitud;
+  return `
+    <div class="agencia-despacho-admin-cuerpo">
+      <div class="agencia-despacho-admin-texto">
+        <h4><i class="ti ti-building-warehouse" aria-hidden="true"></i> Punto de despacho a agencias</h4>
+        <p class="muted">Dónde deja el repartidor los pedidos que van por agencia de carga, en Huamanga (el terminal de las agencias). Toca el mapa para moverlo y guarda.</p>
+        <dl class="carga-datos agencia-despacho-coordenadas">
+          <div><dt>Latitud</dt><dd id="agencia-despacho-lat">${lat != null ? Number(lat).toFixed(5) : '—'}</dd></div>
+          <div><dt>Longitud</dt><dd id="agencia-despacho-lng">${lng != null ? Number(lng).toFixed(5) : '—'}</dd></div>
+        </dl>
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <button type="button" class="btn btn-primary" id="btn-guardar-agencia-despacho" disabled><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar el punto</button>
+      </div>
+      <div id="mapa-agencia-despacho" class="mapa-agencia-despacho" data-lat="${escapeAttr(lat ?? '')}" data-lng="${escapeAttr(lng ?? '')}"></div>
+    </div>`;
+}
+
+function iniciarMapaAgenciaDespacho() {
+  const el = document.getElementById('mapa-agencia-despacho');
+  if (!el || !el.offsetWidth) return;
+  if (mapaAgenciaDespachoAdmin) {
+    mapaAgenciaDespachoAdmin.mapa.invalidateSize();
+    return;
+  }
+  mapaAgenciaDespachoAdmin = crearMapaSeleccionable('mapa-agencia-despacho', {
+    latInicial: el.dataset.lat, lngInicial: el.dataset.lng, color: '#A16207',
+    emoji: '<i class="ti ti-building-warehouse"></i>',
+    onSeleccionar: (lat, lng) => {
+      agenciaDespachoElegida = { latitud: Number(lat.toFixed(6)), longitud: Number(lng.toFixed(6)) };
+      document.getElementById('agencia-despacho-lat').textContent = lat.toFixed(5);
+      document.getElementById('agencia-despacho-lng').textContent = lng.toFixed(5);
+      document.getElementById('btn-guardar-agencia-despacho').disabled = false;
+      document.querySelector('#agencia-despacho-admin .form-entrega-mensaje').classList.add('hidden');
+    },
+  });
+  if (mapaAgenciaDespachoAdmin && hayCoordenadas(el.dataset.lat, el.dataset.lng)) mapaAgenciaDespachoAdmin.mapa.setZoom(16);
+}
+
+async function guardarAgenciaDespacho(boton) {
+  if (!agenciaDespachoElegida) return;
+  boton.disabled = true;
+  const caja = document.getElementById('agencia-despacho-admin');
+  try {
+    await Api.pedidos.admin.actualizarAgenciaDespacho(agenciaDespachoElegida.latitud, agenciaDespachoElegida.longitud);
+    agenciaDespacho = null; // el panel del repartidor lo vuelve a pedir
+    agenciaDespachoElegida = null;
+    toast('Punto de despacho guardado: los repartidores ya lo ven en el mapa.');
+  } catch (err) {
+    boton.disabled = false;
+    mostrarMensajeEntrega(caja, err.message, 'error');
+  }
+}
+
+async function cargarDestinosAdmin() {
+  const cont = document.getElementById('destinos-admin-lista');
+  const vacio = document.getElementById('destinos-admin-empty');
+  cont.innerHTML = renderSkeletonFilas(1);
+  let agencia = null;
+  try {
+    [destinosAdmin, agencia] = await Promise.all([
+      Api.pedidos.admin.destinosLejanos(), Api.pedidos.agenciaDespacho().catch(() => null),
+    ]);
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los destinos lejanos');
+    return;
+  }
+  cont.innerHTML = destinosAdmin.map(renderTarjetaDestinoAdmin).join('');
+  vacio.classList.toggle('hidden', destinosAdmin.length > 0);
+  if (!mapaAgenciaDespachoAdmin) {
+    document.getElementById('agencia-despacho-admin').innerHTML = renderAgenciaDespachoAdmin(agencia);
+    iniciarMapaAgenciaDespacho(); // solo si la pestaña está a la vista; si no, al abrirla
+  }
 }
 
 // ---- Pedidos esperando vehículo con más capacidad (caso poco frecuente: motivo_pendiente ==
@@ -7774,18 +8346,33 @@ const ETAPAS_VIAJE = [
   { estado: 'llegado', texto: 'En destino' },
 ];
 
-function renderTarjetaViaje(v, indice = 0) {
-  const ciudad = escapeAttr(v.destino_ciudad || 'su destino');
+function renderEtapasViaje(v) {
   const actual = Math.max(0, ETAPAS_VIAJE.findIndex((e) => e.estado === v.estado));
-  const capacidad = Number(v.capacidad_sacos) || 0;
-  const cargados = Number(v.sacos_cargados) || 0;
-  const paraSalir = Number(v.sacos_para_salir) || 0;
-  const porcentaje = (n) => (capacidad ? Math.min(100, (n / capacidad) * 100) : 0);
-  const llegado = v.estado === 'llegado';
   const etapas = ETAPAS_VIAJE.map((e, i) => `
           <li class="${i < actual ? 'hecho' : i === actual ? 'actual' : ''}"${i === actual ? ' aria-current="step"' : ''}>
             <span class="viaje-paso-punto" aria-hidden="true"></span>${e.texto}
           </li>`).join('');
+  return `<ol class="viaje-etapas" aria-label="Etapas del viaje">${etapas}</ol>`;
+}
+
+function renderMedidorViaje(v) {
+  const capacidad = Number(v.capacidad_sacos) || 0;
+  const cargados = Number(v.sacos_cargados) || 0;
+  const paraSalir = Number(v.sacos_para_salir) || 0;
+  const porcentaje = (n) => (capacidad ? Math.min(100, (n / capacidad) * 100) : 0);
+  return `
+      <div class="viaje-medidor">
+        <div class="viaje-medidor-texto"><strong>${cargados} sacos cargados</strong><span>de ${capacidad} · sale con ${paraSalir}</span></div>
+        <div class="viaje-medidor-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${capacidad}" aria-valuenow="${Math.min(cargados, capacidad)}" aria-label="Sacos en el camión">
+          <span class="viaje-medidor-relleno" style="width:${porcentaje(cargados)}%"></span>
+          <span class="viaje-medidor-marca" style="left:${porcentaje(paraSalir)}%"></span>
+        </div>
+        <span class="viaje-medidor-leyenda">Sale al llegar a esta marca (${paraSalir} sacos)</span>
+      </div>`;
+}
+
+function renderEnviosDelViaje(v) {
+  const llegado = v.estado === 'llegado';
   const saldoDe = (e) => {
     if (!llegado) return '';
     if (e.estado === 'entregado') return '<span class="viaje-saldo ok">Entregado</span>';
@@ -7797,9 +8384,14 @@ function renderTarjetaViaje(v, indice = 0) {
             <span>${e.sacos ?? '—'} sacos</span>
             ${saldoDe(e)}
           </li>`).join('');
-  const boton = (accion, icono, texto, pregunta, confirmar) => `
+  return envios ? `<ul class="viaje-envios" aria-label="Pedidos en este viaje">${envios}</ul>` : '';
+}
+
+// Botón con su paso de confirmación (salir, llegar o adelantar la salida): mover un viaje avisa a todos sus compradores.
+function renderBotonViaje(v, accion, icono, texto, pregunta, confirmar, claseBoton = 'btn-primary') {
+  return `
       <div class="viaje-acciones">
-        <button type="button" class="btn btn-primary btn-viaje-accion"><i class="ti ti-${icono}" aria-hidden="true"></i> ${texto}</button>
+        <button type="button" class="btn ${claseBoton} btn-viaje-accion"><i class="ti ti-${icono}" aria-hidden="true"></i> ${texto}</button>
       </div>
       <div class="viaje-confirmar hidden" role="group" aria-label="${texto}">
         <p>${pregunta}</p>
@@ -7808,11 +8400,17 @@ function renderTarjetaViaje(v, indice = 0) {
           <button type="button" class="btn btn-primary btn-sm btn-viaje-confirmar" data-accion="${accion}" data-viaje-id="${escapeAttr(v.id)}">${confirmar}</button>
         </div>
       </div>`;
+}
+
+function renderTarjetaViaje(v, indice = 0) {
+  const ciudad = escapeAttr(v.destino_ciudad || 'su destino');
+  const cargados = Number(v.sacos_cargados) || 0;
+  const paraSalir = Number(v.sacos_para_salir) || 0;
   const acciones = {
     abierto: `<p class="viaje-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> Sale al juntar ${paraSalir} sacos: faltan ${Math.max(0, paraSalir - cargados)}. Si hace falta salir antes, lo decide el admin.</p>`,
-    listo: boton('salir', 'truck-delivery', `Salir hacia ${ciudad}`,
+    listo: renderBotonViaje(v, 'salir', 'truck-delivery', `Salir hacia ${ciudad}`,
       `¿Ya cargaste los ${cargados} sacos? Al salir, cada comprador ve que su pedido va en camino a ${ciudad}.`, 'Sí, salir ahora'),
-    en_ruta: boton('llegar', 'map-pin', `Llegué a ${ciudad}`,
+    en_ruta: renderBotonViaje(v, 'llegar', 'map-pin', `Llegué a ${ciudad}`,
       `¿Ya estás en ${ciudad}? Cada comprador recibe el aviso para pagar su saldo (30%) antes de que descargues.`, 'Sí, ya llegué'),
     llegado: `<p class="viaje-nota"><i class="ti ti-wallet" aria-hidden="true"></i> Cobra antes de descargar: entrega cada pedido en «Mis envíos» cuando su saldo figure pagado, con el código del comprador.</p>`,
   }[v.estado] || '';
@@ -7824,16 +8422,9 @@ function renderTarjetaViaje(v, indice = 0) {
           <small>Viaje #${escapeAttr(String(v.id).slice(0, 8))}${v.fecha_salida ? ` · salió el ${formatearFechaServidor(v.fecha_salida)}` : ''}</small>
         </div>
       </div>
-      <ol class="viaje-etapas" aria-label="Etapas del viaje">${etapas}</ol>
-      <div class="viaje-medidor">
-        <div class="viaje-medidor-texto"><strong>${cargados} sacos cargados</strong><span>de ${capacidad} · sale con ${paraSalir}</span></div>
-        <div class="viaje-medidor-barra" role="progressbar" aria-valuemin="0" aria-valuemax="${capacidad}" aria-valuenow="${Math.min(cargados, capacidad)}" aria-label="Sacos en el camión">
-          <span class="viaje-medidor-relleno" style="width:${porcentaje(cargados)}%"></span>
-          <span class="viaje-medidor-marca" style="left:${porcentaje(paraSalir)}%"></span>
-        </div>
-        <span class="viaje-medidor-leyenda">Sale al llegar a esta marca (${paraSalir} sacos)</span>
-      </div>
-      ${envios ? `<ul class="viaje-envios" aria-label="Pedidos en este viaje">${envios}</ul>` : ''}
+      ${renderEtapasViaje(v)}
+      ${renderMedidorViaje(v)}
+      ${renderEnviosDelViaje(v)}
       ${acciones}
     </article>`;
 }
@@ -9690,6 +10281,70 @@ function inicializarEventos() {
   document.getElementById('admin-resumen').addEventListener('keydown', irDesdeResumenAdmin);
   document.getElementById('btn-refrescar-transferencias').addEventListener('click', cargarTransferenciasAdmin);
   document.getElementById('btn-refrescar-reclamos').addEventListener('click', cargarReclamosRucAdmin);
+  document.getElementById('btn-refrescar-transportistas').addEventListener('click', cargarTransportistasAdmin);
+  document.querySelector('.admin-filtros').addEventListener('click', (e) => {
+    const filtro = e.target.closest('.admin-filtro');
+    if (filtro && !filtro.classList.contains('active')) filtrarTransportistasAdmin(filtro);
+  });
+  const listaTransportistas = document.getElementById('transportistas-lista');
+  listaTransportistas.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.transportista-card');
+    if (!tarjeta) return;
+    const ver = e.target.closest('.btn-ver-documento');
+    if (ver) { verDocumentoTransportista(tarjeta, ver); return; }
+    if (e.target.closest('.btn-aprobar-transportista')) { mostrarPasoRevision(tarjeta, 'aprobar'); return; }
+    if (e.target.closest('.btn-rechazar-transportista')) { mostrarPasoRevision(tarjeta, 'rechazar'); return; }
+    if (e.target.closest('.btn-cancelar-revision')) { mostrarPasoRevision(tarjeta, 'acciones'); return; }
+    if (e.target.closest('.btn-confirmar-aprobacion')) decidirTransportista(tarjeta, 'aprobar');
+  });
+  listaTransportistas.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-rechazar-transferencia');
+    if (!form) return;
+    e.preventDefault();
+    const motivo = form.motivo.value.trim();
+    if (motivo.length < 3) {
+      mostrarMensajeEntrega(form, 'Escribe qué tiene que corregir: el transportista lo va a leer.', 'error');
+      form.motivo.focus();
+      return;
+    }
+    decidirTransportista(form.closest('.transportista-card'), 'rechazar', motivo);
+  });
+  document.getElementById('btn-refrescar-viajes').addEventListener('click', cargarViajesAdmin);
+  const listaViajesAdmin = document.getElementById('viajes-admin-lista');
+  listaViajesAdmin.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.viaje-card');
+    if (!tarjeta) return;
+    if (e.target.closest('.btn-viaje-accion')) { mostrarConfirmacionViaje(tarjeta, true); return; }
+    if (e.target.closest('.btn-viaje-cancelar')) { mostrarConfirmacionViaje(tarjeta, false); return; }
+    const confirmar = e.target.closest('.btn-viaje-confirmar');
+    if (confirmar) salirViajeDesdeAdmin(confirmar);
+  });
+  listaViajesAdmin.addEventListener('submit', (e) => {
+    const form = e.target.closest('.form-asignar-viaje');
+    if (!form) return;
+    e.preventDefault();
+    asignarTransportistaAViaje(form);
+  });
+  document.getElementById('btn-nuevo-destino').addEventListener('click', () => abrirFormDestino());
+  document.getElementById('destinos-admin-lista').addEventListener('click', (e) => {
+    const editar = e.target.closest('.btn-editar-destino');
+    if (!editar) return;
+    const id = editar.closest('.destino-card').dataset.destinoId;
+    abrirFormDestino(destinosAdmin.find((d) => String(d.id) === id));
+  });
+  const envolturaDestino = document.getElementById('destino-form-wrap');
+  envolturaDestino.addEventListener('click', (e) => {
+    if (e.target.closest('.btn-cancelar-destino')) cerrarFormDestino();
+  });
+  envolturaDestino.addEventListener('submit', (e) => {
+    if (e.target.id !== 'form-destino') return;
+    e.preventDefault();
+    guardarDestino(e.target);
+  });
+  document.getElementById('agencia-despacho-admin').addEventListener('click', (e) => {
+    const guardar = e.target.closest('#btn-guardar-agencia-despacho');
+    if (guardar) guardarAgenciaDespacho(guardar);
+  });
   const listaReclamos = document.getElementById('reclamos-ruc-lista');
   listaReclamos.addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.reclamo-card');

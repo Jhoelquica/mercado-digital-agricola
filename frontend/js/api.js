@@ -312,6 +312,13 @@ const Api = {
     consultarDni: (dni) => request('pedidos', `/pedidos/dni/${encodeURIComponent(dni)}`, { auth: true }),
     // Dónde deja el repartidor los pedidos que van por agencia de carga (público; lo cambia el admin).
     agenciaDespacho: () => request('pedidos', '/configuracion/agencia-despacho'),
+    admin: {
+      // Todas las ciudades lejanas (también las ocultas) con sus condiciones, para editarlas.
+      destinosLejanos: () => request('pedidos', '/destinos-lejanos/admin', { auth: true }),
+      crearDestino: (datos) => request('pedidos', '/destinos-lejanos', { method: 'POST', body: datos, auth: true }),
+      actualizarDestino: (id, datos) => request('pedidos', `/destinos-lejanos/${id}`, { method: 'PUT', body: datos, auth: true }),
+      actualizarAgenciaDespacho: (latitud, longitud) => request('pedidos', '/configuracion/agencia-despacho', { method: 'PATCH', body: { latitud, longitud }, auth: true }),
+    },
   },
   transporte: {
     obtenerEnvio: (pedidoId) => request('transporte', `/envios/${pedidoId}`, { auth: true }),
@@ -355,6 +362,17 @@ const Api = {
     viajesMios: () => request('transporte', '/viajes/mios', { auth: true }),
     salirViaje: (viajeId) => request('transporte', `/viajes/${viajeId}/salir`, { method: 'POST', body: {}, auth: true }),
     llegarViaje: (viajeId) => request('transporte', `/viajes/${viajeId}/llegar`, { method: 'POST', auth: true }),
+    admin: {
+      // Transportistas de carga por estado de sus documentos ("pendiente", "verificado", "rechazado").
+      transportistas: (estado = 'pendiente') => request('transporte', `/repartidores/admin/transportistas?estado=${encodeURIComponent(estado)}`, { auth: true }),
+      documentoTransportista: (id, cual) => requestBlob('transporte', `/repartidores/admin/transportistas/${id}/documento/${cual}`),
+      verificarTransportista: (id) => request('transporte', `/repartidores/admin/transportistas/${id}/verificar`, { method: 'POST', auth: true }),
+      rechazarTransportista: (id, motivo) => request('transporte', `/repartidores/admin/transportistas/${id}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
+      // Viajes en curso; el admin asigna el transportista y puede adelantar la salida (forzar).
+      viajes: () => request('transporte', '/viajes', { auth: true }),
+      asignarViaje: (viajeId, transportistaId) => request('transporte', `/viajes/${viajeId}/asignar`, { method: 'POST', body: { transportista_id: transportistaId }, auth: true }),
+      salirViaje: (viajeId, forzar = false) => request('transporte', `/viajes/${viajeId}/salir`, { method: 'POST', body: { forzar }, auth: true }),
+    },
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

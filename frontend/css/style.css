@@ -5302,3 +5302,113 @@ body.asistente-abierto { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .viaje-medidor-relleno { transition: none; }
 }
+
+/* ===== Compradores lejanos: pestañas del admin (transportistas, viajes y destinos) =====
+   ui-ux-pro-max: filtros como botones con aria-pressed, confirmación antes de mover un viaje (avisa a todos sus
+   compradores), campos agrupados con su interruptor y los desactivados atenuados. 21st.dev: "Account Settings Fieldset"
+   y "Notification Settings Field" (grupos con interruptor y descripción), "Expanded Map" (tarjeta de ubicación). */
+.admin-filtros { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.admin-filtro {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 8px 16px; border-radius: 999px;
+  border: 1.5px solid var(--color-borde); background: #fff; color: var(--texto-suave); font: inherit; font-size: 0.88rem; font-weight: 700; cursor: pointer;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+.admin-filtro:hover { border-color: var(--color-primario); color: var(--color-primario); }
+.admin-filtro.active { background: var(--color-primario); border-color: var(--color-primario); color: #fff; }
+.admin-filtro:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+
+/* Cada transportista a todo el ancho, como los reclamos: sus datos en una fila y el documento grande al revisarlo. */
+#transportistas-lista { grid-template-columns: minmax(0, 1fr); }
+.transportista-card { max-width: none; }
+.transportista-card .perfil-datos-grid { margin: 12px 0; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+.viaje-card-admin .viaje-cabecera { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.viaje-transportista { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 12px; background: var(--verde-pastel); }
+.viaje-transportista > i { flex: none; font-size: 1.5rem; color: var(--color-primario); }
+.viaje-transportista div { display: grid; gap: 2px; }
+.viaje-transportista small { color: var(--texto-suave); font-size: 0.82rem; }
+.viaje-nota-alerta { padding: 10px 14px; border-radius: 12px; background: #fff3cd; color: #6b5212; }
+.form-asignar-viaje { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.form-asignar-viaje label { flex: 1; min-width: 220px; display: grid; gap: 6px; font-size: 0.85rem; font-weight: 700; color: var(--texto); }
+.form-asignar-viaje select { width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 10px; border: 1.5px solid var(--borde); font: inherit; font-weight: 500; background: #fff; }
+
+.destinos-admin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 460px), 1fr)); gap: 16px; margin-bottom: 20px; }
+.destino-card {
+  display: grid; gap: 14px; align-content: start; padding: 20px 22px; border-radius: var(--radio); background: #fff;
+  border: 1px solid var(--borde); box-shadow: var(--sombra);
+}
+.destino-card.destino-oculto { background: #f7f8f5; }
+.destino-cabecera { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.destino-cabecera h4 { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 1.2rem; color: var(--color-primario); }
+.destino-cabecera small { display: block; margin-top: 2px; font-size: 0.82rem; color: var(--texto-suave); }
+.destino-modalidades { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.destino-modalidad { padding: 12px 14px; border-radius: 12px; background: var(--color-superficie); }
+.destino-modalidad.apagada { background: #f3f4f1; color: var(--texto-suave); }
+.destino-modalidad h5 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 0.9rem; color: var(--texto); }
+.destino-modalidad dl { margin: 0; display: grid; gap: 6px; }
+.destino-modalidad dl div { display: flex; justify-content: space-between; gap: 10px; font-size: 0.84rem; }
+.destino-modalidad dt { color: var(--texto-suave); }
+.destino-modalidad dd { margin: 0; font-weight: 700; text-align: right; }
+.destino-apagado { margin: 0; font-size: 0.85rem; font-style: italic; }
+.destino-ingreso { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--borde); font-size: 0.84rem; color: var(--texto-suave); }
+.destino-ingreso b { color: var(--color-primario); }
+.destino-nota { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.86rem; color: var(--texto-suave); }
+.destino-card .tarjeta-acciones { margin-top: 0; }
+
+.form-destino { display: grid; gap: 16px; max-width: none; margin-bottom: 20px; border: 2px solid var(--color-primario); }
+.form-destino h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.15rem; }
+.form-destino-cuerpo { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.form-destino-campos { display: grid; gap: 14px; }
+.form-destino-grupo { margin: 0; padding: 14px 16px; border: 1px solid var(--color-borde); border-radius: 14px; display: grid; gap: 12px; min-width: 0; }
+.form-destino-grupo legend { padding: 0 6px; font-weight: 800; font-size: 0.92rem; color: var(--color-primario); }
+.form-destino-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.form-destino-grid .perfil-campo { font-size: 0.85rem; }
+.form-destino-grid .perfil-campo input { padding: 10px 12px; }
+.form-destino-grid .perfil-campo small { font-weight: 500; font-size: 0.76rem; }
+.form-destino-grupo.apagado .form-destino-grupo-campos { opacity: 0.45; }
+.form-destino-grupo-campos input:disabled { cursor: not-allowed; background: #f3f4f1; }
+.form-destino-calculo { margin: 0; font-size: 0.88rem; color: var(--texto-suave); }
+.form-destino-calculo:empty { display: none; }
+.form-destino-calculo b { color: var(--color-primario); }
+.form-destino-mapa { position: sticky; top: 90px; display: grid; gap: 8px; }
+.form-destino-mapa-titulo { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 700; color: var(--texto); }
+.mapa-form-destino { height: 380px; border-radius: 14px; border: 1px solid var(--color-borde); overflow: hidden; }
+.form-destino-acciones { justify-content: flex-end; margin-top: 0; }
+
+.interruptor { display: flex; align-items: center; justify-content: space-between; gap: 14px; cursor: pointer; }
+.interruptor span { display: grid; gap: 2px; }
+.interruptor strong { font-size: 0.9rem; color: var(--texto); }
+.interruptor small { font-size: 0.8rem; color: var(--texto-suave); }
+.interruptor input {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 46px; height: 28px; margin: 0; border-radius: 999px;
+  background: #cfd8c8; cursor: pointer; transition: background-color 0.2s;
+}
+.interruptor input::after {
+  content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); transition: transform 0.2s;
+}
+.interruptor input:checked { background: var(--color-primario); }
+.interruptor input:checked::after { transform: translateX(18px); }
+.interruptor input:focus-visible { outline: 3px solid var(--acento-cosecha); outline-offset: 2px; }
+
+.agencia-despacho-admin { margin-top: 4px; }
+/* El formulario de una ciudad y el punto de despacho llevan mapa: a todo el ancho (las demás tarjetas del panel miden 560px). */
+#view-panel-admin .card-panel.form-destino, #view-panel-admin .card-panel.agencia-despacho-admin { max-width: none; }
+.agencia-despacho-admin-cuerpo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 20px; align-items: stretch; }
+.agencia-despacho-admin-texto { display: grid; gap: 12px; align-content: start; }
+.agencia-despacho-admin-texto h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.1rem; }
+.agencia-despacho-admin-texto p { margin: 0; }
+.agencia-despacho-coordenadas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.agencia-despacho-admin-texto .btn { justify-self: start; }
+.mapa-agencia-despacho { min-height: 280px; border-radius: 14px; border: 1px solid var(--color-borde); overflow: hidden; }
+
+@media (max-width: 900px) {
+  .form-destino-cuerpo, .agencia-despacho-admin-cuerpo { grid-template-columns: 1fr; }
+  .form-destino-mapa { position: static; }
+  .mapa-form-destino { height: 280px; }
+}
+@media (max-width: 640px) {
+  .destino-modalidades { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-filtro, .interruptor input, .interruptor input::after { transition: none; }
+}

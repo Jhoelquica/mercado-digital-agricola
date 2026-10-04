@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=e54736f6">
+<link rel="stylesheet" href="css/style.css?v=d087816d">
 </head>
 <body>
 
@@ -678,6 +678,9 @@
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="transferencias"><i class="ti ti-building-bank"></i> Transferencias <span id="admin-transferencias-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="reclamos-ruc"><i class="ti ti-file-certificate"></i> Reclamos de RUC <span id="admin-reclamos-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="transportistas"><i class="ti ti-id"></i> Transportistas <span id="admin-transportistas-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="viajes"><i class="ti ti-route"></i> Viajes en camión <span id="admin-viajes-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="destinos"><i class="ti ti-map-2"></i> Destinos lejanos</button>
         <button type="button" class="admin-tab-btn" data-admintab="productores"><i class="ti ti-tractor"></i> Productores</button>
         <button type="button" class="admin-tab-btn" data-admintab="capacidad"><i class="ti ti-truck"></i> Pendientes por Capacidad</button>
         <button type="button" class="admin-tab-btn" data-admintab="transito"><i class="ti ti-building-warehouse"></i> Productos en Tránsito</button>
@@ -740,6 +743,55 @@
           <p><strong>No hay reclamos de RUC por revisar</strong></p>
           <p class="muted">Cuando alguien reclame un RUC que está en otra cuenta, aparece acá.</p>
         </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="transportistas">
+        <div class="section-header inner">
+          <h3><i class="ti ti-id"></i> Transportistas de carga</h3>
+          <button class="btn btn-outline" id="btn-refrescar-transportistas">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Repartidores con vehículo de carga (2 500 kg o más) que quieren hacer viajes largos. Revisa que la licencia, la tarjeta de propiedad y el SOAT estén vigentes, se lean bien y correspondan a la placa. Solo a un transportista verificado se le asignan viajes.</p>
+        <div class="admin-filtros" role="group" aria-label="Filtrar transportistas por estado">
+          <button type="button" class="admin-filtro active" data-estado="pendiente" aria-pressed="true"><i class="ti ti-hourglass" aria-hidden="true"></i> Por revisar</button>
+          <button type="button" class="admin-filtro" data-estado="verificado" aria-pressed="false"><i class="ti ti-circle-check" aria-hidden="true"></i> Verificados</button>
+          <button type="button" class="admin-filtro" data-estado="rechazado" aria-pressed="false"><i class="ti ti-alert-circle" aria-hidden="true"></i> Observados</button>
+        </div>
+        <div id="transportistas-lista" class="grid-admin"></div>
+        <div id="transportistas-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-id"></i></span>
+          <p><strong id="transportistas-empty-titulo">No hay documentos por revisar</strong></p>
+          <p class="muted">Cuando un repartidor con vehículo de carga envíe sus documentos, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="viajes">
+        <div class="section-header inner">
+          <h3><i class="ti ti-route"></i> Viajes en camión</h3>
+          <button class="btn btn-outline" id="btn-refrescar-viajes">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Los pedidos por camión de una misma ciudad se juntan en un viaje compartido. El viaje queda "Listo para salir" al juntar el porcentaje de carga de esa ciudad. Asígnale un transportista verificado que cargue todos los sacos; él marca la salida y la llegada. Si hace falta, puedes adelantar la salida.</p>
+        <div id="viajes-admin-lista" class="viajes-grid"></div>
+        <div id="viajes-admin-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-route"></i></span>
+          <p><strong>No hay viajes en curso</strong></p>
+          <p class="muted">Cuando un comprador de otra ciudad pida por camión, su pedido abre un viaje o se suma al que ya junta carga.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="destinos">
+        <div class="section-header inner">
+          <h3><i class="ti ti-map-2"></i> Destinos lejanos</h3>
+          <button class="btn btn-primary" id="btn-nuevo-destino"><i class="ti ti-plus" aria-hidden="true"></i> Agregar ciudad</button>
+        </div>
+        <p class="muted admin-nota">Las ciudades fuera de Ayacucho a las que se vende. El comprador ve esta lista y sus condiciones al comprar: pon solo ciudades donde el viaje sea rentable.</p>
+        <div id="destino-form-wrap" class="hidden"></div>
+        <div id="destinos-admin-lista" class="destinos-admin-grid"></div>
+        <div id="destinos-admin-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-map-2"></i></span>
+          <p><strong>Todavía no hay ciudades lejanas</strong></p>
+          <p class="muted">Agrega una ciudad para que los compradores de allá puedan pedir por agencia o por camión.</p>
+        </div>
+        <div id="agencia-despacho-admin" class="card-panel agencia-despacho-admin"></div>
       </div>
 
       <div class="admin-tab-panel" data-admin-panel="capacidad">
@@ -1151,8 +1203,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=29ff0507"></script>
+<script src="js/api.js?v=6e269d57"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=f431127d"></script>
+<script src="js/app.js?v=59e81e46"></script>
 </body>
 </html>
