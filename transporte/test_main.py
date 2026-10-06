@@ -1852,3 +1852,31 @@ def test_un_envio_que_ya_salio_no_se_cancela_y_un_pedido_sin_envio_si():
     assert client.post(f"/envios/pedido/{uuid.uuid4()}/cancelar").json()["cancelable"] is True
     _auth(str(uuid.uuid4()), rol="repartidor")
     assert client.post(f"/envios/pedido/{envio.pedido_id}/cancelar").status_code == 403
+
+
+
+def test_el_admin_ve_el_nombre_de_los_repartidores():
+    repartidor = _crear_repartidor_directo()
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = client.get("/repartidores/admin/nombres", params={"ids": f"{repartidor.id},{uuid.uuid4()}"})
+    assert resp.status_code == 200 and resp.json() == {str(repartidor.id): repartidor.nombre}
+    assert client.get("/repartidores/admin/nombres", params={"ids": "no-es-uuid"}).status_code == 422
+    _auth(str(uuid.uuid4()), rol="repartidor")
+    assert client.get("/repartidores/admin/nombres", params={"ids": str(repartidor.id)}).status_code == 403
+
+
+
+def test_una_propuesta_vencida_de_un_repartidor_borrado_no_traba_a_las_demas(monkeypatch):
+    from datetime import datetime, timedelta
+    monkeypatch.setattr(logica_repartidores, "proponer_envio_a_repartidor", MagicMock())
+    envio = _crear_envio_directo(uuid.uuid4(), estado="propuesto")  # su repartidor ya no existe
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Envio).filter(main.models.Envio.id == envio.id).update(
+            {"fecha_propuesta": datetime.utcnow() - timedelta(hours=2)})
+        db.commit()
+        logica_repartidores.pasar_propuestas_sin_respuesta(db)
+    finally:
+        db.close()
+    recargado = _envio_recargado(envio.id)
+    assert (recargado.estado, recargado.repartidor_id) == ("pendiente_asignacion", None)

@@ -4490,6 +4490,7 @@ const NOTIF_TIPOS = {
   pago_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Pago no completado' },
   saldo_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Saldo no aprobado' },
   pago_reembolsado: { grupo: 'pedido', icono: 'receipt-refund', titulo: 'Pedido cancelado: dinero devuelto' },
+  pago_a_beneficiario: { grupo: 'pedido', icono: 'cash', titulo: 'Te pagamos' },
   recojo_actualizado: { grupo: 'envio', icono: 'plant-2', titulo: 'Recojo de tu cosecha' },
 };
 const NOTIF_FILTROS = [
@@ -4828,6 +4829,7 @@ async function iniciarPanelProductor() {
       cargarEntregasDirectasPendientes(),
     ]);
     pintarResumenChacras();
+    cargarMisGanancias();
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
     animarContadoresResumen(document.getElementById('productor-resumen'));
 
@@ -6772,6 +6774,7 @@ async function cargarGestionEnvios() {
   document.getElementById('repartidor-resumen').innerHTML = renderSkeletonResumen(2);
 
   await Promise.all([cargarListaEnvios(miRepartidor.id), cargarRecojosRepartidor()]);
+  cargarMisGanancias();
   pintarResumenYDisponibilidadRepartidor(miRepartidor.estado_disponibilidad);
   cargarCargaYViajes(miRepartidor);
   iniciarSeguimientoRepartidor();
@@ -6884,7 +6887,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
   await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
-    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar()]);
+    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar(), cargarPagosPorHacer()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -7904,6 +7907,421 @@ function renderTarjetaPendienteCapacidad(envio, indice = 0) {
       </div>
       <p class="muted">Este pedido necesita un vehículo con más capacidad — ningún repartidor disponible alcanzaba. Contrata o coordina uno, y pide a quien lo va a manejar que se registre como Repartidor desde su propia cuenta (pantalla de inicio → "Soy repartidor" → completar perfil con capacidad y tipo de vehículo).</p>
     </div>`;
+}
+
+// ============ MIS GANANCIAS (agricultor y repartidor) ============
+// ChakraShop cobra con Culqi y les paga a mano cada lunes lo cumplido hasta el domingo (ver pagos/logica_cobros.py).
+// 21st.dev "Wallet Card" (lo por cobrar arriba, grande) + "Invoice History Table" (movimientos con su estado y el total
+// pendiente al pie). ui-ux-pro-max: etiquetas visibles, teclado numérico para celular y CCI, error junto al campo y aviso
+// al guardar.
+const ESTADOS_COBRO = {
+  esperando_entrega: { texto: 'Esperando la entrega', pill: 'pendiente_asignacion' },
+  por_cobrar: { texto: 'Por cobrar', pill: 'pendiente' },
+  pagado: { texto: 'Pagado', pill: 'entregado' },
+  anulada: { texto: 'Anulado', pill: 'cancelado' },
+};
+const CONCEPTOS_COBRO = { venta: 'Venta', envio: 'Envío', recojo: 'Recojo en chacra' };
+let gananciasActuales = null;
+
+function contenedorGanancias() {
+  return document.getElementById(Estado.rol === 'productor' ? 'productor-ganancias' : 'repartidor-ganancias');
+}
+
+async function cargarMisGanancias() {
+  const cont = contenedorGanancias();
+  if (!cont) return;
+  cont.innerHTML = renderSkeletonFilas(1);
+  try {
+    gananciasActuales = await Api.ganancias.mias();
+  } catch (err) {
+    cont.innerHTML = `<p class="muted">${escapeAttr(err.message || 'No se pudieron cargar tus ganancias.')}</p>`;
+    return;
+  }
+  cont.innerHTML = renderMisGanancias(gananciasActuales);
+}
+
+// "2026-10-12" -> "lunes 12 oct." (la fecha viene sin hora: se lee como fecha local, no UTC)
+function fechaDePago(fechaIso) {
+  return new Date(`${fechaIso}T12:00:00`).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short' }).replace(',', '');
+}
+
+// Cuándo se paga, dicho para quien cobra: un lunes que ya pasó sin pago queda "pendiente desde" ese lunes.
+function textoDiaDePago(fechaIso, conVerbo = false) {
+  const hoy = hoyIso();
+  if (fechaIso < hoy) return `Pendiente desde el ${fechaDePago(fechaIso)}`;
+  if (fechaIso === hoy) return conVerbo ? 'Se paga hoy' : 'Hoy';
+  const dia = fechaDePago(fechaIso);
+  return conVerbo ? `Se paga el ${dia}` : dia.charAt(0).toUpperCase() + dia.slice(1);
+}
+
+function hoyIso() {
+  return new Date().toLocaleDateString('sv-SE');
+}
+
+function renderMisGanancias(g) {
+  const r = g.resumen;
+  const esProductor = g.beneficiario.tipo === 'productor';
+  const proximo = g.proximos_pagos[0];
+  const tarjeta = (icono, etiqueta, valor, pie, clase = '') => `
+    <div class="economia-stat ${clase}">
+      <div class="economia-stat-cabeza">
+        <span class="economia-stat-icono"><i class="ti ti-${icono}" aria-hidden="true"></i></span>
+        <span class="economia-stat-label">${etiqueta}</span>
+      </div>
+      <span class="economia-stat-valor">${valor}</span>
+      <span class="economia-stat-sub">${pie}</span>
+    </div>`;
+  const stats = [
+    tarjeta('wallet', 'Por cobrar', formatearMoneda(r.por_cobrar),
+      proximo ? textoDiaDePago(proximo.fecha, true) : 'Nada pendiente por ahora', 'ganancias-destacada'),
+    esProductor ? tarjeta('truck', 'Esperando la entrega', formatearMoneda(r.esperando_entrega), 'Se cobra cuando el comprador lo recibe') : '',
+    tarjeta('circle-check', 'Ya cobrado', formatearMoneda(r.cobrado),
+      g.pagos.length ? `Último pago: ${formatearFechaCortaServidor(g.pagos[0].fecha)}` : 'Todavía sin pagos'),
+    esProductor && r.deuda_recojos > 0
+      ? tarjeta('plant-2', 'Debes por recojos', formatearMoneda(r.deuda_recojos), 'Se descuenta de tus próximas ventas') : '',
+  ].filter(Boolean);
+  return `
+    <p class="ganancias-intro"><i class="ti ti-calendar-dollar" aria-hidden="true"></i>
+      <span>Te pagamos <strong>cada lunes</strong> lo ${esProductor ? 'que vendiste y ya se entregó' : 'que entregaste'} hasta el domingo: por Yape hasta S/ 500, o por transferencia a tu cuenta.</span></p>
+    <div class="economia-stats ganancias-stats" style="--columnas:${stats.length}">${stats.join('')}</div>
+    <div class="ganancias-cuerpo">
+      <div class="ganancias-cuenta-wrap">${renderCuentaCobro(g)}</div>
+      ${renderProximosPagos(g)}
+    </div>
+    ${renderMovimientosGanancias(g)}
+    ${renderPagosRecibidos(g)}`;
+}
+
+function renderCuentaCobro(g, editando = false) {
+  const c = g.cuenta;
+  if (!c || editando) return renderFormCuentaCobro(g);
+  const medios = [
+    c.yape_celular ? `<li><i class="ti ti-device-mobile" aria-hidden="true"></i><div><strong>Yape ${escapeAttr(c.yape_celular.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3'))}</strong><span>${escapeAttr(c.yape_titular)}</span></div></li>` : '',
+    c.cci ? `<li><i class="ti ti-building-bank" aria-hidden="true"></i><div><strong>${escapeAttr(c.banco)} · CCI ${escapeAttr(c.cci)}</strong><span>${escapeAttr(c.cuenta_titular)}</span></div></li>` : '',
+  ].join('');
+  return `
+    <section class="card-panel ganancias-cuenta" aria-labelledby="ganancias-cuenta-titulo">
+      <div class="ganancias-cuenta-cabeza">
+        <h4 id="ganancias-cuenta-titulo"><i class="ti ti-cash" aria-hidden="true"></i> Cómo cobras</h4>
+        <button type="button" class="btn btn-ghost btn-sm btn-cambiar-cuenta-cobro"><i class="ti ti-pencil" aria-hidden="true"></i> Cambiar</button>
+      </div>
+      <ul class="ganancias-medios">${medios}</ul>
+      ${c.cci ? '' : '<p class="ganancias-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> Sin cuenta bancaria, un pago de más de S/ 500 te llega en varios Yape.</p>'}
+    </section>`;
+}
+
+function renderFormCuentaCobro(g) {
+  const c = g.cuenta || {};
+  const opciones = g.bancos.map((b) => `<option value="${escapeAttr(b)}"${c.banco === b ? ' selected' : ''}>${escapeAttr(b)}</option>`).join('');
+  return `
+    <section class="card-panel ganancias-cuenta${g.cuenta ? '' : ' sin-cuenta'}" aria-labelledby="ganancias-cuenta-titulo">
+      <h4 id="ganancias-cuenta-titulo"><i class="ti ti-cash" aria-hidden="true"></i> ${g.cuenta ? 'Cambia cómo cobras' : 'Dinos cómo quieres cobrar'}</h4>
+      ${g.cuenta ? '' : '<p class="ganancias-nota alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Sin esto no te podemos pagar. Llena tu Yape, tu cuenta bancaria o los dos.</p>'}
+      <form class="form-cuenta-cobro" novalidate>
+        <fieldset>
+          <legend><i class="ti ti-device-mobile" aria-hidden="true"></i> Yape <small>hasta S/ 500 por pago</small></legend>
+          <label class="perfil-campo"><span>Celular de Yape</span>
+            <input name="yape_celular" type="tel" inputmode="numeric" maxlength="11" autocomplete="tel-national" placeholder="9__ ___ ___" value="${escapeAttr(c.yape_celular || '')}"></label>
+          <label class="perfil-campo"><span>Nombre que sale en tu Yape</span>
+            <input name="yape_titular" type="text" maxlength="100" autocomplete="name" value="${escapeAttr(c.yape_titular || '')}"></label>
+        </fieldset>
+        <fieldset>
+          <legend><i class="ti ti-building-bank" aria-hidden="true"></i> Cuenta bancaria <small>para montos grandes</small></legend>
+          <label class="perfil-campo"><span>Banco o caja</span>
+            <select name="banco"><option value="">Elige tu banco…</option>${opciones}</select></label>
+          <label class="perfil-campo"><span>CCI (20 dígitos)</span>
+            <input name="cci" type="text" inputmode="numeric" maxlength="26" autocomplete="off" placeholder="Está en la app de tu banco" value="${escapeAttr(c.cci || '')}"></label>
+          <label class="perfil-campo"><span>Titular de la cuenta</span>
+            <input name="cuenta_titular" type="text" maxlength="100" autocomplete="name" value="${escapeAttr(c.cuenta_titular || '')}"></label>
+        </fieldset>
+        <div class="form-entrega-mensaje" aria-live="polite"></div>
+        <div class="tarjeta-acciones">
+          ${g.cuenta ? '<button type="button" class="btn btn-ghost btn-cancelar-cuenta-cobro">Cancelar</button>' : ''}
+          <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
+        </div>
+      </form>
+    </section>`;
+}
+
+function renderProximosPagos(g) {
+  const filas = g.proximos_pagos.map((p, i) => {
+    const cuando = textoDiaDePago(p.fecha);
+    return `<li class="${i === 0 ? 'siguiente' : ''}"><span><i class="ti ti-calendar" aria-hidden="true"></i> ${cuando}</span><strong>${formatearMoneda(p.monto)}</strong></li>`;
+  }).join('');
+  return `
+    <section class="card-panel ganancias-proximos" aria-labelledby="ganancias-proximos-titulo">
+      <h4 id="ganancias-proximos-titulo"><i class="ti ti-calendar-dollar" aria-hidden="true"></i> Próximos pagos</h4>
+      ${filas ? `<ul>${filas}</ul>` : `<p class="muted">Cuando ${g.beneficiario.tipo === 'productor' ? 'se entregue un pedido con tus productos' : 'entregues un pedido'}, aquí ves qué lunes se te paga.</p>`}
+    </section>`;
+}
+
+function renderMovimientosGanancias(g) {
+  if (!g.movimientos.length) {
+    return `<div class="card-panel ganancias-movimientos"><h4><i class="ti ti-list-details" aria-hidden="true"></i> Movimientos</h4>
+      <p class="muted">Todavía no tienes ${g.beneficiario.tipo === 'productor' ? 'ventas' : 'envíos ni recojos'} cobrados por la plataforma.</p></div>`;
+  }
+  const filas = g.movimientos.map((m) => {
+    const estado = ESTADOS_COBRO[m.estado] || { texto: m.estado, pill: 'pendiente' };
+    const cuando = m.estado === 'por_cobrar' && m.se_paga_el ? ` · ${fechaDePago(m.se_paga_el)}`
+      : m.estado === 'pagado' && m.pagado_el ? ` · ${formatearFechaCortaServidor(m.pagado_el)}` : '';
+    const descuentos = [`${formatearMoneda(m.monto_bruto)}`, `− ${formatearMoneda(m.comision)} comisión`,
+      m.descuento_recojo ? `− ${formatearMoneda(m.descuento_recojo)} recojo` : ''].filter(Boolean).join(' ');
+    return `
+      <tr>
+        <td data-etiqueta="Fecha">${formatearFechaCortaServidor(m.fecha)}</td>
+        <td data-etiqueta="Detalle"><strong>${CONCEPTOS_COBRO[m.concepto] || m.concepto}</strong> <span class="muted">#${escapeAttr(m.pedido_id.slice(0, 8))}</span><small class="ganancias-desglose">${descuentos}</small></td>
+        <td data-etiqueta="Recibes" class="num">${formatearMoneda(m.monto_neto)}</td>
+        <td data-etiqueta="Estado"><span class="pill pill-estado pill-${estado.pill}">${estado.texto}${cuando}</span></td>
+      </tr>`;
+  }).join('');
+  return `
+    <div class="card-panel ganancias-movimientos">
+      <h4><i class="ti ti-list-details" aria-hidden="true"></i> Movimientos</h4>
+      <div class="tabla-wrap">
+        <table class="tabla-simple tabla-ganancias">
+          <thead><tr><th>Fecha</th><th>Detalle</th><th class="num">Recibes</th><th>Estado</th></tr></thead>
+          <tbody>${filas}</tbody>
+          <tfoot><tr><td colspan="2">Por cobrar</td><td class="num">${formatearMoneda(g.resumen.por_cobrar)}</td><td></td></tr></tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderPagosRecibidos(g) {
+  if (!g.pagos.length) return '';
+  const filas = g.pagos.map((p) => `
+    <li>
+      <span class="ganancias-pago-icono"><i class="ti ti-${p.metodo === 'yape' ? 'device-mobile' : 'building-bank'}" aria-hidden="true"></i></span>
+      <div><strong>${formatearMoneda(p.monto)} por ${p.metodo === 'yape' ? 'Yape' : 'transferencia'}</strong>
+        <span>${formatearFechaServidor(p.fecha)} · operación ${escapeAttr(p.numero_operacion)}</span></div>
+    </li>`).join('');
+  return `
+    <div class="card-panel ganancias-pagos">
+      <h4><i class="ti ti-receipt" aria-hidden="true"></i> Pagos que recibiste</h4>
+      <ul>${filas}</ul>
+    </div>`;
+}
+
+function validarCuentaCobro(datos) {
+  const celular = (datos.yape_celular || '').replace(/\D/g, '');
+  const cci = (datos.cci || '').replace(/\D/g, '');
+  const conYape = Boolean(celular || datos.yape_titular);
+  const conBanco = Boolean(cci || datos.banco || datos.cuenta_titular);
+  if (!conYape && !conBanco) return ['Llena tu Yape, tu cuenta bancaria o los dos.', 'yape_celular'];
+  if (conYape && !/^9\d{8}$/.test(celular)) return ['El celular de Yape tiene 9 dígitos y empieza con 9.', 'yape_celular'];
+  if (conYape && (datos.yape_titular || '').length < 3) return ['Escribe el nombre que sale en tu Yape.', 'yape_titular'];
+  if (conBanco && !datos.banco) return ['Elige tu banco o caja.', 'banco'];
+  if (conBanco && cci.length !== 20) return [`El CCI tiene 20 dígitos (escribiste ${cci.length}).`, 'cci'];
+  if (conBanco && (datos.cuenta_titular || '').length < 3) return ['Escribe el nombre del titular de la cuenta.', 'cuenta_titular'];
+  return null;
+}
+
+async function guardarCuentaCobro(form) {
+  const campos = ['yape_celular', 'yape_titular', 'banco', 'cci', 'cuenta_titular'];
+  const datos = Object.fromEntries(campos.map((k) => [k, form[k].value.trim() || null]));
+  campos.forEach((k) => form[k].removeAttribute('aria-invalid'));
+  const error = validarCuentaCobro(datos);
+  if (error) {
+    mostrarMensajeEntrega(form, error[0], 'error');
+    form[error[1]].setAttribute('aria-invalid', 'true');
+    form[error[1]].focus();
+    return;
+  }
+  form.querySelectorAll('button, input, select').forEach((el) => { el.disabled = true; });
+  try {
+    await Api.ganancias.guardarCuenta(datos);
+    toast('Listo: ya sabemos cómo pagarte 💸');
+    await cargarMisGanancias();
+  } catch (err) {
+    form.querySelectorAll('button, input, select').forEach((el) => { el.disabled = false; });
+    mostrarMensajeEntrega(form, err.message || 'No se pudo guardar.', 'error');
+  }
+}
+
+function manejarClickGanancias(e) {
+  const wrap = e.target.closest('.ganancias-cuenta-wrap');
+  if (!wrap || !gananciasActuales) return;
+  if (e.target.closest('.btn-cambiar-cuenta-cobro')) {
+    wrap.innerHTML = renderCuentaCobro(gananciasActuales, true);
+    wrap.querySelector('input')?.focus();
+  } else if (e.target.closest('.btn-cancelar-cuenta-cobro')) {
+    wrap.innerHTML = renderCuentaCobro(gananciasActuales);
+    wrap.querySelector('.btn-cambiar-cuenta-cobro')?.focus();
+  }
+}
+
+// ---- Pagos por hacer (admin): el pago semanal a agricultores y repartidores ----
+// 21st.dev "Wallet Card" (lo que se debe, grande, con el medio para pagar a la vista y botón de copiar) + "Invoice History
+// Table" (pagos ya hechos). ui-ux-pro-max: el monto que se registra es el que se ve, confirmación con el n.º de operación.
+let porPagarAdmin = null;
+
+const redondear2 = (n) => Math.round(Number(n) * 100) / 100;
+
+async function cargarPagosPorHacer() {
+  const cont = document.getElementById('pagos-por-hacer-lista');
+  const vacio = document.getElementById('pagos-por-hacer-empty');
+  const badge = document.getElementById('admin-pagos-por-hacer-total');
+  cont.innerHTML = renderSkeletonFilas(1);
+  let hechos;
+  try {
+    [porPagarAdmin, hechos] = await Promise.all([Api.ganancias.admin.porPagar(), Api.ganancias.admin.pagosHechos()]);
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los pagos por hacer');
+    return;
+  }
+  // El nombre de quien todavía no registró su cuenta de cobro: el del agricultor es público; el de los repartidores se pide
+  // de una vez a Transporte.
+  const sinNombre = porPagarAdmin.beneficiarios.filter((b) => !b.nombre);
+  const repartidoresSinNombre = sinNombre.filter((b) => b.beneficiario_tipo === 'repartidor').map((b) => b.beneficiario_id);
+  const nombresRepartidores = repartidoresSinNombre.length
+    ? await Api.ganancias.admin.nombresRepartidores(repartidoresSinNombre).catch(() => ({})) : {};
+  await Promise.all(sinNombre.map(async (b) => {
+    if (b.beneficiario_tipo === 'repartidor') { b.nombre = nombresRepartidores[b.beneficiario_id] || null; return; }
+    try { b.nombre = (await Api.productores.obtener(b.beneficiario_id)).nombre; } catch { /* queda sin nombre */ }
+  }));
+  document.getElementById('pagos-por-hacer-cabecera').innerHTML = renderCabeceraPagosPorHacer(porPagarAdmin);
+  cont.innerHTML = porPagarAdmin.beneficiarios.map(renderTarjetaPorPagar).join('');
+  vacio.classList.toggle('hidden', porPagarAdmin.beneficiarios.length > 0);
+  document.getElementById('pagos-hechos-lista').innerHTML = renderPagosHechos(hechos);
+  const porPagar = porPagarAdmin.beneficiarios.filter((b) => b.a_pagar > 0).length;
+  badge.textContent = porPagar;
+  badge.classList.toggle('hidden', !porPagar);
+}
+
+function renderCabeceraPagosPorHacer(d) {
+  const lunes = fechaDePago(d.dia_de_pago);
+  const domingo = new Date(`${d.dia_de_pago}T12:00:00`);
+  domingo.setDate(domingo.getDate() - 1);
+  const personas = d.beneficiarios.filter((b) => b.a_pagar > 0).length;
+  return `
+    <div class="pph-cabecera">
+      <div><span class="pph-cabecera-etiqueta">Pago del ${lunes}</span>
+        <strong>${formatearMoneda(d.total_a_pagar)}</strong>
+        <small>${personas ? `a ${personas} persona${personas === 1 ? '' : 's'}` : 'nadie por pagar todavía'} · lo cumplido hasta el ${domingo.toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short' })}</small></div>
+      <i class="ti ti-calendar-dollar" aria-hidden="true"></i>
+    </div>`;
+}
+
+function renderMedioDePago(icono, etiqueta, valor, copiar) {
+  return `
+    <div class="pph-medio">
+      <i class="ti ti-${icono}" aria-hidden="true"></i>
+      <div><span>${etiqueta}</span><strong>${valor}</strong></div>
+      <button type="button" class="btn btn-ghost btn-sm btn-copiar" data-copiar="${escapeAttr(copiar)}" aria-label="Copiar ${escapeAttr(copiar)}"><i class="ti ti-copy" aria-hidden="true"></i></button>
+    </div>`;
+}
+
+function renderTarjetaPorPagar(b, indice = 0) {
+  const esProductor = b.beneficiario_tipo === 'productor';
+  const tipo = esProductor ? { texto: 'Agricultor', icono: 'plant-2' } : { texto: 'Repartidor', icono: 'truck' };
+  const nombre = escapeAttr(b.nombre || `${tipo.texto} #${b.beneficiario_id.slice(0, 8)}`);
+  const c = b.cuenta;
+  const medios = c
+    ? [c.yape_celular ? renderMedioDePago('device-mobile', `Yape · ${escapeAttr(c.yape_titular)}`, escapeAttr(c.yape_celular), c.yape_celular) : '',
+       c.cci ? renderMedioDePago('building-bank', `${escapeAttr(c.banco)} · ${escapeAttr(c.cuenta_titular)}`, `CCI ${escapeAttr(c.cci)}`, c.cci) : ''].join('')
+    : '<p class="pph-sin-cuenta"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Todavía no registró cómo cobrar: pídele que lo haga en "Mis ganancias".</p>';
+  const cuantas = `${b.cantidad_a_pagar} ${esProductor ? 'venta' : 'entrega'}${b.cantidad_a_pagar === 1 ? '' : 's'}`;
+  return `
+    <article class="viaje-card pph-card${b.a_pagar > 0 ? ' con-pago' : ''}" style="animation-delay:${Math.min(indice, 8) * 50}ms"
+      data-tipo="${b.beneficiario_tipo}" data-id="${escapeAttr(b.beneficiario_id)}" data-nombre="${nombre}">
+      <div class="viaje-cabecera">
+        <div><h4><i class="ti ti-${tipo.icono}" aria-hidden="true"></i> ${nombre}</h4><small>${tipo.texto}</small></div>
+        <span class="pill pill-estado ${b.a_pagar > 0 ? 'pill-pendiente' : 'pill-pendiente_asignacion'}">${b.a_pagar > 0 ? 'Pagar este lunes' : b.esta_semana > 0 ? 'Para el próximo lunes' : 'Esperando entregas'}</span>
+      </div>
+      <dl class="pph-montos">
+        <div class="principal"><dt>A pagar ahora</dt><dd>${formatearMoneda(b.a_pagar)}</dd>${b.a_pagar > 0 ? `<small>${cuantas}</small>` : ''}</div>
+        <div><dt>De esta semana</dt><dd>${formatearMoneda(b.esta_semana)}</dd></div>
+        ${esProductor ? `<div><dt>Esperando la entrega</dt><dd>${formatearMoneda(b.esperando_entrega)}</dd></div>` : ''}
+      </dl>
+      <div class="pph-medios">${medios}</div>
+      ${c && (b.a_pagar > 0 || b.esta_semana > 0) ? renderFormPagoBeneficiario(b) : ''}
+    </article>`;
+}
+
+function montoDelFormPago(form) {
+  const incluir = form.querySelector('[name="incluir_semana_actual"]')?.checked;
+  return redondear2(Number(form.dataset.aPagar) + (incluir ? Number(form.dataset.estaSemana) : 0));
+}
+
+function renderFormPagoBeneficiario(b) {
+  const c = b.cuenta;
+  const max = porPagarAdmin.yape_maximo_por_operacion;
+  const monto = b.a_pagar > 0 ? b.a_pagar : redondear2(b.a_pagar + b.esta_semana);
+  const sugerido = c.yape_celular && (monto <= max || !c.cci) ? 'yape' : 'transferencia';
+  const opcion = (valor, icono, texto, habilitada) => `
+    <label class="pph-opcion${habilitada ? '' : ' deshabilitada'}">
+      <input type="radio" name="metodo" value="${valor}"${habilitada ? '' : ' disabled'}${sugerido === valor ? ' checked' : ''}>
+      <i class="ti ti-${icono}" aria-hidden="true"></i> ${texto}${habilitada ? '' : ' <small>(no registró)</small>'}
+    </label>`;
+  return `
+    <div class="viaje-acciones">
+      <button type="button" class="btn btn-primary btn-pph-abrir"><i class="ti ti-cash" aria-hidden="true"></i> Registrar pago de ${formatearMoneda(monto)}</button>
+    </div>
+    <form class="pph-form hidden" novalidate data-a-pagar="${b.a_pagar}" data-esta-semana="${b.esta_semana}">
+      <fieldset class="pph-metodo"><legend>¿Cómo le pagaste?</legend>
+        ${opcion('yape', 'device-mobile', 'Yape', Boolean(c.yape_celular))}
+        ${opcion('transferencia', 'building-bank', 'Transferencia', Boolean(c.cci))}
+      </fieldset>
+      ${b.esta_semana > 0 ? `<label class="pph-adelantar"><input type="checkbox" name="incluir_semana_actual"${b.a_pagar > 0 ? '' : ' checked disabled'}> Incluir también lo de esta semana (${formatearMoneda(b.esta_semana)})</label>` : ''}
+      <label class="perfil-campo"><span>N.º de operación</span>
+        <input name="numero_operacion" type="text" maxlength="200" autocomplete="off" placeholder="Ej.: 12345678"></label>
+      <p class="pph-ayuda" aria-live="polite"></p>
+      <div class="form-entrega-mensaje" aria-live="polite"></div>
+      <div class="tarjeta-acciones">
+        <button type="button" class="btn btn-ghost btn-sm btn-pph-cerrar">Todavía no</button>
+        <button type="submit" class="btn btn-primary">Ya le pagué <span class="pph-monto">${formatearMoneda(monto)}</span></button>
+      </div>
+    </form>`;
+}
+
+// El monto y la ayuda del formulario según el medio y si se adelanta lo de esta semana.
+function actualizarFormPago(form) {
+  const monto = montoDelFormPago(form);
+  const max = porPagarAdmin.yape_maximo_por_operacion;
+  form.querySelector('.pph-monto').textContent = formatearMoneda(monto);
+  const metodo = form.querySelector('input[name="metodo"]:checked')?.value;
+  const operaciones = Math.ceil(monto / max);
+  form.querySelector('.pph-ayuda').textContent = metodo === 'yape' && operaciones > 1
+    ? `Por Yape se manda hasta ${formatearMoneda(max)} por operación: para ${formatearMoneda(monto)} haz ${operaciones} y anota los ${operaciones} números separados por comas.`
+    : metodo === 'transferencia' ? 'Anota el número de operación de la transferencia (sale en la constancia).' : '';
+}
+
+async function registrarPagoBeneficiario(form) {
+  const tarjeta = form.closest('.pph-card');
+  const metodo = form.querySelector('input[name="metodo"]:checked')?.value;
+  const operacion = form.numero_operacion.value.trim();
+  if (!metodo) { mostrarMensajeEntrega(form, 'Elige cómo le pagaste.', 'error'); return; }
+  if (operacion.length < 4) {
+    mostrarMensajeEntrega(form, 'Escribe el número de operación que te dio Yape o tu banco.', 'error');
+    form.numero_operacion.focus();
+    return;
+  }
+  const monto = montoDelFormPago(form);
+  form.querySelectorAll('button, input').forEach((el) => { el.disabled = true; });
+  try {
+    await Api.ganancias.admin.pagar(tarjeta.dataset.tipo, tarjeta.dataset.id, {
+      metodo, numero_operacion: operacion, monto, incluir_semana_actual: Boolean(form.querySelector('[name="incluir_semana_actual"]')?.checked),
+    });
+    toast(`Pago de ${formatearMoneda(monto)} registrado: ${tarjeta.dataset.nombre} ya tiene el aviso.`);
+    await cargarPagosPorHacer();
+  } catch (err) {
+    form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
+    mostrarMensajeEntrega(form, err.message || 'No se pudo registrar el pago.', 'error');
+  }
+}
+
+function renderPagosHechos(pagos) {
+  if (!pagos.length) return '<p class="muted">Todavía no se registró ningún pago.</p>';
+  const filas = pagos.map((p) => `
+    <tr>
+      <td data-etiqueta="Fecha">${formatearFechaServidor(p.fecha)}</td>
+      <td data-etiqueta="A quién"><strong>${escapeAttr(p.nombre || p.beneficiario_id.slice(0, 8))}</strong> <span class="muted">${p.beneficiario_tipo === 'productor' ? 'Agricultor' : 'Repartidor'}</span></td>
+      <td data-etiqueta="Monto" class="num">${formatearMoneda(p.monto)}</td>
+      <td data-etiqueta="Medio">${escapeAttr(p.destino)}</td>
+      <td data-etiqueta="Operación">${escapeAttr(p.numero_operacion)}</td>
+    </tr>`).join('');
+  return `<table class="tabla-simple tabla-ganancias"><thead><tr><th>Fecha</th><th>A quién</th><th class="num">Monto</th><th>Medio</th><th>Operación</th></tr></thead><tbody>${filas}</tbody></table>`;
 }
 
 // ---- Pedidos pagados sin entregar (cancelar y devolver el dinero) ----
@@ -11017,6 +11435,45 @@ function inicializarEventos() {
   });
   document.getElementById('btn-refrescar-viajes').addEventListener('click', cargarViajesAdmin);
   document.getElementById('btn-refrescar-sin-entregar').addEventListener('click', cargarPedidosSinEntregar);
+  document.getElementById('btn-refrescar-pagos-por-hacer').addEventListener('click', cargarPagosPorHacer);
+  const listaPorPagar = document.getElementById('pagos-por-hacer-lista');
+  listaPorPagar.addEventListener('click', (e) => {
+    const copiar = e.target.closest('.btn-copiar');
+    if (copiar) { copiarAlPortapapeles(copiar.dataset.copiar); return; }
+    const tarjeta = e.target.closest('.pph-card');
+    if (!tarjeta) return;
+    const form = tarjeta.querySelector('.pph-form');
+    if (e.target.closest('.btn-pph-abrir')) {
+      tarjeta.querySelector('.viaje-acciones').classList.add('hidden');
+      form.classList.remove('hidden');
+      actualizarFormPago(form);
+      form.numero_operacion.focus();
+    } else if (e.target.closest('.btn-pph-cerrar')) {
+      form.classList.add('hidden');
+      tarjeta.querySelector('.viaje-acciones').classList.remove('hidden');
+      tarjeta.querySelector('.btn-pph-abrir').focus();
+    }
+  });
+  listaPorPagar.addEventListener('change', (e) => {
+    const form = e.target.closest('.pph-form');
+    if (form) actualizarFormPago(form);
+  });
+  listaPorPagar.addEventListener('submit', (e) => {
+    const form = e.target.closest('.pph-form');
+    if (!form) return;
+    e.preventDefault();
+    registrarPagoBeneficiario(form);
+  });
+  ['productor-ganancias', 'repartidor-ganancias'].forEach((id) => {
+    const cont = document.getElementById(id);
+    cont.addEventListener('click', manejarClickGanancias);
+    cont.addEventListener('submit', (e) => {
+      const form = e.target.closest('.form-cuenta-cobro');
+      if (!form) return;
+      e.preventDefault();
+      guardarCuentaCobro(form);
+    });
+  });
   const listaSinEntregar = document.getElementById('sin-entregar-lista');
   listaSinEntregar.addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.sin-entregar-card');

@@ -438,6 +438,17 @@ const Api = {
       rechazar: (pedidoId, motivo) => request('pagos', `/pagos/admin/transferencias/${pedidoId}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
     },
   },
+  // Agricultor o repartidor: lo que gana, qué lunes se le paga y cómo cobra. El admin registra el pago semanal.
+  ganancias: {
+    mias: () => request('pagos', '/ganancias/me', { auth: true }),
+    guardarCuenta: (datos) => request('pagos', '/ganancias/me/cuenta', { method: 'PUT', body: datos, auth: true }),
+    admin: {
+      porPagar: () => request('pagos', '/ganancias/admin/por-pagar', { auth: true }),
+      nombresRepartidores: (ids) => request('transporte', `/repartidores/admin/nombres?ids=${ids.map(encodeURIComponent).join(',')}`, { auth: true }),
+      pagar: (tipo, id, datos) => request('pagos', `/ganancias/admin/${tipo}/${id}/pagar`, { method: 'POST', body: datos, auth: true }),
+      pagosHechos: () => request('pagos', '/ganancias/admin/pagos-hechos', { auth: true }),
+    },
+  },
   certificacion: {
     verificar: (productoId) => request('certificacion', `/certificacion/${productoId}/verificar`),
     historial: (productoId) => request('certificacion', `/certificacion/${productoId}/historial`),

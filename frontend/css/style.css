@@ -5549,3 +5549,99 @@ body.asistente-abierto { overflow: hidden; }
 .sin-entregar-confirmar .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
 .sin-entregar-confirmar .btn-danger { background: #b42318; color: #fff; min-height: 44px; }
 .sin-entregar-confirmar .btn-danger:hover { background: #912018; }
+
+/* ===== Mis ganancias (agricultor y repartidor) y Pagos por hacer (admin) =====
+   21st.dev "Wallet Card" (lo por cobrar, grande) + "Invoice History Table" (movimientos con estado y total al pie).
+   ui-ux-pro-max: etiquetas visibles, teclado numérico para celular/CCI, error junto al campo, botones de 44px+, cifras
+   alineadas a la derecha con números tabulares. */
+.ganancias { display: grid; gap: 18px; }
+.ganancias-seccion { margin-top: 28px; }
+.ganancias-intro { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 12px 16px; border-radius: 12px; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.95rem; line-height: 1.45; }
+.ganancias-intro i { font-size: 1.3rem; flex: none; }
+@media (min-width: 700px) { .ganancias-stats { grid-template-columns: repeat(var(--columnas, 3), minmax(0, 1fr)); } }
+.ganancias-destacada { background: linear-gradient(135deg, var(--color-primario), #3f5a3a); color: #fff; border: none; }
+.ganancias-destacada .economia-stat-label, .ganancias-destacada .economia-stat-sub { color: rgba(255, 255, 255, 0.85); }
+.ganancias-destacada .economia-stat-valor { color: #fff; font-size: 2.2rem; }
+.ganancias-destacada .economia-stat-icono { background: rgba(255, 255, 255, 0.15); color: #fff; }
+.ganancias-cuerpo { display: grid; gap: 18px; }
+@media (min-width: 960px) { .ganancias-cuerpo { grid-template-columns: 1.4fr 1fr; align-items: start; } }
+.ganancias h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 1.05rem; color: var(--color-primario); }
+.ganancias-cuenta-cabeza { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ganancias-cuenta-cabeza h4 { margin: 0; }
+.ganancias-cuenta.sin-cuenta { border: 2px solid #e0b252; }
+.ganancias-medios { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+.ganancias-medios li { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-radius: 12px; background: var(--color-superficie); }
+.ganancias-medios li i { font-size: 1.4rem; color: var(--color-primario); }
+.ganancias-medios li div, .ganancias-pagos li div { display: grid; gap: 2px; min-width: 0; }
+.ganancias-medios strong { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.ganancias-medios span, .ganancias-pagos li span { font-size: 0.85rem; color: var(--texto-suave); }
+.ganancias-nota { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0 0; font-size: 0.88rem; color: var(--texto-suave); }
+.ganancias-nota.alerta { margin: 0 0 14px; padding: 10px 12px; border-radius: 10px; background: #fff3cd; color: #6b5212; font-weight: 600; }
+.form-cuenta-cobro { display: grid; gap: 16px; }
+.form-cuenta-cobro fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; margin: 0; padding: 14px; border: 1px solid var(--borde); border-radius: 12px; }
+.form-cuenta-cobro legend { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-weight: 700; color: var(--color-primario); }
+.form-cuenta-cobro legend small { font-weight: 500; color: var(--texto-suave); }
+.form-cuenta-cobro .perfil-campo { display: grid; gap: 6px; }
+.form-cuenta-cobro .perfil-campo > span { font-size: 0.88rem; font-weight: 700; }
+.form-cuenta-cobro input, .form-cuenta-cobro select { min-height: 46px; font-size: 1rem; }
+.form-cuenta-cobro [aria-invalid="true"] { border-color: #b42318; outline: 2px solid rgba(180, 35, 24, 0.2); }
+.form-cuenta-cobro .form-entrega-mensaje:empty, .pph-form .form-entrega-mensaje:empty { display: none; }
+.form-cuenta-cobro .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+.ganancias-proximos ul, .ganancias-pagos ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ganancias-proximos li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--color-superficie); }
+.ganancias-proximos li span { display: flex; align-items: center; gap: 8px; }
+.ganancias-proximos li.siguiente { background: var(--verde-pastel); font-weight: 700; }
+.ganancias-proximos li strong, .tabla-ganancias .num { font-variant-numeric: tabular-nums; }
+.tabla-ganancias .num { text-align: right; white-space: nowrap; }
+.tabla-ganancias td { vertical-align: top; }
+.tabla-ganancias tfoot td { padding: 12px 10px; font-weight: 800; color: var(--color-primario); border-top: 2px solid var(--color-borde); }
+.ganancias-desglose { display: block; margin-top: 2px; font-size: 0.78rem; font-weight: 500; color: var(--texto-suave); }
+.tabla-ganancias .pill { white-space: nowrap; }
+.ganancias-pagos li { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-borde) 40%, transparent); }
+.ganancias-pagos li:last-child { border-bottom: none; }
+.ganancias-pago-icono { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.15rem; }
+@media (max-width: 640px) {
+  .tabla-ganancias thead { display: none; }
+  .tabla-ganancias tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-borde) 40%, transparent); }
+  .tabla-ganancias td { padding: 0; border: none; }
+  .tabla-ganancias td[data-etiqueta="Detalle"] { grid-column: 1 / -1; order: -1; }
+  .tabla-ganancias tfoot tr { border-bottom: none; }
+}
+
+.pph-cabecera { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 18px 22px; border-radius: var(--radio); background: linear-gradient(135deg, var(--color-primario), #3f5a3a); color: #fff; box-shadow: var(--sombra); }
+.pph-cabecera > div { display: grid; gap: 2px; }
+.pph-cabecera-etiqueta { font-size: 0.8rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .85; }
+.pph-cabecera strong { font-family: var(--font-titulo); font-size: 2rem; }
+.pph-cabecera small { font-size: 0.88rem; opacity: .85; }
+.pph-cabecera > i { font-size: 2.6rem; opacity: .5; }
+.pph-card.con-pago { border-left-color: var(--acento-cosecha, #A16207); }
+.pph-montos { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin: 0; }
+.pph-montos div { display: grid; gap: 2px; }
+.pph-montos dt { font-size: 0.75rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--texto-suave); }
+.pph-montos dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pph-montos .principal dd { font-family: var(--font-titulo); font-size: 1.7rem; color: var(--color-primario); }
+.pph-montos small { font-size: 0.8rem; color: var(--texto-suave); }
+.pph-medios { display: grid; gap: 8px; }
+.pph-medio { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--color-superficie); }
+.pph-medio > i { font-size: 1.3rem; color: var(--color-primario); }
+.pph-medio > div { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.pph-medio span { font-size: 0.8rem; color: var(--texto-suave); }
+.pph-medio strong { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pph-medio .btn { min-width: 44px; min-height: 44px; }
+.pph-sin-cuenta { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 10px; background: #fff3cd; color: #6b5212; font-weight: 600; font-size: 0.9rem; }
+.pph-card .viaje-acciones .btn { min-height: 46px; }
+.pph-form { display: grid; gap: 12px; padding: 16px; border-radius: 14px; border: 2px solid var(--color-primario); background: #fff; }
+.pph-metodo { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; border: none; }
+.pph-metodo legend { margin-bottom: 8px; font-weight: 700; font-size: 0.9rem; }
+.pph-opcion { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 14px; border: 1px solid var(--borde); border-radius: 999px; cursor: pointer; font-weight: 600; }
+.pph-opcion:has(input:checked) { border-color: var(--color-primario); background: var(--verde-pastel); color: var(--color-primario); }
+.pph-opcion.deshabilitada { opacity: .55; cursor: not-allowed; }
+.pph-opcion small { font-weight: 500; }
+.pph-adelantar { display: flex; align-items: center; gap: 8px; font-size: 0.92rem; }
+.pph-form .perfil-campo { display: grid; gap: 6px; }
+.pph-form .perfil-campo > span { font-weight: 700; font-size: 0.88rem; }
+.pph-form input[type="text"] { min-height: 46px; font-size: 1rem; }
+.pph-ayuda { margin: 0; font-size: 0.85rem; color: var(--acento-cosecha-texto); }
+.pph-ayuda:empty { display: none; }
+.pph-form .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+.pph-historial { margin-top: 22px; }

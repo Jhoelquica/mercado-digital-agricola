@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=2860b03e">
+<link rel="stylesheet" href="css/style.css?v=58db7b31">
 </head>
 <body>
 
@@ -464,6 +464,7 @@
         <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> Mis Chacras</button>
         <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> Borradores</button>
         <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos <span id="productor-llegadas-total" class="badge-contador hidden" title="Cosechas por coordinar">0</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="ganancias"><i class="ti ti-wallet"></i> Mis ganancias</button>
         <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> Gestión Económica</button>
       </nav>
 
@@ -563,6 +564,13 @@
           <p><strong>Aún no tienes productos publicados</strong></p>
           <p class="muted">Completa un borrador de arriba y publícalo para que aparezca en el catálogo.</p>
         </div>
+      </div>
+
+      <div class="productor-tab-panel" data-tab-panel="ganancias">
+        <div class="section-header inner">
+          <h3><i class="ti ti-wallet"></i> Mis ganancias</h3>
+        </div>
+        <div id="productor-ganancias" class="ganancias"></div>
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="economia">
@@ -674,6 +682,14 @@
         <p class="muted">No tienes propuestas ni envíos activos en este momento.</p>
       </div>
 
+      <!-- Lo que gana el repartidor y cómo cobra: ChakraShop le paga cada lunes lo entregado hasta el domingo. -->
+      <section class="ganancias-seccion" aria-labelledby="repartidor-ganancias-titulo">
+        <div class="section-header inner">
+          <h3 id="repartidor-ganancias-titulo"><i class="ti ti-wallet"></i> Mis ganancias</h3>
+        </div>
+        <div id="repartidor-ganancias" class="ganancias"></div>
+      </section>
+
       <!-- Viajes largos en camión: documentos del transportista (licencia, tarjeta de propiedad, SOAT) y su verificación. -->
       <section id="carga-section" class="carga-section hidden" aria-labelledby="carga-titulo"></section>
       <datalist id="agencias-sugeridas">
@@ -695,6 +711,7 @@
       <nav class="admin-tabs" aria-label="Secciones del panel">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="transferencias"><i class="ti ti-building-bank"></i> Transferencias <span id="admin-transferencias-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="pagos-por-hacer"><i class="ti ti-cash"></i> Pagos por hacer <span id="admin-pagos-por-hacer-total" class="badge-contador hidden" title="Personas a las que hay que pagar este lunes">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="sin-entregar"><i class="ti ti-package"></i> Pedidos sin entregar <span id="admin-sin-entregar-total" class="badge-contador hidden" title="Pedidos pagados que no tienen quién los lleve">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="reclamos-ruc"><i class="ti ti-file-certificate"></i> Reclamos de RUC <span id="admin-reclamos-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="transportistas"><i class="ti ti-id"></i> Transportistas <span id="admin-transportistas-total" class="badge-contador hidden">0</span></button>
@@ -747,6 +764,25 @@
           <span class="empty-state-icon"><i class="ti ti-building-bank"></i></span>
           <p><strong>No hay transferencias por revisar</strong></p>
           <p class="muted">Cuando un comprador suba la constancia de su transferencia, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="pagos-por-hacer">
+        <div class="section-header inner">
+          <h3><i class="ti ti-cash"></i> Pagos por hacer</h3>
+          <button class="btn btn-outline" id="btn-refrescar-pagos-por-hacer">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Cada lunes se les paga a los agricultores y repartidores lo que se cumplió hasta el domingo: lo vendido y ya entregado al comprador, y los envíos y recojos hechos. Págales por Yape (hasta S/ 500 por operación) o por transferencia a su cuenta y registra aquí el número de operación: el pago queda anotado y la persona recibe un aviso.</p>
+        <div id="pagos-por-hacer-cabecera"></div>
+        <div id="pagos-por-hacer-lista" class="viajes-grid"></div>
+        <div id="pagos-por-hacer-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-cash"></i></span>
+          <p><strong>No hay nada por pagar</strong></p>
+          <p class="muted">Cuando se entregue un pedido o se haga un recojo, lo que gana cada uno aparece aquí.</p>
+        </div>
+        <div class="card-panel pph-historial">
+          <h4><i class="ti ti-history" aria-hidden="true"></i> Pagos ya hechos</h4>
+          <div id="pagos-hechos-lista" class="tabla-wrap"></div>
         </div>
       </div>
 
@@ -1236,8 +1272,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=e92de6c6"></script>
+<script src="js/api.js?v=ed1546b6"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=5a2fa71c"></script>
+<script src="js/app.js?v=3d2df679"></script>
 </body>
 </html>

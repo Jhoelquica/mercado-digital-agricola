@@ -832,6 +832,18 @@ def enviar_documentos_de_carga(
     return {"verificacion_estado": "pendiente"}
 
 
+# El nombre de unos repartidores, para el admin (en "Pagos por hacer" sale quién es cada uno aunque todavía no haya
+# registrado su cuenta de cobro).
+@app.get("/repartidores/admin/nombres")
+def nombres_de_repartidores(ids: str, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    try:
+        buscados = [uuid.UUID(i) for i in ids.split(",") if i.strip()][:100]
+    except ValueError:
+        raise HTTPException(status_code=422, detail="ids debe ser una lista de UUID separados por comas")
+    repartidores = db.query(models.Repartidor).filter(models.Repartidor.id.in_(buscados)).all() if buscados else []
+    return {str(r.id): r.nombre for r in repartidores}
+
+
 @app.get("/repartidores/admin/transportistas")
 def listar_transportistas(estado: str = "pendiente", db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
     consulta = db.query(models.Repartidor).filter(models.Repartidor.transportista_carga.is_(True))
