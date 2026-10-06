@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=8600048c">
+<link rel="stylesheet" href="css/style.css?v=2232ce68">
 </head>
 <body>
 
@@ -463,7 +463,7 @@
         <button type="button" class="productor-tab-btn active" data-tab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> Mis Chacras</button>
         <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> Borradores</button>
-        <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos</button>
+        <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos <span id="productor-llegadas-total" class="badge-contador hidden" title="Cosechas por coordinar">0</span></button>
         <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> Gestión Económica</button>
       </nav>
 
@@ -544,6 +544,15 @@
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="productos">
+        <!-- Cómo llega cada cosecha publicada al almacén: la lleva el agricultor o la recoge un repartidor. -->
+        <section id="productor-llegadas" class="alm-seccion hidden" aria-labelledby="productor-llegadas-titulo">
+          <div class="section-header inner">
+            <h3 id="productor-llegadas-titulo"><i class="ti ti-building-warehouse"></i> Cosechas por llevar al almacén</h3>
+          </div>
+          <p class="muted alm-intro">Tu cosecha sale a la venta cuando el almacén la recibe y la pesa. Elige cómo llega: la llevas tú o un repartidor la recoge en tu chacra.</p>
+          <div id="productor-llegadas-lista" class="alm-lista"></div>
+        </section>
+
         <div class="section-header inner">
           <h3>Mis productos publicados</h3>
           <button class="btn btn-outline" id="btn-refrescar-mis-productos">↻ Refrescar</button>
@@ -636,6 +645,15 @@
           <h3><i class="ti ti-mail"></i> Propuestas pendientes <span id="propuestas-badge" class="badge-contador hidden">0</span></h3>
         </div>
         <div id="propuestas-list" class="propuestas-grid"></div>
+      </div>
+
+      <!-- Recojos de cosechas en chacras: se recoge en la chacra y se deja en el almacén. -->
+      <div id="recojos-section" class="recojos-section hidden">
+        <div class="section-header inner">
+          <h3><i class="ti ti-plant-2"></i> Recojos en chacras</h3>
+        </div>
+        <p class="muted recojos-intro">Recoges la cosecha en la chacra y la dejas en el almacén. Lo que ganas se registra cuando el almacén la pesa.</p>
+        <div id="recojos-list" class="envios-grid"></div>
       </div>
 
       <!-- Transportista de carga: sus viajes compartidos a otras ciudades (salir cuando juntó la carga, llegar). -->
@@ -1203,8 +1221,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=0b85a91c"></script>
+<script src="js/api.js?v=54c3d096"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=996f96e8"></script>
+<script src="js/app.js?v=790842c0"></script>
 </body>
 </html>

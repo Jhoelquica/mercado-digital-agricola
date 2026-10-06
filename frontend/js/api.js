@@ -315,6 +315,8 @@ const Api = {
     consultarDni: (dni) => request('pedidos', `/pedidos/dni/${encodeURIComponent(dni)}`, { auth: true }),
     // Dónde deja el repartidor los pedidos que van por agencia de carga (público; lo cambia el admin).
     agenciaDespacho: () => request('pedidos', '/configuracion/agencia-despacho'),
+    // Dónde está el almacén (público): el repartidor lleva ahí la cosecha que recogió en una chacra.
+    almacen: () => request('pedidos', '/configuracion/almacen'),
     admin: {
       // Todas las ciudades lejanas (también las ocultas) con sus condiciones, para editarlas.
       destinosLejanos: () => request('pedidos', '/destinos-lejanos/admin', { auth: true }),
@@ -376,6 +378,24 @@ const Api = {
       asignarViaje: (viajeId, transportistaId) => request('transporte', `/viajes/${viajeId}/asignar`, { method: 'POST', body: { transportista_id: transportistaId }, auth: true }),
       salirViaje: (viajeId, forzar = false) => request('transporte', `/viajes/${viajeId}/salir`, { method: 'POST', body: { forzar }, auth: true }),
     },
+  },
+  // Tramo chacra -> almacén de una cosecha publicada (ver transporte/logica_recojos.py).
+  recojos: {
+    // Agricultor: cuánto costaría, pedirlo (o avisar que la lleva él), ver los suyos y anular.
+    cotizar: (productoId, latitud, longitud) => request('transporte',
+      `/recojos/cotizacion?producto_id=${encodeURIComponent(productoId)}&latitud=${encodeURIComponent(latitud)}&longitud=${encodeURIComponent(longitud)}`, { auth: true }),
+    pedir: (datos) => request('transporte', '/recojos', { method: 'POST', body: datos, auth: true }),
+    mios: () => request('transporte', '/recojos/mios', { auth: true }),
+    cancelar: (id) => request('transporte', `/recojos/${id}/cancelar`, { method: 'POST', auth: true }),
+    // Repartidor: los que le ofrecieron y los que tiene a cargo, y cada paso.
+    propuestas: () => request('transporte', '/recojos/propuestas', { auth: true }),
+    asignados: () => request('transporte', '/recojos/asignados', { auth: true }),
+    aceptar: (id) => request('transporte', `/recojos/${id}/aceptar`, { method: 'POST', auth: true }),
+    rechazar: (id) => request('transporte', `/recojos/${id}/rechazar`, { method: 'POST', auth: true }),
+    recogido: (id) => request('transporte', `/recojos/${id}/recogido`, { method: 'POST', auth: true }),
+    enAlmacen: (id) => request('transporte', `/recojos/${id}/en-almacen`, { method: 'POST', auth: true }),
+    // Admin: cómo llega cada cosecha que se espera en el almacén.
+    enCurso: () => request('transporte', '/recojos', { auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

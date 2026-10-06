@@ -505,13 +505,15 @@ const ICONOS_ESTADO = {
   en_agencia: 'building-warehouse',
   en_destino: 'map-pin',
   esperando_camion: 'hourglass',
+  recogido: 'package',
+  en_almacen: 'building-warehouse',
   error: 'alert-triangle',
 };
 
 const ESTADOS_BADGE_CONOCIDOS = new Set([
   'pendiente', 'pendiente_asignacion', 'propuesto', 'confirmado', 'asignado',
   'en_camino', 'en_transito', 'en_ruta', 'entregado', 'aprobado',
-  'cancelado', 'rechazado', 'error', 'en_agencia', 'en_destino', 'esperando_camion',
+  'cancelado', 'rechazado', 'error', 'en_agencia', 'en_destino', 'esperando_camion', 'recogido', 'en_almacen',
 ]);
 
 function badgeEstadoEnvio(estado) {
@@ -6094,8 +6096,294 @@ async function cargarMisProductos() {
     } else {
       grid.innerHTML = publicados.map((p, i) => renderTarjetaProductorProducto(p, i)).join('');
     }
+    cargarLlegadasAlmacen();
   } catch (err) {
     manejarError(err, 'cargar tus productos');
+  }
+}
+
+// ---- Cómo llega una cosecha publicada al almacén (recojo en la chacra, ver transporte/logica_recojos.py) ----
+// Referencias: 21st.dev "Radio Group in Card" (opciones con su precio), "AI Approval" (la elegida se despliega) y
+// "Task Steps" (pasos del recojo con su estado). ui-ux-pro-max: el costo a la vista ANTES de pedir, botones de 48px,
+// etiquetas visibles y aviso de éxito.
+const ESTADOS_RECOJO_EN_CURSO = ['pendiente_asignacion', 'propuesto', 'asignado', 'recogido', 'en_almacen', 'en_camino'];
+const PASOS_RECOJO = [
+  { titulo: 'Buscando repartidor', estados: ['pendiente_asignacion', 'propuesto'] },
+  { titulo: 'Repartidor en camino a tu chacra', estados: ['asignado'] },
+  { titulo: 'Recogida', estados: ['recogido'] },
+  { titulo: 'En el almacén, por pesar', estados: ['en_almacen'] },
+  { titulo: 'Pesada y a la venta', estados: ['completado'] },
+];
+let recojosDelProductor = [];
+const mapasRecojo = {};   // productoId -> mapa seleccionable de dónde recoger
+const puntoRecojo = {};   // productoId -> { lat, lng }
+
+function fechaLocalIso(fecha) {
+  return `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}-${String(fecha.getDate()).padStart(2, '0')}`;
+}
+
+function recojoVigenteDe(productoId) {
+  return recojosDelProductor.find((r) => String(r.producto_id) === String(productoId) && ESTADOS_RECOJO_EN_CURSO.includes(r.estado)) || null;
+}
+
+// Por defecto se recoge en la chacra de la siembra de esta cosecha.
+function chacraDeProducto(p) {
+  const registro = (Estado.registrosProduccion || []).find((r) => String(r.id) === String(p.registro_produccion_id));
+  const chacras = Estado.chacras || [];
+  return chacras.find((c) => String(c.id) === String(registro?.chacra_id)) || chacras[0] || null;
+}
+
+function renderOpcionLlegada(productoId, valor, icono, titulo, detalle) {
+  return `
+        <label class="opcion-lejana">
+          <input type="radio" name="llegada-${productoId}" value="${valor}">
+          <span class="opcion-lejana-caja">
+            <span class="opcion-lejana-cabecera">
+              <span class="opcion-lejana-icono"><i class="ti ti-${icono}" aria-hidden="true"></i></span>
+              <strong>${titulo}</strong>
+            </span>
+            <span class="opcion-lejana-detalle">${detalle}</span>
+          </span>
+        </label>`;
+}
+
+function renderEleccionLlegada(p) {
+  const id = escapeAttr(p.id);
+  const hoy = new Date();
+  const limite = new Date();
+  limite.setDate(limite.getDate() + 60);
+  return `
+    <form class="alm-form" data-producto-id="${id}" novalidate>
+      <fieldset class="alm-opciones">
+        <legend>¿Cómo llega al almacén?</legend>
+        ${renderOpcionLlegada(id, 'productor', 'walk', 'La llevo yo', 'Sin costo. Solo dinos qué día la llevas.')}
+        ${renderOpcionLlegada(id, 'repartidor', 'truck', 'Pedir recojo en mi chacra', 'Un repartidor la recoge y la deja en el almacén. No pagas ahora: el costo se descuenta de lo que ganes cuando se venda.')}
+      </fieldset>
+      <div class="alm-detalle hidden" data-detalle="productor">
+        <label class="perfil-campo">¿Qué día la llevas?
+          <input type="date" name="fecha" min="${fechaLocalIso(hoy)}" max="${fechaLocalIso(limite)}" value="${fechaLocalIso(hoy)}">
+        </label>
+        <button type="submit" class="btn btn-primary"><i class="ti ti-send" aria-hidden="true"></i> Avisar al almacén</button>
+      </div>
+      <div class="alm-detalle hidden" data-detalle="repartidor">
+        <div class="alm-recojo">
+          <div class="alm-mapa-bloque">
+            <span class="alm-mapa-titulo"><i class="ti ti-map-pin" aria-hidden="true"></i> Dónde recoger: toca el mapa para mover el punto</span>
+            <div class="alm-mapa" id="mapa-recojo-${id}"></div>
+          </div>
+          <div class="alm-recojo-campos">
+            <label class="perfil-campo">Cómo llegar (referencia)
+              <input type="text" name="referencia" maxlength="200" placeholder="Ej. Pasando el puente, casa de adobe" autocomplete="off">
+            </label>
+            <label class="perfil-campo">Tu celular
+              <input type="tel" name="telefono" inputmode="tel" maxlength="11" placeholder="987 654 321" autocomplete="tel">
+              <small class="muted">El repartidor te llama al llegar.</small>
+            </label>
+            <div class="alm-cotizacion" aria-live="polite"></div>
+            <button type="submit" class="btn btn-primary btn-pedir-recojo" disabled><i class="ti ti-truck" aria-hidden="true"></i> Pedir recojo</button>
+          </div>
+        </div>
+      </div>
+      <p class="form-entrega-mensaje hidden" role="alert"></p>
+    </form>`;
+}
+
+function renderAnularRecojo(r, texto) {
+  return `
+      <div class="alm-anular">
+        <button type="button" class="btn btn-ghost btn-sm btn-anular-recojo"><i class="ti ti-x" aria-hidden="true"></i> ${texto}</button>
+        <div class="alm-anular-confirmar hidden" role="group" aria-label="${texto}">
+          <span>${r.estado === 'asignado' ? 'El repartidor ya aceptó: avísale que no vaya. ¿Anular igual?' : '¿Seguro?'}</span>
+          <button type="button" class="btn btn-ghost btn-sm btn-anular-no">No</button>
+          <button type="button" class="btn btn-danger btn-sm btn-anular-si" data-recojo-id="${escapeAttr(r.id)}">Sí, anular</button>
+        </div>
+      </div>`;
+}
+
+function renderEstadoRecojo(r) {
+  if (r.modalidad === 'productor') {
+    return `
+      <div class="alm-estado">
+        <div class="envio-aviso info"><i class="ti ti-walk" aria-hidden="true"></i>
+          <div><strong>La llevas tú${r.fecha_estimada ? ` el ${formatearFechaCorta(r.fecha_estimada)}` : ''}</strong>
+            <span>Cuando llegue, el almacén la pesa y sale a la venta.</span></div></div>
+        ${renderAnularRecojo(r, 'Cambiar cómo llega')}
+      </div>`;
+  }
+  const actual = Math.max(0, PASOS_RECOJO.findIndex((p) => p.estados.includes(r.estado)));
+  const peso = Number(r.peso_kg || 0).toLocaleString('es-PE', { maximumFractionDigits: 1 });
+  const repartidor = r.repartidor ? `${escapeAttr(r.repartidor.nombre)} (${escapeAttr(r.repartidor.tipo_vehiculo || 'vehículo')})` : 'El repartidor';
+  const detalle = {
+    pendiente_asignacion: `Todavía no hay un repartidor libre con espacio para ${peso} kg. Seguimos buscando; aquí verás cuando uno acepte.`,
+    propuesto: 'Se lo ofrecimos a un repartidor: falta que acepte.',
+    asignado: `${repartidor} va a recogerla. Te llamará al ${escapeAttr(formatearTelefono(r.telefono || ''))}.`,
+    recogido: 'El repartidor ya la recogió y la lleva al almacén.',
+    en_almacen: 'Ya está en el almacén: falta que la pesen. Ahí sale a la venta.',
+  }[r.estado] || '';
+  const pasos = PASOS_RECOJO.map((p, i) => `
+          <li class="${i < actual ? 'hecho' : i === actual ? 'actual' : ''}"${i === actual ? ' aria-current="step"' : ''}>
+            <span class="alm-paso-punto" aria-hidden="true">${i < actual ? '<i class="ti ti-check"></i>' : ''}</span>
+            <div><strong>${p.titulo}</strong>${i === actual && detalle ? `<small>${detalle}</small>` : ''}</div>
+          </li>`).join('');
+  return `
+      <div class="alm-estado">
+        <ol class="alm-pasos" aria-label="Cómo va el recojo">${pasos}</ol>
+        <p class="alm-costo"><i class="ti ti-receipt" aria-hidden="true"></i><span>Recojo: <b>${formatearMoneda(r.costo)}</b>, se descuenta de lo que ganes cuando se venda.</span></p>
+        ${['pendiente_asignacion', 'propuesto', 'asignado'].includes(r.estado) ? renderAnularRecojo(r, 'Anular el recojo') : ''}
+      </div>`;
+}
+
+function renderTarjetaLlegadaAlmacen(p, recojo, indice = 0) {
+  return `
+    <article class="alm-card" data-producto-id="${escapeAttr(p.id)}" style="animation-delay:${Math.min(indice, 8) * 50}ms">
+      <div class="alm-producto">
+        ${renderMediaProducto(p, 'alm-foto')}
+        <div>
+          <h4>${escapeAttr(p.nombre)}</h4>
+          <p>Declaraste <b>${p.stock} ${escapeAttr(unidadPlural(p.unidad_medida, p.stock))}</b></p>
+          <span class="pill pill-estado pill-en_transito"><i class="ti ti-truck" aria-hidden="true"></i> Por llegar al almacén</span>
+        </div>
+      </div>
+      <div class="alm-cuerpo">${recojo ? renderEstadoRecojo(recojo) : renderEleccionLlegada(p)}</div>
+    </article>`;
+}
+
+async function cargarLlegadasAlmacen() {
+  const seccion = document.getElementById('productor-llegadas');
+  const lista = document.getElementById('productor-llegadas-lista');
+  const badge = document.getElementById('productor-llegadas-total');
+  if (!seccion) return;
+  Object.keys(mapasRecojo).forEach((id) => { mapasRecojo[id]?.mapa.remove(); delete mapasRecojo[id]; });
+  const enTransito = (Estado.misProductos || []).filter((p) => p.estado === 'en_transito');
+  if (!enTransito.length) {
+    seccion.classList.add('hidden');
+    badge.classList.add('hidden');
+    return;
+  }
+  try {
+    recojosDelProductor = await Api.recojos.mios();
+  } catch (err) {
+    recojosDelProductor = [];
+    manejarError(err, 'cargar cómo llegan tus cosechas al almacén');
+  }
+  lista.innerHTML = enTransito.map((p, i) => renderTarjetaLlegadaAlmacen(p, recojoVigenteDe(p.id), i)).join('');
+  seccion.classList.remove('hidden');
+  const sinCoordinar = enTransito.filter((p) => !recojoVigenteDe(p.id)).length;
+  badge.textContent = sinCoordinar;
+  badge.classList.toggle('hidden', !sinCoordinar);
+}
+
+function elegirModalidadLlegada(form, valor) {
+  form.querySelectorAll('.alm-detalle').forEach((d) => d.classList.toggle('hidden', d.dataset.detalle !== valor));
+  form.querySelector('.form-entrega-mensaje')?.classList.add('hidden');
+  if (valor === 'repartidor') iniciarMapaRecojo(form);
+}
+
+function iniciarMapaRecojo(form) {
+  const productoId = form.dataset.productoId;
+  if (mapasRecojo[productoId]) {
+    mapasRecojo[productoId].mapa.invalidateSize();
+    return;
+  }
+  const producto = (Estado.misProductos || []).find((x) => String(x.id) === productoId);
+  const chacra = producto ? chacraDeProducto(producto) : null;
+  if (chacra && puntoRecojo[productoId] === undefined) puntoRecojo[productoId] = { lat: chacra.ubicacion_latitud, lng: chacra.ubicacion_longitud };
+  const punto = puntoRecojo[productoId];
+  mapasRecojo[productoId] = crearMapaSeleccionable(`mapa-recojo-${productoId}`, {
+    latInicial: punto?.lat, lngInicial: punto?.lng, color: '#2D3B2A',
+    onSeleccionar: (lat, lng) => {
+      puntoRecojo[productoId] = { lat, lng };
+      cotizarRecojo(form);
+    },
+  });
+  cotizarRecojo(form);
+}
+
+async function cotizarRecojo(form) {
+  const productoId = form.dataset.productoId;
+  const punto = puntoRecojo[productoId];
+  const caja = form.querySelector('.alm-cotizacion');
+  const boton = form.querySelector('.btn-pedir-recojo');
+  boton.disabled = true;
+  if (!punto) {
+    caja.innerHTML = '<p class="muted">Toca el mapa para marcar dónde recoger tu cosecha.</p>';
+    return;
+  }
+  const turno = (form.dataset.turnoCotizacion = String(Number(form.dataset.turnoCotizacion || 0) + 1));
+  caja.innerHTML = '<p class="muted"><i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Calculando el costo…</p>';
+  try {
+    const c = await Api.recojos.cotizar(productoId, punto.lat, punto.lng);
+    if (turno !== form.dataset.turnoCotizacion) return; // ya se movió el punto otra vez
+    const peso = Number(c.peso_kg).toLocaleString('es-PE', { maximumFractionDigits: 1 });
+    caja.innerHTML = `
+      <dl class="alm-cotizacion-datos">
+        <div><dt>Distancia al almacén</dt><dd>${formatearDistancia(c.distancia_km)}</dd></div>
+        <div><dt>Peso</dt><dd>${peso} kg</dd></div>
+        <div><dt>Tarifa</dt><dd>${formatearMoneda(c.tarifa_distancia)}${c.recargo_peso ? ` + ${formatearMoneda(c.recargo_peso)} por el peso` : ''}</dd></div>
+      </dl>
+      <p class="alm-cotizacion-total">Costo del recojo: <b>${formatearMoneda(c.total)}</b></p>
+      <p class="alm-cotizacion-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> No pagas nada ahora: se descuenta de lo que ganes cuando se venda tu cosecha.</p>`;
+    boton.disabled = false;
+    boton.innerHTML = `<i class="ti ti-truck" aria-hidden="true"></i> Pedir recojo por ${formatearMoneda(c.total)}`;
+  } catch (err) {
+    if (turno !== form.dataset.turnoCotizacion) return;
+    caja.innerHTML = `<p class="form-entrega-mensaje error"><i class="ti ti-alert-circle" aria-hidden="true"></i><span>${escapeAttr(err.message)}</span></p>`;
+  }
+}
+
+async function enviarLlegadaAlmacen(form) {
+  const productoId = form.dataset.productoId;
+  const modalidad = form.querySelector(`input[name="llegada-${productoId}"]:checked`)?.value;
+  if (!modalidad) {
+    mostrarMensajeEntrega(form, 'Elige cómo llega tu cosecha al almacén.', 'error');
+    return;
+  }
+  let datos = { producto_id: productoId, modalidad };
+  if (modalidad === 'productor') {
+    if (!form.fecha.value) {
+      mostrarMensajeEntrega(form, 'Elige qué día la llevas.', 'error');
+      form.fecha.focus();
+      return;
+    }
+    datos.fecha_estimada = `${form.fecha.value}T12:00:00`;
+  } else {
+    const punto = puntoRecojo[productoId];
+    const telefono = form.telefono.value.replace(/\D/g, '');
+    if (!punto) {
+      mostrarMensajeEntrega(form, 'Marca en el mapa dónde recoger tu cosecha.', 'error');
+      return;
+    }
+    if (!/^9\d{8}$/.test(telefono)) {
+      mostrarMensajeEntrega(form, 'Escribe tu celular de 9 dígitos: el repartidor te llama al llegar.', 'error');
+      form.telefono.focus();
+      return;
+    }
+    datos = { ...datos, latitud: punto.lat, longitud: punto.lng, referencia: form.referencia.value.trim() || null, telefono };
+  }
+  const boton = form.querySelector(`.alm-detalle[data-detalle="${modalidad}"] button[type="submit"]`);
+  boton.disabled = true;
+  try {
+    const recojo = await Api.recojos.pedir(datos);
+    toast(modalidad === 'productor'
+      ? 'Listo: el almacén te espera ese día.'
+      : recojo.estado === 'propuesto' ? 'Recojo pedido: ya se lo ofrecimos a un repartidor 🚚' : 'Recojo pedido: estamos buscando un repartidor con espacio.');
+    delete puntoRecojo[productoId];
+    await cargarLlegadasAlmacen();
+  } catch (err) {
+    boton.disabled = false;
+    mostrarMensajeEntrega(form, err.message, 'error');
+  }
+}
+
+async function anularRecojo(boton) {
+  boton.disabled = true;
+  try {
+    await Api.recojos.cancelar(boton.dataset.recojoId);
+    toast('Listo: ya puedes elegir otra vez cómo llega tu cosecha.');
+    await cargarLlegadasAlmacen();
+  } catch (err) {
+    boton.disabled = false;
+    manejarError(err, 'anular el recojo');
   }
 }
 
@@ -6419,7 +6707,7 @@ function renderBannerDisponibilidad(estado, { propuestas = 0, activos = 0 } = {}
   // "Ocupado" también es lo que queda mientras hay una propuesta sin responder (el servidor reserva al
   // repartidor al proponérsela): decir "atendiendo un envío" en ese caso confundía.
   if (clave === 'ocupado' && activos === 0 && propuestas > 0) {
-    info = { ...info, detalle: `Tienes ${propuestas === 1 ? 'una propuesta' : `${propuestas} propuestas`} de envío por responder: acéptala o recházala.` };
+    info = { ...info, detalle: `Tienes ${propuestas === 1 ? 'una propuesta' : `${propuestas} propuestas`} por responder: acéptala o recházala.` };
   }
   return `
     <div class="disponibilidad-banner ${info.clase}">
@@ -6462,7 +6750,7 @@ async function cargarGestionEnvios() {
   document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(miRepartidor.estado_disponibilidad);
   document.getElementById('repartidor-resumen').innerHTML = renderSkeletonResumen(2);
 
-  await cargarListaEnvios(miRepartidor.id);
+  await Promise.all([cargarListaEnvios(miRepartidor.id), cargarRecojosRepartidor()]);
   pintarResumenYDisponibilidadRepartidor(miRepartidor.estado_disponibilidad);
   cargarCargaYViajes(miRepartidor);
   iniciarSeguimientoRepartidor();
@@ -6472,13 +6760,20 @@ async function cargarGestionEnvios() {
 // y Estado.propuestasRepartidor, que llena cargarListaEnvios).
 function pintarResumenYDisponibilidadRepartidor(estadoDisponibilidad) {
   if (estadoDisponibilidad !== undefined) Estado.disponibilidadRepartidor = estadoDisponibilidad;
-  const activos = (Estado.enviosRepartidor || []).filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado)).length;
+  const recojos = Estado.recojosRepartidor || [];
+  const activos = (Estado.enviosRepartidor || []).filter((e) => ESTADOS_ENVIO_EN_CURSO.includes(e.estado)).length
+    + recojos.filter((r) => ['asignado', 'recogido'].includes(r.estado)).length;
   document.getElementById('disponibilidad-banner').innerHTML = renderBannerDisponibilidad(
     Estado.disponibilidadRepartidor,
-    { propuestas: (Estado.propuestasRepartidor || []).length, activos },
+    { propuestas: (Estado.propuestasRepartidor || []).length + recojos.filter((r) => r.estado === 'propuesto').length, activos },
   );
   document.getElementById('repartidor-resumen').innerHTML = renderResumenRepartidor();
   animarContadoresResumen(document.getElementById('repartidor-resumen'));
+  // Con recojos en chacras a la vista, "Todo tranquilo" no es cierto: se dice que lo que falta son envíos a compradores.
+  const vacio = document.getElementById('envios-empty');
+  const conRecojos = recojos.length > 0;
+  vacio.querySelector('strong').textContent = conRecojos ? 'Sin envíos a compradores por ahora' : 'Todo tranquilo por ahora';
+  vacio.querySelector('p.muted').textContent = conRecojos ? 'Tus recojos en chacras están arriba.' : 'No tienes propuestas ni envíos activos en este momento.';
   dibujarGraficoEnviosRepartidor();
 }
 
@@ -6491,7 +6786,7 @@ async function refrescarPanelRepartidor() {
   try {
     perfil = await Api.repartidores.miPerfil();
   } catch { /* el banner y la sección de viajes quedan como estaban */ }
-  await cargarListaEnvios(Estado.repartidorId);
+  await Promise.all([cargarListaEnvios(Estado.repartidorId), cargarRecojosRepartidor()]);
   pintarResumenYDisponibilidadRepartidor(perfil?.estado_disponibilidad);
   if (perfil) cargarCargaYViajes(perfil);
 }
@@ -7610,7 +7905,25 @@ async function cargarEnviosPendientesPorCapacidad() {
 }
 
 // ---- Productos en tránsito (confirmar llegada al almacén) ----
-function renderTarjetaProductoTransito(p, totalReservas, indice = 0) {
+// Cómo llega al almacén la cosecha que se espera (lo que eligió el agricultor; ver transporte/logica_recojos.py).
+function renderLlegadaEsperada(r) {
+  if (!r) return '<p class="alm-admin-llega sin-coordinar"><i class="ti ti-help-circle" aria-hidden="true"></i> El agricultor todavía no dijo cómo la trae.</p>';
+  if (r.modalidad === 'productor') {
+    return `<p class="alm-admin-llega"><i class="ti ti-walk" aria-hidden="true"></i> La trae el agricultor${r.fecha_estimada ? ` el ${formatearFechaCorta(r.fecha_estimada)}` : ''}.</p>`;
+  }
+  const quien = escapeAttr(r.repartidor?.nombre || 'El repartidor');
+  const texto = {
+    pendiente_asignacion: 'Recojo pedido: todavía sin repartidor con espacio.',
+    propuesto: 'Recojo ofrecido a un repartidor: falta que acepte.',
+    asignado: `${quien} va a recogerla en la chacra.`,
+    recogido: `${quien} ya la recogió y la trae.`,
+    en_almacen: `${quien} la dejó en el almacén: pésala y confirma la llegada.`,
+  }[r.estado] || r.estado;
+  return `<p class="alm-admin-llega${r.estado === 'en_almacen' ? ' lista' : ''}"><i class="ti ti-truck" aria-hidden="true"></i> ${texto}
+    <small>Recojo de ${formatearMoneda(r.costo)}: se le paga al repartidor y se le descuenta al agricultor al vender.</small></p>`;
+}
+
+function renderTarjetaProductoTransito(p, totalReservas, indice = 0, recojo = null) {
   const retraso = Math.min(indice, 12) * 35;
   const unidad = UNIDADES_MEDIDA[p.unidad_medida]?.etiqueta || p.unidad_medida || 'kg';
   const declarada = Math.max(Number(p.stock) || 0, 0);
@@ -7628,6 +7941,7 @@ function renderTarjetaProductoTransito(p, totalReservas, indice = 0) {
         <div class="perfil-dato"><span class="perfil-dato-label">Declarado</span><span class="perfil-dato-valor">${declarada} ${escapeAttr(unidad)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Reservas</span><span class="perfil-dato-valor">${totalReservas}</span></div>
       </div>
+      ${renderLlegadaEsperada(recojo)}
       <form class="form-llegada" data-producto-id="${escapeAttr(p.id)}" data-declarada="${declarada}" data-unidad="${escapeAttr(unidad)}" novalidate>
         <div class="form-llegada-campos">
           <label for="${idCantidad}">Cantidad recibida (${escapeAttr(unidad)})
@@ -7665,10 +7979,12 @@ async function cargarProductosEnTransito() {
       // una demo (mismo criterio que cargarMisProductos trayendo el detalle de cada borrador por
       // separado). Si el catálogo creciera de verdad, esto se resuelve mejor agregando un conteo
       // de reservas directo en la respuesta de GET /productos en vez de N llamadas adicionales.
-      const reservasPorProducto = await Promise.all(
-        enTransito.map((p) => Api.productos.reservas(p.id).catch(() => []))
-      );
-      cont.innerHTML = enTransito.map((p, i) => renderTarjetaProductoTransito(p, reservasPorProducto[i].length, i)).join('');
+      const [reservasPorProducto, recojos] = await Promise.all([
+        Promise.all(enTransito.map((p) => Api.productos.reservas(p.id).catch(() => []))),
+        Api.recojos.enCurso().catch(() => []),
+      ]);
+      const recojoDe = (p) => recojos.find((r) => String(r.producto_id) === String(p.id)) || null;
+      cont.innerHTML = enTransito.map((p, i) => renderTarjetaProductoTransito(p, reservasPorProducto[i].length, i, recojoDe(p))).join('');
     }
     refrescarResumenAdmin();
   } catch (err) {
@@ -8210,6 +8526,105 @@ async function despacharEnAgencia(form) {
     mostrarMensajeEntrega(form, err.message, 'error');
     form.querySelectorAll('button, input').forEach((el) => { el.disabled = false; });
     boton.textContent = 'Registrar despacho';
+  }
+}
+
+// ---- Recojos de cosechas en chacras (repartidor) ----
+let almacenUbicacion = null;
+async function obtenerAlmacen() {
+  if (!almacenUbicacion) {
+    try { almacenUbicacion = await Api.pedidos.almacen(); } catch { /* sin el enlace al mapa del almacén */ }
+  }
+  return almacenUbicacion;
+}
+
+function renderTarjetaRecojoRepartidor(r, indice = 0) {
+  const porcentaje = condicionesPago?.comision_plataforma_porcentaje;
+  const reparto = r.costo != null && porcentaje != null ? repartoDelEnvio(r.costo, porcentaje) : null;
+  const numero = (n) => Number(n || 0).toLocaleString('es-PE', { maximumFractionDigits: 1 });
+  const dato = (icono, valor, etiqueta) => `<div class="propuesta-metrica"><i class="ti ti-${icono}" aria-hidden="true"></i><strong>${valor}</strong><span>${etiqueta}</span></div>`;
+  const id = escapeAttr(r.id);
+  const telefono = String(r.telefono || '').replace(/\D/g, '');
+  const enlaceChacra = r.latitud != null ? `<a href="${enlaceMapaOsm(r.latitud, r.longitud)}" target="_blank" rel="noopener">Ver la chacra en el mapa <i class="ti ti-external-link" aria-hidden="true"></i></a>` : '';
+  const enlaceAlmacen = almacenUbicacion?.latitud != null
+    ? `<a href="${enlaceMapaOsm(almacenUbicacion.latitud, almacenUbicacion.longitud)}" target="_blank" rel="noopener">Ver el almacén en el mapa <i class="ti ti-external-link" aria-hidden="true"></i></a>` : '';
+  let cuerpo;
+  if (r.estado === 'propuesto') {
+    cuerpo = `
+      ${r.referencia ? `<p class="recojo-referencia"><i class="ti ti-map-2" aria-hidden="true"></i> ${escapeAttr(r.referencia)}</p>` : ''}
+      <div class="propuesta-actions">
+        <button type="button" class="btn btn-outline btn-recojo-accion" data-accion="rechazar" data-recojo-id="${id}"><i class="ti ti-x" aria-hidden="true"></i> Rechazar</button>
+        <button type="button" class="btn btn-primary btn-recojo-accion" data-accion="aceptar" data-recojo-id="${id}"><i class="ti ti-check" aria-hidden="true"></i> Aceptar recojo</button>
+      </div>`;
+  } else if (r.estado === 'asignado') {
+    cuerpo = `
+      <ol class="envio-pasos-agencia">
+        <li><strong>Ve a la chacra y recoge la cosecha.</strong> ${enlaceChacra}${r.referencia ? `<br>${escapeAttr(r.referencia)}` : ''}</li>
+        <li><strong>Revisa que sean unos ${numero(r.peso_kg)} kg</strong> antes de cargarla.</li>
+      </ol>
+      <div class="envio-actualizar">
+        ${telefono ? `<a class="btn btn-outline" href="tel:${telefono}"><i class="ti ti-phone" aria-hidden="true"></i> Llamar al agricultor</a>` : ''}
+        <button type="button" class="btn btn-primary btn-recojo-accion" data-accion="recogido" data-recojo-id="${id}"><i class="ti ti-package" aria-hidden="true"></i> Ya la recogí</button>
+      </div>`;
+  } else if (r.estado === 'recogido') {
+    cuerpo = `
+      <p class="envio-aviso info"><i class="ti ti-road" aria-hidden="true"></i><span>Llévala al almacén. ${enlaceAlmacen}</span></p>
+      <div class="envio-actualizar">
+        <button type="button" class="btn btn-primary btn-recojo-accion" data-accion="en-almacen" data-recojo-id="${id}"><i class="ti ti-building-warehouse" aria-hidden="true"></i> La dejé en el almacén</button>
+      </div>`;
+  } else {
+    cuerpo = `<div class="envio-aviso ok"><i class="ti ti-circle-check" aria-hidden="true"></i><div><strong>La dejaste en el almacén</strong>
+      <span>Lo que ganas se registra cuando el almacén la pese.</span></div></div>`;
+  }
+  return `
+    <div class="pedido-card recojo-card ${r.estado === 'propuesto' ? 'propuesta-card' : 'pedido-card-activo'}" style="animation-delay:${Math.min(indice, 12) * 35}ms">
+      <div class="pedido-card-header">
+        <div>
+          <div class="pedido-id">Recojo · ${escapeAttr(r.producto_nombre || 'Cosecha')}</div>
+          <div class="pedido-fecha">${formatearFechaServidor(r.fecha_creacion)}</div>
+        </div>
+        ${badgeEstadoEnvio(r.estado)}
+      </div>
+      <div class="propuesta-metricas" role="group" aria-label="Datos del recojo">
+        ${dato('route', r.distancia_km != null ? `${numero(r.distancia_km)} km` : '—', 'Del almacén')}
+        ${dato('weight', `${numero(r.peso_kg)} kg`, 'Peso')}
+        ${dato('cash', reparto ? formatearMoneda(reparto.neto) : formatearMoneda(r.costo), reparto ? 'Ganas' : 'Tarifa')}
+      </div>
+      ${cuerpo}
+    </div>`;
+}
+
+async function cargarRecojosRepartidor() {
+  const seccion = document.getElementById('recojos-section');
+  const lista = document.getElementById('recojos-list');
+  let propuestas = [];
+  let asignados = [];
+  try {
+    [propuestas, asignados] = await Promise.all([Api.recojos.propuestas(), Api.recojos.asignados(), obtenerCondicionesPago(), obtenerAlmacen()]);
+  } catch { /* sección discreta: si falla, el resto del panel sigue igual */ }
+  Estado.recojosRepartidor = [...propuestas, ...asignados];
+  seccion.classList.toggle('hidden', !Estado.recojosRepartidor.length);
+  lista.innerHTML = Estado.recojosRepartidor.map((r, i) => renderTarjetaRecojoRepartidor(r, i)).join('');
+}
+
+async function moverRecojo(boton) {
+  const { accion, recojoId } = boton.dataset;
+  const tarjeta = boton.closest('.recojo-card');
+  tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+  const llamadas = { aceptar: Api.recojos.aceptar, rechazar: Api.recojos.rechazar, recogido: Api.recojos.recogido, 'en-almacen': Api.recojos.enAlmacen };
+  const mensajes = {
+    aceptar: 'Recojo aceptado: llama al agricultor antes de ir 🚚',
+    rechazar: 'Recojo rechazado.',
+    recogido: 'Listo: ahora llévala al almacén.',
+    'en-almacen': 'Gracias: lo que ganas se registra cuando el almacén la pese.',
+  };
+  try {
+    await llamadas[accion](recojoId);
+    toast(mensajes[accion]);
+    refrescarPanelRepartidor();
+  } catch (err) {
+    manejarError(err, 'actualizar el recojo');
+    tarjeta.querySelectorAll('button').forEach((b) => { b.disabled = false; });
   }
 }
 
@@ -10567,6 +10982,38 @@ function inicializarEventos() {
     if (!form) return;
     e.preventDefault();
     confirmarEntregaConPin(form);
+  });
+  document.getElementById('recojos-list').addEventListener('click', (e) => {
+    const boton = e.target.closest('.btn-recojo-accion');
+    if (boton) moverRecojo(boton);
+  });
+  const listaLlegadas = document.getElementById('productor-llegadas-lista');
+  listaLlegadas.addEventListener('change', (e) => {
+    const opcion = e.target.closest('.alm-opciones input[type="radio"]');
+    if (opcion) elegirModalidadLlegada(opcion.closest('.alm-form'), opcion.value);
+  });
+  listaLlegadas.addEventListener('input', (e) => {
+    e.target.closest('.alm-form')?.querySelector('.form-entrega-mensaje')?.classList.add('hidden');
+  });
+  listaLlegadas.addEventListener('submit', (e) => {
+    const form = e.target.closest('.alm-form');
+    if (!form) return;
+    e.preventDefault();
+    enviarLlegadaAlmacen(form);
+  });
+  listaLlegadas.addEventListener('click', (e) => {
+    const anular = e.target.closest('.alm-anular');
+    if (!anular) return;
+    if (e.target.closest('.btn-anular-recojo')) {
+      anular.querySelector('.btn-anular-recojo').classList.add('hidden');
+      anular.querySelector('.alm-anular-confirmar').classList.remove('hidden');
+      anular.querySelector('.btn-anular-no').focus();
+    } else if (e.target.closest('.btn-anular-no')) {
+      anular.querySelector('.alm-anular-confirmar').classList.add('hidden');
+      anular.querySelector('.btn-anular-recojo').classList.remove('hidden');
+    } else if (e.target.closest('.btn-anular-si')) {
+      anularRecojo(e.target.closest('.btn-anular-si'));
+    }
   });
   document.getElementById('viajes-list').addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.viaje-card');

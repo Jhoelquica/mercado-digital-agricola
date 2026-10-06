@@ -5431,3 +5431,92 @@ body.asistente-abierto { overflow: hidden; }
 /* Sobre el fondo rojo claro, el botón de peligro va lleno (el suave de siempre casi no se distinguía). */
 .anular-siembra-confirmar .btn-danger { background: #b42318; color: #fff; min-height: 44px; }
 .anular-siembra-confirmar .btn-danger:hover { background: #912018; }
+
+/* ===== Recojo de cosechas en la chacra (agricultor, repartidor y admin) =====
+   21st.dev: "Radio Group in Card" (opciones con su costo, reusa .opcion-lejana), "AI Approval" (la elegida se despliega)
+   y "Task Steps" (pasos del recojo). ui-ux-pro-max: costo visible antes de pedir, botones de 48px, estado con texto. */
+.pill-recogido { background: #e8eefc; color: #2b4a8b; }
+.pill-en_almacen { background: #fdf0d5; color: #7a4b06; }
+
+.alm-seccion { margin: 0 0 28px; }
+.alm-seccion .section-header.inner { margin-top: 0; margin-bottom: 8px; }
+.alm-seccion h3 { display: flex; align-items: center; gap: 8px; }
+.alm-intro { margin: 0 0 16px; max-width: 760px; }
+.alm-lista { display: grid; gap: 16px; }
+.alm-card {
+  display: grid; grid-template-columns: minmax(200px, 260px) minmax(0, 1fr); gap: 20px; padding: 20px 22px;
+  border-radius: var(--radio); background: #fff; border: 1px solid var(--borde); box-shadow: var(--sombra);
+  animation: aparecerTarjeta 0.3s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.alm-producto { display: grid; gap: 12px; align-content: start; }
+.alm-foto { width: 100%; aspect-ratio: 4 / 3; border-radius: 14px; overflow: hidden; background: var(--color-superficie); display: grid; place-items: center; font-size: 3rem; }
+.alm-foto img { width: 100%; height: 100%; object-fit: cover; }
+.alm-producto h4 { margin: 0; font-size: 1.15rem; }
+.alm-producto p { margin: 2px 0 8px; color: var(--texto-suave); font-size: 0.9rem; }
+.alm-cuerpo { min-width: 0; }
+.alm-form { display: grid; gap: 14px; }
+.alm-opciones { margin: 0; padding: 0; border: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.alm-opciones legend { padding: 0; margin-bottom: 10px; font-weight: 800; font-size: 1rem; color: var(--texto); }
+.alm-opciones .opcion-lejana-caja { height: 100%; min-height: 96px; }
+.alm-detalle { display: grid; gap: 12px; padding-top: 14px; border-top: 1px dashed var(--borde); }
+.alm-detalle[data-detalle="productor"] { grid-template-columns: minmax(0, 260px) auto; align-items: end; justify-content: start; }
+.alm-detalle .btn { min-height: 48px; font-size: 1rem; }
+.alm-recojo { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.alm-mapa-bloque { display: grid; gap: 8px; }
+.alm-mapa-titulo { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 700; color: var(--texto); }
+.alm-mapa { height: 280px; border-radius: 14px; border: 1px solid var(--color-borde); overflow: hidden; }
+.alm-recojo-campos { display: grid; gap: 12px; }
+.alm-recojo-campos .perfil-campo input { min-height: 48px; }
+.alm-cotizacion { display: grid; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--color-superficie); }
+.alm-cotizacion:empty { display: none; }
+.alm-cotizacion p { margin: 0; }
+.alm-cotizacion-datos { margin: 0; display: grid; gap: 4px; }
+.alm-cotizacion-datos div { display: flex; justify-content: space-between; gap: 10px; font-size: 0.86rem; }
+.alm-cotizacion-datos dt { color: var(--texto-suave); }
+.alm-cotizacion-datos dd { margin: 0; font-weight: 700; text-align: right; }
+.alm-cotizacion-total { font-size: 1.05rem; padding-top: 6px; border-top: 1px dashed var(--borde); }
+.alm-cotizacion-total b { color: var(--color-primario); }
+.alm-cotizacion-nota { display: flex; gap: 6px; align-items: flex-start; font-size: 0.82rem; color: var(--texto-suave); }
+
+.alm-estado { display: grid; gap: 14px; }
+.alm-pasos { list-style: none; margin: 0; padding: 0; display: grid; }
+.alm-pasos li { position: relative; display: flex; gap: 12px; padding-bottom: 14px; color: var(--texto-suave); }
+.alm-pasos li:last-child { padding-bottom: 0; }
+.alm-pasos li::before { content: ''; position: absolute; left: 11px; top: 26px; bottom: 0; width: 2px; background: #e3e8dd; }
+.alm-pasos li:last-child::before { display: none; }
+.alm-pasos li.hecho::before { background: var(--color-primario); }
+.alm-paso-punto { position: relative; z-index: 1; flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 3px solid #cfd8c8; background: #fff; color: #fff; font-size: 0.8rem; }
+.alm-pasos li.hecho .alm-paso-punto { background: var(--color-primario); border-color: var(--color-primario); }
+.alm-pasos li.actual .alm-paso-punto { border-color: var(--acento-cosecha); background: var(--acento-cosecha-suave); box-shadow: 0 0 0 4px rgba(161, 98, 7, 0.16); }
+.alm-pasos li div { display: grid; gap: 2px; padding-top: 2px; }
+.alm-pasos li strong { font-size: 0.92rem; }
+.alm-pasos li.hecho strong, .alm-pasos li.actual strong { color: var(--texto); }
+.alm-pasos li small { font-size: 0.85rem; line-height: 1.45; color: var(--texto-suave); }
+.alm-costo { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.88rem; color: var(--texto-suave); }
+.alm-costo b { color: var(--texto); }
+.alm-anular { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.alm-anular-confirmar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 12px; background: #fdecec; color: #9b1c1c; font-size: 0.88rem; font-weight: 600; }
+.alm-anular-confirmar .btn-danger { background: #b42318; color: #fff; }
+
+.alm-admin-llega { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: flex-start; margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--color-superficie); font-size: 0.88rem; font-weight: 600; color: var(--texto); }
+.alm-admin-llega small { flex-basis: 100%; font-weight: 500; color: var(--texto-suave); }
+.alm-admin-llega.sin-coordinar { background: #fff3cd; color: #6b5212; }
+.alm-admin-llega.lista { background: #e8f5ee; color: #14532d; }
+
+.recojos-section { margin: 0 0 28px; padding: 18px 20px; border-radius: var(--radio); background: #f5f9f1; border: 1.5px solid #cfe0c3; }
+.recojos-section .section-header.inner { margin-top: 0; margin-bottom: 6px; }
+.recojos-section h3 { display: flex; align-items: center; gap: 8px; }
+.recojos-intro { margin: 0 0 14px; }
+.recojo-referencia { display: flex; gap: 8px; align-items: flex-start; margin: 12px 0 0; font-size: 0.9rem; color: var(--texto); }
+
+@media (max-width: 860px) {
+  .alm-card { grid-template-columns: 1fr; }
+  .alm-producto { grid-template-columns: 96px minmax(0, 1fr); align-items: center; }
+  .alm-foto { aspect-ratio: 1; font-size: 2rem; }
+  .alm-recojo { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .alm-opciones { grid-template-columns: 1fr; }
+  .alm-detalle[data-detalle="productor"] { grid-template-columns: 1fr; }
+}
+.recojo-card a.btn { text-decoration: none; }
