@@ -40,6 +40,8 @@ class Envio(Base):
     #   "sin_capacidad_suficiente": había candidatos disponibles, pero ninguno con capacidad
     #   suficiente para el peso del pedido.
     motivo_pendiente = Column(String, nullable=True)
+    # Cuándo se le ofreció al repartidor actual: si no responde a tiempo, pasa al siguiente (logica_repartidores).
+    fecha_propuesta = Column(DateTime, nullable=True)
     # Evidencia de entrega — código de 4 dígitos generado al crear el envío (ver
     # rabbitmq_consumer.py), que el comprador le dicta al repartidor en la puerta. Los otros 3
     # solo se llenan al confirmar la entrega vía POST /envios/{id}/entregar: la foto sube a MinIO
@@ -138,6 +140,8 @@ class EnvioRechazo(Base):
     envio_id = Column(UUID(as_uuid=True), ForeignKey("envios.id"), nullable=False)
     repartidor_id = Column(UUID(as_uuid=True), ForeignKey("repartidores.id"), nullable=False)
     fecha_rechazo = Column(DateTime, default=datetime.utcnow)
+    # NULL = la rechazó (no se le vuelve a ofrecer). "sin_respuesta" = no contestó a tiempo: va al final de la fila.
+    motivo = Column(String, nullable=True)
 
 
 
@@ -166,6 +170,7 @@ class Recojo(Base):
     distancia_km = Column(Float, nullable=True)
     costo = Column(Numeric(10, 2), nullable=True)
     repartidor_id = Column(UUID(as_uuid=True), nullable=True)
+    fecha_propuesto = Column(DateTime, nullable=True)  # cuándo se le ofreció al repartidor actual
     motivo_cancelacion = Column(String, nullable=True)
     liquidacion_confirmada = Column(Boolean, nullable=False, default=False)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
@@ -183,3 +188,4 @@ class RecojoRechazo(Base):
     recojo_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     repartidor_id = Column(UUID(as_uuid=True), nullable=False)
     fecha = Column(DateTime, default=datetime.utcnow)
+    motivo = Column(String, nullable=True)  # mismo criterio que EnvioRechazo.motivo

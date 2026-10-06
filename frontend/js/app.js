@@ -8121,6 +8121,14 @@ function renderMetricasPropuesta(resumen) {
     ${resumen.requiere_vehiculo_grande ? '<p class="propuesta-aviso"><i class="ti ti-truck" aria-hidden="true"></i> Pedido grande: pide un vehículo con más capacidad.</p>' : ''}`;
 }
 
+// Hasta cuándo puede responder el repartidor una propuesta: después se le ofrece a otro (transporte/logica_repartidores).
+function renderPlazoPropuesta(responderAntesDe) {
+  const hasta = responderAntesDe ? parsearFechaServidor(responderAntesDe) : null;
+  if (!hasta || isNaN(hasta)) return '';
+  const hora = hasta.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  return `<p class="propuesta-plazo"><i class="ti ti-clock" aria-hidden="true"></i> Responde antes de las ${hora}: si no, se le ofrece a otro repartidor.</p>`;
+}
+
 function renderTarjetaPropuesta(envio, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   return `
@@ -8133,6 +8141,7 @@ function renderTarjetaPropuesta(envio, indice = 0) {
         ${badgeEstadoEnvio(envio.estado || 'propuesto')}
       </div>
       ${renderMetricasPropuesta(envio.resumen)}
+      ${renderPlazoPropuesta(envio.responder_antes_de)}
       <div class="propuesta-actions">
         <button type="button" class="btn btn-outline btn-rechazar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-x"></i> Rechazar</button>
         <button type="button" class="btn btn-primary btn-aceptar-propuesta" data-envio-id="${envio.id}"><i class="ti ti-check"></i> Aceptar envío</button>
@@ -8560,6 +8569,7 @@ function renderTarjetaRecojoRepartidor(r, indice = 0) {
   if (r.estado === 'propuesto') {
     cuerpo = `
       ${r.referencia ? `<p class="recojo-referencia"><i class="ti ti-map-2" aria-hidden="true"></i> ${escapeAttr(r.referencia)}</p>` : ''}
+      ${renderPlazoPropuesta(r.responder_antes_de)}
       <div class="propuesta-actions">
         <button type="button" class="btn btn-outline btn-recojo-accion" data-accion="rechazar" data-recojo-id="${id}"><i class="ti ti-x" aria-hidden="true"></i> Rechazar</button>
         <button type="button" class="btn btn-primary btn-recojo-accion" data-accion="aceptar" data-recojo-id="${id}"><i class="ti ti-check" aria-hidden="true"></i> Aceptar recojo</button>

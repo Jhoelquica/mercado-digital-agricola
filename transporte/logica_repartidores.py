@@ -1,8 +1,15 @@
 import os
+from datetime import datetime, timedelta
+
 import httpx
+from sqlalchemy import case, func, or_
 from pedidos_interno import cabecera_pedidos
 
 import models
+
+# Cuánto espera una propuesta la respuesta del repartidor antes de pasar al siguiente.
+PLAZO_RESPUESTA_MINUTOS = int(os.getenv("PLAZO_RESPUESTA_PROPUESTA_MINUTOS", "30"))
+SIN_RESPUESTA = "sin_respuesta"
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
@@ -88,8 +95,14 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
     # cualquier momento pasado, sin importar qué disparador reintente después (inmediato,
     # periódico, o este mismo si se llama de nuevo más tarde).
     rechazos_previos = db.query(models.EnvioRechazo.repartidor_id).filter(
-        models.EnvioRechazo.envio_id == envio_id
+        models.EnvioRechazo.envio_id == envio_id,
+        or_(models.EnvioRechazo.motivo.is_(None), models.EnvioRechazo.motivo != SIN_RESPUESTA),
     )
+    # Quien no respondió a tiempo no queda excluido: va al final de la fila (si no hay nadie más, se le vuelve a ofrecer).
+    no_respondieron = db.query(models.EnvioRechazo.repartidor_id).filter(
+        models.EnvioRechazo.envio_id == envio_id, models.EnvioRechazo.motivo == SIN_RESPUESTA,
+    )
+    al_final_si_no_respondio = case((models.Repartidor.id.in_(no_respondieron), 1), else_=0)
 
     # Peso del pedido asociado a este envío — determina si se puede filtrar por capacidad de
     # vehículo. None = "no se pudo determinar" (Pedidos no respondió, o el pedido en sí tiene
@@ -117,7 +130,7 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
     if excluir_id:
         disponibilidad_query = disponibilidad_query.filter(models.Repartidor.id != excluir_id)
 
-    query = disponibilidad_query
+    query = disponibilidad_query.order_by(al_final_si_no_respondio)
     if peso_total_kg is not None:
         # .isnot(None) es redundante en SQL (NULL >= peso_total_kg ya es falso de por sí, así que
         # un repartidor sin capacidad declarada nunca calificaría igual) — se deja explícito por
@@ -176,6 +189,7 @@ def proponer_envio_a_repartidor(envio_id, db, excluir_id=None):
     envio.repartidor_id = repartidor.id
     envio.estado = "propuesto"
     envio.motivo_pendiente = None
+    envio.fecha_propuesta = datetime.utcnow()
     repartidor.estado_disponibilidad = "ocupado"
     db.commit()
     print(f"[Transporte] Envío {envio_id} propuesto a repartidor {repartidor.nombre}")
@@ -204,3 +218,50 @@ def intentar_resolver_envio_huerfano(db, excluir_id=None):
     )
     if huerfano:
         proponer_envio_a_repartidor(huerfano.id, db, excluir_id=excluir_id)
+
+
+
+def tiene_otro_trabajo(db, repartidor_id, salvo_envio=None, salvo_recojo=None) -> bool:
+    """Si el repartidor sigue con algo entre manos (otra propuesta, un envío o un recojo en curso): en ese caso no se
+    lo deja "disponible" al quitarle una propuesta."""
+    envios = db.query(models.Envio.id).filter(
+        models.Envio.repartidor_id == repartidor_id,
+        models.Envio.estado.in_(("propuesto", "asignado", "en_camino", "en_destino")),
+    )
+    if salvo_envio is not None:
+        envios = envios.filter(models.Envio.id != salvo_envio)
+    recojos = db.query(models.Recojo.id).filter(
+        models.Recojo.repartidor_id == repartidor_id,
+        models.Recojo.estado.in_(("propuesto", "asignado", "recogido")),
+    )
+    if salvo_recojo is not None:
+        recojos = recojos.filter(models.Recojo.id != salvo_recojo)
+    return envios.first() is not None or recojos.first() is not None
+
+
+def pasar_propuestas_sin_respuesta(db, ahora=None) -> int:
+    """Las propuestas de envío que el repartidor no respondió a tiempo pasan al siguiente: queda anotado que no
+    respondió (va al final de la fila para ese envío), se le libera si no tiene otro trabajo y se vuelve a buscar
+    repartidor. Las de antes de esta regla (sin fecha_propuesta) cuentan desde que se creó el envío."""
+    ahora = ahora or datetime.utcnow()
+    limite = ahora - timedelta(minutes=PLAZO_RESPUESTA_MINUTOS)
+    vencidas = (db.query(models.Envio)
+                .filter(models.Envio.estado == "propuesto",
+                        func.coalesce(models.Envio.fecha_propuesta, models.Envio.fecha_creacion) < limite)
+                .with_for_update(skip_locked=True).all())
+    for envio in vencidas:
+        repartidor_id = envio.repartidor_id
+        if repartidor_id and not db.query(models.EnvioRechazo).filter(
+                models.EnvioRechazo.envio_id == envio.id, models.EnvioRechazo.repartidor_id == repartidor_id,
+                models.EnvioRechazo.motivo == SIN_RESPUESTA).first():
+            db.add(models.EnvioRechazo(envio_id=envio.id, repartidor_id=repartidor_id, motivo=SIN_RESPUESTA))
+        if repartidor_id and not tiene_otro_trabajo(db, repartidor_id, salvo_envio=envio.id):
+            repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()
+            if repartidor:
+                repartidor.estado_disponibilidad = "disponible"
+        envio.estado = "pendiente_asignacion"
+        envio.repartidor_id = None
+        db.commit()
+        print(f"[Transporte] Envío {envio.id}: sin respuesta del repartidor en {PLAZO_RESPUESTA_MINUTOS} min, se ofrece al siguiente")
+        proponer_envio_a_repartidor(envio.id, db)
+    return len(vencidas)

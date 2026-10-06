@@ -16,9 +16,11 @@ from datetime import datetime
 
 import httpx
 from fastapi import HTTPException
+from sqlalchemy import case, or_
 
 import models
 from rabbitmq_publisher import publicar_evento
+from logica_repartidores import PLAZO_RESPUESTA_MINUTOS, SIN_RESPUESTA, tiene_otro_trabajo
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
@@ -75,7 +77,11 @@ def cotizar(latitud: float, longitud: float, peso_kg: float) -> dict:
 def proponer_recojo(db, recojo: models.Recojo, excluir_id=None) -> None:
     """Se lo propone al repartidor disponible de menor capacidad que cargue el peso (mismo criterio que un envío), sin
     volver a ofrecérselo a quien ya lo rechazó. Si no hay nadie, queda "pendiente_asignacion" y el job lo reintenta."""
-    rechazaron = db.query(models.RecojoRechazo.repartidor_id).filter(models.RecojoRechazo.recojo_id == recojo.id)
+    rechazaron = db.query(models.RecojoRechazo.repartidor_id).filter(
+        models.RecojoRechazo.recojo_id == recojo.id,
+        or_(models.RecojoRechazo.motivo.is_(None), models.RecojoRechazo.motivo != SIN_RESPUESTA))
+    no_respondieron = db.query(models.RecojoRechazo.repartidor_id).filter(
+        models.RecojoRechazo.recojo_id == recojo.id, models.RecojoRechazo.motivo == SIN_RESPUESTA)
     candidatos = (
         db.query(models.Repartidor)
         .filter(models.Repartidor.estado_disponibilidad == "disponible", ~models.Repartidor.id.in_(rechazaron))
@@ -84,15 +90,41 @@ def proponer_recojo(db, recojo: models.Recojo, excluir_id=None) -> None:
         candidatos = candidatos.filter(models.Repartidor.id != excluir_id)
     if recojo.peso_kg is not None:
         candidatos = candidatos.filter(models.Repartidor.capacidad_maxima_kg >= recojo.peso_kg)
-    elegido = candidatos.order_by(models.Repartidor.capacidad_maxima_kg.asc()).with_for_update(skip_locked=True).first()
+    # Quien no respondió a tiempo va al final de la fila; después, el vehículo más chico que alcance.
+    elegido = (candidatos
+               .order_by(case((models.Repartidor.id.in_(no_respondieron), 1), else_=0), models.Repartidor.capacidad_maxima_kg.asc())
+               .with_for_update(skip_locked=True).first())
     if elegido:
         recojo.estado = "propuesto"
         recojo.repartidor_id = elegido.id
+        recojo.fecha_propuesto = datetime.utcnow()
         elegido.estado_disponibilidad = "ocupado"
     else:
         recojo.estado = "pendiente_asignacion"
         recojo.repartidor_id = None
     db.commit()
+
+
+def pasar_recojos_sin_respuesta(db, ahora=None) -> int:
+    """Los recojos propuestos que el repartidor no respondió a tiempo pasan al siguiente (mismo criterio que los envíos,
+    ver logica_repartidores.pasar_propuestas_sin_respuesta)."""
+    from datetime import timedelta
+    ahora = ahora or datetime.utcnow()
+    limite = ahora - timedelta(minutes=PLAZO_RESPUESTA_MINUTOS)
+    vencidos = (db.query(models.Recojo)
+                .filter(models.Recojo.estado == "propuesto", models.Recojo.fecha_propuesto < limite)
+                .with_for_update(skip_locked=True).all())
+    for recojo in vencidos:
+        repartidor_id = recojo.repartidor_id
+        if repartidor_id and not db.query(models.RecojoRechazo).filter(
+                models.RecojoRechazo.recojo_id == recojo.id, models.RecojoRechazo.repartidor_id == repartidor_id,
+                models.RecojoRechazo.motivo == SIN_RESPUESTA).first():
+            db.add(models.RecojoRechazo(recojo_id=recojo.id, repartidor_id=repartidor_id, motivo=SIN_RESPUESTA))
+        if repartidor_id and not tiene_otro_trabajo(db, repartidor_id, salvo_recojo=recojo.id):
+            liberar_repartidor(db, repartidor_id)
+        db.flush()
+        proponer_recojo(db, recojo)
+    return len(vencidos)
 
 
 def asignar_recojos_pendientes(db) -> None:
@@ -193,6 +225,13 @@ def reintentar_liquidaciones(db) -> None:
         _liquidar_sin_romper(db, recojo)
 
 
+def _responder_antes_de(recojo):
+    from datetime import timedelta
+    if recojo.estado != "propuesto" or not recojo.fecha_propuesto:
+        return None
+    return recojo.fecha_propuesto + timedelta(minutes=PLAZO_RESPUESTA_MINUTOS)
+
+
 def recojo_para_mostrar(db, recojo: models.Recojo) -> dict:
     repartidor = (db.query(models.Repartidor).filter(models.Repartidor.id == recojo.repartidor_id).first()
                   if recojo.repartidor_id else None)
@@ -213,6 +252,7 @@ def recojo_para_mostrar(db, recojo: models.Recojo) -> dict:
         "costo": float(recojo.costo) if recojo.costo is not None else None,
         "repartidor": {"id": str(repartidor.id), "nombre": repartidor.nombre, "tipo_vehiculo": repartidor.tipo_vehiculo} if repartidor else None,
         "motivo_cancelacion": recojo.motivo_cancelacion,
+        "responder_antes_de": _responder_antes_de(recojo),
         "fecha_creacion": recojo.fecha_creacion,
         "fecha_recogido": recojo.fecha_recogido,
         "fecha_en_almacen": recojo.fecha_en_almacen,

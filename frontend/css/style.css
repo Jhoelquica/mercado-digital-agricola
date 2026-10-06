@@ -5522,3 +5522,4 @@ body.asistente-abierto { overflow: hidden; }
 .recojo-card a.btn { text-decoration: none; }
 .pill-completado { background: var(--verde-pastel); color: var(--verde-oscuro); }
 .notif-icon.tipo-recojo_actualizado { background: var(--verde-pastel); color: var(--color-primario); }
+.propuesta-plazo { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.86rem; font-weight: 600; }

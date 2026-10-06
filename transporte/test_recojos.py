@@ -29,6 +29,9 @@ def mundo(monkeypatch):
     tests quedan desconectados para que la elección sea predecible."""
     db = main.SessionLocal()
     db.query(models.Repartidor).update({models.Repartidor.estado_disponibilidad: "desconectado"})
+    # La base de pruebas se reusa entre corridas: un recojo que quedó en curso se llevaría a los repartidores de este test.
+    db.query(models.Recojo).filter(models.Recojo.estado.in_(logica_recojos.ESTADOS_EN_CURSO)).update(
+        {models.Recojo.estado: "cancelado"}, synchronize_session=False)
     db.commit()
     db.close()
     productor_id, producto_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -215,3 +218,21 @@ def test_solo_el_dueno_y_solo_con_la_cosecha_en_transito(mundo, monkeypatch):
     monkeypatch.setattr(logica_recojos, "pedir_producto", lambda pid: {**mundo["producto"], "estado": "disponible"})
     assert _pedir(mundo).status_code == 409
     assert _pedir(mundo, telefono="123").status_code in (409, 422)
+
+
+
+def test_un_recojo_sin_respuesta_pasa_al_siguiente_repartidor(mundo):
+    callado = _repartidor(450)
+    otro = _repartidor(900)
+    recojo_id = _pedir(mundo).json()["id"]
+    assert str(_fila(recojo_id).repartidor_id) == str(callado.id)
+    assert client.get("/recojos/mios").json()[0]["responder_antes_de"] is not None
+
+    db = main.SessionLocal()
+    try:
+        logica_recojos.pasar_recojos_sin_respuesta(db, ahora=datetime.utcnow() + timedelta(minutes=logica_recojos.PLAZO_RESPUESTA_MINUTOS + 1))
+    finally:
+        db.close()
+    fila = _fila(recojo_id)
+    assert (fila.estado, str(fila.repartidor_id)) == ("propuesto", str(otro.id))
+    assert _disponibilidad(callado.id) == "disponible"

@@ -1717,3 +1717,104 @@ def test_el_comprador_ve_cuanto_le_falta_al_camion(lejanos, monkeypatch):
     assert datos["modalidad_envio"] == "camion" and datos["sacos"] == 50
     assert datos["viaje"]["sacos_cargados"] == 60 and datos["viaje"]["sacos_para_salir"] == 80
     assert datos["viaje"]["estado"] == "abierto" and datos["pin_entrega"] == "1234"
+
+
+
+# ============ Una propuesta sin respuesta pasa al siguiente repartidor ============
+
+def _poner_propuesto(envio_id, repartidor_id, hace_minutos):
+    from datetime import datetime, timedelta
+    db = main.SessionLocal()
+    try:
+        envio = db.query(main.models.Envio).filter(main.models.Envio.id == envio_id).one()
+        envio.estado, envio.repartidor_id = "propuesto", repartidor_id
+        envio.fecha_propuesta = datetime.utcnow() - timedelta(minutes=hace_minutos)
+        db.query(main.models.Repartidor).filter(main.models.Repartidor.id == repartidor_id).update({"estado_disponibilidad": "ocupado"})
+        db.commit()
+    finally:
+        db.close()
+
+
+def _rechazos_de(envio_id):
+    db = main.SessionLocal()
+    try:
+        return [(str(r.repartidor_id), r.motivo) for r in db.query(main.models.EnvioRechazo).filter(main.models.EnvioRechazo.envio_id == envio_id)]
+    finally:
+        db.close()
+
+
+def _borrar_rechazos(envio_id):
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.EnvioRechazo).filter(main.models.EnvioRechazo.envio_id == envio_id).delete()
+        db.commit()
+    finally:
+        db.close()
+
+
+def _disponibilidad_de(repartidor_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Repartidor).filter(main.models.Repartidor.id == repartidor_id).one().estado_disponibilidad
+    finally:
+        db.close()
+
+
+def test_una_propuesta_sin_respuesta_pasa_al_siguiente_y_libera_al_que_no_respondio(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    callado = _crear_repartidor_disponible(capacidad_maxima_kg=50)
+    otro = _crear_repartidor_disponible(capacidad_maxima_kg=80)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids += [callado.id, otro.id]
+    envio_ids.append(envio.id)
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=20))
+    _poner_propuesto(envio.id, callado.id, hace_minutos=logica_repartidores.PLAZO_RESPUESTA_MINUTOS + 1)
+    try:
+        db = main.SessionLocal()
+        try:
+            assert logica_repartidores.pasar_propuestas_sin_respuesta(db) >= 1
+        finally:
+            db.close()
+        recargado = _envio_recargado(envio.id)
+        assert (recargado.estado, str(recargado.repartidor_id)) == ("propuesto", str(otro.id))
+        assert _disponibilidad_de(callado.id) == "disponible"
+        assert _rechazos_de(envio.id) == [(str(callado.id), "sin_respuesta")]
+    finally:
+        _borrar_rechazos(envio.id)
+
+
+def test_si_no_hay_nadie_mas_se_le_vuelve_a_ofrecer_al_que_no_respondio(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    unico = _crear_repartidor_disponible(capacidad_maxima_kg=50)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(unico.id)
+    envio_ids.append(envio.id)
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=20))
+    _poner_propuesto(envio.id, unico.id, hace_minutos=logica_repartidores.PLAZO_RESPUESTA_MINUTOS + 1)
+    try:
+        db = main.SessionLocal()
+        try:
+            logica_repartidores.pasar_propuestas_sin_respuesta(db)
+        finally:
+            db.close()
+        recargado = _envio_recargado(envio.id)
+        assert (recargado.estado, str(recargado.repartidor_id)) == ("propuesto", str(unico.id))  # nadie más: vuelve a él
+        assert _disponibilidad_de(unico.id) == "ocupado"
+    finally:
+        _borrar_rechazos(envio.id)
+
+
+def test_una_propuesta_todavia_a_tiempo_no_se_toca(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    a_tiempo = _crear_repartidor_disponible(capacidad_maxima_kg=50)
+    envio = _crear_envio_directo(None, estado="pendiente")
+    repartidor_ids.append(a_tiempo.id)
+    envio_ids.append(envio.id)
+    _poner_propuesto(envio.id, a_tiempo.id, hace_minutos=1)
+    db = main.SessionLocal()
+    try:
+        logica_repartidores.pasar_propuestas_sin_respuesta(db)
+    finally:
+        db.close()
+    assert str(_envio_recargado(envio.id).repartidor_id) == str(a_tiempo.id)
+    assert _rechazos_de(envio.id) == []

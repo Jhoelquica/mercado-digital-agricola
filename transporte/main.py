@@ -35,7 +35,7 @@ from fastapi import Response
 import re
 import logica_viajes
 import logica_recojos
-from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano
+from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano, PLAZO_RESPUESTA_MINUTOS
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
@@ -175,6 +175,8 @@ class ResumenEntrega(BaseModel):
 class PropuestaSalida(EnvioSalida):
     # None si Pedidos no respondió: la propuesta se muestra igual, solo sin estos datos.
     resumen: ResumenEntrega | None = None
+    # Hasta cuándo puede responder el repartidor: después pasa al siguiente (logica_repartidores).
+    responder_antes_de: datetime | None = None
 
 
 def evento_envio_actualizado(envio) -> dict:
@@ -248,6 +250,7 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
     for envio in envios:
         propuesta = PropuestaSalida.model_validate(envio)
         propuesta.resumen = resumenes.get(envio.pedido_id)
+        propuesta.responder_antes_de = (envio.fecha_propuesta or envio.fecha_creacion) + timedelta(minutes=PLAZO_RESPUESTA_MINUTOS)
         propuestas.append(propuesta)
     return propuestas
 
