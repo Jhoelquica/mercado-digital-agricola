@@ -1131,6 +1131,7 @@ def pedir_recojo(datos: RecojoCrear, db: Session = Depends(get_db), usuario: dic
     if en_curso:
         raise HTTPException(status_code=409, detail="Esta cosecha ya tiene cómo llegar al almacén. Anúlalo primero si quieres cambiarlo.")
     recojo = models.Recojo(producto_id=datos.producto_id, productor_id=productor["id"], producto_nombre=producto.get("nombre"),
+                           productor_usuario_id=usuario.get("sub"),
                            modalidad=datos.modalidad, referencia=(datos.referencia or "").strip() or None)
     if datos.modalidad == "productor":
         hoy = datetime.utcnow().date()
@@ -1225,6 +1226,7 @@ def aceptar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario:
     recojo.estado = "asignado"
     recojo.fecha_aceptado = datetime.utcnow()
     db.commit()
+    logica_recojos.avisar_al_agricultor(db, recojo)
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1245,6 +1247,7 @@ def marcar_recogido(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario
     recojo.estado = "recogido"
     recojo.fecha_recogido = datetime.utcnow()
     db.commit()
+    logica_recojos.avisar_al_agricultor(db, recojo)
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1257,6 +1260,7 @@ def dejar_en_almacen(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuari
     recojo.fecha_en_almacen = datetime.utcnow()
     repartidor.estado_disponibilidad = "disponible"
     db.commit()
+    logica_recojos.avisar_al_agricultor(db, recojo)
     intentar_resolver_envio_huerfano(db)
     logica_recojos.asignar_recojos_pendientes(db)
     return logica_recojos.recojo_para_mostrar(db, recojo)

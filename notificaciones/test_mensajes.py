@@ -1,5 +1,5 @@
 """Textos de los avisos (mensajes.py): funciones puras, sin base de datos."""
-from mensajes import mensaje_envio, mensaje_pago, mensaje_pedido_creado, soles
+from mensajes import mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo, soles
 
 
 def test_la_agencia_da_la_guia_donde_recoger_y_que_el_flete_se_paga_al_recoger():
@@ -51,3 +51,15 @@ def test_el_aviso_del_pedido_depende_de_como_viaja():
 def test_un_pedido_que_vencio_sin_pagar_lo_dice_asi():
     texto = mensaje_pago({"evento": "pago_rechazado", "vencido": True, "motivo": "Pasaron 60 minutos sin pagar"})
     assert texto.startswith("Venció el plazo para pagar tu pedido") and "Mis Pedidos" in texto
+
+
+def test_el_agricultor_sabe_como_va_el_recojo_de_su_cosecha():
+    base = {"producto_nombre": "papa amarilla", "repartidor_nombre": "Juan", "modalidad": "repartidor", "costo": 42.5}
+    assert mensaje_recojo({**base, "estado": "asignado"}) == "Juan aceptó recoger tu papa amarilla en tu chacra. Te llamará antes de llegar."
+    assert "ya recogió tu papa amarilla" in mensaje_recojo({**base, "estado": "recogido"})
+    assert "ya está en el almacén" in mensaje_recojo({**base, "estado": "en_almacen"})
+    pesada = mensaje_recojo({**base, "estado": "completado"})
+    assert "ya está a la venta" in pesada and "(S/ 42.50) se descontará" in pesada
+    assert mensaje_recojo({**base, "modalidad": "productor", "costo": None, "estado": "completado"}) == (
+        "El almacén recibió y pesó tu papa amarilla: ya está a la venta.")
+    assert "no se te cobra nada" in mensaje_recojo({**base, "estado": "cancelado"})

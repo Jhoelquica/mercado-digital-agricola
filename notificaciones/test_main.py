@@ -145,3 +145,17 @@ def test_un_evento_de_pagos_que_no_es_para_el_comprador_no_crea_aviso():
     pedido_id = str(uuid.uuid4())
     _procesar({"evento": "liquidacion_creada", "pedido_id": pedido_id})
     assert _avisos_de(pedido_id) == []
+
+
+
+def test_el_aviso_del_recojo_le_llega_al_agricultor_con_su_producto_y_estado():
+    agricultor, producto_id = str(uuid.uuid4()), str(uuid.uuid4())
+    _procesar({"evento": "recojo_actualizado", "recojo_id": str(uuid.uuid4()), "producto_id": producto_id, "usuario_id": agricultor,
+               "estado": "recogido", "modalidad": "repartidor", "producto_nombre": "papa amarilla", "repartidor_nombre": "Juan", "costo": 42.5})
+    db = SessionLocal()
+    try:
+        [aviso] = db.query(models.Notificacion).filter(models.Notificacion.producto_id == producto_id).all()
+    finally:
+        db.close()
+    assert (str(aviso.usuario_id), aviso.tipo, aviso.estado, aviso.pedido_id) == (agricultor, "recojo_actualizado", "recogido", None)
+    assert aviso.mensaje == "Juan ya recogió tu papa amarilla y la lleva al almacén."

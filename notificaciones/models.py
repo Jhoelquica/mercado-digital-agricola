@@ -17,7 +17,7 @@ class Notificacion(Base):
     # la garantía de la aplicación.
     pedido_id = Column(UUID(as_uuid=True), nullable=True)
     producto_id = Column(UUID(as_uuid=True), nullable=True)
-    tipo = Column(String, nullable=False)       # pedido_creado, envio_actualizado, producto_disponible, pago_confirmado, saldo_pagado, pago_rechazado, saldo_rechazado
+    tipo = Column(String, nullable=False)       # pedido_creado, envio_actualizado, producto_disponible, pago_confirmado, saldo_pagado, pago_rechazado, saldo_rechazado, recojo_actualizado
     # Estado del envío en un envio_actualizado (p. ej. "en_destino"): el frontend lo muestra como etiqueta junto al texto.
     # Nullable: la migración lo agrega a la tabla ya creada; los avisos de antes lo traían dentro del mensaje.
     estado = Column(String, nullable=True)

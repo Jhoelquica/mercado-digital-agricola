@@ -6,7 +6,7 @@ import pika
 
 from database import SessionLocal
 import models
-from mensajes import mensaje_envio, mensaje_pago, mensaje_pedido_creado
+from mensajes import mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
@@ -62,6 +62,10 @@ def _procesar_mensaje(ch, method, properties, body):
             tipo="producto_disponible",
             mensaje=f"¡Buenas noticias! El producto \"{datos.get('nombre_producto')}\" que reservaste ya está disponible para comprar.",
         )
+    elif evento == "recojo_actualizado" and datos.get("usuario_id") and datos.get("producto_id"):
+        # El recojo de una cosecha en la chacra: el aviso es para el agricultor (Transporte manda su usuario).
+        _guardar_notificacion(producto_id=datos["producto_id"], usuario_id=datos["usuario_id"], tipo="recojo_actualizado",
+                              mensaje=mensaje_recojo(datos), estado=datos.get("estado"))
     elif evento in ("pago_confirmado", "saldo_pagado", "pago_rechazado", "saldo_rechazado") and datos.get("pedido_id"):
         # Pagos no manda el usuario: se toma del aviso de pedido_creado de ese pedido (ver _guardar_notificacion).
         _guardar_notificacion(pedido_id=datos["pedido_id"], tipo=evento, mensaje=mensaje_pago(datos))

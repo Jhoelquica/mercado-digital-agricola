@@ -507,13 +507,14 @@ const ICONOS_ESTADO = {
   esperando_camion: 'hourglass',
   recogido: 'package',
   en_almacen: 'building-warehouse',
+  completado: 'circle-check',
   error: 'alert-triangle',
 };
 
 const ESTADOS_BADGE_CONOCIDOS = new Set([
   'pendiente', 'pendiente_asignacion', 'propuesto', 'confirmado', 'asignado',
   'en_camino', 'en_transito', 'en_ruta', 'entregado', 'aprobado',
-  'cancelado', 'rechazado', 'error', 'en_agencia', 'en_destino', 'esperando_camion', 'recogido', 'en_almacen',
+  'cancelado', 'rechazado', 'error', 'en_agencia', 'en_destino', 'esperando_camion', 'recogido', 'en_almacen', 'completado',
 ]);
 
 function badgeEstadoEnvio(estado) {
@@ -4476,6 +4477,7 @@ const NOTIF_TIPOS = {
   saldo_pagado: { grupo: 'pedido', icono: 'wallet', titulo: 'Saldo recibido' },
   pago_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Pago no completado' },
   saldo_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Saldo no aprobado' },
+  recojo_actualizado: { grupo: 'envio', icono: 'plant-2', titulo: 'Recojo de tu cosecha' },
 };
 const NOTIF_FILTROS = [
   { clave: 'todas', etiqueta: 'Todas' },
@@ -4492,6 +4494,9 @@ const ETIQUETAS_ESTADO_ENVIO = {
   esperando_camion: 'Esperando que se llene el camión',
   en_destino: 'El camión llegó a tu ciudad',
   en_agencia: 'En la agencia de tu ciudad',
+  recogido: 'Recogida en la chacra',
+  en_almacen: 'En el almacén',
+  completado: 'Pesada y a la venta',
   entregado: 'Entregado',
   cancelado: 'Cancelado',
 };
@@ -4624,7 +4629,9 @@ function renderNotifCard(n, i) {
       : `<p class="notif-msg">${escapeAttr(n.mensaje)}</p>`;
 
   const acciones = [];
-  if (n.pedido_id) {
+  if (n.tipo === 'recojo_actualizado') {
+    acciones.push('<button type="button" class="notif-accion" data-accion="ver-cosechas">Ver mis cosechas <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
+  } else if (n.pedido_id) {
     acciones.push(`<span class="notif-chip"><i class="ti ti-receipt" aria-hidden="true"></i> Pedido #${String(n.pedido_id).slice(0, 8)}</span>`);
     acciones.push('<button type="button" class="notif-accion" data-accion="ver-pedido">Ver mis pedidos <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
   } else if (n.producto_id) {
@@ -4821,7 +4828,8 @@ async function iniciarPanelProductor() {
     document.getElementById('productor-economia-historial').innerHTML = renderTablaHistorialCosechas(registros);
     dibujarGraficoCosechasPorMes(registros);
     graficosEconomiaProductorListos = false;
-    activarTabProductor('inicio');
+    activarTabProductor(Estado.tabProductorInicial || 'inicio');
+    Estado.tabProductorInicial = null;
   } else {
     setup.classList.remove('hidden');
     panel.classList.add('hidden');
@@ -10597,6 +10605,10 @@ function inicializarEventos() {
     if (!boton) return;
     if (boton.dataset.accion === 'ver-pedido') cambiarVista('mis-pedidos');
     if (boton.dataset.accion === 'ver-producto') cambiarVista('detalle-producto', boton.dataset.id);
+    if (boton.dataset.accion === 'ver-cosechas') {
+      Estado.tabProductorInicial = 'productos'; // donde están "Cosechas por llevar al almacén"
+      cambiarVista('panel-productor');
+    }
   });
   document.getElementById('notificaciones-empty').addEventListener('click', (e) => {
     const boton = e.target.closest('[data-notif-accion]');

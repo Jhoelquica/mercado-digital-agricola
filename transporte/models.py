@@ -150,6 +150,8 @@ class Recojo(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     producto_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     productor_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    # El usuario del agricultor (quien lo pidió): a él le llegan los avisos de cómo va su recojo.
+    productor_usuario_id = Column(UUID(as_uuid=True), nullable=True)
     producto_nombre = Column(String, nullable=True)
     modalidad = Column(String, nullable=False)  # repartidor | productor
     # repartidor: pendiente_asignacion -> propuesto -> asignado -> recogido -> en_almacen -> completado

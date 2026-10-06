@@ -18,6 +18,7 @@ import httpx
 from fastapi import HTTPException
 
 import models
+from rabbitmq_publisher import publicar_evento
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
@@ -107,6 +108,29 @@ def liberar_repartidor(db, repartidor_id) -> None:
         repartidor.estado_disponibilidad = "disponible"
 
 
+def avisar_al_agricultor(db, recojo: models.Recojo) -> None:
+    """Le cuenta al agricultor cómo va su recojo (Notificaciones arma el texto). Nunca rompe el paso que lo dispara: si
+    RabbitMQ no responde, el agricultor igual lo ve en su panel."""
+    if not recojo.productor_usuario_id:
+        return
+    repartidor = (db.query(models.Repartidor).filter(models.Repartidor.id == recojo.repartidor_id).first()
+                  if recojo.repartidor_id else None)
+    try:
+        publicar_evento({
+            "evento": "recojo_actualizado",
+            "recojo_id": str(recojo.id),
+            "producto_id": str(recojo.producto_id),
+            "usuario_id": str(recojo.productor_usuario_id),
+            "estado": recojo.estado,
+            "modalidad": recojo.modalidad,
+            "producto_nombre": recojo.producto_nombre,
+            "repartidor_nombre": repartidor.nombre if repartidor else None,
+            "costo": float(recojo.costo) if recojo.costo is not None else None,
+        })
+    except Exception:
+        logger.warning("No se pudo avisar al agricultor del recojo %s (%s)", recojo.id, recojo.estado, exc_info=True)
+
+
 def liquidar(recojo: models.Recojo) -> None:
     """Le pide a Pagos que liquide el recojo al repartidor y lo anote como deuda del agricultor. Propaga cualquier falla:
     quien llama marca liquidacion_confirmada solo si salió bien (y el job lo reintenta)."""
@@ -147,6 +171,7 @@ def cerrar_por_llegada(db, producto_id) -> None:
         recojo.estado = "completado"
         recojo.fecha_completado = ahora
         db.commit()
+        avisar_al_agricultor(db, recojo)
         _liquidar_sin_romper(db, recojo)
         return
     if recojo.modalidad == "repartidor":
@@ -157,6 +182,7 @@ def cerrar_por_llegada(db, producto_id) -> None:
         recojo.estado = "completado"
     recojo.fecha_completado = ahora
     db.commit()
+    avisar_al_agricultor(db, recojo)
 
 
 def reintentar_liquidaciones(db) -> None:

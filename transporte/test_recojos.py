@@ -40,7 +40,9 @@ def mundo(monkeypatch):
     liquidados = []
     monkeypatch.setattr(logica_recojos, "liquidar", lambda recojo: liquidados.append((str(recojo.id), float(recojo.costo))))
     monkeypatch.setattr(main, "intentar_resolver_envio_huerfano", MagicMock())
-    return {"productor_id": productor_id, "producto_id": producto_id, "producto": producto, "liquidados": liquidados}
+    avisos = []
+    monkeypatch.setattr(logica_recojos, "publicar_evento", avisos.append)
+    return {"productor_id": productor_id, "producto_id": producto_id, "producto": producto, "liquidados": liquidados, "avisos": avisos}
 
 
 def _repartidor(capacidad, estado="disponible"):
@@ -56,8 +58,11 @@ def _repartidor(capacidad, estado="disponible"):
         db.close()
 
 
+AGRICULTOR = str(uuid.uuid4())  # el usuario del agricultor: a él le llegan los avisos
+
+
 def _pedir(mundo, **extra):
-    _como(str(uuid.uuid4()), "productor")
+    _como(AGRICULTOR, "productor")
     cuerpo = {"producto_id": mundo["producto_id"], "modalidad": "repartidor", "latitud": -13.10, "longitud": -74.25,
               "referencia": "Junto al puente", "telefono": "987 654 321", **extra}
     return client.post("/recojos", json=cuerpo)
@@ -123,6 +128,12 @@ def test_de_punta_a_punta_se_cobra_recien_con_la_cosecha_pesada(mundo):
     fila = _fila(recojo_id)
     assert (fila.estado, fila.liquidacion_confirmada) == ("completado", True)
     assert mundo["liquidados"] == [(recojo_id, 42.5)]
+    # el agricultor se enteró de cada paso (no de la propuesta: eso es entre el sistema y el repartidor)
+    assert [a["estado"] for a in mundo["avisos"]] == ["asignado", "recogido", "en_almacen", "completado"]
+    assert {a["usuario_id"] for a in mundo["avisos"]} == {AGRICULTOR}
+    assert mundo["avisos"][0] == {"evento": "recojo_actualizado", "recojo_id": recojo_id, "producto_id": mundo["producto_id"],
+                                  "usuario_id": AGRICULTOR, "estado": "asignado", "modalidad": "repartidor",
+                                  "producto_nombre": "Papa amarilla QA", "repartidor_nombre": "QA rep 1000", "costo": 42.5}
 
 
 def test_sin_repartidor_con_capacidad_espera_y_el_job_lo_asigna_despues(mundo):
@@ -181,6 +192,7 @@ def test_si_la_cosecha_llega_antes_de_recogerla_el_recojo_se_anula_sin_cobrar(mu
     fila = _fila(recojo_id)
     assert fila.estado == "cancelado" and "antes de que la recogieran" in fila.motivo_cancelacion
     assert _disponibilidad(repartidor.id) == "disponible" and mundo["liquidados"] == []
+    assert [a["estado"] for a in mundo["avisos"]] == ["cancelado"]
 
 
 def test_si_la_lleva_el_agricultor_dice_cuando_y_no_cuesta_nada(mundo):

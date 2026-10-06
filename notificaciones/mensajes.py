@@ -87,6 +87,28 @@ def mensaje_envio(datos):
     return f"Tu envío cambió de estado: {legible}."
 
 
+def mensaje_recojo(datos):
+    """Cómo va el recojo de una cosecha en la chacra, contado al agricultor."""
+    producto = datos.get("producto_nombre") or "cosecha"
+    quien = datos.get("repartidor_nombre") or "El repartidor"
+    estado = datos.get("estado") or ""
+    if estado == "asignado":
+        return f"{quien} aceptó recoger tu {producto} en tu chacra. Te llamará antes de llegar."
+    if estado == "recogido":
+        return f"{quien} ya recogió tu {producto} y la lleva al almacén."
+    if estado == "en_almacen":
+        return f"Tu {producto} ya está en el almacén. Cuando la pesen, sale a la venta."
+    if estado == "completado":
+        costo = soles(datos.get("costo"))
+        if datos.get("modalidad") == "repartidor" and costo:
+            return f"El almacén pesó tu {producto} y ya está a la venta. El recojo ({costo}) se descontará de lo que ganes cuando se venda."
+        return f"El almacén recibió y pesó tu {producto}: ya está a la venta."
+    if estado == "cancelado":
+        return f"Tu {producto} llegó al almacén antes de que la recogieran: anulamos el recojo y no se te cobra nada."
+    legible = ESTADOS_LEGIBLES.get(estado, estado.replace("_", " "))
+    return f"Tu recojo cambió de estado: {legible}."
+
+
 def mensaje_pago(datos):
     """El texto de un evento de Pagos, o None si no es uno que se le avise al comprador."""
     evento = datos.get("evento")

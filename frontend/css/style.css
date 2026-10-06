@@ -5520,3 +5520,5 @@ body.asistente-abierto { overflow: hidden; }
   .alm-detalle[data-detalle="productor"] { grid-template-columns: 1fr; }
 }
 .recojo-card a.btn { text-decoration: none; }
+.pill-completado { background: var(--verde-pastel); color: var(--verde-oscuro); }
+.notif-icon.tipo-recojo_actualizado { background: var(--verde-pastel); color: var(--color-primario); }
