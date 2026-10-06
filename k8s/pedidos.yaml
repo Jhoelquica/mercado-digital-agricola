@@ -54,6 +54,9 @@ spec:
             # GET /pedidos/{id} le pregunta a Transporte si el repartidor que lo pide tiene ese envío asignado.
             - name: TRANSPORTE_URL
               value: http://transporte:8004
+            # Cancelar un pedido pagado le pide a Pagos que devuelva el dinero.
+            - name: PAGOS_URL
+              value: http://pagos:8007
             - name: PRODUCTOS_URL
               value: http://productos:8002
             - name: RABBITMQ_HOST

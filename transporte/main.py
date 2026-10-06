@@ -35,7 +35,7 @@ from fastapi import Response
 import re
 import logica_viajes
 import logica_recojos
-from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano, PLAZO_RESPUESTA_MINUTOS
+from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano, PLAZO_RESPUESTA_MINUTOS, tiene_otro_trabajo
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
@@ -1275,3 +1275,43 @@ def recojos_en_curso(db: Session = Depends(get_db), usuario: dict = Depends(requ
     recojos = (db.query(models.Recojo).filter(models.Recojo.estado.in_(logica_recojos.ESTADOS_EN_CURSO))
                .order_by(models.Recojo.fecha_creacion).all())
     return [logica_recojos.recojo_para_mostrar(db, r) for r in recojos]
+
+
+
+# ============ Cancelar el envío de un pedido pagado que se cancela (lo pide Pedidos, con el token del admin) ============
+ESTADOS_ENVIO_CANCELABLES = ("pendiente", "pendiente_asignacion", "propuesto", "asignado", "esperando_camion", "pendiente_entrega_directa")
+ESTADOS_QUE_YA_SALIERON = {"en_camino": "en camino", "en_destino": "en la ciudad de destino", "en_agencia": "en la agencia de carga",
+                           "entregado": "entregado"}
+
+
+@app.post("/envios/pedido/{pedido_id}/cancelar")
+def cancelar_envio_de_pedido(pedido_id: uuid.UUID, solo_revisar: bool = False, db: Session = Depends(get_db),
+                             usuario: dict = Depends(requiere_rol("admin"))):
+    """Paso de la saga de cancelación de un pedido pagado (cancelar_pedido_pagado en Pedidos): el envío se cancela solo
+    si todavía no salió. Con solo_revisar=true no cambia nada, solo dice si se puede (Pedidos lo pregunta ANTES de
+    devolver el dinero). Libera al repartidor que lo tenía propuesto o asignado y saca sus sacos del camión."""
+    envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).with_for_update().first()
+    if not envio or envio.estado == "cancelado":
+        db.rollback()
+        return {"envio_id": str(envio.id) if envio else None, "estado": envio.estado if envio else None, "cancelable": True}
+    if envio.estado not in ESTADOS_ENVIO_CANCELABLES:
+        db.rollback()
+        legible = ESTADOS_QUE_YA_SALIERON.get(envio.estado, envio.estado.replace("_", " "))
+        raise HTTPException(status_code=409, detail=f"El pedido ya está {legible}: no se puede cancelar.")
+    if solo_revisar:
+        db.rollback()
+        return {"envio_id": str(envio.id), "estado": envio.estado, "cancelable": True}
+    repartidor_id = envio.repartidor_id if envio.estado in ("propuesto", "asignado") else None
+    viaje = db.query(models.Viaje).filter(models.Viaje.id == envio.viaje_id).with_for_update().first() if envio.viaje_id else None
+    envio.estado = "cancelado"
+    db.flush()
+    if repartidor_id and not tiene_otro_trabajo(db, repartidor_id, salvo_envio=envio.id):
+        repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()
+        if repartidor:
+            repartidor.estado_disponibilidad = "disponible"
+    if viaje and viaje.estado == "listo" and logica_viajes.sacos_cargados(db, viaje) < viaje.sacos_para_salir:
+        viaje.estado = "abierto"  # sin esos sacos ya no junta lo necesario para salir
+    db.commit()
+    if repartidor_id:
+        intentar_resolver_envio_huerfano(db)
+    return {"envio_id": str(envio.id), "estado": "cancelado", "cancelable": True}

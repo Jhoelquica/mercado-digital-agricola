@@ -33,7 +33,9 @@ def _destino(destino_lejano_id) -> dict | None:
 
 
 def sacos_cargados(db, viaje) -> int:
-    return sum(e.sacos or 0 for e in db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id).all())
+    # Un pedido cancelado deja de ocupar lugar en el camión.
+    return sum(e.sacos or 0 for e in db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id,
+                                                                   models.Envio.estado != "cancelado").all())
 
 
 def sumar_a_viaje(db, envio, pedido: dict) -> "models.Viaje | None":

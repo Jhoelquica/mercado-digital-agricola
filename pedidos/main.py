@@ -162,6 +162,7 @@ app.add_middleware(
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 TRANSPORTE_URL = os.getenv("TRANSPORTE_URL", "http://localhost:8004")
+PAGOS_URL = os.getenv("PAGOS_URL", "http://localhost:8007")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
@@ -1048,6 +1049,78 @@ def _repartidor_tiene_el_envio(pedido_id: uuid.UUID, token: str) -> bool:
 # comprador) y, tras exigir sesión, lo leía cualquier repartidor o productor con solo conocer el id. Un
 # productor no lo necesita para nada (ve sus ventas en otro lado), así que no entra. pedido_id va tipado
 # como UUID: un id mal formado da 422 en vez de un error de la base.
+# Para el admin: los pedidos pagados que todavía no se entregaron (ahí ve los que se quedaron sin repartidor y puede
+# cancelarlos devolviendo el dinero). Antes de /pedidos/{pedido_id}, que se comería "admin" como id.
+@app.get("/pedidos/admin/sin-entregar")
+def pedidos_sin_entregar(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    pedidos = db.query(models.Pedido).filter(models.Pedido.estado == "confirmado").order_by(models.Pedido.fecha_creacion).all()
+    for pedido in pedidos:
+        pedido.items  # carga la relación para la respuesta
+    return [pedido_para(usuario, p) for p in pedidos]
+
+
+class CancelacionPedido(BaseModel):
+    motivo: str = Field(min_length=3, max_length=300)
+
+
+def _detalle_de(resp) -> str:
+    try:
+        detalle = resp.json().get("detail")
+    except ValueError:
+        detalle = None
+    return detalle if isinstance(detalle, str) else f"HTTP {resp.status_code}"
+
+
+@app.post("/pedidos/{pedido_id}/cancelar")
+def cancelar_pedido_pagado(pedido_id: uuid.UUID, datos: CancelacionPedido, db: Session = Depends(get_db),
+                           usuario: dict = Depends(requiere_rol("admin")),
+                           credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    """Saga para cancelar un pedido ya pagado (la pide el admin; cada paso va con su token):
+    1) Transporte dice si el envío todavía se puede cancelar (no salió). Si no, no se toca nada.
+    2) Pagos devuelve el dinero (Culqi; lo pagado por transferencia queda para devolver a mano), anula las ganancias que
+       no se pagaron y devuelve el stock. Si falla, no se toca nada.
+    3) Transporte cancela el envío y libera al repartidor.
+    4) El pedido queda cancelado con su motivo (el aviso al comprador lo publica Pagos al devolver).
+    Si el paso 3 fallara (el envío salió justo entre medio) el dinero ya está devuelto: queda en el log para resolverlo a mano."""
+    pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).with_for_update().first()
+    if not pedido:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if pedido.estado == "cancelado" and pedido.motivo_cancelacion:
+        return pedido_para(usuario, pedido)  # ya se canceló antes: repetir no hace nada
+    if pedido.estado != "confirmado":
+        raise HTTPException(status_code=409, detail="Solo se cancela así un pedido pagado que todavía no se entregó.")
+    motivo = " ".join(datos.motivo.split())
+    cabecera = {"Authorization": f"Bearer {credenciales.credentials}"}
+    try:
+        with httpx.Client() as client:
+            revision = client.post(f"{TRANSPORTE_URL}/envios/pedido/{pedido_id}/cancelar", params={"solo_revisar": "true"},
+                                   headers=cabecera, timeout=10)
+            if revision.status_code == 409:
+                raise HTTPException(status_code=409, detail=_detalle_de(revision))
+            if revision.status_code != 200:
+                raise HTTPException(status_code=503, detail="Transporte no respondió: no se canceló nada.")
+            devolucion = client.post(f"{PAGOS_URL}/pagos/admin/{pedido_id}/devolver", json={"motivo": motivo},
+                                     headers=cabecera, timeout=40)
+            if devolucion.status_code != 200:
+                raise HTTPException(status_code=devolucion.status_code if devolucion.status_code in (409, 502) else 503,
+                                    detail=_detalle_de(devolucion))
+            envio = client.post(f"{TRANSPORTE_URL}/envios/pedido/{pedido_id}/cancelar", headers=cabecera, timeout=10)
+            if envio.status_code != 200:
+                logger.error("Pedido %s: el dinero ya se devolvió pero Transporte no canceló el envío (%s). REVISAR A MANO.",
+                             pedido_id, _detalle_de(envio))
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="Un servicio no respondió: no se canceló nada.")
+    pedido.estado = "cancelado"
+    pedido.motivo_cancelacion = motivo
+    pedido.fecha_cancelacion = datetime.utcnow()
+    db.commit()
+    db.refresh(pedido)
+    pedido.items
+    respuesta = pedido_para(usuario, pedido)
+    respuesta["devolucion"] = devolucion.json()
+    return respuesta
+
+
 @app.get("/pedidos/{pedido_id}")
 def obtener_pedido(
     pedido_id: uuid.UUID,

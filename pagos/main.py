@@ -32,7 +32,7 @@ import models
 from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
-from culqi_client import crear_cargo
+from culqi_client import crear_cargo, crear_devolucion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
 from rabbitmq_publisher import publicar_evento
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, crear_liquidacion_recojo, pagos_sin_liquidaciones
@@ -272,8 +272,9 @@ def obtener_pago(
     datos = jsonable_encoder(pago)
     parte = parte_a_cobrar(pago)
     # Lo que el comprador tiene que pagar ahora (nada si ya está todo pagado).
-    datos["parte_a_pagar"] = None if pago.estado == "aprobado" else parte
-    datos["monto_a_pagar"] = None if pago.estado == "aprobado" else float(monto_de(pago, parte))
+    pagado_o_devuelto = pago.estado in ("aprobado", "reembolsado")
+    datos["parte_a_pagar"] = None if pagado_o_devuelto else parte
+    datos["monto_a_pagar"] = None if pagado_o_devuelto else float(monto_de(pago, parte))
     return datos
 
 @app.delete("/pagos/{pago_id}")
@@ -465,6 +466,8 @@ def procesar_pago(
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
+    if pago.estado == "reembolsado":
+        raise HTTPException(status_code=409, detail="Este pedido se canceló y se te devolvió el dinero: ya no se puede pagar.")
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste la constancia de una transferencia para este pedido: está en revisión.")
     parte = parte_a_cobrar(pago)
@@ -572,6 +575,8 @@ def enviar_constancia_de_transferencia(
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
+    if pago.estado == "reembolsado":
+        raise HTTPException(status_code=409, detail="Este pedido se canceló y se te devolvió el dinero: ya no se puede pagar.")
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste una constancia para este pedido: está en revisión.")
 
@@ -701,3 +706,109 @@ def rechazar_transferencia(
     publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
     return _transferencia_resumen(pago, parte)
 
+
+
+
+# ============ Devolver lo pagado de un pedido que se cancela (lo pide Pedidos, con el token del admin) ============
+class Devolucion(BaseModel):
+    motivo: str = Field(min_length=3, max_length=300)
+
+
+def _cobros_a_devolver(pago) -> tuple[list, Decimal]:
+    """[(id del cargo en Culqi, monto)] y lo que hay que devolver a mano (lo pagado por transferencia). Un pedido en camión
+    tiene dos cobros: el adelanto y, si ya llegó, el saldo."""
+    cobros, manual = [], Decimal("0")
+
+    def parte(metodo, cargo, monto):
+        nonlocal manual
+        if metodo == "transferencia" or not cargo:
+            manual += monto
+        else:
+            cobros.append((cargo, monto))
+
+    if pago.monto_adelanto is None:
+        parte(pago.metodo, pago.culqi_charge_id, monto_de(pago, "total"))
+    else:
+        parte(pago.metodo, pago.culqi_charge_id, monto_de(pago, "adelanto"))
+        if pago.estado == "aprobado":  # el saldo también se pagó
+            parte(pago.metodo_saldo, pago.culqi_charge_id_saldo, monto_de(pago, "saldo"))
+    return cobros, manual
+
+
+def _devolver_descuentos_cobrados(db: Session, liquidacion) -> None:
+    """Si la liquidación que se anula ya le había cobrado al productor parte de un recojo, esa deuda vuelve a quedar
+    pendiente (las más recientes primero)."""
+    resto = Decimal(str(liquidacion.descuento_recojo or 0))
+    if resto <= 0:
+        return
+    deudas = (db.query(models.DescuentoProductor)
+              .filter(models.DescuentoProductor.productor_id == liquidacion.beneficiario_id, models.DescuentoProductor.aplicado > 0)
+              .order_by(models.DescuentoProductor.fecha_creacion.desc()).with_for_update().all())
+    for deuda in deudas:
+        quitar = min(resto, Decimal(str(deuda.aplicado)))
+        deuda.aplicado = Decimal(str(deuda.aplicado)) - quitar
+        resto -= quitar
+        if resto <= 0:
+            break
+
+
+def _resumen_devolucion(pago) -> dict:
+    return {
+        "estado": pago.estado,
+        "monto_reembolsado": float(pago.monto_reembolsado or 0),
+        "reembolso_manual": float(pago.reembolso_manual) if pago.reembolso_manual else None,
+        "reembolso_ids": json.loads(pago.reembolso_ids) if pago.reembolso_ids else [],
+    }
+
+
+@app.post("/pagos/admin/{pedido_id}/devolver")
+def devolver_pago(pedido_id: uuid.UUID, datos: Devolucion, db: Session = Depends(get_db),
+                  usuario: dict = Depends(requiere_rol("admin"))):
+    """Paso de la saga de cancelación de un pedido pagado (cancelar_pedido_pagado en Pedidos). Devuelve en Culqi cada cobro
+    (tarjeta o Yape); lo pagado por transferencia queda anotado para devolverlo a mano. Después anula las ganancias que
+    todavía no se pagaron y devuelve el stock. Si Culqi rechaza una devolución no se cambia el estado (se puede reintentar
+    sin devolver dos veces: los cobros ya devueltos quedan anotados). Idempotente: un pago ya devuelto dice qué se hizo."""
+    pago = db.query(models.Pago).filter(models.Pago.pedido_id == pedido_id).with_for_update().first()
+    if not pago:
+        raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
+    if pago.estado == "reembolsado":
+        return _resumen_devolucion(pago)
+    if pago.estado not in ("aprobado", "adelanto_pagado"):
+        raise HTTPException(status_code=409, detail="Este pedido no tiene un pago confirmado que devolver.")
+    motivo = " ".join(datos.motivo.split())
+    cobros, manual = _cobros_a_devolver(pago)
+    hechos = json.loads(pago.reembolso_ids) if pago.reembolso_ids else []
+    ya_devueltos = {h["cargo"] for h in hechos}
+    for cargo, monto in cobros:
+        if cargo in ya_devueltos:
+            continue
+        try:
+            resultado = crear_devolucion(cargo, float(monto))
+        except httpx.RequestError:
+            logger.error("Culqi no respondió al devolver el cargo %s del pedido %s", cargo, pedido_id, exc_info=True)
+            raise HTTPException(status_code=502, detail="La pasarela de pagos no respondió. No se canceló nada: intenta de nuevo.")
+        if resultado["status_code"] not in (200, 201):
+            mensaje = resultado["data"].get("user_message") or resultado["data"].get("merchant_message") or "rechazó la devolución"
+            raise HTTPException(status_code=502, detail=f"Culqi no hizo la devolución ({mensaje}). No se canceló nada.")
+        hechos.append({"cargo": cargo, "devolucion": resultado["data"].get("id"), "monto": float(monto)})
+        pago.reembolso_ids = json.dumps(hechos)
+        db.commit()  # cada devolución hecha queda anotada: un reintento no la repite
+        pago = db.query(models.Pago).filter(models.Pago.pedido_id == pedido_id).with_for_update().first()
+
+    pago.estado = "reembolsado"
+    pago.monto_reembolsado = sum((Decimal(str(h["monto"])) for h in hechos), Decimal("0"))
+    pago.reembolso_manual = manual or None
+    pago.motivo_reembolso = motivo
+    pago.fecha_reembolso = datetime.utcnow()
+    for liquidacion in db.query(models.Liquidacion).filter(models.Liquidacion.pedido_id == pedido_id,
+                                                           models.Liquidacion.estado == "pendiente").all():
+        _devolver_descuentos_cobrados(db, liquidacion)
+        liquidacion.estado = "anulada"
+    db.commit()
+    compensar_stock(pago.items)
+    try:
+        publicar_evento({"evento": "pago_reembolsado", "pedido_id": str(pago.pedido_id), "motivo": motivo,
+                         "monto": _dinero(pago.monto_reembolsado), "manual": _dinero(manual) if manual else None})
+    except Exception:
+        logger.error("No se pudo avisar la devolución del pedido %s", pedido_id, exc_info=True)
+    return _resumen_devolucion(pago)

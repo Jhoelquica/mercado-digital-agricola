@@ -67,6 +67,9 @@ class Pedido(Base):
     flete_destino_estimado = Column(Numeric(10, 2), nullable=True)  # agencia: aproximado, se paga en destino
     monto_adelanto = Column(Numeric(10, 2), nullable=True)  # camión: lo que se paga al pedir (el resto al llegar)
     porcentaje_adelanto = Column(Integer, nullable=True)
+    # Un pedido pagado que el admin canceló (con la devolución del dinero; ver cancelar_pedido_pagado en main.py).
+    motivo_cancelacion = Column(String, nullable=True)
+    fecha_cancelacion = Column(DateTime, nullable=True)
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"

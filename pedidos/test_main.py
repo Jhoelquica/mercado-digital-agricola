@@ -1422,3 +1422,95 @@ def test_el_recojo_cuesta_lo_mismo_que_un_envio_de_ese_peso_y_solo_dentro_de_aya
     assert cuerpo["total"] == round(envio["costo_envio"] + 10.0, 2)
     assert client.get("/pedidos/costo-recojo", params={"latitud": -12.05, "longitud": -77.04, "peso_kg": 50}).status_code == 422
     assert client.get("/pedidos/costo-recojo", params={"latitud": -13.1588, "longitud": -74.2239, "peso_kg": 0}).status_code == 422
+
+
+
+# ============ Cancelar un pedido pagado (saga con Transporte y Pagos) ============
+
+def _pedido_confirmado():
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        pedido_id = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).update({"estado": "confirmado"})
+        db.commit()
+    finally:
+        db.close()
+    return pedido_id
+
+
+def _servicios(respuestas):
+    """httpx.Client falso: cada POST devuelve la siguiente respuesta (status, json) y se anota la URL."""
+    llamadas = []
+    cola = list(respuestas)
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+
+    def post(url, **kwargs):
+        llamadas.append((url, kwargs.get("params")))
+        estado, cuerpo = cola.pop(0)
+        resp = MagicMock(status_code=estado)
+        resp.json.return_value = cuerpo
+        return resp
+    mock_client.post.side_effect = post
+    return mock_client, llamadas
+
+
+def test_cancelar_un_pedido_pagado_revisa_devuelve_cancela_el_envio_y_lo_marca(monkeypatch):
+    pedido_id = _pedido_confirmado()
+    devolucion = {"estado": "reembolsado", "monto_reembolsado": 55.0, "reembolso_manual": None, "reembolso_ids": []}
+    mock_client, llamadas = _servicios([(200, {"cancelable": True}), (200, devolucion), (200, {"estado": "cancelado"})])
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        with patch("main.httpx.Client", return_value=mock_client):
+            resp = client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "Sin repartidor desde hace días"}, headers=CON_TOKEN)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert (cuerpo["estado"], cuerpo["motivo_cancelacion"], cuerpo["devolucion"]) == ("cancelado", "Sin repartidor desde hace días", devolucion)
+    assert [u.split("/", 3)[-1] for u, _ in llamadas] == [f"envios/pedido/{pedido_id}/cancelar", f"pagos/admin/{pedido_id}/devolver",
+                                                         f"envios/pedido/{pedido_id}/cancelar"]
+    assert llamadas[0][1] == {"solo_revisar": "true"} and llamadas[2][1] is None
+
+
+def test_si_el_envio_ya_salio_no_se_devuelve_nada(monkeypatch):
+    pedido_id = _pedido_confirmado()
+    mock_client, llamadas = _servicios([(409, {"detail": "El pedido ya está en camino: no se puede cancelar."})])
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        with patch("main.httpx.Client", return_value=mock_client):
+            resp = client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "Lo pidió el comprador"}, headers=CON_TOKEN)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert resp.status_code == 409 and "en camino" in resp.json()["detail"]
+    assert len(llamadas) == 1  # ni Pagos ni la cancelación del envío
+
+
+def test_si_la_devolucion_falla_el_envio_y_el_pedido_siguen_igual(monkeypatch):
+    pedido_id = _pedido_confirmado()
+    mock_client, llamadas = _servicios([(200, {"cancelable": True}), (502, {"detail": "Culqi no hizo la devolución."})])
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        with patch("main.httpx.Client", return_value=mock_client):
+            resp = client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "Lo pidió el comprador"}, headers=CON_TOKEN)
+            otra = client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert resp.status_code == 502 and len(llamadas) == 2
+    assert otra.json()["estado"] == "confirmado"
+
+
+def test_solo_el_admin_cancela_y_solo_un_pedido_pagado():
+    pedido_id = _pedido_confirmado()
+    _como(str(uuid.uuid4()), "comprador")
+    assert client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "quiero"}, headers=CON_TOKEN).status_code == 403
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        sin_pagar = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        assert client.post(f"/pedidos/{sin_pagar}/cancelar", json={"motivo": "no pagó"}, headers=CON_TOKEN).status_code == 409
+        assert pedido_id in [p["id"] for p in client.get("/pedidos/admin/sin-entregar", headers=CON_TOKEN).json()]
+    finally:
+        _como(str(uuid.uuid4()), "comprador")

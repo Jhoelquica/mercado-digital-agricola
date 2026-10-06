@@ -63,3 +63,12 @@ def test_el_agricultor_sabe_como_va_el_recojo_de_su_cosecha():
     assert mensaje_recojo({**base, "modalidad": "productor", "costo": None, "estado": "completado"}) == (
         "El almacén recibió y pesó tu papa amarilla: ya está a la venta.")
     assert "no se te cobra nada" in mensaje_recojo({**base, "estado": "cancelado"})
+
+
+
+def test_al_cancelar_un_pedido_pagado_se_dice_por_que_y_cuanto_se_devolvio():
+    texto = mensaje_pago({"evento": "pago_reembolsado", "motivo": "No hubo repartidor.", "monto": "40.80", "manual": None})
+    assert texto == ("Cancelamos tu pedido: No hubo repartidor. Te devolvimos S/ 40.80 al medio con que pagaste; "
+                     "puede tardar unos días en verse en tu cuenta.")
+    a_mano = mensaje_pago({"evento": "pago_reembolsado", "motivo": "x", "monto": "0.00", "manual": "25.00"})
+    assert "Te devolvimos" not in a_mano and "S/ 25.00 que pagaste por transferencia" in a_mano

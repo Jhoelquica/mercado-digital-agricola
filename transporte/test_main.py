@@ -1818,3 +1818,37 @@ def test_una_propuesta_todavia_a_tiempo_no_se_toca(monkeypatch, matching):
         db.close()
     assert str(_envio_recargado(envio.id).repartidor_id) == str(a_tiempo.id)
     assert _rechazos_de(envio.id) == []
+
+
+
+# ============ Cancelar el envío de un pedido pagado ============
+
+def test_el_envio_se_cancela_si_todavia_no_salio_y_libera_al_repartidor(monkeypatch):
+    _auth(str(uuid.uuid4()), rol="admin")
+    monkeypatch.setattr(main, "intentar_resolver_envio_huerfano", MagicMock())
+    repartidor = _crear_repartidor_directo()
+    envio = _crear_envio_directo(repartidor.id, estado="propuesto")
+
+    revisar = client.post(f"/envios/pedido/{envio.pedido_id}/cancelar", params={"solo_revisar": "true"})
+    assert revisar.status_code == 200 and revisar.json()["cancelable"] is True
+    assert _envio_recargado(envio.id).estado == "propuesto"  # solo revisar no cambia nada
+
+    resp = client.post(f"/envios/pedido/{envio.pedido_id}/cancelar")
+    assert resp.status_code == 200 and resp.json()["estado"] == "cancelado"
+    assert _envio_recargado(envio.id).estado == "cancelado"
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Repartidor).filter(main.models.Repartidor.id == repartidor.id).one().estado_disponibilidad == "disponible"
+    finally:
+        db.close()
+    assert client.post(f"/envios/pedido/{envio.pedido_id}/cancelar").status_code == 200  # repetir no rompe nada
+
+
+def test_un_envio_que_ya_salio_no_se_cancela_y_un_pedido_sin_envio_si():
+    _auth(str(uuid.uuid4()), rol="admin")
+    envio = _crear_envio_directo(None, estado="en_camino")
+    resp = client.post(f"/envios/pedido/{envio.pedido_id}/cancelar", params={"solo_revisar": "true"})
+    assert resp.status_code == 409 and "en camino" in resp.json()["detail"]
+    assert client.post(f"/envios/pedido/{uuid.uuid4()}/cancelar").json()["cancelable"] is True
+    _auth(str(uuid.uuid4()), rol="repartidor")
+    assert client.post(f"/envios/pedido/{envio.pedido_id}/cancelar").status_code == 403

@@ -1350,3 +1350,90 @@ def test_el_recojo_se_liquida_al_repartidor_y_se_descuenta_de_las_ventas_del_pro
         assert (float(deuda.monto), float(deuda.aplicado)) == (30.0, 30.0)
     finally:
         db.close()
+
+
+
+# ============ Devolver lo pagado de un pedido que se cancela ============
+
+def _devolver(pedido_id, motivo="El repartidor no pudo llevarlo"):
+    _sesion_con_rol("admin")
+    try:
+        return client.post(f"/pagos/admin/{pedido_id}/devolver", json={"motivo": motivo})
+    finally:
+        _sesion_con_rol("comprador")
+
+
+def _aprobado_con_tarjeta(pago, cargo="chr_test_1", metodo="tarjeta"):
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.estado, fila.metodo, fila.culqi_charge_id = "aprobado", metodo, cargo
+        db.add(main.models.Liquidacion(pedido_id=fila.pedido_id, beneficiario_tipo="productor", beneficiario_id=uuid.uuid4(),
+                                       monto_bruto=40, comision_plataforma=4, monto_neto=36, estado="pendiente",
+                                       fecha_limite=main.datetime.utcnow()))
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_devolver_un_pago_con_tarjeta_anula_las_ganancias_y_devuelve_el_stock(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    _aprobado_con_tarjeta(pago)
+    devoluciones, eventos, compensar = [], [], MagicMock()
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": "ref_1"}})
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+
+    assert client.post(f"/pagos/admin/{pago.pedido_id}/devolver", json={"motivo": "x x x"}).status_code == 403  # solo el admin
+    resp = _devolver(pago.pedido_id)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"estado": "reembolsado", "monto_reembolsado": 40.0, "reembolso_manual": None,
+                           "reembolso_ids": [{"cargo": "chr_test_1", "devolucion": "ref_1", "monto": 40.0}]}
+    assert devoluciones == [("chr_test_1", 40.0)]
+    compensar.assert_called_once()
+    assert [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["anulada"]
+    assert eventos == [{"evento": "pago_reembolsado", "pedido_id": str(pago.pedido_id), "motivo": "El repartidor no pudo llevarlo",
+                        "monto": "40.00", "manual": None}]
+    # repetir no devuelve dos veces, y ya no se puede volver a pagar
+    assert _devolver(pago.pedido_id).json()["estado"] == "reembolsado" and len(devoluciones) == 1
+    assert _procesar(pago).status_code == 409
+
+
+def test_lo_pagado_por_transferencia_queda_para_devolver_a_mano(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 25.0}])
+    _aprobado_con_tarjeta(pago, cargo=None, metodo="transferencia")
+    monkeypatch.setattr(main, "crear_devolucion", MagicMock(side_effect=AssertionError("no hay cargo en Culqi")))
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    cuerpo = _devolver(pago.pedido_id).json()
+    assert (cuerpo["monto_reembolsado"], cuerpo["reembolso_manual"]) == (0.0, 25.0)
+
+
+def test_un_pedido_en_camion_devuelve_el_adelanto_y_el_saldo_por_separado(monkeypatch):
+    pago, _ = _pago_en_camion(total=1000.0, adelanto=700.0, estado="aprobado")
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.metodo, fila.culqi_charge_id, fila.metodo_saldo, fila.culqi_charge_id_saldo = "tarjeta", "chr_a", "yape", "chr_s"
+        db.commit()
+    finally:
+        db.close()
+    devoluciones = []
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": f"ref_{cargo}"}})
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    assert _devolver(pago.pedido_id).json()["monto_reembolsado"] == 1000.0
+    assert devoluciones == [("chr_a", 700.0), ("chr_s", 300.0)]
+
+
+def test_si_culqi_rechaza_la_devolucion_no_se_cancela_nada(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    _aprobado_con_tarjeta(pago)
+    compensar = MagicMock()
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: {"status_code": 400, "data": {"user_message": "Cargo no encontrado"}})
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    resp = _devolver(pago.pedido_id)
+    assert resp.status_code == 502 and "Cargo no encontrado" in resp.json()["detail"]
+    assert _estado_del_pago(pago) == "aprobado" and [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["pendiente"]
+    compensar.assert_not_called()
+    assert _devolver(_crear_pago_directo([]).pedido_id).status_code == 409  # sin pago confirmado no hay qué devolver

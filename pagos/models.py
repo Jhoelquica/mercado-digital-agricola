@@ -42,6 +42,13 @@ class Pago(Base):
     # main.py). NULL en los pagos de antes, que no vencen solos.
     vence_en = Column(DateTime, nullable=True)
     vencido_en = Column(DateTime, nullable=True)
+    # Devolución de un pedido pagado que se canceló (estado "reembolsado"): lo devuelto por Culqi, lo que queda por
+    # devolver a mano (lo pagado por transferencia), los id de las devoluciones en Culqi (JSON) y el motivo.
+    monto_reembolsado = Column(Numeric(10, 2), nullable=True)
+    reembolso_manual = Column(Numeric(10, 2), nullable=True)
+    reembolso_ids = Column(String, nullable=True)
+    motivo_reembolso = Column(String, nullable=True)
+    fecha_reembolso = Column(DateTime, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

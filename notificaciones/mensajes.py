@@ -122,6 +122,16 @@ def mensaje_pago(datos):
         return f"Recibimos tu pago{de_monto}. Tu pedido está confirmado y ya buscamos quién lo lleve."
     if evento == "saldo_pagado":
         return f"Recibimos tu saldo{de_monto}. Ya pueden descargar tu pedido: dale tu código de entrega al chofer."
+    if evento == "pago_reembolsado":
+        motivo = (datos.get("motivo") or "").strip().rstrip(".")
+        partes = [f"Cancelamos tu pedido{': ' + motivo if motivo else ''}."]
+        devuelto = soles(datos.get("monto"))
+        if devuelto and float(datos.get("monto")) > 0:
+            partes.append(f"Te devolvimos {devuelto} al medio con que pagaste; puede tardar unos días en verse en tu cuenta.")
+        manual = soles(datos.get("manual"))
+        if manual:
+            partes.append(f"Los {manual} que pagaste por transferencia te los devolvemos a la misma cuenta.")
+        return " ".join(partes)
     if evento == "pago_rechazado" and datos.get("vencido"):
         return ("Venció el plazo para pagar tu pedido y los productos volvieron al catálogo. Si siguen disponibles, "
                 "puedes pagarlo desde Mis Pedidos.")
