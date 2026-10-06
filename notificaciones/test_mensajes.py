@@ -72,3 +72,11 @@ def test_al_cancelar_un_pedido_pagado_se_dice_por_que_y_cuanto_se_devolvio():
                      "puede tardar unos días en verse en tu cuenta.")
     a_mano = mensaje_pago({"evento": "pago_reembolsado", "motivo": "x", "monto": "0.00", "manual": "25.00"})
     assert "Te devolvimos" not in a_mano and "S/ 25.00 que pagaste por transferencia" in a_mano
+
+
+
+def test_el_pago_semanal_dice_cuanto_por_donde_y_la_operacion():
+    from mensajes import mensaje_cobro
+    texto = mensaje_cobro({"monto": "120.50", "metodo": "yape", "numero_operacion": "OP123", "beneficiario_tipo": "productor"})
+    assert texto.startswith("Te pagamos S/ 120.50 por Yape (operación OP123): lo que vendiste")
+    assert "tus entregas" in mensaje_cobro({"monto": "9.00", "metodo": "transferencia", "beneficiario_tipo": "repartidor"})

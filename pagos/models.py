@@ -81,6 +81,8 @@ class Liquidacion(Base):
     # Lo que se le cobró al productor de esta venta por recojos de sus cosechas (ver DescuentoProductor): monto_neto ya
     # viene con el descuento hecho.
     descuento_recojo = Column(Numeric(10, 2), nullable=True)
+    # El pago semanal (hecho a mano por el admin) que incluyó esta liquidación; ver PagoBeneficiario.
+    pago_beneficiario_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
     # Calculada en la aplicación como fecha_creacion + 24h (ver crear_liquidaciones), no con un
     # default de columna propio: dos defaults independientes llamarían datetime.utcnow() por
@@ -102,3 +104,54 @@ class DescuentoProductor(Base):
     monto = Column(Numeric(10, 2), nullable=False)
     aplicado = Column(Numeric(10, 2), nullable=False, default=0)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
+
+
+
+class CuentaCobro(Base):
+    """Cómo cobra un agricultor o un repartidor lo que gana. ChakraShop cobra todo con Culqi y les paga A MANO una vez por
+    semana (decisión del usuario 2026-10-06): por Yape (hasta S/ 500 por operación) o por transferencia a su cuenta. La
+    registra la misma persona en "Mis ganancias"; el admin la ve para pagarle."""
+    __tablename__ = "cuentas_cobro"
+    __table_args__ = (UniqueConstraint("beneficiario_tipo", "beneficiario_id", name="uq_cuenta_cobro_beneficiario"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    beneficiario_tipo = Column(String, nullable=False)  # productor | repartidor (igual que en Liquidacion)
+    beneficiario_id = Column(UUID(as_uuid=True), nullable=False)
+    usuario_id = Column(UUID(as_uuid=True), nullable=False)  # para avisarle cuando se le paga
+    nombre = Column(String, nullable=True)  # su nombre de productor o repartidor (para la lista del admin)
+    yape_celular = Column(String, nullable=True)
+    yape_titular = Column(String, nullable=True)
+    banco = Column(String, nullable=True)
+    cuenta_titular = Column(String, nullable=True)
+    cci = Column(String, nullable=True)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class EntregaPedido(Base):
+    """Cuándo se cumplió un pedido: se entregó al comprador o quedó en la agencia de su ciudad. Desde ahí el agricultor
+    puede cobrar lo que vendió en ese pedido (antes, si el pedido se cancela, se le devuelve el dinero al comprador). La
+    escribe el consumidor de eventos_envios (rabbitmq_consumer.py)."""
+    __tablename__ = "entregas_pedido"
+
+    pedido_id = Column(UUID(as_uuid=True), primary_key=True)
+    estado = Column(String, nullable=False)  # entregado | en_agencia
+    fecha = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PagoBeneficiario(Base):
+    """Un pago semanal que el admin hizo a mano a un agricultor o repartidor (Yape o transferencia), con el número de
+    operación. Cubre todas las liquidaciones que lo apuntan (Liquidacion.pago_beneficiario_id)."""
+    __tablename__ = "pagos_beneficiarios"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    beneficiario_tipo = Column(String, nullable=False)
+    beneficiario_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    nombre = Column(String, nullable=True)
+    monto = Column(Numeric(10, 2), nullable=False)
+    metodo = Column(String, nullable=False)  # yape | transferencia
+    destino = Column(String, nullable=False)  # el celular o el banco y CCI al que se pagó (copia: la cuenta puede cambiar)
+    numero_operacion = Column(String, nullable=False)
+    cantidad = Column(Numeric(6, 0), nullable=False)  # cuántas liquidaciones cubre
+    hasta = Column(DateTime, nullable=False)  # lo cumplido antes de este momento
+    pagado_por = Column(UUID(as_uuid=True), nullable=True)  # el admin
+    fecha = Column(DateTime, nullable=False, default=datetime.utcnow)

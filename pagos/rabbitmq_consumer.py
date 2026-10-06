@@ -5,9 +5,11 @@ import threading
 from datetime import datetime, timedelta
 
 import pika
+from sqlalchemy.exc import IntegrityError
 
 from database import SessionLocal
 import models
+from logica_cobros import ESTADOS_CUMPLIDOS
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
@@ -52,6 +54,19 @@ def _procesar_mensaje(ch, method, properties, body):
         finally:
             db.close()
 
+    elif datos.get("evento") == "envio_actualizado" and datos.get("estado") in ESTADOS_CUMPLIDOS and datos.get("pedido_id"):
+        # El pedido llegó (o quedó en la agencia de la ciudad del comprador): desde ahora el agricultor puede cobrar lo
+        # que vendió en él (ver logica_cobros.py). Idempotente: vale la primera vez que se cumplió.
+        db = SessionLocal()
+        try:
+            if not db.query(models.EntregaPedido).filter(models.EntregaPedido.pedido_id == datos["pedido_id"]).first():
+                db.add(models.EntregaPedido(pedido_id=datos["pedido_id"], estado=datos["estado"], fecha=datetime.utcnow()))
+                db.commit()
+        except IntegrityError:
+            db.rollback()
+        finally:
+            db.close()
+
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
@@ -69,7 +84,12 @@ def _iniciar_consumo():
             channel.queue_bind(exchange="eventos_pedidos", queue="pagos_pedidos")
 
             channel.basic_consume(queue="pagos_pedidos", on_message_callback=_procesar_mensaje)
-            print("[Pagos] Escuchando eventos de pedidos...")
+            # Las entregas: cuándo el agricultor ya puede cobrar lo vendido.
+            channel.exchange_declare(exchange="eventos_envios", exchange_type="fanout", durable=True)
+            channel.queue_declare(queue="pagos_envios", durable=True)
+            channel.queue_bind(exchange="eventos_envios", queue="pagos_envios")
+            channel.basic_consume(queue="pagos_envios", on_message_callback=_procesar_mensaje)
+            print("[Pagos] Escuchando eventos de pedidos y de envíos...")
             channel.start_consuming()
 
         except Exception as e:

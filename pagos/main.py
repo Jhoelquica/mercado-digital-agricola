@@ -37,6 +37,7 @@ from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTO
 from rabbitmq_publisher import publicar_evento
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, crear_liquidacion_recojo, pagos_sin_liquidaciones
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
+import logica_cobros
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 from migraciones import agregar_columnas_faltantes
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
@@ -46,6 +47,9 @@ from fastapi.responses import JSONResponse
 logger = logging.getLogger("pagos.main")
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+# "Mis ganancias": quién es el agricultor (Productores) o el repartidor (Transporte) con sesión.
+PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
+TRANSPORTE_URL = os.getenv("TRANSPORTE_URL", "http://localhost:8004")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # para llamar a reponer_stock en Productos
@@ -812,3 +816,244 @@ def devolver_pago(pedido_id: uuid.UUID, datos: Devolucion, db: Session = Depends
     except Exception:
         logger.error("No se pudo avisar la devolución del pedido %s", pedido_id, exc_info=True)
     return _resumen_devolucion(pago)
+
+
+
+# ============ Cobros semanales de agricultores y repartidores (ver logica_cobros.py) ============
+BANCOS_PERU = ("BCP", "Interbank", "BBVA", "Scotiabank", "Banco de la Nación", "BanBif", "Banco Pichincha", "Mibanco",
+               "Caja Arequipa", "Caja Huancayo", "Caja Cusco", "Caja Piura", "Caja Trujillo", "Otro")
+
+
+def _beneficiario_autenticado(usuario: dict, token: str) -> dict:
+    """El agricultor o repartidor con sesión, con el id con que se guardan sus ganancias: su id de productor
+    (Productores) o de repartidor (Transporte)."""
+    rol = usuario.get("rol")
+    if rol not in ("productor", "repartidor"):
+        raise HTTPException(status_code=403, detail="Solo los agricultores y los repartidores tienen ganancias.")
+    url = f"{PRODUCTORES_URL}/productores/me" if rol == "productor" else f"{TRANSPORTE_URL}/repartidores/me"
+    try:
+        with httpx.Client() as client:
+            resp = client.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=5)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="No se pudo consultar tu perfil. Intenta de nuevo en un momento.")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Completa primero tu perfil para ver tus ganancias.")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=503, detail="No se pudo consultar tu perfil. Intenta de nuevo en un momento.")
+    perfil = resp.json()
+    return {"tipo": rol, "id": uuid.UUID(str(perfil["id"])), "nombre": perfil.get("nombre"), "usuario_id": usuario.get("sub")}
+
+
+def _cuenta_de(db: Session, tipo: str, beneficiario_id) -> "models.CuentaCobro | None":
+    return db.query(models.CuentaCobro).filter(models.CuentaCobro.beneficiario_tipo == tipo,
+                                               models.CuentaCobro.beneficiario_id == beneficiario_id).first()
+
+
+def _cuenta_salida(cuenta) -> dict | None:
+    if not cuenta:
+        return None
+    return {"yape_celular": cuenta.yape_celular, "yape_titular": cuenta.yape_titular, "banco": cuenta.banco,
+            "cuenta_titular": cuenta.cuenta_titular, "cci": cuenta.cci, "fecha_actualizacion": cuenta.fecha_actualizacion}
+
+
+def _pago_beneficiario_salida(pago) -> dict:
+    return {"id": str(pago.id), "beneficiario_tipo": pago.beneficiario_tipo, "beneficiario_id": str(pago.beneficiario_id),
+            "nombre": pago.nombre, "monto": float(pago.monto), "metodo": pago.metodo, "destino": pago.destino,
+            "numero_operacion": pago.numero_operacion, "cantidad": int(pago.cantidad), "hasta": pago.hasta, "fecha": pago.fecha}
+
+
+class CuentaCobroDatos(BaseModel):
+    yape_celular: str | None = Field(default=None, max_length=20)
+    yape_titular: str | None = Field(default=None, max_length=100)
+    banco: str | None = Field(default=None, max_length=40)
+    cuenta_titular: str | None = Field(default=None, max_length=100)
+    cci: str | None = Field(default=None, max_length=40)
+
+
+def _validar_cuenta_cobro(datos: CuentaCobroDatos) -> dict:
+    """Al menos un medio completo: Yape (celular + nombre) o cuenta bancaria (banco + CCI + titular)."""
+    texto = lambda valor: " ".join((valor or "").split())
+    celular, cci = re.sub(r"\D", "", datos.yape_celular or ""), re.sub(r"\D", "", datos.cci or "")
+    con_yape = bool(celular or texto(datos.yape_titular))
+    con_banco = bool(cci or texto(datos.banco) or texto(datos.cuenta_titular))
+    if not con_yape and not con_banco:
+        raise HTTPException(status_code=422, detail="Registra al menos un medio para cobrar: Yape o una cuenta bancaria.")
+    if con_yape:
+        if not re.fullmatch(r"9\d{8}", celular):
+            raise HTTPException(status_code=422, detail="El celular de Yape tiene 9 dígitos y empieza con 9.")
+        if len(texto(datos.yape_titular)) < 3:
+            raise HTTPException(status_code=422, detail="Escribe el nombre que aparece en tu Yape.")
+    if con_banco:
+        if texto(datos.banco) not in BANCOS_PERU:
+            raise HTTPException(status_code=422, detail="Elige tu banco o caja de la lista.")
+        if len(cci) != 20:
+            raise HTTPException(status_code=422, detail="El CCI tiene 20 dígitos: lo ves en la app de tu banco o en tu estado de cuenta.")
+        if len(texto(datos.cuenta_titular)) < 3:
+            raise HTTPException(status_code=422, detail="Escribe el nombre del titular de la cuenta.")
+    return {"yape_celular": celular if con_yape else None, "yape_titular": texto(datos.yape_titular) if con_yape else None,
+            "banco": texto(datos.banco) if con_banco else None, "cuenta_titular": texto(datos.cuenta_titular) if con_banco else None,
+            "cci": cci if con_banco else None}
+
+
+@app.get("/ganancias/me")
+def mis_ganancias(db: Session = Depends(get_db), usuario: dict = Depends(verificar_token),
+                  credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    """Lo que gana el agricultor o el repartidor: cada venta, envío o recojo con su estado (esperando la entrega, por
+    cobrar y en qué lunes se paga, pagado o anulado), los pagos que ya recibió y su cuenta de cobro."""
+    yo = _beneficiario_autenticado(usuario, credenciales.credentials)
+    liquidaciones = (db.query(models.Liquidacion)
+                     .filter(models.Liquidacion.beneficiario_tipo == yo["tipo"], models.Liquidacion.beneficiario_id == yo["id"])
+                     .order_by(models.Liquidacion.fecha_creacion.desc()).all())
+    entregas = logica_cobros.entregas_de(db, {l.pedido_id for l in liquidaciones if l.beneficiario_tipo == "productor"})
+    movimientos, por_dia = [], {}
+    totales = {"por_cobrar": Decimal("0"), "esperando_entrega": Decimal("0"), "cobrado": Decimal("0")}
+    for l in liquidaciones:
+        estado = logica_cobros.estado_de_cobro(l, entregas)
+        cumplido = logica_cobros.cumplido_en(l, entregas)
+        se_paga_el = logica_cobros.dia_de_pago(cumplido) if estado == "por_cobrar" else None
+        neto = Decimal(str(l.monto_neto))
+        if estado == "por_cobrar":
+            totales["por_cobrar"] += neto
+            por_dia[se_paga_el] = por_dia.get(se_paga_el, Decimal("0")) + neto
+        elif estado == "esperando_entrega":
+            totales["esperando_entrega"] += neto
+        elif estado == "pagado":
+            totales["cobrado"] += neto
+        movimientos.append({
+            "id": str(l.id), "pedido_id": str(l.pedido_id), "concepto": logica_cobros.concepto_de(l), "estado": estado,
+            "fecha": l.fecha_creacion, "cumplido_en": cumplido, "se_paga_el": se_paga_el, "pagado_el": l.fecha_pago,
+            "monto_bruto": float(l.monto_bruto), "comision": float(l.comision_plataforma),
+            "descuento_recojo": float(l.descuento_recojo) if l.descuento_recojo else None, "monto_neto": float(neto),
+        })
+    deuda_recojos = None
+    if yo["tipo"] == "productor":
+        deudas = db.query(models.DescuentoProductor).filter(models.DescuentoProductor.productor_id == yo["id"]).all()
+        deuda_recojos = float(sum((Decimal(str(d.monto)) - Decimal(str(d.aplicado)) for d in deudas), Decimal("0")))
+    pagos = (db.query(models.PagoBeneficiario)
+             .filter(models.PagoBeneficiario.beneficiario_tipo == yo["tipo"], models.PagoBeneficiario.beneficiario_id == yo["id"])
+             .order_by(models.PagoBeneficiario.fecha.desc()).limit(30).all())
+    return {
+        "beneficiario": {"tipo": yo["tipo"], "id": str(yo["id"]), "nombre": yo["nombre"]},
+        "cuenta": _cuenta_salida(_cuenta_de(db, yo["tipo"], yo["id"])),
+        "resumen": {**{k: float(v) for k, v in totales.items()}, "deuda_recojos": deuda_recojos},
+        "proximos_pagos": [{"fecha": dia, "monto": float(monto)} for dia, monto in sorted(por_dia.items())],
+        "movimientos": movimientos[:150],
+        "pagos": [_pago_beneficiario_salida(p) for p in pagos],
+        "yape_maximo_por_operacion": float(YAPE_MAXIMO_POR_OPERACION),
+        "bancos": list(BANCOS_PERU),
+    }
+
+
+@app.put("/ganancias/me/cuenta")
+def guardar_mi_cuenta_cobro(datos: CuentaCobroDatos, db: Session = Depends(get_db), usuario: dict = Depends(verificar_token),
+                            credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    yo = _beneficiario_autenticado(usuario, credenciales.credentials)
+    valores = _validar_cuenta_cobro(datos)
+    cuenta = _cuenta_de(db, yo["tipo"], yo["id"])
+    if not cuenta:
+        cuenta = models.CuentaCobro(beneficiario_tipo=yo["tipo"], beneficiario_id=yo["id"], usuario_id=yo["usuario_id"])
+        db.add(cuenta)
+    cuenta.usuario_id = yo["usuario_id"]
+    cuenta.nombre = yo["nombre"]
+    for campo, valor in valores.items():
+        setattr(cuenta, campo, valor)
+    cuenta.fecha_actualizacion = datetime.utcnow()
+    db.commit()
+    db.refresh(cuenta)
+    return _cuenta_salida(cuenta)
+
+
+@app.get("/ganancias/admin/por-pagar")
+def ganancias_por_pagar(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    """Lo que el admin tiene que pagar este lunes a cada agricultor y repartidor (lo cumplido antes del corte), lo que ya
+    entra en el pago del lunes siguiente y lo que todavía espera la entrega, con la cuenta de cobro de cada uno."""
+    corte = logica_cobros.corte_de_la_semana()
+    liquidaciones, entregas = logica_cobros.pendientes(db)
+    grupos = {}
+    for l in liquidaciones:
+        g = grupos.setdefault((l.beneficiario_tipo, l.beneficiario_id), {
+            "a_pagar": Decimal("0"), "cantidad_a_pagar": 0, "esta_semana": Decimal("0"), "esperando_entrega": Decimal("0")})
+        cumplido, neto = logica_cobros.cumplido_en(l, entregas), Decimal(str(l.monto_neto))
+        if cumplido is None:
+            g["esperando_entrega"] += neto
+        elif cumplido < corte:
+            g["a_pagar"] += neto
+            g["cantidad_a_pagar"] += 1
+        else:
+            g["esta_semana"] += neto
+    cuentas = {(c.beneficiario_tipo, c.beneficiario_id): c for c in db.query(models.CuentaCobro).all()}
+    filas = []
+    for (tipo, beneficiario_id), g in grupos.items():
+        if g["a_pagar"] + g["esta_semana"] + g["esperando_entrega"] <= 0:
+            continue
+        cuenta = cuentas.get((tipo, beneficiario_id))
+        filas.append({"beneficiario_tipo": tipo, "beneficiario_id": str(beneficiario_id), "nombre": cuenta.nombre if cuenta else None,
+                      "cuenta": _cuenta_salida(cuenta), "cantidad_a_pagar": g["cantidad_a_pagar"],
+                      **{k: float(g[k]) for k in ("a_pagar", "esta_semana", "esperando_entrega")}})
+    filas.sort(key=lambda f: (-f["a_pagar"], -f["esta_semana"]))
+    return {"corte": corte, "dia_de_pago": (corte - logica_cobros.HORAS_PERU).date(),
+            "yape_maximo_por_operacion": float(YAPE_MAXIMO_POR_OPERACION),
+            "total_a_pagar": float(sum((Decimal(str(f["a_pagar"])) for f in filas), Decimal("0"))), "beneficiarios": filas}
+
+
+class PagoABeneficiario(BaseModel):
+    metodo: Literal["yape", "transferencia"]
+    numero_operacion: str = Field(min_length=4, max_length=200)
+    monto: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    incluir_semana_actual: bool = False
+
+
+@app.post("/ganancias/admin/{tipo}/{beneficiario_id}/pagar")
+def registrar_pago_a_beneficiario(tipo: Literal["productor", "repartidor"], beneficiario_id: uuid.UUID, datos: PagoABeneficiario,
+                                  db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    """El admin ya le pagó (por Yape o transferencia, fuera del sistema) y lo registra con el número de operación: todo lo
+    cumplido antes del corte (o hasta ahora, si adelanta lo de esta semana) queda pagado y la persona recibe un aviso.
+    `monto` es lo que el admin vio en la lista: si cambió entre tanto (se entregó otro pedido), no se registra nada."""
+    cuenta = _cuenta_de(db, tipo, beneficiario_id)
+    if not cuenta:
+        raise HTTPException(status_code=409, detail="Todavía no registró cómo cobrar: pídele que lo haga en \"Mis ganancias\".")
+    if datos.metodo == "yape" and not cuenta.yape_celular:
+        raise HTTPException(status_code=409, detail="No registró un Yape: págale por transferencia a su cuenta.")
+    if datos.metodo == "transferencia" and not cuenta.cci:
+        raise HTTPException(status_code=409, detail="No registró una cuenta bancaria: págale por Yape.")
+    liquidaciones, entregas = logica_cobros.pendientes(db, tipo, beneficiario_id, bloquear=True)
+    ahora = datetime.utcnow()
+    hasta = ahora if datos.incluir_semana_actual else logica_cobros.corte_de_la_semana(ahora)
+    cubiertas = logica_cobros.cumplidas_antes(liquidaciones, entregas, hasta)
+    total = logica_cobros.neto(cubiertas)
+    if not cubiertas or total <= 0:
+        raise HTTPException(status_code=409, detail="No tiene nada por cobrar en este pago.")
+    if total != datos.monto:
+        raise HTTPException(status_code=409, detail=f"Lo que se le debe cambió (ahora S/ {total:.2f}): actualiza la lista antes de registrar el pago.")
+    operaciones = re.findall(r"[A-Za-z0-9-]{4,}", datos.numero_operacion)
+    if not operaciones:
+        raise HTTPException(status_code=422, detail="Escribe el número de operación que te dio Yape o tu banco.")
+    necesarias = math.ceil(total / YAPE_MAXIMO_POR_OPERACION)
+    if datos.metodo == "yape" and len(operaciones) < necesarias:
+        raise HTTPException(status_code=422, detail=(
+            f"Por Yape se manda hasta S/ {YAPE_MAXIMO_POR_OPERACION:.2f} por operación: para S/ {total:.2f} anota los "
+            f"{necesarias} números de operación separados por comas, o págale por transferencia."))
+    destino = (f"Yape {cuenta.yape_celular} ({cuenta.yape_titular})" if datos.metodo == "yape"
+               else f"{cuenta.banco} · CCI {cuenta.cci} ({cuenta.cuenta_titular})")
+    pago = models.PagoBeneficiario(beneficiario_tipo=tipo, beneficiario_id=beneficiario_id, nombre=cuenta.nombre, monto=total,
+                                   metodo=datos.metodo, destino=destino, numero_operacion=", ".join(operaciones),
+                                   cantidad=len(cubiertas), hasta=hasta, pagado_por=usuario.get("sub"), fecha=ahora)
+    db.add(pago)
+    db.flush()
+    for l in cubiertas:
+        l.estado, l.fecha_pago, l.pago_beneficiario_id = "pagado", ahora, pago.id
+    db.commit()
+    db.refresh(pago)
+    try:
+        publicar_evento({"evento": "pago_a_beneficiario", "usuario_id": str(cuenta.usuario_id), "beneficiario_tipo": tipo,
+                         "monto": _dinero(total), "metodo": datos.metodo, "numero_operacion": pago.numero_operacion,
+                         "cantidad": len(cubiertas)})
+    except Exception:
+        logger.error("No se pudo avisar el pago %s a %s %s", pago.id, tipo, beneficiario_id, exc_info=True)
+    return _pago_beneficiario_salida(pago)
+
+
+@app.get("/ganancias/admin/pagos-hechos")
+def pagos_hechos_a_beneficiarios(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    pagos = db.query(models.PagoBeneficiario).order_by(models.PagoBeneficiario.fecha.desc()).limit(50).all()
+    return [_pago_beneficiario_salida(p) for p in pagos]

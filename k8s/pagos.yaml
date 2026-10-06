@@ -100,6 +100,11 @@ spec:
             # GET /pagos/{pedido_id} pregunta a Pedidos de quién es el pedido antes de mostrar el pago.
             - name: PEDIDOS_URL
               value: http://pedidos:8003
+            # "Mis ganancias": quién es el agricultor o el repartidor con sesión.
+            - name: PRODUCTORES_URL
+              value: http://productores:8001
+            - name: TRANSPORTE_URL
+              value: http://transporte:8004
             # Constancias de las transferencias bancarias (bucket PRIVADO pagos-constancias): mismas credenciales de
             # MinIO que Productos, Productores y Transporte.
             - name: MINIO_ENDPOINT

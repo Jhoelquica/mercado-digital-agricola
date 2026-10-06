@@ -436,7 +436,7 @@ spec:
     # del admin: sin JWT se rechaza aquí, antes de llegar al servicio (que igual exige el rol).
     - kind: Rule
       priority: 100
-      match: (Method(`POST`) && Path(`/api/pagos/pagos/transferencia`)) || PathPrefix(`/api/pagos/pagos/admin/`)
+      match: (Method(`POST`) && Path(`/api/pagos/pagos/transferencia`)) || PathPrefix(`/api/pagos/pagos/admin/`) || PathPrefix(`/api/pagos/ganancias/`)
       middlewares:
         - name: rate-limit-global
         - name: cors-global

@@ -1311,7 +1311,8 @@ def test_un_pedido_sin_pagar_vence_devuelve_su_stock_y_avisa(monkeypatch):
 
     fila = _fila_pago(vencido)
     assert fila.estado == "rechazado" and fila.vencido_en is not None and "volvieron al catálogo" in fila.motivo_rechazo
-    compensar.assert_called_once_with(fila.items)
+    # La base de pruebas guarda los pagos de corridas anteriores (sus "al día" ya vencieron): solo se mira este.
+    assert [c.args for c in compensar.call_args_list].count((fila.items,)) == 1
     assert [e for e in eventos if e["pedido_id"] == str(vencido.pedido_id)] == [
         {"evento": "pago_rechazado", "pedido_id": str(vencido.pedido_id), "motivo": main.MOTIVO_VENCIDO, "vencido": True}]
     assert _estado_del_pago(al_dia) == "pendiente"
@@ -1437,3 +1438,145 @@ def test_si_culqi_rechaza_la_devolucion_no_se_cancela_nada(monkeypatch):
     assert _estado_del_pago(pago) == "aprobado" and [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["pendiente"]
     compensar.assert_not_called()
     assert _devolver(_crear_pago_directo([]).pedido_id).status_code == 409  # sin pago confirmado no hay qué devolver
+
+
+
+# ============ Cobros semanales de agricultores y repartidores (logica_cobros.py) ============
+from datetime import date as _fecha, datetime as _momento
+
+import logica_cobros
+import rabbitmq_consumer
+
+
+def _liquidacion(tipo, beneficiario_id, neto, cuando, pedido_id=None):
+    db = main.SessionLocal()
+    try:
+        fila = main.models.Liquidacion(pedido_id=pedido_id or uuid.uuid4(), beneficiario_tipo=tipo, beneficiario_id=beneficiario_id,
+                                       monto_bruto=neto, comision_plataforma=0, monto_neto=neto, estado="pendiente",
+                                       fecha_creacion=cuando, fecha_limite=cuando)
+        db.add(fila)
+        db.commit()
+        db.refresh(fila)
+        db.expunge(fila)
+        return fila
+    finally:
+        db.close()
+
+
+def _entrega(pedido_id, cuando):
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.EntregaPedido(pedido_id=pedido_id, estado="entregado", fecha=cuando))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _como_beneficiario(monkeypatch, tipo):
+    yo = {"tipo": tipo, "id": uuid.uuid4(), "nombre": f"QA {tipo}", "usuario_id": str(uuid.uuid4())}
+    monkeypatch.setattr(main, "_beneficiario_autenticado", lambda usuario, token: yo)
+    return yo
+
+
+def test_el_corte_es_el_lunes_a_medianoche_en_peru_y_se_paga_el_lunes_siguiente():
+    # miércoles 7 oct 2026, 10:00 en Perú (15:00 UTC): el corte fue el lunes 5 a las 00:00 de Perú (05:00 UTC)
+    assert logica_cobros.corte_de_la_semana(_momento(2026, 10, 7, 15)) == _momento(2026, 10, 5, 5)
+    # lunes 5 a las 03:00 UTC todavía es domingo 4 en Perú: sigue la semana anterior
+    assert logica_cobros.corte_de_la_semana(_momento(2026, 10, 5, 3)) == _momento(2026, 9, 28, 5)
+    assert logica_cobros.dia_de_pago(_momento(2026, 10, 7, 15)) == _fecha(2026, 10, 12)
+    assert logica_cobros.dia_de_pago(_momento(2026, 10, 5, 3)) == _fecha(2026, 10, 5)
+
+
+def test_lo_vendido_se_cobra_recien_cuando_el_pedido_se_entrega(monkeypatch):
+    yo = _como_beneficiario(monkeypatch, "productor")
+    hace_dos_semanas = main.datetime.utcnow() - timedelta(days=14)
+    venta = _liquidacion("productor", yo["id"], 30, hace_dos_semanas)
+    cuerpo = client.get("/ganancias/me", headers=CON_TOKEN).json()
+    assert (cuerpo["resumen"]["esperando_entrega"], cuerpo["resumen"]["por_cobrar"]) == (30.0, 0.0)
+    assert cuerpo["movimientos"][0]["estado"] == "esperando_entrega" and cuerpo["cuenta"] is None
+
+    _entrega(venta.pedido_id, hace_dos_semanas + timedelta(days=1))
+    cuerpo = client.get("/ganancias/me", headers=CON_TOKEN).json()
+    movimiento = cuerpo["movimientos"][0]
+    assert (movimiento["estado"], movimiento["concepto"]) == ("por_cobrar", "venta")
+    assert cuerpo["proximos_pagos"] == [{"fecha": movimiento["se_paga_el"], "monto": 30.0}]
+
+
+def test_la_cuenta_de_cobro_pide_un_medio_completo(monkeypatch):
+    assert client.get("/ganancias/me", headers=CON_TOKEN).status_code == 403  # un comprador no tiene ganancias
+    _como_beneficiario(monkeypatch, "repartidor")
+    guardar = lambda datos: client.put("/ganancias/me/cuenta", json=datos, headers=CON_TOKEN)
+    assert guardar({}).status_code == 422
+    assert "9 dígitos" in guardar({"yape_celular": "12345", "yape_titular": "Ana"}).json()["detail"]
+    assert "20 dígitos" in guardar({"banco": "BCP", "cci": "123", "cuenta_titular": "Ana Quispe"}).json()["detail"]
+    assert "lista" in guardar({"banco": "Banco Inventado", "cci": "0" * 20, "cuenta_titular": "Ana Quispe"}).json()["detail"]
+    cuenta = guardar({"yape_celular": "987 654 321", "yape_titular": "  Ana   Quispe ",
+                      "banco": "BCP", "cci": "002-19100-1234567890-12", "cuenta_titular": "Ana Quispe"}).json()
+    assert (cuenta["yape_celular"], cuenta["yape_titular"], cuenta["cci"]) == ("987654321", "Ana Quispe", "00219100123456789012")
+
+
+def test_el_admin_paga_lo_cumplido_hasta_el_corte_y_se_le_avisa(monkeypatch):
+    yo = _como_beneficiario(monkeypatch, "repartidor")
+    client.put("/ganancias/me/cuenta", json={"yape_celular": "987654321", "yape_titular": "Rosa Huamán"}, headers=CON_TOKEN)
+    ahora = main.datetime.utcnow()
+    corte = logica_cobros.corte_de_la_semana(ahora)
+    _liquidacion("repartidor", yo["id"], 12.5, corte - timedelta(days=2))
+    _liquidacion("repartidor", yo["id"], 8, corte + (ahora - corte) / 2)  # de esta semana
+    eventos = []
+    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    url = f"/ganancias/admin/repartidor/{yo['id']}/pagar"
+    _sesion_con_rol("admin")
+    try:
+        fila = next(f for f in client.get("/ganancias/admin/por-pagar").json()["beneficiarios"] if f["beneficiario_id"] == str(yo["id"]))
+        assert (fila["a_pagar"], fila["esta_semana"], fila["cantidad_a_pagar"]) == (12.5, 8.0, 1)
+        assert fila["nombre"] == "QA repartidor" and fila["cuenta"]["yape_celular"] == "987654321"
+        assert "cuenta bancaria" in client.post(url, json={"metodo": "transferencia", "numero_operacion": "OP12345", "monto": 12.5}).json()["detail"]
+        assert "cambió" in client.post(url, json={"metodo": "yape", "numero_operacion": "OP12345", "monto": 20}).json()["detail"]
+        pago = client.post(url, json={"metodo": "yape", "numero_operacion": "OP12345", "monto": 12.5})
+        assert pago.status_code == 200 and pago.json()["cantidad"] == 1 and pago.json()["destino"] == "Yape 987654321 (Rosa Huamán)"
+        # lo de esta semana va en el pago del lunes siguiente, salvo que el admin lo adelante
+        assert client.post(url, json={"metodo": "yape", "numero_operacion": "OP99999", "monto": 8}).status_code == 409
+        adelanto = client.post(url, json={"metodo": "yape", "numero_operacion": "OP99999", "monto": 8, "incluir_semana_actual": True})
+        assert adelanto.status_code == 200
+    finally:
+        _sesion_con_rol("comprador")
+    assert eventos[0] == {"evento": "pago_a_beneficiario", "usuario_id": yo["usuario_id"], "beneficiario_tipo": "repartidor",
+                          "monto": "12.50", "metodo": "yape", "numero_operacion": "OP12345", "cantidad": 1}
+    cuerpo = client.get("/ganancias/me", headers=CON_TOKEN).json()
+    assert [m["estado"] for m in cuerpo["movimientos"]] == ["pagado", "pagado"] and cuerpo["resumen"]["cobrado"] == 20.5
+    assert len(cuerpo["pagos"]) == 2
+
+
+def test_por_yape_mas_de_500_pide_un_numero_por_operacion(monkeypatch):
+    yo = _como_beneficiario(monkeypatch, "productor")
+    client.put("/ganancias/me/cuenta", json={"yape_celular": "912345678", "yape_titular": "Juan Quispe"}, headers=CON_TOKEN)
+    corte = logica_cobros.corte_de_la_semana()
+    venta = _liquidacion("productor", yo["id"], 750, corte - timedelta(days=3))
+    _entrega(venta.pedido_id, corte - timedelta(days=2))
+    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    url = f"/ganancias/admin/productor/{yo['id']}/pagar"
+    _sesion_con_rol("admin")
+    try:
+        una = client.post(url, json={"metodo": "yape", "numero_operacion": "OP11111", "monto": 750})
+        assert una.status_code == 422 and "2 números de operación" in una.json()["detail"]
+        assert client.post(url, json={"metodo": "yape", "numero_operacion": "OP11111, OP22222", "monto": 750}).status_code == 200
+    finally:
+        _sesion_con_rol("comprador")
+
+
+def test_la_entrega_llega_por_el_evento_del_envio_y_vale_la_primera_vez():
+    pedido = str(uuid.uuid4())
+    canal = MagicMock()
+    for estado in ("entregado", "entregado", "en_camino"):
+        rabbitmq_consumer._procesar_mensaje(canal, MagicMock(delivery_tag=1), None,
+                                            json.dumps({"evento": "envio_actualizado", "pedido_id": pedido, "estado": estado}))
+    otro = str(uuid.uuid4())
+    rabbitmq_consumer._procesar_mensaje(canal, MagicMock(delivery_tag=1), None,
+                                        json.dumps({"evento": "envio_actualizado", "pedido_id": otro, "estado": "en_camino"}))
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.EntregaPedido).filter(main.models.EntregaPedido.pedido_id == pedido).count() == 1
+        assert db.query(main.models.EntregaPedido).filter(main.models.EntregaPedido.pedido_id == otro).count() == 0
+    finally:
+        db.close()
+    assert canal.basic_ack.call_count == 4

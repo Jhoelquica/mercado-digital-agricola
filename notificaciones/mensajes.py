@@ -87,6 +87,16 @@ def mensaje_envio(datos):
     return f"Tu envío cambió de estado: {legible}."
 
 
+def mensaje_cobro(datos):
+    """El pago semanal que ChakraShop le hizo a un agricultor o repartidor."""
+    monto = soles(datos.get("monto")) or "tu pago"
+    medio = "Yape" if datos.get("metodo") == "yape" else "transferencia a tu cuenta"
+    operacion = (datos.get("numero_operacion") or "").strip()
+    que = "tus entregas" if datos.get("beneficiario_tipo") == "repartidor" else "lo que vendiste y ya se entregó"
+    return (f"Te pagamos {monto} por {medio}{f' (operación {operacion})' if operacion else ''}: {que}. "
+            "El detalle está en Mis ganancias.")
+
+
 def mensaje_recojo(datos):
     """Cómo va el recojo de una cosecha en la chacra, contado al agricultor."""
     producto = datos.get("producto_nombre") or "cosecha"
