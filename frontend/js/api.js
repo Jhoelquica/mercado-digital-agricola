@@ -323,6 +323,9 @@ const Api = {
       crearDestino: (datos) => request('pedidos', '/destinos-lejanos', { method: 'POST', body: datos, auth: true }),
       actualizarDestino: (id, datos) => request('pedidos', `/destinos-lejanos/${id}`, { method: 'PUT', body: datos, auth: true }),
       actualizarAgenciaDespacho: (latitud, longitud) => request('pedidos', '/configuracion/agencia-despacho', { method: 'PATCH', body: { latitud, longitud }, auth: true }),
+      // Pedidos pagados que todavía no se entregaron, y cancelar uno devolviendo el dinero (si el envío no salió).
+      sinEntregar: () => request('pedidos', '/pedidos/admin/sin-entregar', { auth: true }),
+      cancelar: (id, motivo) => request('pedidos', `/pedidos/${id}/cancelar`, { method: 'POST', body: { motivo }, auth: true }),
     },
   },
   transporte: {

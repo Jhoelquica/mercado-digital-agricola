@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=16c49574">
+<link rel="stylesheet" href="css/style.css?v=2860b03e">
 </head>
 <body>
 
@@ -695,6 +695,7 @@
       <nav class="admin-tabs" aria-label="Secciones del panel">
         <button type="button" class="admin-tab-btn active" data-admintab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
         <button type="button" class="admin-tab-btn" data-admintab="transferencias"><i class="ti ti-building-bank"></i> Transferencias <span id="admin-transferencias-total" class="badge-contador hidden">0</span></button>
+        <button type="button" class="admin-tab-btn" data-admintab="sin-entregar"><i class="ti ti-package"></i> Pedidos sin entregar <span id="admin-sin-entregar-total" class="badge-contador hidden" title="Pedidos pagados que no tienen quién los lleve">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="reclamos-ruc"><i class="ti ti-file-certificate"></i> Reclamos de RUC <span id="admin-reclamos-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="transportistas"><i class="ti ti-id"></i> Transportistas <span id="admin-transportistas-total" class="badge-contador hidden">0</span></button>
         <button type="button" class="admin-tab-btn" data-admintab="viajes"><i class="ti ti-route"></i> Viajes en camión <span id="admin-viajes-total" class="badge-contador hidden">0</span></button>
@@ -746,6 +747,20 @@
           <span class="empty-state-icon"><i class="ti ti-building-bank"></i></span>
           <p><strong>No hay transferencias por revisar</strong></p>
           <p class="muted">Cuando un comprador suba la constancia de su transferencia, aparece acá.</p>
+        </div>
+      </div>
+
+      <div class="admin-tab-panel" data-admin-panel="sin-entregar">
+        <div class="section-header inner">
+          <h3><i class="ti ti-package"></i> Pedidos pagados sin entregar</h3>
+          <button class="btn btn-outline" id="btn-refrescar-sin-entregar">↻ Refrescar</button>
+        </div>
+        <p class="muted admin-nota">Pedidos ya pagados que todavía no llegan al comprador. Si uno no puede salir (no hay repartidor, falta el producto o el comprador lo pide), cancélalo: el dinero se devuelve por Culqi si pagó con tarjeta o Yape (lo pagado por transferencia lo devuelves tú a la misma cuenta), los productos vuelven al catálogo y el comprador recibe un aviso con el motivo. Un pedido que ya salió no se puede cancelar.</p>
+        <div id="sin-entregar-lista" class="viajes-grid"></div>
+        <div id="sin-entregar-empty" class="empty-state hidden">
+          <span class="empty-state-icon"><i class="ti ti-package"></i></span>
+          <p><strong>Todos los pedidos pagados ya se entregaron</strong></p>
+          <p class="muted">Cuando un comprador pague un pedido, aparece acá hasta que lo reciba.</p>
         </div>
       </div>
 
@@ -1221,8 +1236,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=54c3d096"></script>
+<script src="js/api.js?v=e92de6c6"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=81dfa8ec"></script>
+<script src="js/app.js?v=5a2fa71c"></script>
 </body>
 </html>

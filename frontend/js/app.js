@@ -4030,7 +4030,7 @@ function pagoConfirmadoPedido(d) {
   return d.pago?.estado === 'aprobado' || ['confirmado', 'entregado'].includes(d.pedido.estado) || esPedidoEntregado(d);
 }
 
-const ETIQUETAS_ESTADO_PAGO = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado', adelanto_pagado: 'Adelanto pagado (70%)' };
+const ETIQUETAS_ESTADO_PAGO = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado', adelanto_pagado: 'Adelanto pagado (70%)', reembolsado: 'Devuelto' };
 const ETIQUETAS_METODO_PAGO = { tarjeta: 'tarjeta', yape: 'Yape', transferencia: 'transferencia' };
 
 function textoEstadoPago(pago) {
@@ -4058,6 +4058,7 @@ function estadoGeneralPedido(d) {
       ? { clave: 'pago_rechazado', etiqueta: 'Plazo vencido', icono: 'clock-x', pill: 'rechazado' }
       : { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
   }
+  if (d.pago?.estado === 'reembolsado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado · dinero devuelto', icono: 'receipt-refund', pill: 'cancelado' };
   if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
   if (envio?.estado === 'en_agencia') return { clave: 'en_curso', etiqueta: 'En la agencia de tu ciudad', icono: 'building-warehouse', pill: 'en_camino' };
   if (envio?.estado === 'en_destino') return { clave: 'en_curso', etiqueta: 'El camión llegó a tu ciudad', icono: 'truck', pill: 'en_camino' };
@@ -4090,7 +4091,7 @@ function pasosPedido(d) {
     {
       icono: 'credit-card', titulo: 'Pago', hecho: pagoOk, error: pagoMal,
       detalle: pagoOk ? 'Confirmado' : enRevision ? 'En revisión'
-        : pagoMal ? (pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
+        : pagoMal ? (d.pago?.estado === 'reembolsado' ? 'Devuelto' : pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
     },
     {
       icono: 'truck', titulo: 'En camino', hecho: enCamino,
@@ -4282,6 +4283,17 @@ function renderTarjetaPedido(pedido, envio, pago, ruta, indice = 0) {
       <div><strong>${esAdelanto ? `Falta pagar el adelanto (70%): ${formatearMoneda(montoAhora)}` : 'Falta pagar este pedido'}</strong>
         <span>${esAdelanto ? 'Con el adelanto reservas tu lugar en el camión; el 30% se paga cuando llegue.' : 'Está reservado: págalo con tarjeta, Yape o transferencia.'}${plazo}</span></div>
       ${botonPagar(esAdelanto ? 'Pagar el adelanto' : 'Pagar ahora')}
+    </div>`;
+  } else if (pago?.estado === 'reembolsado') {
+    // El admin canceló el pedido ya pagado (ver cancelar_pedido_pagado en Pedidos): por qué y cuánto se devolvió.
+    const devuelto = Number(pago.monto_reembolsado) || 0;
+    const aMano = Number(pago.reembolso_manual) || 0;
+    const motivo = (pedido.motivo_cancelacion || '').replace(/[.\s]+$/, '');
+    alertaPago = `
+    <div class="mp-alerta mp-alerta-info" role="status">
+      <i class="ti ti-receipt-refund"></i>
+      <div><strong>Cancelamos este pedido${motivo ? `: ${escapeAttr(motivo)}` : ''}</strong>
+        <span>${devuelto > 0 ? `Te devolvimos ${formatearMoneda(devuelto)} al medio con que pagaste; puede tardar unos días en verse en tu cuenta. ` : ''}${aMano > 0 ? `Los ${formatearMoneda(aMano)} que pagaste por transferencia te los devolvemos a la misma cuenta.` : ''}</span></div>
     </div>`;
   } else if (pago?.estado === 'adelanto_pagado' && envio?.estado === 'en_destino') {
     alertaPago = `
@@ -4477,6 +4489,7 @@ const NOTIF_TIPOS = {
   saldo_pagado: { grupo: 'pedido', icono: 'wallet', titulo: 'Saldo recibido' },
   pago_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Pago no completado' },
   saldo_rechazado: { grupo: 'pedido', icono: 'alert-circle', titulo: 'Saldo no aprobado' },
+  pago_reembolsado: { grupo: 'pedido', icono: 'receipt-refund', titulo: 'Pedido cancelado: dinero devuelto' },
   recojo_actualizado: { grupo: 'envio', icono: 'plant-2', titulo: 'Recojo de tu cosecha' },
 };
 const NOTIF_FILTROS = [
@@ -6871,7 +6884,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
   await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
-    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin()]);
+    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -7891,6 +7904,145 @@ function renderTarjetaPendienteCapacidad(envio, indice = 0) {
       </div>
       <p class="muted">Este pedido necesita un vehículo con más capacidad — ningún repartidor disponible alcanzaba. Contrata o coordina uno, y pide a quien lo va a manejar que se registre como Repartidor desde su propia cuenta (pantalla de inicio → "Soy repartidor" → completar perfil con capacidad y tipo de vehículo).</p>
     </div>`;
+}
+
+// ---- Pedidos pagados sin entregar (cancelar y devolver el dinero) ----
+// 21st.dev "Shipment Card" (estado del envío arriba, a la vista) + "Order Confirmation Card" (filas de datos: pago y
+// total). ui-ux-pro-max: acción destructiva con confirmación en la misma tarjeta, motivo obligatorio (lo lee el
+// comprador), qué va a pasar dicho antes de confirmar y aviso al terminar.
+const ENVIOS_QUE_SE_PUEDEN_CANCELAR = ['pendiente', 'pendiente_asignacion', 'propuesto', 'asignado', 'esperando_camion', 'pendiente_entrega_directa'];
+
+function textoEnvioSinEntregar(envio) {
+  if (!envio) return { texto: 'Todavía sin envío', alerta: true };
+  if (envio.estado === 'pendiente_asignacion' && envio.motivo_pendiente === 'sin_capacidad_suficiente') {
+    return { texto: 'Ningún repartidor tiene un vehículo con capacidad para llevarlo', alerta: true };
+  }
+  if (envio.estado === 'pendiente_asignacion') return { texto: 'Sin repartidor: nadie lo tomó todavía', alerta: true };
+  if (envio.estado === 'propuesto') return { texto: `Ofrecido a ${envio.transportista || 'un repartidor'}: falta que acepte` };
+  if (envio.estado === 'asignado') return { texto: `${envio.transportista || 'Un repartidor'} lo va a llevar` };
+  return { texto: ETIQUETAS_ESTADO_ENVIO[envio.estado] || envio.estado };
+}
+
+function renderTarjetaSinEntregar(d, indice = 0) {
+  const { pedido, envio, pago } = d;
+  const corto = escapeAttr(String(pedido.id).slice(0, 8));
+  const estadoEnvio = textoEnvioSinEntregar(envio);
+  const pagado = pago?.estado === 'adelanto_pagado' ? Number(pago.monto_adelanto) : Number(pago?.monto);
+  const metodos = [pago?.metodo, pago?.estado === 'aprobado' ? pago?.metodo_saldo : null].filter(Boolean);
+  const porTransferencia = metodos.includes('transferencia');
+  const destino = pedido.destino_ciudad ? `${escapeAttr(pedido.destino_ciudad)} · ${pedido.modalidad_envio === 'camion' ? 'camión' : 'agencia'}` : 'Ayacucho · reparto local';
+  const tel = String(pedido.comprador_telefono || '').replace(/\D/g, '');
+
+  let acciones;
+  if (!pago || !['aprobado', 'adelanto_pagado'].includes(pago.estado)) {
+    acciones = `<p class="viaje-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> Su pago figura como "${escapeAttr(textoEstadoPago(pago))}": no hay dinero confirmado que devolver.</p>`;
+  } else if (envio && !ENVIOS_QUE_SE_PUEDEN_CANCELAR.includes(envio.estado)) {
+    acciones = `<p class="viaje-nota"><i class="ti ti-truck" aria-hidden="true"></i> Ya salió (${escapeAttr(ETIQUETAS_ESTADO_ENVIO[envio.estado] || envio.estado)}): no se puede cancelar.</p>`;
+  } else {
+    const monto = formatearMoneda(pagado);
+    const comoSeDevuelve = metodos.every((m) => m === 'transferencia')
+      ? 'Pagó por transferencia: Culqi no puede devolverlo, lo devuelves tú a la misma cuenta del comprador (queda anotado).'
+      : porTransferencia
+        ? 'Lo pagado por transferencia lo devuelves tú a la misma cuenta del comprador (queda anotado); lo pagado con tarjeta o Yape lo devuelve Culqi.'
+        : 'Culqi lo devuelve a la tarjeta o Yape con que pagó (puede tardar unos días en verse).';
+    acciones = `
+      <div class="viaje-acciones">
+        <button type="button" class="btn btn-danger btn-sin-entregar-cancelar"><i class="ti ti-receipt-refund" aria-hidden="true"></i> Cancelar y devolver ${monto}</button>
+      </div>
+      <form class="sin-entregar-confirmar hidden" data-pedido-id="${escapeAttr(pedido.id)}" novalidate>
+        <p><i class="ti ti-alert-triangle" aria-hidden="true"></i><span>No se puede deshacer. Se devuelven ${monto}. ${comoSeDevuelve} Los productos vuelven al catálogo${envio?.estado === 'propuesto' || envio?.estado === 'asignado' ? ' y el repartidor queda libre' : ''}.</span></p>
+        <label class="perfil-campo">
+          <span>Motivo <small>(lo lee el comprador en su aviso)</small></span>
+          <textarea name="motivo" rows="2" maxlength="300" required placeholder="Ej.: no hubo repartidor para tu zona en estos días"></textarea>
+        </label>
+        <div class="form-entrega-mensaje" aria-live="polite"></div>
+        <div class="tarjeta-acciones">
+          <button type="button" class="btn btn-ghost btn-sm btn-sin-entregar-volver">Todavía no</button>
+          <button type="submit" class="btn btn-danger">Sí, cancelar y devolver ${monto}</button>
+        </div>
+      </form>`;
+  }
+  return `
+    <article class="viaje-card sin-entregar-card${estadoEnvio.alerta ? ' con-alerta' : ''}" style="animation-delay:${Math.min(indice, 8) * 50}ms" data-pedido-id="${escapeAttr(pedido.id)}">
+      <div class="viaje-cabecera sin-entregar-cabecera">
+        <div>
+          <h4><i class="ti ti-package" aria-hidden="true"></i> Pedido #${corto}</h4>
+          <small>Hecho ${tiempoRelativo(pedido.fecha_creacion)} · ${formatearFechaServidor(pedido.fecha_creacion)}</small>
+        </div>
+        <span class="pill pill-estado ${estadoEnvio.alerta ? 'pill-pendiente' : `pill-${escapeAttr(envio?.estado || 'pendiente')}`}">${escapeAttr(ETIQUETAS_ESTADO_ENVIO[envio?.estado] || 'Sin envío')}</span>
+      </div>
+      <p class="sin-entregar-envio${estadoEnvio.alerta ? ' alerta' : ''}"><i class="ti ti-${estadoEnvio.alerta ? 'user-question' : 'truck'}" aria-hidden="true"></i> ${escapeAttr(estadoEnvio.texto)}</p>
+      <dl class="sin-entregar-datos">
+        <div><dt>Comprador</dt><dd>${escapeAttr(pedido.comprador_nombre || '—')}${tel ? ` · <a href="tel:${tel}">${escapeAttr(pedido.comprador_telefono)}</a>` : ''}</dd></div>
+        <div><dt>Pagado</dt><dd><strong>${formatearMoneda(pagado)}</strong> · ${escapeAttr(textoEstadoPago(pago))}</dd></div>
+        <div><dt>Destino</dt><dd>${destino}</dd></div>
+        <div><dt>Productos</dt><dd>${(pedido.items || []).length} línea${(pedido.items || []).length === 1 ? '' : 's'}${pedido.peso_total_kg ? ` · ${Number(pedido.peso_total_kg).toLocaleString('es-PE')} kg` : ''}</dd></div>
+      </dl>
+      ${acciones}
+    </article>`;
+}
+
+async function cargarPedidosSinEntregar() {
+  const cont = document.getElementById('sin-entregar-lista');
+  const vacio = document.getElementById('sin-entregar-empty');
+  const badge = document.getElementById('admin-sin-entregar-total');
+  cont.innerHTML = renderSkeletonFilas(1);
+  let pedidos;
+  try {
+    pedidos = await Api.pedidos.admin.sinEntregar();
+  } catch (err) {
+    cont.innerHTML = '';
+    manejarError(err, 'cargar los pedidos sin entregar');
+    return;
+  }
+  // El envío y el pago de cada uno (sin envío o sin pago la tarjeta igual se muestra, con lo que haya).
+  const datos = await Promise.all(pedidos.map(async (pedido) => {
+    const [envio, pago] = await Promise.all([
+      Api.transporte.obtenerEnvio(pedido.id).catch(() => null), Api.pagos.obtener(pedido.id).catch(() => null),
+    ]);
+    return { pedido, envio, pago };
+  }));
+  // Primero los que esperan sin repartidor (los que el admin tiene que resolver), después por antigüedad.
+  const urgente = (d) => (textoEnvioSinEntregar(d.envio).alerta ? 0 : 1);
+  datos.sort((a, b) => urgente(a) - urgente(b));
+  cont.innerHTML = datos.map(renderTarjetaSinEntregar).join('');
+  vacio.classList.toggle('hidden', datos.length > 0);
+  const porAtender = datos.filter((d) => urgente(d) === 0).length;
+  badge.textContent = porAtender;
+  badge.classList.toggle('hidden', !porAtender);
+}
+
+function mostrarConfirmacionSinEntregar(tarjeta, mostrar) {
+  tarjeta.querySelector('.viaje-acciones')?.classList.toggle('hidden', mostrar);
+  const form = tarjeta.querySelector('.sin-entregar-confirmar');
+  form?.classList.toggle('hidden', !mostrar);
+  (mostrar ? form?.motivo : tarjeta.querySelector('.btn-sin-entregar-cancelar'))?.focus();
+}
+
+async function cancelarPedidoConDevolucion(form) {
+  const motivo = form.motivo.value.trim();
+  if (motivo.length < 3) {
+    mostrarMensajeEntrega(form, 'Escribe el motivo: el comprador lo va a leer en su aviso.', 'error');
+    form.motivo.focus();
+    return;
+  }
+  form.querySelectorAll('button, textarea').forEach((el) => { el.disabled = true; });
+  const enviar = form.querySelector('button[type="submit"]');
+  const textoBoton = enviar.innerHTML;
+  enviar.innerHTML = '<i class="ti ti-loader-2 icono-girando" aria-hidden="true"></i> Devolviendo…';
+  try {
+    const pedido = await Api.pedidos.admin.cancelar(form.dataset.pedidoId, motivo);
+    const dev = pedido.devolucion || {};
+    const aMano = Number(dev.reembolso_manual) || 0;
+    toast(aMano > 0
+      ? `Pedido cancelado. Falta que devuelvas ${formatearMoneda(aMano)} por transferencia al comprador.`
+      : `Pedido cancelado: se devolvieron ${formatearMoneda(dev.monto_reembolsado)} y el comprador ya tiene el aviso.`);
+    await cargarPedidosSinEntregar();
+  } catch (err) {
+    form.querySelectorAll('button, textarea').forEach((el) => { el.disabled = false; });
+    enviar.innerHTML = textoBoton;
+    mostrarMensajeEntrega(form, err.message || 'No se pudo cancelar el pedido.', 'error');
+  }
 }
 
 async function cargarEnviosPendientesPorCapacidad() {
@@ -10864,6 +11016,20 @@ function inicializarEventos() {
     decidirTransportista(form.closest('.transportista-card'), 'rechazar', motivo);
   });
   document.getElementById('btn-refrescar-viajes').addEventListener('click', cargarViajesAdmin);
+  document.getElementById('btn-refrescar-sin-entregar').addEventListener('click', cargarPedidosSinEntregar);
+  const listaSinEntregar = document.getElementById('sin-entregar-lista');
+  listaSinEntregar.addEventListener('click', (e) => {
+    const tarjeta = e.target.closest('.sin-entregar-card');
+    if (!tarjeta) return;
+    if (e.target.closest('.btn-sin-entregar-cancelar')) mostrarConfirmacionSinEntregar(tarjeta, true);
+    else if (e.target.closest('.btn-sin-entregar-volver')) mostrarConfirmacionSinEntregar(tarjeta, false);
+  });
+  listaSinEntregar.addEventListener('submit', (e) => {
+    const form = e.target.closest('.sin-entregar-confirmar');
+    if (!form) return;
+    e.preventDefault();
+    cancelarPedidoConDevolucion(form);
+  });
   const listaViajesAdmin = document.getElementById('viajes-admin-lista');
   listaViajesAdmin.addEventListener('click', (e) => {
     const tarjeta = e.target.closest('.viaje-card');

@@ -5523,3 +5523,29 @@ body.asistente-abierto { overflow: hidden; }
 .pill-completado { background: var(--verde-pastel); color: var(--verde-oscuro); }
 .notif-icon.tipo-recojo_actualizado { background: var(--verde-pastel); color: var(--color-primario); }
 .propuesta-plazo { display: flex; gap: 8px; align-items: center; margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.86rem; font-weight: 600; }
+
+/* ===== Pedidos pagados sin entregar (admin): cancelar y devolver el dinero =====
+   21st.dev "Shipment Card" (estado del envío arriba) + "Order Confirmation Card" (filas pago/total). ui-ux-pro-max:
+   confirmación en la misma tarjeta para una acción que no se deshace, motivo con etiqueta visible, botones de 44px+. */
+.sin-entregar-card.con-alerta { border-left-color: #b45309; }
+.sin-entregar-envio { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--verde-pastel); color: var(--color-primario); font-weight: 600; font-size: 0.92rem; line-height: 1.4; }
+.sin-entregar-envio.alerta { background: #fff3cd; color: #6b5212; }
+.sin-entregar-envio i { font-size: 1.15rem; flex: none; }
+.sin-entregar-datos { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 170px), 1fr)); gap: 12px 18px; margin: 0; }
+.sin-entregar-datos div { display: grid; gap: 2px; min-width: 0; }
+.sin-entregar-datos dt { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--texto-suave); }
+.sin-entregar-datos dd { margin: 0; font-size: 0.95rem; overflow-wrap: anywhere; }
+.sin-entregar-datos dd strong { font-size: 1.05rem; color: var(--color-primario); }
+.sin-entregar-card .viaje-acciones .btn { min-height: 46px; }
+.sin-entregar-confirmar { display: grid; gap: 12px; padding: 16px; border-radius: 14px; background: #fdecec; }
+.sin-entregar-confirmar > p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.92rem; font-weight: 600; color: #9b1c1c; line-height: 1.45; }
+.sin-entregar-confirmar > p i { font-size: 1.15rem; flex: none; margin-top: 1px; }
+.sin-entregar-confirmar .perfil-campo { display: grid; gap: 6px; }
+.sin-entregar-confirmar .perfil-campo > span { font-weight: 700; font-size: 0.9rem; color: var(--texto); }
+.sin-entregar-confirmar .perfil-campo small { font-weight: 500; color: var(--texto-suave); }
+.sin-entregar-confirmar textarea { width: 100%; min-height: 64px; padding: 10px 12px; border-radius: 10px; border: 1px solid #f0b4ae; background: #fff; font: inherit; font-size: 1rem; resize: vertical; }
+.sin-entregar-confirmar textarea:focus-visible { outline: 3px solid rgba(180, 35, 24, 0.25); border-color: #b42318; }
+.sin-entregar-confirmar .form-entrega-mensaje:empty { display: none; }
+.sin-entregar-confirmar .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+.sin-entregar-confirmar .btn-danger { background: #b42318; color: #fff; min-height: 44px; }
+.sin-entregar-confirmar .btn-danger:hover { background: #912018; }
