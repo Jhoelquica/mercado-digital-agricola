@@ -239,6 +239,10 @@ def tiene_otro_trabajo(db, repartidor_id, salvo_envio=None, salvo_recojo=None) -
     return envios.first() is not None or recojos.first() is not None
 
 
+def _repartidor_existe(db, repartidor_id) -> bool:
+    return bool(repartidor_id) and db.query(models.Repartidor.id).filter(models.Repartidor.id == repartidor_id).first() is not None
+
+
 def pasar_propuestas_sin_respuesta(db, ahora=None) -> int:
     """Las propuestas de envío que el repartidor no respondió a tiempo pasan al siguiente: queda anotado que no
     respondió (va al final de la fila para ese envío), se le libera si no tiene otro trabajo y se vuelve a buscar
@@ -250,7 +254,10 @@ def pasar_propuestas_sin_respuesta(db, ahora=None) -> int:
                         func.coalesce(models.Envio.fecha_propuesta, models.Envio.fecha_creacion) < limite)
                 .with_for_update(skip_locked=True).all())
     for envio in vencidas:
-        repartidor_id = envio.repartidor_id
+        # Si el repartidor ya no existe (se borró su cuenta) no hay a quién anotarle la falta de respuesta: la propuesta
+        # pasa igual al siguiente. Sin esto, la clave foránea del rechazo tumbaba el ciclo entero y ninguna otra
+        # propuesta vencida avanzaba.
+        repartidor_id = envio.repartidor_id if _repartidor_existe(db, envio.repartidor_id) else None
         if repartidor_id and not db.query(models.EnvioRechazo).filter(
                 models.EnvioRechazo.envio_id == envio.id, models.EnvioRechazo.repartidor_id == repartidor_id,
                 models.EnvioRechazo.motivo == SIN_RESPUESTA).first():

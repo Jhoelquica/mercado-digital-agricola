@@ -20,7 +20,7 @@ from sqlalchemy import case, or_
 
 import models
 from rabbitmq_publisher import publicar_evento
-from logica_repartidores import PLAZO_RESPUESTA_MINUTOS, SIN_RESPUESTA, tiene_otro_trabajo
+from logica_repartidores import PLAZO_RESPUESTA_MINUTOS, SIN_RESPUESTA, tiene_otro_trabajo, _repartidor_existe
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
@@ -115,7 +115,8 @@ def pasar_recojos_sin_respuesta(db, ahora=None) -> int:
                 .filter(models.Recojo.estado == "propuesto", models.Recojo.fecha_propuesto < limite)
                 .with_for_update(skip_locked=True).all())
     for recojo in vencidos:
-        repartidor_id = recojo.repartidor_id
+        # Un repartidor que ya no existe no frena la fila (ver logica_repartidores.pasar_propuestas_sin_respuesta).
+        repartidor_id = recojo.repartidor_id if _repartidor_existe(db, recojo.repartidor_id) else None
         if repartidor_id and not db.query(models.RecojoRechazo).filter(
                 models.RecojoRechazo.recojo_id == recojo.id, models.RecojoRechazo.repartidor_id == repartidor_id,
                 models.RecojoRechazo.motivo == SIN_RESPUESTA).first():
