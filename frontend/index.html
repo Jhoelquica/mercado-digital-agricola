@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=cde98378">
+<link rel="stylesheet" href="css/style.css?v=8b5c529c">
 </head>
 <body>
 
@@ -466,6 +466,7 @@
         <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos <span id="productor-llegadas-total" class="badge-contador hidden" title="Cosechas por coordinar">0</span></button>
         <button type="button" class="productor-tab-btn" data-tab="ganancias"><i class="ti ti-wallet"></i> Mis ganancias</button>
         <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> Gestión Económica</button>
+        <button type="button" class="productor-tab-btn" data-tab="que-sembrar"><i class="ti ti-bulb"></i> ¿Qué sembrar?</button>
       </nav>
 
       <div class="productor-tab-panel active" data-tab-panel="inicio">
@@ -571,6 +572,15 @@
           <h3><i class="ti ti-wallet"></i> Mis ganancias</h3>
         </div>
         <div id="productor-ganancias" class="ganancias"></div>
+      </div>
+
+      <div class="productor-tab-panel" data-tab-panel="que-sembrar">
+        <div class="section-header inner">
+          <h3><i class="ti ti-bulb"></i> ¿Qué me conviene sembrar?</h3>
+          <button class="btn btn-outline" id="btn-refrescar-que-sembrar">↻ Actualizar</button>
+        </div>
+        <p class="muted ventas-intro">Los cultivos ordenados por lo que más te conviene sembrar hoy: lo que se vende en ChakraShop y a cuánto, lo que cuesta producirlo, cuánto tarda y cuántos otros agricultores van a cosechar lo mismo en la misma fecha.</p>
+        <div id="productor-que-sembrar" class="que-sembrar"></div>
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="economia">
@@ -1293,8 +1303,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=a78561d8"></script>
+<script src="js/api.js?v=71691786"></script>
 <script src="js/asistente.js?v=c0323f7b"></script>
-<script src="js/app.js?v=2ea0f860"></script>
+<script src="js/app.js?v=cc18b57b"></script>
 </body>
 </html>

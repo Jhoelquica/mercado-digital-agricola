@@ -34,9 +34,17 @@ def test_el_precio_sale_del_catalogo_si_no_hubo_ventas_y_el_stock_sube_el_riesgo
     datos = r.recomendar({"haba": {"kg": 30, "soles": 120, "kg_por_mes": [5] * 6}}, {"haba": {"precio_kg": 4.0, "stock_kg": 200}},
                          {}, {}, {"haba": 1.5}, HOY)
     haba = datos["recomendaciones"][0]
-    assert haba["fuente_precio"] == "ventas en ChakraShop" and haba["riesgo"] == "medio"  # 200 kg en stock > 3 meses de venta
+    # 200 kg en el catálogo y se venden 5 kg al mes: 40 meses de stock, mucho riesgo y menos puntaje
+    assert haba["fuente_precio"] == "ventas en ChakraShop" and haba["riesgo"] == "alto"
+    assert any("alcanza para más de un año" in f for f in haba["frases"])
+    poco_stock = r.recomendar({"haba": {"kg": 30, "soles": 120, "kg_por_mes": [5] * 6}}, {"haba": {"precio_kg": 4.0, "stock_kg": 20}},
+                              {}, {}, {"haba": 1.5}, HOY)["recomendaciones"][0]
+    assert poco_stock["riesgo"] == "medio" and "unos 4 meses de lo que se vende" in " ".join(poco_stock["frases"])
+    assert poco_stock["puntaje"] > haba["puntaje"]
     solo_catalogo = r.recomendar({}, {"arveja": {"precio_kg": 5.0, "stock_kg": 0}}, {}, {}, {}, HOY)["recomendaciones"][0]
     assert (solo_catalogo["clave"], solo_catalogo["fuente_precio"], solo_catalogo["demanda_kg"]) == ("arveja", "precio del catálogo", 0)
+    sin_vender = r.recomendar({}, {"arveja": {"precio_kg": 5.0, "stock_kg": 80}}, {}, {}, {}, HOY)["recomendaciones"][0]
+    assert sin_vender["riesgo"] == "medio" and "Hay 80 kg en el catálogo y todavía no se venden." in sin_vender["frases"]
 
 
 def test_sin_clave_de_ia_no_hay_consejo_y_el_ranking_igual_sirve(monkeypatch):

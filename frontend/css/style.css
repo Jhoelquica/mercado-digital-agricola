@@ -5781,3 +5781,39 @@ body.asistente-abierto { overflow: hidden; }
 /* Tipo de producción en la tarjeta (crianza, elaboración, frutal): un chip neutro junto al estado. */
 .produccion-card-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .pill-tipo-produccion { background: #eef1f6; color: #3c4a63; }
+
+/* ===== ¿Qué me conviene sembrar? =====
+   21st.dev "Financial Score Cards" + "Leaderboard Table"; ui-ux-pro-max: riesgo con ícono y texto (nunca solo color),
+   razones a la vista y fuentes al pie; skill dataviz: medidor de un tono (verde) sobre su pista clara. */
+.que-sembrar { display: grid; gap: 18px; }
+.qs-consejo { display: flex; gap: 14px; align-items: flex-start; padding: 18px 20px; border-radius: var(--radio); background: linear-gradient(135deg, var(--color-primario), #3f5a3a); color: #fff; box-shadow: var(--sombra); }
+.qs-consejo-icono { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 12px; background: rgba(255, 255, 255, 0.15); font-size: 1.4rem; }
+.qs-consejo strong { font-size: 0.82rem; letter-spacing: .04em; text-transform: uppercase; opacity: .85; }
+.qs-consejo p { margin: 4px 0 6px; font-size: 1.05rem; line-height: 1.5; }
+.qs-consejo small { opacity: .8; font-size: 0.8rem; }
+.qs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 16px; }
+.qs-card { display: grid; gap: 14px; align-content: start; padding: 18px 20px; border-radius: var(--radio); background: #fff; border: 1px solid var(--borde); box-shadow: var(--sombra); animation: aparecerTarjeta .35s ease both; }
+.qs-card.destacada { border: 2px solid #3E8E41; }
+.qs-cabeza { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-items: center; }
+.qs-puesto { grid-row: span 2; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--color-superficie); font-family: var(--font-titulo); font-weight: 800; font-size: 1.15rem; color: var(--color-primario); }
+.qs-card.destacada .qs-puesto { background: #3E8E41; color: #fff; }
+.qs-cabeza h4 { margin: 0; font-size: 1.2rem; color: var(--color-primario); }
+.qs-riesgo { display: inline-flex; align-items: center; gap: 5px; width: fit-content; padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+.qs-riesgo.bajo { background: #e5f2e3; color: #1d5a1d; }
+.qs-riesgo.medio { background: #fff3cd; color: #6b5212; }
+.qs-riesgo.alto { background: #fbe9e4; color: #9b2c12; }
+.qs-puntaje { display: grid; gap: 6px; }
+.qs-puntaje-texto { display: flex; align-items: baseline; gap: 6px; }
+.qs-puntaje-texto strong { font-family: var(--font-titulo); font-size: 1.8rem; color: var(--color-primario); }
+.qs-puntaje-texto span { font-size: 0.88rem; font-weight: 700; color: var(--texto-suave); }
+.qs-medidor { height: 10px; border-radius: 999px; background: #e3eedf; overflow: hidden; }
+.qs-medidor span { display: block; height: 100%; border-radius: 999px; background: #3E8E41; }
+.qs-datos { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.qs-datos li { display: flex; gap: 8px; align-items: flex-start; font-size: 0.93rem; line-height: 1.4; }
+.qs-datos li > i { flex: none; margin-top: 2px; color: var(--color-primario); font-size: 1.05rem; }
+.qs-porque summary, .qs-fuentes summary { cursor: pointer; font-weight: 700; color: var(--color-primario); min-height: 36px; display: flex; align-items: center; }
+.qs-porque ul, .qs-fuentes ul { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.88rem; color: var(--texto); line-height: 1.45; }
+.qs-sin-datos { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.88rem; color: var(--texto-suave); }
+.qs-fuentes { padding: 14px 16px; border-radius: 12px; background: var(--color-superficie); }
+.qs-fuentes p { margin: 8px 0 0; font-size: 0.86rem; color: var(--texto-suave); line-height: 1.45; }
+@media (prefers-reduced-motion: reduce) { .qs-card { animation: none; } }

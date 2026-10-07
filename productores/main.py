@@ -1229,9 +1229,10 @@ def _mercado(token: str) -> tuple[dict, bool]:
         clave = _clave_de(p["nombre"])
         if not clave:
             continue
-        m = salida.setdefault(clave, {"kg": 0.0, "soles": 0.0, "kg_por_mes": [0.0] * len(p["kg_por_mes"])})
+        m = salida.setdefault(clave, {"kg": 0.0, "soles": 0.0, "soles_con_kg": 0.0, "kg_por_mes": [0.0] * len(p["kg_por_mes"])})
         m["kg"] += p["kg"]
         m["soles"] += p["soles"]
+        m["soles_con_kg"] += p.get("soles_con_kg", p["soles"])
         m["kg_por_mes"] = [a + b for a, b in zip(m["kg_por_mes"], p["kg_por_mes"])]
     return salida, True
 

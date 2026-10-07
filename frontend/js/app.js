@@ -4830,6 +4830,7 @@ async function iniciarPanelProductor() {
     ]);
     pintarResumenChacras();
     cargarMisGanancias();
+    queSembrarCargado = false;
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
     animarContadoresResumen(document.getElementById('productor-resumen'));
 
@@ -8549,6 +8550,87 @@ function marcarPeriodoVentas(cual, meses) {
   });
 }
 
+// ============ ¿QUÉ ME CONVIENE SEMBRAR? (productores/recomendacion_siembra.py) ============
+// 21st.dev "Financial Score Cards" (puntaje con su nivel) + "Leaderboard Table" (barras de puntaje en orden).
+// ui-ux-pro-max: el riesgo nunca va solo con color (ícono + texto), y cada recomendación dice por qué (sus frases) y de
+// dónde sale cada número (fuentes al pie). Skill dataviz: medidor de un solo tono con su pista más clara.
+let queSembrarCargado = false;
+const RIESGO_SIEMBRA = {
+  bajo: { texto: 'Poco riesgo de que sobre', icono: 'shield-check', clase: 'bajo' },
+  medio: { texto: 'Algo de riesgo de que sobre', icono: 'alert-triangle', clase: 'medio' },
+  alto: { texto: 'Mucho riesgo de que sobre', icono: 'alert-octagon', clase: 'alto' },
+};
+
+function nivelPuntaje(p) {
+  return p >= 70 ? 'Conviene mucho' : p >= 50 ? 'Conviene' : p >= 35 ? 'Puede ser' : 'Poco conveniente';
+}
+
+function renderTarjetaSiembraSugerida(f, i) {
+  const riesgo = RIESGO_SIEMBRA[f.riesgo] || RIESGO_SIEMBRA.medio;
+  const tendencia = { sube: ['trending-up', 'va subiendo'], baja: ['trending-down', 'va bajando'], estable: ['minus', 'se mantiene'] }[f.tendencia];
+  const cosecha = f.cosecha_estimada ? new Date(`${f.cosecha_estimada}T12:00:00`).toLocaleDateString('es-PE', { month: 'long', year: 'numeric' }) : null;
+  const datos = [
+    f.margen_kg != null
+      ? `<li><i class="ti ti-coin" aria-hidden="true"></i><span><strong>${f.margen_kg >= 0 ? 'Ganas' : 'Pierdes'} ${formatearMoneda(Math.abs(f.margen_kg))}</strong> por kg (${f.margen_pct} %)</span></li>`
+      : '<li><i class="ti ti-coin" aria-hidden="true"></i><span>Ganancia: <strong>falta el costo</strong></span></li>',
+    `<li><i class="ti ti-shopping-cart" aria-hidden="true"></i><span>${f.demanda_kg ? `<strong>${Math.round(f.demanda_kg).toLocaleString('es-PE')} kg</strong> vendidos` : '<strong>Sin ventas</strong> todavía'}${tendencia ? ` · <i class="ti ti-${tendencia[0]}" aria-hidden="true"></i> ${tendencia[1]}` : ''}</span></li>`,
+    cosecha ? `<li><i class="ti ti-calendar" aria-hidden="true"></i><span>Cosecharías en <strong>${cosecha}</strong></span></li>` : '',
+  ].join('');
+  return `
+    <article class="qs-card${i < 3 && f.completo ? ' destacada' : ''}" style="animation-delay:${Math.min(i, 8) * 50}ms">
+      <header class="qs-cabeza">
+        <span class="qs-puesto" aria-label="Puesto ${i + 1}">${i + 1}</span>
+        <h4>${escapeAttr(f.nombre)}</h4>
+        <span class="qs-riesgo ${riesgo.clase}"><i class="ti ti-${riesgo.icono}" aria-hidden="true"></i> ${riesgo.texto}</span>
+      </header>
+      <div class="qs-puntaje">
+        <div class="qs-puntaje-texto"><strong>${f.puntaje}</strong><span>/100 · ${nivelPuntaje(f.puntaje)}</span></div>
+        <div class="qs-medidor" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${f.puntaje}" aria-label="Qué tanto conviene: ${f.puntaje} de 100"><span style="width:${f.puntaje}%"></span></div>
+      </div>
+      <ul class="qs-datos">${datos}</ul>
+      <details class="qs-porque"${i < 3 ? ' open' : ''}>
+        <summary>¿Por qué?</summary>
+        <ul>${f.frases.map((t) => `<li>${escapeAttr(t)}</li>`).join('')}</ul>
+      </details>
+    </article>`;
+}
+
+function renderQueSembrar(d) {
+  const consejo = d.consejo ? `
+    <section class="qs-consejo" aria-label="Consejo">
+      <span class="qs-consejo-icono"><i class="ti ti-sparkles" aria-hidden="true"></i></span>
+      <div><strong>En pocas palabras</strong><p>${escapeAttr(d.consejo)}</p><small>Resumen hecho con IA a partir de los datos de abajo: revísalo con tu experiencia.</small></div>
+    </section>` : '';
+  const aviso = d.ventas_disponibles ? '' : `
+    <p class="ganancias-nota alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Ahora no pudimos traer las ventas: el ranking usa solo el catálogo y las siembras.</p>`;
+  const tarjetas = d.recomendaciones.length
+    ? `<div class="qs-grid">${d.recomendaciones.map(renderTarjetaSiembraSugerida).join('')}</div>`
+    : `<div class="empty-state"><span class="empty-state-icon"><i class="ti ti-bulb"></i></span>
+        <p><strong>Todavía no hay datos suficientes</strong></p>
+        <p class="muted">Cuando se vendan productos en ChakraShop o los agricultores registren sus cosechas con sus gastos, aquí verás qué conviene sembrar.</p></div>`;
+  const sinDatos = d.sin_datos.length ? `<p class="qs-sin-datos"><i class="ti ti-info-circle" aria-hidden="true"></i> Aún sin datos de venta en ChakraShop: ${d.sin_datos.map(escapeAttr).join(', ')}.</p>` : '';
+  const fuentes = `
+    <details class="qs-fuentes"><summary>¿De dónde salen los números?</summary>
+      <p>Las ventas, los precios y las siembras son de ChakraShop. El costo por kg sale de tus cosechas con gastos; si no tienes, de las de otros agricultores; si tampoco hay, de estas referencias:</p>
+      <ul>${d.referencias.map((r) => `<li><strong>${escapeAttr(r.cultivo)}:</strong> ${escapeAttr(r.fuente)}</li>`).join('')}</ul>
+      <p>Es una guía para decidir, no una promesa: el clima, las plagas y el precio del día también cuentan.</p>
+    </details>`;
+  return `${consejo}${aviso}${tarjetas}${sinDatos}${fuentes}`;
+}
+
+async function cargarQueSembrar() {
+  const cont = document.getElementById('productor-que-sembrar');
+  if (!cont) return;
+  queSembrarCargado = true;
+  cont.innerHTML = renderSkeletonFilas(2);
+  try {
+    cont.innerHTML = renderQueSembrar(await Api.productores.queSembrar());
+  } catch (err) {
+    queSembrarCargado = false;
+    cont.innerHTML = `<p class="muted">${escapeAttr(err.message || 'No se pudo calcular qué conviene sembrar.')}</p>`;
+  }
+}
+
 // ============ MIS GANANCIAS (agricultor y repartidor) ============
 // ChakraShop cobra con Culqi y les paga a mano cada lunes lo cumplido hasta el domingo (ver pagos/logica_cobros.py).
 // 21st.dev "Wallet Card" (lo por cobrar arriba, grande) + "Invoice History Table" (movimientos con su estado y el total
@@ -10894,6 +10976,7 @@ function activarTabProductor(nombreTab) {
       mapaUbicacionChacra?.mapa.invalidateSize();
     }, 60);
   }
+  if (nombreTab === 'que-sembrar' && !queSembrarCargado) cargarQueSembrar();
   if (nombreTab === 'economia') {
     if (!graficosEconomiaProductorListos) {
       dibujarGraficosEconomiaProductor(Estado.registrosProduccion || []);
@@ -12300,6 +12383,7 @@ function inicializarEventos() {
     e.preventDefault();
     registrarPagoBeneficiario(form);
   });
+  document.getElementById('btn-refrescar-que-sembrar').addEventListener('click', cargarQueSembrar);
   document.querySelectorAll('.ventas-periodo').forEach((grupo) => grupo.addEventListener('click', (e) => {
     const boton = e.target.closest('.ventas-periodo-btn');
     if (!boton) return;

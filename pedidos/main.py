@@ -1247,13 +1247,16 @@ def ventas_del_mercado(meses: int = Query(6, ge=1, le=24), db: Session = Depends
         nombre = (l["nombre"] or "").strip()
         if not nombre:
             continue
-        g = grupos.setdefault(nombre.lower(), {"nombre": nombre, "kg": 0.0, "soles": 0.0, "pedidos": set(),
+        g = grupos.setdefault(nombre.lower(), {"nombre": nombre, "kg": 0.0, "soles": 0.0, "soles_con_kg": 0.0, "pedidos": set(),
                                                "kg_por_mes": {m: 0.0 for m in ventana}})
         g["kg"] += l["kg"]
         g["soles"] += l["soles"]
+        if l["kg"]:
+            g["soles_con_kg"] += l["soles"]  # para el precio por kg: solo lo vendido con peso (no los atados o unidades)
         g["pedidos"].add(l["pedido_id"])
         if l["mes"] in g["kg_por_mes"]:
             g["kg_por_mes"][l["mes"]] += l["kg"]
     return {"meses": ventana, "productos": [
-        {"nombre": g["nombre"], "kg": round(g["kg"], 2), "soles": round(g["soles"], 2), "pedidos": len(g["pedidos"]),
+        {"nombre": g["nombre"], "kg": round(g["kg"], 2), "soles": round(g["soles"], 2),
+         "soles_con_kg": round(g["soles_con_kg"], 2), "pedidos": len(g["pedidos"]),
          "kg_por_mes": [round(g["kg_por_mes"][m], 2) for m in ventana]} for g in grupos.values()]}

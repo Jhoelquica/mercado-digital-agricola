@@ -248,6 +248,8 @@ const Api = {
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),
     // Cómo se obtiene cada alimento: tipos, rubros de gasto y etapas (público).
     plantillas: () => request('productores', '/plantillas'),
+    // Ranking de cultivos para sembrar ahora (ventas, costos, ciclo y competencia).
+    queSembrar: () => request('productores', '/que-sembrar', { auth: true }),
     plantillaPara: (nombre) => request('productores', `/plantillas/para?nombre=${encodeURIComponent(nombre)}`),
     produccion: {
       crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),

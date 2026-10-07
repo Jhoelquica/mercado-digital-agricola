@@ -82,7 +82,7 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         cosecha = hoy + timedelta(days=dias) if dias else None
 
         if m and m["kg"] > 0:
-            precio, fuente_precio = m["soles"] / m["kg"], "ventas en ChakraShop"
+            precio, fuente_precio = m.get("soles_con_kg", m["soles"]) / m["kg"], "ventas en ChakraShop"
         elif c and c.get("precio_kg"):
             precio, fuente_precio = c["precio_kg"], "precio del catálogo"
         else:
@@ -103,8 +103,15 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         compiten = [f for f in otras if cosecha and abs((f - cosecha).days) <= DIAS_COMPETENCIA] if cosecha else otras
         nivel = 0 if not compiten else 1 if len(compiten) <= 2 else 2
         por_mes = demanda_kg / max(1, len(m["kg_por_mes"])) if m else 0
-        if c and c.get("stock_kg") and por_mes and c["stock_kg"] > 3 * por_mes:
-            nivel = min(2, nivel + 1)  # ya hay en el catálogo más de 3 meses de lo que se vende
+        # Lo que ya está en el catálogo frente a lo que se vende: más de 3 meses, algo de riesgo; más de un año, mucho.
+        stock = c["stock_kg"] if c and c.get("stock_kg") else 0
+        meses_de_stock = stock / por_mes if stock and por_mes else None
+        if meses_de_stock and meses_de_stock > 12:
+            nivel = 2
+        elif meses_de_stock and meses_de_stock > 3:
+            nivel = min(2, nivel + 1)
+        elif stock and not demanda_kg:
+            nivel = max(nivel, 1)  # hay en el catálogo y no se vende: algo de riesgo
 
         if precio is None and not demanda_kg and not otras:
             if ref or clave in costos_plataforma:
@@ -117,7 +124,11 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         if margen_pct is not None:
             puntaje = 0.45 * (max(-1, min(1, margen_pct)) + 1) / 2 + 0.35 * max(0, min(1, demanda)) + 0.2 * riesgo
         else:
-            puntaje = 0.8 * (0.6 * max(0, min(1, demanda)) + 0.4 * riesgo)  # sin costo: menos seguro
+            puntaje = 0.6 * (0.6 * max(0, min(1, demanda)) + 0.4 * riesgo)  # sin costo: menos seguro
+        if not demanda_kg:
+            puntaje *= 0.75  # sin ventas comprobadas en la plataforma: la demanda es una apuesta
+        if meses_de_stock and meses_de_stock > 12:
+            puntaje *= 0.6  # ya hay más de un año de lo que se vende: sembrar más hace bajar el precio
 
         frases = []
         if demanda_kg:
@@ -139,6 +150,13 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
                           f"cosecha{'n' if len(compiten) > 1 else ''} cerca de esa fecha: puede sobrar y bajar el precio.")
         elif cosecha:
             frases.append("Nadie más en la plataforma cosecha cerca de esa fecha.")
+        if meses_de_stock and meses_de_stock > 12:
+            frases.append(f"Ya hay {_miles(stock)} kg en el catálogo: alcanza para más de un año de lo que se vende. "
+                          "Sembrar más puede hacer bajar el precio.")
+        elif meses_de_stock and meses_de_stock > 3:
+            frases.append(f"Ya hay {_miles(stock)} kg en el catálogo: unos {round(meses_de_stock)} meses de lo que se vende.")
+        elif stock and not demanda_kg:
+            frases.append(f"Hay {_miles(stock)} kg en el catálogo y todavía no se venden.")
         if ref:
             frases.append(f"Rinde unos {_miles(ref['rendimiento_kg_ha'])} kg por hectárea ({ref['fuente']}).")
 
@@ -155,7 +173,7 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
             "rendimiento_kg_ha": ref["rendimiento_kg_ha"] if ref else None, "frases": frases,
             "completo": precio is not None and margen is not None and demanda_kg > 0,
         })
-    filas.sort(key=lambda f: (-f["completo"], -f["puntaje"]))
+    filas.sort(key=lambda f: -f["puntaje"])
     return {"recomendaciones": filas, "sin_datos": sorted(sin_datos)}
 
 
@@ -163,8 +181,12 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
 SISTEMA_CONSEJO = (
     "Eres un asesor agrario que habla con agricultores de la sierra de Ayacucho, Perú, muchos de edad avanzada. Con el "
     "ranking que te paso (ya calculado con datos reales de la plataforma), escribe un consejo corto: 2 o 3 oraciones en "
-    "español sencillo, recomendando 1 o 2 cultivos y diciendo por qué con los datos que ves. No inventes números ni "
-    "datos que no estén en el ranking; si falta información, dilo. Nada de listas ni de saludos."
+    "español sencillo, recomendando 1 o 2 cultivos y diciendo por qué con los datos que ves. Trátalo de usted, sin apodos "
+    "ni saludos. 'ventas_tendencia' es si los KILOS vendidos suben o bajan (no habla del precio). Si un cultivo tiene 0 "
+    "kg vendidos, di que todavía no se vende en la plataforma. Si todos los puntajes son menores a 50, di con naturalidad "
+    "que todavía hay pocos datos y que ninguno destaca claramente (sin mencionar puntajes ni esta regla). No recomiendes "
+    "un cultivo cuyo riesgo_de_que_sobre sea 'alto'; si es el primero, explica que conviene esperar por eso. No inventes "
+    "números ni datos que no estén en el ranking. Nada de listas."
 )
 ESQUEMA_CONSEJO = {"type": "object", "properties": {"consejo": {"type": "string"}}, "required": ["consejo"]}
 _cache_consejos = {}
@@ -177,8 +199,10 @@ def consejo(ranking: list[dict], clave_productor: str) -> str | None:
     cliente = sugerencia_cosecha._cliente_ia()
     if not cliente or not ranking:
         return None
-    resumen = [{k: f[k] for k in ("nombre", "puntaje", "precio_kg", "costo_kg", "margen_kg", "demanda_kg", "tendencia",
-                                  "cosecha_estimada", "competencia", "riesgo")} for f in ranking[:5]]
+    resumen = [{"nombre": f["nombre"], "puntaje": f["puntaje"], "precio_kg": f["precio_kg"], "costo_kg": f["costo_kg"],
+                "margen_kg": f["margen_kg"], "kg_vendidos_6_meses": f["demanda_kg"], "ventas_tendencia": f["tendencia"],
+                "cosecha_estimada": f["cosecha_estimada"], "otros_agricultores_cosechan_cerca": f["competencia"],
+                "kg_ya_en_catalogo": f["stock_catalogo_kg"], "riesgo_de_que_sobre": f["riesgo"]} for f in ranking[:5]]
     clave = hashlib.sha256(json.dumps(resumen, sort_keys=True).encode()).hexdigest()
     with _candado:
         guardado = _cache_consejos.get(clave)
