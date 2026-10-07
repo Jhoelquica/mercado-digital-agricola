@@ -14,7 +14,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from auth import verificar_token, requiere_rol
+from auth import verificar_token, requiere_rol, security
+from fastapi.security import HTTPAuthorizationCredentials
 from auth import secreto_de_servicio_valido
 import pybreaker
 from validaciones import (
@@ -28,6 +29,7 @@ from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from migraciones import agregar_columnas_faltantes
 import sugerencia_cosecha
 import plantillas_produccion as plantillas
+import recomendacion_siembra
 
 from database import Base, engine, SessionLocal
 import models
@@ -232,6 +234,8 @@ class CompletarCosechaDatos(_ConUbicacionGps):
     # presentación del 2026-10-01). Si un cliente viejo lo sigue mandando, se ignora.
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
+# "¿Qué me conviene sembrar?": lo que se vende en la plataforma.
+PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
 # produccion) — ningún otro servicio llama a estos endpoints.
@@ -1181,3 +1185,96 @@ def borrar_gasto(registro_id: uuid.UUID, gasto_id: uuid.UUID, db: Session = Depe
     _recalcular_costos(registro, db)
     db.commit()
     return _detalle_gastos(registro, db)
+
+
+
+# ============ ¿Qué me conviene sembrar? (ver recomendacion_siembra.py) ============
+def _clave_de(registro_o_nombre) -> str | None:
+    if isinstance(registro_o_nombre, str):
+        return plantillas.clave_para(registro_o_nombre)
+    return registro_o_nombre.plantilla if registro_o_nombre.plantilla in plantillas.ALIMENTOS else plantillas.clave_para(registro_o_nombre.cultivo)
+
+
+def _kg_cosechados(r) -> float | None:
+    if r.cantidad_cosechada is None:
+        return None
+    if r.unidad_medida == "kg":
+        return float(r.cantidad_cosechada)
+    return float(r.cantidad_cosechada) * float(r.equivalencia_kg) if r.equivalencia_kg else None
+
+
+def _costos_por_kg(registros) -> dict:
+    """{clave: S/ por kg} de cosechas con gastos anotados (suma de costos / suma de kilos)."""
+    sumas = {}
+    for r in registros:
+        clave, kg = _clave_de(r), _kg_cosechados(r)
+        costo = float(r.costo_semillas or 0) + float(r.costo_insumos or 0) + float(r.costo_mano_obra or 0)
+        if not clave or not kg or costo <= 0:
+            continue
+        s = sumas.setdefault(clave, [0.0, 0.0])
+        s[0] += costo
+        s[1] += kg
+    return {k: v[0] / v[1] for k, v in sumas.items() if v[1]}
+
+
+def _mercado(token: str) -> tuple[dict, bool]:
+    try:
+        resp = httpx.get(f"{PEDIDOS_URL}/ventas/mercado", params={"meses": 6}, headers={"Authorization": f"Bearer {token}"}, timeout=8)
+        resp.raise_for_status()
+    except Exception:
+        logger.warning("Qué sembrar: Pedidos no respondió las ventas del mercado", exc_info=True)
+        return {}, False
+    salida = {}
+    for p in resp.json()["productos"]:
+        clave = _clave_de(p["nombre"])
+        if not clave:
+            continue
+        m = salida.setdefault(clave, {"kg": 0.0, "soles": 0.0, "kg_por_mes": [0.0] * len(p["kg_por_mes"])})
+        m["kg"] += p["kg"]
+        m["soles"] += p["soles"]
+        m["kg_por_mes"] = [a + b for a, b in zip(m["kg_por_mes"], p["kg_por_mes"])]
+    return salida, True
+
+
+def _catalogo_por_alimento() -> dict:
+    try:
+        resp = httpx.get(f"{PRODUCTOS_URL}/productos", timeout=8)
+        resp.raise_for_status()
+    except Exception:
+        logger.warning("Qué sembrar: Productos no respondió el catálogo", exc_info=True)
+        return {}
+    grupos = {}
+    for p in resp.json():
+        clave = _clave_de(p.get("nombre") or "")
+        if not clave or p.get("unidad_medida") != "kg" or not p.get("precio"):
+            continue
+        g = grupos.setdefault(clave, {"precios": [], "stock_kg": 0.0})
+        g["precios"].append(float(p["precio"]))
+        g["stock_kg"] += float(p.get("stock") or 0)
+    return {k: {"precio_kg": sum(g["precios"]) / len(g["precios"]), "stock_kg": g["stock_kg"]} for k, g in grupos.items()}
+
+
+@app.get("/que-sembrar")
+def que_me_conviene_sembrar(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor")),
+                            credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    """El ranking de cultivos para sembrar ahora, con lo que se vende, a cuánto, cuánto cuesta producirlo, cuánto tarda y
+    cuántos otros agricultores cosechan en la misma fecha. Sin rutas bajo /productores/ (chocaría con /productores/{id})."""
+    productor = _obtener_productor_del_token(usuario, db)
+    hoy = datetime.utcnow()
+    mercado, ventas_ok = _mercado(credenciales.credentials)
+    planificadas = {}
+    for r in (db.query(models.RegistroProduccion)
+              .filter(models.RegistroProduccion.estado == "planificado", models.RegistroProduccion.productor_id != productor.id,
+                      models.RegistroProduccion.fecha_cosecha_estimada >= hoy - timedelta(days=30)).all()):
+        clave = _clave_de(r)
+        if clave:
+            planificadas.setdefault(clave, []).append(r.fecha_cosecha_estimada)
+    cosechados = (db.query(models.RegistroProduccion)
+                  .filter(models.RegistroProduccion.estado.in_(("cosechado", "aprobado"))).all())
+    resultado = recomendacion_siembra.recomendar(
+        mercado, _catalogo_por_alimento(), planificadas,
+        _costos_por_kg([r for r in cosechados if str(r.productor_id) == str(productor.id)]),
+        _costos_por_kg([r for r in cosechados if str(r.productor_id) != str(productor.id)]), hoy)
+    return {**resultado, "generado": hoy, "ventas_disponibles": ventas_ok,
+            "consejo": recomendacion_siembra.consejo(resultado["recomendaciones"], str(productor.id)),
+            "referencias": [{"cultivo": plantillas.ALIMENTOS[k][0], "fuente": v["fuente"]} for k, v in recomendacion_siembra.REFERENCIAS.items()]}

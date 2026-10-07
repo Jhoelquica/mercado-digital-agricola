@@ -1580,3 +1580,28 @@ def test_el_admin_ve_las_ventas_de_la_plataforma_y_los_cancelados():
     actual = datos["por_mes"][-1]
     assert actual["soles"] >= 1234.5 and actual["soles_envio"] >= 5 and actual["compradores_nuevos"] >= 1
     assert {"cancelados_devueltos", "sin_pagar"} <= set(actual)
+
+
+
+def test_las_ventas_del_mercado_van_por_producto_sin_decir_quien_vende():
+    nombre = f"Oca QA {uuid.uuid4().hex[:6]}"
+    db = main.SessionLocal()
+    try:
+        for kg in (10, 15):
+            pedido = main.models.Pedido(usuario_id=uuid.uuid4(), comprador_nombre="QA", estado="entregado",
+                                        destino_latitud=-13.16, destino_longitud=-74.22, costo_envio=5)
+            db.add(pedido)
+            db.flush()
+            db.add(main.models.PedidoItem(pedido_id=pedido.id, producto_id=uuid.uuid4(), cantidad=kg, precio_unitario=3,
+                                          peso_kg=kg, productor_id=uuid.uuid4(), producto_nombre=nombre))
+        db.commit()
+    finally:
+        db.close()
+    _como(str(uuid.uuid4()), "productor")
+    try:
+        datos = client.get("/ventas/mercado", params={"meses": 6}, headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    oca = next(p for p in datos["productos"] if p["nombre"] == nombre)
+    assert (oca["kg"], oca["soles"], oca["pedidos"], oca["kg_por_mes"][-1]) == (25.0, 75.0, 2, 25.0)
+    assert "productor_id" not in oca and len(datos["meses"]) == 6

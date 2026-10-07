@@ -108,6 +108,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: db-productores
       PRODUCTOS_URL: http://productos:8002
+      PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
       PRODUCTORES_A_PRODUCTOS_SECRETO: dev-productores-a-productos-secreto
       PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto

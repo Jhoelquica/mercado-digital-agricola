@@ -1232,3 +1232,28 @@ def ventas_de_la_plataforma(meses: int = Query(12, ge=1, le=24), db: Session = D
         fila.update({"compradores_nuevos": nuevos[i], "cancelados_devueltos": devueltos.get(fila["mes"], 0),
                      "sin_pagar": sin_pagar.get(fila["mes"], 0), "soles_envio": round(envio_por_mes.get(fila["mes"], 0.0), 2)})
     return datos
+
+
+
+@app.get("/ventas/mercado")
+def ventas_del_mercado(meses: int = Query(6, ge=1, le=24), db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
+    """Lo que se vendió en la plataforma por producto (pedidos pagados), sin decir quién lo vendió ni a quién: la
+    demanda que usa "¿qué me conviene sembrar?" en Productores."""
+    ahora = datetime.utcnow()
+    ventana = ventas.meses_hasta(ahora, meses)
+    desde = datetime(int(ventana[0][:4]), int(ventana[0][5:]), 1) + ventas.HORAS_PERU
+    grupos = {}
+    for l in _lineas_vendidas(db, desde):
+        nombre = (l["nombre"] or "").strip()
+        if not nombre:
+            continue
+        g = grupos.setdefault(nombre.lower(), {"nombre": nombre, "kg": 0.0, "soles": 0.0, "pedidos": set(),
+                                               "kg_por_mes": {m: 0.0 for m in ventana}})
+        g["kg"] += l["kg"]
+        g["soles"] += l["soles"]
+        g["pedidos"].add(l["pedido_id"])
+        if l["mes"] in g["kg_por_mes"]:
+            g["kg_por_mes"][l["mes"]] += l["kg"]
+    return {"meses": ventana, "productos": [
+        {"nombre": g["nombre"], "kg": round(g["kg"], 2), "soles": round(g["soles"], 2), "pedidos": len(g["pedidos"]),
+         "kg_por_mes": [round(g["kg_por_mes"][m], 2) for m in ventana]} for g in grupos.values()]}

@@ -1120,3 +1120,40 @@ def test_la_cadena_dice_recogidos_en_la_granja_para_los_huevos(monkeypatch):
     texto = capturado["json"]["datos_cosecha"]
     assert "360 unidad de Huevo de campo recogidos en granja GR-1 por Granja Sol (periodo desde el 01/01/2026, hasta el 20/08/2026)." in texto
     assert "Al registrar lo recogido: a 3,10 km de la granja" in texto and "Foto de lo recogido" in texto
+
+
+
+# ============ ¿Qué me conviene sembrar? ============
+
+def test_que_sembrar_junta_ventas_catalogo_y_siembras_de_otros(monkeypatch):
+    class Respuesta:
+        def __init__(self, datos):
+            self._datos = datos
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._datos
+
+    def get_falso(url, **kwargs):
+        if url.endswith("/ventas/mercado"):
+            assert kwargs["headers"]["Authorization"].startswith("Bearer ")
+            return Respuesta({"meses": ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"],
+                              "productos": [{"nombre": "Papa amarilla", "kg": 500, "soles": 1750, "pedidos": 9, "kg_por_mes": [50, 60, 80, 90, 100, 120]}]})
+        return Respuesta([{"nombre": "Quinua roja", "unidad_medida": "kg", "precio": 9.5, "stock": 40}])
+
+    monkeypatch.setattr(main.httpx, "get", get_falso)
+    monkeypatch.setattr(main.recomendacion_siembra, "consejo", lambda ranking, clave: "Siembra papa.")
+    otro = _crear_con_etapas(cultivo="Quinua blanca", fecha_siembra=datetime.utcnow().isoformat(),
+                             fecha_cosecha_estimada=(datetime.utcnow() + timedelta(days=165)).isoformat())
+    assert otro["estado"] == "planificado"
+    _nuevo_productor()  # quien pregunta es otro agricultor
+    resp = client.get("/que-sembrar", headers={"Authorization": "Bearer token"})
+    assert resp.status_code == 200, resp.text
+    datos = resp.json()
+    papa = next(f for f in datos["recomendaciones"] if f["clave"] == "papa")
+    quinua = next(f for f in datos["recomendaciones"] if f["clave"] == "quinua")
+    assert (papa["precio_kg"], papa["demanda_kg"], papa["tendencia"]) == (3.5, 500, "sube")
+    assert quinua["fuente_precio"] == "precio del catálogo" and quinua["competencia"] >= 1
+    assert datos["consejo"] == "Siembra papa." and datos["ventas_disponibles"] is True and datos["referencias"]
+    _auth(str(uuid.uuid4()), rol="comprador")
+    assert client.get("/que-sembrar", headers={"Authorization": "Bearer token"}).status_code == 403

@@ -53,6 +53,9 @@ spec:
               value: db-productores
             - name: PRODUCTOS_URL
               value: http://productos:8002
+            # "¿Qué me conviene sembrar?": lo que se vende en la plataforma.
+            - name: PEDIDOS_URL
+              value: http://pedidos:8003
             - name: DB_USER
               valueFrom:
                 secretKeyRef:

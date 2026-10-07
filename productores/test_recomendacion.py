@@ -1,0 +1,45 @@
+"""Ranking de "¿qué me conviene sembrar?" (recomendacion_siembra.recomendar): sin base de datos ni red."""
+from datetime import datetime, timedelta
+
+import recomendacion_siembra as r
+
+HOY = datetime(2026, 10, 7)
+
+
+def test_gana_lo_que_se_vende_deja_margen_y_nadie_mas_cosecha():
+    mercado = {"papa": {"kg": 600, "soles": 600 * 3.5, "kg_por_mes": [50, 50, 80, 120, 150, 150]},
+               "quinua": {"kg": 60, "soles": 60 * 9, "kg_por_mes": [10] * 6}}
+    planificadas = {"quinua": [HOY + timedelta(days=165 + d) for d in (-10, 0, 12)]}  # 3 cosechan cerca: riesgo alto
+    datos = r.recomendar(mercado, {}, planificadas, {"papa": 1.2}, {}, HOY)
+    papa, quinua = datos["recomendaciones"][0], datos["recomendaciones"][1]
+    assert (papa["clave"], papa["fuente_costo"], papa["tendencia"], papa["riesgo"]) == ("papa", "tus cosechas", "sube", "bajo")
+    assert papa["margen_kg"] == 2.3 and papa["margen_pct"] == 66 and papa["completo"]
+    assert (quinua["clave"], quinua["competencia"], quinua["riesgo"]) == ("quinua", 3, "alto")
+    assert quinua["fuente_costo"] == "referencia" and quinua["costo_kg"] == round(2800 / 1250, 2)
+    assert any("3 siembras de otros agricultores" in f for f in quinua["frases"])
+    assert any("cosecharías en" in f for f in papa["frases"])
+
+
+def test_sin_costo_queda_detras_y_lo_que_no_tiene_datos_no_entra():
+    mercado = {"oca": {"kg": 300, "soles": 900, "kg_por_mes": [50] * 6}, "papa": {"kg": 100, "soles": 350, "kg_por_mes": [0, 0, 0, 0, 50, 50]}}
+    datos = r.recomendar(mercado, {}, {}, {}, {"papa": 1.0}, HOY)
+    claves = [f["clave"] for f in datos["recomendaciones"]]
+    assert claves[0] == "papa" and "oca" in claves  # la oca no tiene costo: va después aunque se venda más
+    oca = next(f for f in datos["recomendaciones"] if f["clave"] == "oca")
+    assert oca["margen_kg"] is None and not oca["completo"] and any("anota tus gastos" in f for f in oca["frases"])
+    assert "Trigo" in datos["sin_datos"] and "trigo" not in claves
+
+
+def test_el_precio_sale_del_catalogo_si_no_hubo_ventas_y_el_stock_sube_el_riesgo():
+    datos = r.recomendar({"haba": {"kg": 30, "soles": 120, "kg_por_mes": [5] * 6}}, {"haba": {"precio_kg": 4.0, "stock_kg": 200}},
+                         {}, {}, {"haba": 1.5}, HOY)
+    haba = datos["recomendaciones"][0]
+    assert haba["fuente_precio"] == "ventas en ChakraShop" and haba["riesgo"] == "medio"  # 200 kg en stock > 3 meses de venta
+    solo_catalogo = r.recomendar({}, {"arveja": {"precio_kg": 5.0, "stock_kg": 0}}, {}, {}, {}, HOY)["recomendaciones"][0]
+    assert (solo_catalogo["clave"], solo_catalogo["fuente_precio"], solo_catalogo["demanda_kg"]) == ("arveja", "precio del catálogo", 0)
+
+
+def test_sin_clave_de_ia_no_hay_consejo_y_el_ranking_igual_sirve(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(r.sugerencia_cosecha, "_cliente", None, raising=False)
+    assert r.consejo([{"nombre": "Papa"}], "p-1") is None
