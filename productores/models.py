@@ -95,6 +95,12 @@ class RegistroProduccion(Base):
     foto_cosecha_url = Column(String, nullable=True)
     foto_cosecha_sha256 = Column(String, nullable=True)
     foto_cosecha_fecha = Column(DateTime, nullable=True)
+    # Cómo se obtiene este alimento y sus etapas (ver plantillas_produccion.py): la clave del alimento ("papa",
+    # "huevo", "generica_temporada"...) y su tipo (temporada | frutal | crianza | elaboracion). None en los registros
+    # de antes (decisión del usuario 2026-10-07: esos se quedan con sus 3 costos). Con plantilla, costo_semillas,
+    # costo_insumos y costo_mano_obra son la suma de sus gastos (GastoProduccion) por rubro.
+    plantilla = Column(String, nullable=True)
+    tipo_produccion = Column(String, nullable=True)
 
 
 class HistorialVerificacionCosecha(Base):
@@ -117,3 +123,22 @@ class HistorialVerificacionCosecha(Base):
     accion = Column(String, nullable=False)  # aprobado | rechazado
     motivo = Column(String, nullable=True)  # obligatorio en la práctica solo para "rechazado" (validado en main.py)
     fecha = Column(DateTime, default=datetime.utcnow)
+
+
+
+class GastoProduccion(Base):
+    """Un gasto de una siembra (o de un periodo de crianza, o de una elaboración) en una de sus etapas: "Aporque: 4
+    jornales × S/ 50", "Siembra: semilla S/ 600". Se anota cuando ocurre, no solo al sembrar y al cosechar."""
+    __tablename__ = "gastos_produccion"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    registro_id = Column(UUID(as_uuid=True), ForeignKey("registros_produccion.id"), nullable=False, index=True)
+    etapa = Column(String, nullable=False)
+    rubro = Column(String, nullable=False)
+    descripcion = Column(String, nullable=True)
+    cantidad = Column(Numeric(12, 2), nullable=True)
+    unidad = Column(String, nullable=True)
+    precio_unitario = Column(Numeric(12, 2), nullable=True)
+    monto = Column(Numeric(12, 2), nullable=False)
+    fecha = Column(DateTime, nullable=False, default=datetime.utcnow)
+    fecha_registro = Column(DateTime, nullable=False, default=datetime.utcnow)

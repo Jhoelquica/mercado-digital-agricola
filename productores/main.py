@@ -7,13 +7,13 @@ import httpx
 from datetime import datetime, timedelta
 
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from auth import verificar_token, requiere_rol
 from auth import secreto_de_servicio_valido
 import pybreaker
@@ -27,6 +27,7 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from migraciones import agregar_columnas_faltantes
 import sugerencia_cosecha
+import plantillas_produccion as plantillas
 
 from database import Base, engine, SessionLocal
 import models
@@ -171,6 +172,18 @@ class _ConUbicacionGps(BaseModel):
         return self
 
 
+class GastoDatos(BaseModel):
+    """Un gasto de una etapa: o el monto, o cantidad × precio ("4 jornales × S/ 50")."""
+    etapa: str = Field(min_length=2, max_length=40)
+    rubro: str = Field(min_length=2, max_length=40)
+    descripcion: str | None = Field(default=None, max_length=120)
+    cantidad: float | None = Field(default=None, gt=0, le=1_000_000)
+    unidad: str | None = Field(default=None, max_length=20)
+    precio_unitario: float | None = Field(default=None, ge=0, le=1_000_000)
+    monto: float | None = Field(default=None, ge=0, le=9_999_999.99)
+    fecha: datetime | None = None
+
+
 class RegistroProduccionCrear(_ConUbicacionGps):
     # Toda siembra se asocia a una chacra del productor (obligatorio). Se valida en el
     # endpoint que la chacra pertenezca a la cuenta autenticada, no solo que exista.
@@ -186,6 +199,10 @@ class RegistroProduccionCrear(_ConUbicacionGps):
     equivalencia_kg: Equivalencia | None = None
     fecha_siembra: Fecha
     fecha_cosecha_estimada: Fecha
+    # Cómo se obtiene (clave de plantillas_produccion); si no llega, se reconoce por el nombre del cultivo.
+    plantilla: str | None = Field(default=None, max_length=40)
+    # Lo que se gastó en las etapas de inicio (preparar el terreno, sembrar...). Lo demás se anota después.
+    gastos: list[GastoDatos] = Field(default_factory=list, max_length=60)
 
 class RegistroProduccionEditar(BaseModel):
     """Lo que el productor puede corregir de una siembra todavía planificada. La chacra y dónde estaba al registrarla
@@ -208,7 +225,9 @@ class SugerirCosechaDatos(BaseModel):
 class CompletarCosechaDatos(_ConUbicacionGps):
     cantidad_cosechada: Cantidad
     fecha_cosecha_real: Fecha
-    costo_mano_obra: Monto
+    # Solo en los registros de antes (sin plantilla). Con plantilla, lo de la cosecha llega en `gastos`.
+    costo_mano_obra: Monto | None = None
+    gastos: list[GastoDatos] = Field(default_factory=list, max_length=60)
     # Ya no se pide el "costo de envío final": se confundía con el envío que paga el comprador (observación de la
     # presentación del 2026-10-01). Si un cliente viejo lo sigue mandando, se ignora.
 
@@ -650,6 +669,7 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "cosecha_distancia_km": registro.cosecha_distancia_km,
         "radio_chacra_km": RADIO_CHACRA_KM,
         "foto_cosecha_url": registro.foto_cosecha_url,
+        **_resumen_plantilla(registro, db),
         **_calcular_metricas(registro, cache_precios),
     }
 
@@ -700,14 +720,15 @@ def crear_registro_produccion(
 
     _validar_datos_de_siembra(datos)
 
+    plantilla = _plantilla_pedida(datos.plantilla, datos.cultivo)
     nuevo = models.RegistroProduccion(
         productor_id=productor.id,
         chacra_id=datos.chacra_id,
         cultivo=datos.cultivo,
         numero_parcelas=datos.numero_parcelas,
         ubicacion_cosecha=datos.ubicacion_cosecha,
-        costo_semillas=datos.costo_semillas,
-        costo_insumos=datos.costo_insumos,
+        plantilla=plantilla["clave"],
+        tipo_produccion=plantilla["tipo"],
         unidad_medida=datos.unidad_medida,
         equivalencia_kg=datos.equivalencia_kg,
         fecha_siembra=datos.fecha_siembra,
@@ -718,6 +739,14 @@ def crear_registro_produccion(
         siembra_distancia_km=_distancia_a_la_chacra(chacra, datos.latitud, datos.longitud),
     )
     db.add(nuevo)
+    db.flush()
+    gastos = [_gasto_validado(plantilla, g, datos.fecha_siembra) for g in datos.gastos]
+    # Una pantalla de antes manda semillas e insumos sueltos: van como gastos de la etapa de inicio.
+    gastos += _gastos_de_antes(plantilla, datos.fecha_siembra, semilla=datos.costo_semillas, insumos=datos.costo_insumos)
+    for g in gastos:
+        db.add(models.GastoProduccion(registro_id=nuevo.id, **g))
+    db.flush()
+    _recalcular_costos(nuevo, db)
     db.commit()
     db.refresh(nuevo)
     return _serializar_registro(nuevo, {}, db)
@@ -763,7 +792,15 @@ def corregir_siembra(
     productor = _obtener_productor_del_token(usuario, db)
     registro = _siembra_propia_planificada(registro_id, productor, db)
     _validar_datos_de_siembra(datos)
-    for campo, valor in datos.model_dump().items():
+    valores = datos.model_dump()
+    if registro.plantilla:
+        # Sus costos son la suma de sus gastos por etapa: se corrigen allí, no aquí.
+        valores.pop("costo_semillas", None)
+        valores.pop("costo_insumos", None)
+        if datos.cultivo != registro.cultivo:
+            nueva = plantillas.plantilla_para(datos.cultivo)
+            registro.plantilla, registro.tipo_produccion = nueva["clave"], nueva["tipo"]
+    for campo, valor in valores.items():
         setattr(registro, campo, valor)
     db.commit()
     db.refresh(registro)
@@ -911,9 +948,20 @@ def completar_cosecha(
         )
 
     chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first()
+    plantilla = plantillas.plantilla_por_clave(registro.plantilla)
+    if plantilla:
+        gastos = [_gasto_validado(plantilla, g, datos.fecha_cosecha_real) for g in datos.gastos]
+        gastos += _gastos_de_antes(plantilla, datos.fecha_cosecha_real, mano_obra=datos.costo_mano_obra)
+        for g in gastos:
+            db.add(models.GastoProduccion(registro_id=registro.id, **g))
+        db.flush()
+        _recalcular_costos(registro, db)
+    elif datos.costo_mano_obra is None:
+        raise HTTPException(status_code=422, detail="Escribe cuánto pagaste por la mano de obra (puede ser cero).")
+    else:
+        registro.costo_mano_obra = datos.costo_mano_obra
     registro.cantidad_cosechada = datos.cantidad_cosechada
     registro.fecha_cosecha_real = datos.fecha_cosecha_real
-    registro.costo_mano_obra = datos.costo_mano_obra
     registro.cosecha_latitud = datos.latitud
     registro.cosecha_longitud = datos.longitud
     registro.cosecha_distancia_km = _distancia_a_la_chacra(chacra, datos.latitud, datos.longitud)
@@ -952,3 +1000,181 @@ def eliminar_registro_produccion(
     db.delete(registro)
     db.commit()
     return {"mensaje": "Registro de producción eliminado"}
+
+
+# ============ Etapas y gastos de cada alimento (ver plantillas_produccion.py) ============
+def _plantilla_pedida(clave: str | None, cultivo: str) -> dict:
+    """La plantilla que eligió la pantalla (si existe) o la que se reconoce por el nombre del cultivo."""
+    return plantillas.plantilla_por_clave(clave) or plantillas.plantilla_para(cultivo)
+
+
+def _gasto_validado(plantilla: dict, gasto: GastoDatos, fecha_por_defecto: datetime) -> dict:
+    etapas = {e["clave"] for e in plantilla["etapas"]}
+    if gasto.etapa not in etapas:
+        raise HTTPException(status_code=422, detail=f"La etapa \"{gasto.etapa}\" no es de {plantilla['nombre'] or 'este cultivo'}.")
+    if gasto.rubro not in plantillas.RUBROS:
+        raise HTTPException(status_code=422, detail=f"No conocemos el gasto \"{gasto.rubro}\".")
+    if gasto.cantidad is not None and gasto.precio_unitario is not None:
+        monto = round(gasto.cantidad * gasto.precio_unitario, 2)
+    elif gasto.monto is not None:
+        monto = round(gasto.monto, 2)
+    else:
+        raise HTTPException(status_code=422, detail="Escribe cuánto gastaste, o la cantidad y el precio de cada uno.")
+    if monto <= 0:
+        raise HTTPException(status_code=422, detail="El gasto tiene que ser mayor a cero.")
+    if monto > 9_999_999.99:
+        raise HTTPException(status_code=422, detail="Ese gasto es demasiado grande: revisa la cantidad y el precio.")
+    descripcion = " ".join((gasto.descripcion or "").split()) or None
+    return {"etapa": gasto.etapa, "rubro": gasto.rubro, "descripcion": descripcion, "cantidad": gasto.cantidad,
+            "unidad": (gasto.unidad or "").strip() or None, "precio_unitario": gasto.precio_unitario, "monto": monto,
+            "fecha": gasto.fecha or fecha_por_defecto}
+
+
+def _gastos_de_antes(plantilla: dict, fecha: datetime, semilla=0, insumos=0, mano_obra=None) -> list[dict]:
+    """Los montos sueltos que manda una pantalla de antes (semillas, insumos, mano de obra), como gastos de su etapa:
+    las semillas en la etapa de inicio que lleva semilla (la siembra), los insumos en la que lleva abono, y la mano de
+    obra en la primera etapa final."""
+    inicios = [e for e in plantilla["etapas"] if e["momento"] == "inicio"] or plantilla["etapas"][:1]
+    de_semilla = next((e for e in inicios if "semilla" in e["rubros"]), inicios[0])
+    de_insumos = next((e for e in inicios if "abono" in e["rubros"]), de_semilla)
+    final = next((e for e in plantilla["etapas"] if e["momento"] == "final"), plantilla["etapas"][-1])
+    salida = []
+    if semilla:
+        salida.append({"etapa": de_semilla["clave"], "rubro": "semilla", "descripcion": "Semillas", "monto": round(semilla, 2), "fecha": fecha})
+    if insumos:
+        rubro = "abono" if "abono" in de_insumos["rubros"] else de_insumos["rubros"][0]
+        salida.append({"etapa": de_insumos["clave"], "rubro": rubro, "descripcion": "Insumos", "monto": round(insumos, 2), "fecha": fecha})
+    if mano_obra:
+        salida.append({"etapa": final["clave"], "rubro": "mano_obra", "descripcion": "Mano de obra", "monto": round(mano_obra, 2), "fecha": fecha})
+    return salida
+
+
+def _recalcular_costos(registro, db: Session) -> None:
+    """Con plantilla, las 3 columnas de siempre son la suma de sus gastos por rubro (la ganancia y los gráficos de la
+    Gestión Económica las siguen usando)."""
+    sumas = {"costo_semillas": 0.0, "costo_insumos": 0.0, "costo_mano_obra": 0.0}
+    for g in db.query(models.GastoProduccion).filter(models.GastoProduccion.registro_id == registro.id).all():
+        sumas[plantillas.columna_de(g.rubro)] += float(g.monto)
+    for columna, valor in sumas.items():
+        setattr(registro, columna, round(valor, 2))
+
+
+def _gasto_salida(g) -> dict:
+    return {"id": str(g.id), "etapa": g.etapa, "rubro": g.rubro, "descripcion": g.descripcion,
+            "cantidad": float(g.cantidad) if g.cantidad is not None else None, "unidad": g.unidad,
+            "precio_unitario": float(g.precio_unitario) if g.precio_unitario is not None else None,
+            "monto": float(g.monto), "fecha": g.fecha}
+
+
+def _resumen_plantilla(registro, db: Session) -> dict:
+    """Para la tarjeta: cómo se obtiene el alimento y cuánto lleva gastado en cada etapa (sin el detalle)."""
+    plantilla = plantillas.plantilla_por_clave(registro.plantilla)
+    if not plantilla:
+        return {"plantilla": None, "tipo_produccion": None, "alimento": None, "gastos_por_etapa": None}
+    totales = {}
+    for g in db.query(models.GastoProduccion).filter(models.GastoProduccion.registro_id == registro.id).all():
+        t = totales.setdefault(g.etapa, [0.0, 0])
+        t[0] += float(g.monto)
+        t[1] += 1
+    etapas = [{"clave": e["clave"], "nombre": e["nombre"], "momento": e["momento"],
+               "total": round(totales.get(e["clave"], [0.0])[0], 2), "gastos": totales.get(e["clave"], [0.0, 0])[1]}
+              for e in plantilla["etapas"]]
+    claves = {e["clave"] for e in plantilla["etapas"]}
+    otras = [v for k, v in totales.items() if k not in claves]  # etapas de un cultivo anterior (se corrigió el cultivo)
+    if otras:
+        etapas.append({"clave": "otras", "nombre": "Otras etapas", "momento": "cuidado",
+                       "total": round(sum(v[0] for v in otras), 2), "gastos": sum(v[1] for v in otras)})
+    return {"plantilla": plantilla["clave"], "tipo_produccion": plantilla["tipo"], "alimento": plantilla["nombre"],
+            "gastos_por_etapa": etapas}
+
+
+def _detalle_gastos(registro, db: Session) -> dict:
+    gastos = (db.query(models.GastoProduccion).filter(models.GastoProduccion.registro_id == registro.id)
+              .order_by(models.GastoProduccion.fecha, models.GastoProduccion.fecha_registro).all())
+    resumen = _resumen_plantilla(registro, db)
+    return {**resumen, "etapas": (plantillas.plantilla_por_clave(registro.plantilla) or {}).get("etapas", []),
+            "gastos": [_gasto_salida(g) for g in gastos], "total": round(sum(float(g.monto) for g in gastos), 2),
+            "costo_semillas": float(registro.costo_semillas or 0), "costo_insumos": float(registro.costo_insumos or 0),
+            "costo_mano_obra": float(registro.costo_mano_obra or 0)}
+
+
+def _registro_propio_con_etapas(registro_id, productor, db: Session, para_cambiar: bool):
+    registro = db.query(models.RegistroProduccion).filter(models.RegistroProduccion.id == registro_id).first()
+    if not registro or registro.estado == "anulado":
+        raise HTTPException(status_code=404, detail="Registro no encontrado")
+    if str(registro.productor_id) != str(productor.id):
+        raise HTTPException(status_code=403, detail="Este registro no te pertenece")
+    if not registro.plantilla:
+        raise HTTPException(status_code=409, detail="Este registro es de antes de las etapas: sus costos se corrigen con \"Corregir datos\".")
+    if para_cambiar and registro.estado != "planificado":
+        raise HTTPException(status_code=409, detail="Ya se cosechó: sus gastos quedaron cerrados.")
+    return registro
+
+
+@app.get("/plantillas")
+def catalogo_de_plantillas():
+    """Público: los tipos de producción, los rubros de gasto y las etapas de cada alimento."""
+    return plantillas.catalogo()
+
+
+@app.get("/plantillas/para")
+def plantilla_para_un_nombre(nombre: str = Query(min_length=1, max_length=80)):
+    """La plantilla que corresponde al nombre que escribió el agricultor ("Papa amarilla" → papa). Si no se reconoce,
+    la genérica de cultivo de temporada (reconocido=false)."""
+    clave = plantillas.clave_para(nombre)
+    return {**plantillas.plantilla(clave or ""), "reconocido": clave is not None}
+
+
+@app.get("/productores/produccion/{registro_id}/gastos")
+def gastos_de_un_registro(registro_id: uuid.UUID, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_con_etapas(registro_id, productor, db, para_cambiar=False)
+    return _detalle_gastos(registro, db)
+
+
+@app.post("/productores/produccion/{registro_id}/gastos")
+def anotar_gasto(registro_id: uuid.UUID, datos: GastoDatos, db: Session = Depends(get_db),
+                 usuario: dict = Depends(requiere_rol("productor"))):
+    """Un gasto en una etapa, cuando ocurre (el deshierbo, el aporque, la fumigación...)."""
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_con_etapas(registro_id, productor, db, para_cambiar=True)
+    gasto = _gasto_validado(plantillas.plantilla_por_clave(registro.plantilla), datos, datetime.utcnow())
+    db.add(models.GastoProduccion(registro_id=registro.id, **gasto))
+    db.flush()
+    _recalcular_costos(registro, db)
+    db.commit()
+    return _detalle_gastos(registro, db)
+
+
+def _gasto_propio(registro, gasto_id, db: Session):
+    gasto = db.query(models.GastoProduccion).filter(models.GastoProduccion.id == gasto_id,
+                                                    models.GastoProduccion.registro_id == registro.id).first()
+    if not gasto:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    return gasto
+
+
+@app.put("/productores/produccion/{registro_id}/gastos/{gasto_id}")
+def corregir_gasto(registro_id: uuid.UUID, gasto_id: uuid.UUID, datos: GastoDatos, db: Session = Depends(get_db),
+                   usuario: dict = Depends(requiere_rol("productor"))):
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_con_etapas(registro_id, productor, db, para_cambiar=True)
+    gasto = _gasto_propio(registro, gasto_id, db)
+    for campo, valor in _gasto_validado(plantillas.plantilla_por_clave(registro.plantilla), datos, gasto.fecha).items():
+        setattr(gasto, campo, valor)
+    db.flush()
+    _recalcular_costos(registro, db)
+    db.commit()
+    return _detalle_gastos(registro, db)
+
+
+@app.delete("/productores/produccion/{registro_id}/gastos/{gasto_id}")
+def borrar_gasto(registro_id: uuid.UUID, gasto_id: uuid.UUID, db: Session = Depends(get_db),
+                 usuario: dict = Depends(requiere_rol("productor"))):
+    productor = _obtener_productor_del_token(usuario, db)
+    registro = _registro_propio_con_etapas(registro_id, productor, db, para_cambiar=True)
+    db.delete(_gasto_propio(registro, gasto_id, db))
+    db.flush()
+    _recalcular_costos(registro, db)
+    db.commit()
+    return _detalle_gastos(registro, db)

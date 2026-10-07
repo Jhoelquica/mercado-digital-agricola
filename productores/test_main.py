@@ -954,7 +954,8 @@ def test_el_productor_corrige_una_siembra_planificada_sin_tocar_su_evidencia():
 
     assert resp.status_code == 200, resp.text
     fila = _fila(registro_id)
-    assert (fila.cultivo, fila.numero_parcelas, float(fila.costo_semillas)) == ("papa amarilla", 3, 120.0)
+    # Con etapas, los costos son la suma de sus gastos: se corrigen en "Gastos por etapa", no aquí (siguen en 100).
+    assert (fila.cultivo, fila.numero_parcelas, float(fila.costo_semillas)) == ("papa amarilla", 3, 100.0)
     assert fila.fecha_siembra == datetime(2026, 2, 1)
     assert (fila.chacra_id, fila.siembra_latitud, fila.siembra_longitud) == (antes.chacra_id, antes.siembra_latitud, antes.siembra_longitud)
     assert client.put(f"/productores/produccion/{registro_id}",
@@ -1007,3 +1008,104 @@ def test_una_chacra_con_cosechas_no_cambia_de_lugar_ni_de_codigo_pero_si_de_nomb
     renombrada = client.put(f"/chacras/{chacra_id}", json={**movida, "nombre": "Chacra de abajo"})
     assert renombrada.status_code == 200 and renombrada.json()["nombre"] == "Chacra de abajo"
     assert client.get(f"/chacras/{chacra_id}").json()["ubicacion_latitud"] == -13.30
+
+
+
+# ============ Etapas y gastos de cada alimento ============
+
+def _crear_con_etapas(cultivo="Papa amarilla", gastos=None, **extra):
+    _nuevo_productor()
+    chacra = client.post("/chacras", json=_chacra_payload(codigo=f"CH-{uuid.uuid4().hex[:6]}")).json()
+    payload = {**_registro_payload(chacra["id"]), "cultivo": cultivo, "costo_semillas": 0, "costo_insumos": 0,
+               "gastos": gastos or [], **extra}
+    resp = client.post("/productores/produccion", json=payload)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_la_siembra_guarda_sus_gastos_por_etapa_y_suma_las_columnas_de_siempre():
+    registro = _crear_con_etapas(gastos=[
+        {"etapa": "preparacion", "rubro": "maquinaria", "monto": 300},
+        {"etapa": "siembra", "rubro": "semilla", "monto": 600},
+        {"etapa": "siembra", "rubro": "mano_obra", "cantidad": 4, "precio_unitario": 50, "unidad": "jornal"},
+    ])
+    assert (registro["plantilla"], registro["tipo_produccion"], registro["alimento"]) == ("papa", "temporada", "Papa")
+    assert (float(registro["costo_semillas"]), float(registro["costo_insumos"]), float(registro["costo_mano_obra"])) == (600, 300, 200)
+    etapas = {e["clave"]: e["total"] for e in registro["gastos_por_etapa"]}
+    assert etapas == {"preparacion": 300, "siembra": 800, "deshierbo": 0, "aporque": 0, "fumigacion": 0, "cosecha": 0}
+    detalle = client.get(f"/productores/produccion/{registro['id']}/gastos").json()
+    jornales = next(g for g in detalle["gastos"] if g["rubro"] == "mano_obra")
+    assert (jornales["cantidad"], jornales["precio_unitario"], jornales["monto"], detalle["total"]) == (4, 50, 200, 1100)
+
+
+def test_los_gastos_se_anotan_cuando_ocurren_y_se_corrigen_o_borran():
+    registro = _crear_con_etapas()
+    url = f"/productores/produccion/{registro['id']}/gastos"
+    aporque = client.post(url, json={"etapa": "aporque", "rubro": "abono", "descripcion": "2 sacos de urea", "monto": 240})
+    assert aporque.status_code == 200 and aporque.json()["total"] == 240
+    assert "no es de Papa" in client.post(url, json={"etapa": "trilla", "rubro": "abono", "monto": 10}).json()["detail"]
+    assert client.post(url, json={"etapa": "aporque", "rubro": "cohete", "monto": 10}).status_code == 422
+    assert client.post(url, json={"etapa": "aporque", "rubro": "abono"}).status_code == 422  # sin monto
+    gasto = aporque.json()["gastos"][0]
+    corregido = client.put(f"{url}/{gasto['id']}", json={"etapa": "aporque", "rubro": "abono", "monto": 260}).json()
+    assert corregido["total"] == 260 and corregido["costo_insumos"] == 260
+    assert client.delete(f"{url}/{gasto['id']}").json()["total"] == 0
+    _nuevo_productor()  # otra cuenta
+    assert client.post(url, json={"etapa": "aporque", "rubro": "abono", "monto": 1}).status_code == 403
+
+
+def test_al_cosechar_se_anotan_los_gastos_de_la_cosecha_y_despues_se_cierran():
+    registro = _crear_con_etapas(gastos=[{"etapa": "siembra", "rubro": "semilla", "monto": 500}])
+    assert _subir_foto(registro["id"]).status_code == 200
+    resp = client.patch(f"/productores/produccion/{registro['id']}/completar-cosecha", json={
+        "cantidad_cosechada": 800, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat(),
+        "gastos": [{"etapa": "cosecha", "rubro": "mano_obra", "cantidad": 6, "precio_unitario": 50},
+                   {"etapa": "cosecha", "rubro": "envases", "monto": 40}]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["costo_total"] == 840
+    url = f"/productores/produccion/{registro['id']}/gastos"
+    assert client.post(url, json={"etapa": "cosecha", "rubro": "otros", "monto": 5}).status_code == 409
+
+
+def test_huevos_y_leche_no_se_siembran_tienen_sus_propias_etapas():
+    huevos = _crear_con_etapas(cultivo="Huevo de campo", gastos=[{"etapa": "alimentacion", "rubro": "alimento", "monto": 900}])
+    assert huevos["tipo_produccion"] == "crianza" and [e["clave"] for e in huevos["gastos_por_etapa"]][0] == "alimentacion"
+    assert float(huevos["costo_insumos"]) == 900
+    leche = _crear_con_etapas(cultivo="Leche fresca")
+    assert leche["plantilla"] == "leche" and "ordeno" in [e["clave"] for e in leche["gastos_por_etapa"]]
+
+
+def test_una_pantalla_de_antes_sigue_funcionando_y_sus_montos_van_a_las_etapas():
+    registro_id = _crear_registro_planificado()  # manda costo_semillas 100 y costo_insumos 50, sin gastos
+    detalle = client.get(f"/productores/produccion/{registro_id}/gastos").json()
+    assert {(g["etapa"], g["rubro"], g["monto"]) for g in detalle["gastos"]} == {("siembra", "semilla", 100), ("siembra", "abono", 50)}
+    assert _subir_foto(registro_id).status_code == 200
+    assert _completar_cosecha(registro_id).status_code == 200  # con costo_mano_obra 20, sin gastos
+    assert float(_mi_registro(registro_id)["costo_mano_obra"]) == 20
+
+
+def test_un_registro_de_antes_sin_plantilla_conserva_sus_tres_costos():
+    registro_id = _crear_registro_planificado()
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro_id).one()
+        db.query(main.models.GastoProduccion).filter(main.models.GastoProduccion.registro_id == fila.id).delete()
+        fila.plantilla, fila.tipo_produccion = None, None
+        db.commit()
+    finally:
+        db.close()
+    assert _mi_registro(registro_id)["gastos_por_etapa"] is None
+    assert client.get(f"/productores/produccion/{registro_id}/gastos").status_code == 409
+    assert _subir_foto(registro_id).status_code == 200
+    sin_mano = client.patch(f"/productores/produccion/{registro_id}/completar-cosecha",
+                            json={"cantidad_cosechada": 10, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat()})
+    assert sin_mano.status_code == 422
+    assert _completar_cosecha(registro_id).status_code == 200
+
+
+def test_las_plantillas_son_publicas_y_reconocen_el_nombre():
+    catalogo = client.get("/plantillas").json()
+    assert {"tipos", "rubros", "familias", "alimentos"} <= set(catalogo)
+    assert client.get("/plantillas/para", params={"nombre": "Queso andino"}).json()["tipo"] == "elaboracion"
+    desconocido = client.get("/plantillas/para", params={"nombre": "Chuño"}).json()
+    assert desconocido["reconocido"] is False and desconocido["tipo"] == "temporada"
