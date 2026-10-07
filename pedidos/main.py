@@ -1065,6 +1065,33 @@ def pedidos_sin_entregar(db: Session = Depends(get_db), usuario: dict = Depends(
     return [pedido_para(usuario, p) for p in pedidos]
 
 
+# Los pedidos del comprador con sesión, del más nuevo al más viejo. Antes "Mis pedidos" solo mostraba los que ese
+# navegador recordaba (localStorage): en otro celular, o tras borrar los datos del navegador, el comprador no veía sus
+# pedidos, ni el PIN de entrega ni cómo reintentar un pago. Va antes de /pedidos/{pedido_id}, que se comería "mios".
+PEDIDOS_MIOS_MAXIMO = 100
+
+
+@app.get("/pedidos/mios")
+def mis_pedidos(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
+    pedidos = (db.query(models.Pedido).filter(models.Pedido.usuario_id == usuario.get("sub"))
+               .order_by(models.Pedido.fecha_creacion.desc()).limit(PEDIDOS_MIOS_MAXIMO).all())
+    for pedido in pedidos:
+        pedido.items  # carga la relación para la respuesta
+    return [pedido_para(usuario, p) for p in pedidos]
+
+
+# Los productos que el comprador ya RECIBIÓ (pedido entregado): solo de esos puede dejar una reseña. Lo usa la página
+# del producto para mostrar o no el formulario, y Productos para aceptar la reseña (le pregunta con el token del propio
+# comprador, sin secreto de servicio).
+@app.get("/pedidos/mios/productos-recibidos")
+def productos_que_recibi(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
+    filas = (db.query(models.PedidoItem.producto_id)
+             .join(models.Pedido, models.Pedido.id == models.PedidoItem.pedido_id)
+             .filter(models.Pedido.usuario_id == usuario.get("sub"), models.Pedido.estado == "entregado")
+             .distinct().all())
+    return {"productos": sorted(str(producto_id) for (producto_id,) in filas)}
+
+
 class CancelacionPedido(BaseModel):
     motivo: str = Field(min_length=3, max_length=300)
 

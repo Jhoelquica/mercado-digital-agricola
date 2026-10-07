@@ -19,6 +19,7 @@ llama a mano una vez acá abajo para que el almacén exista antes del primer tes
 pasaría en un arranque real.
 """
 import json
+from datetime import timedelta
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -1566,6 +1567,44 @@ def test_mis_ventas_solo_cuenta_lo_pagado_de_ese_agricultor(monkeypatch):
     assert (datos["totales"]["pedidos"], datos["totales"]["compradores"], datos["totales"]["compradores_recurrentes"]) == (2, 1, 1)
     assert datos["productos"][0]["nombre"] == "Quinua" and datos["productos"][0]["kg"] == 8.0
     assert client.get("/ventas/mias", headers=CON_TOKEN).status_code == 403  # un comprador no tiene ventas
+
+
+def test_mis_pedidos_trae_solo_los_del_comprador_del_mas_nuevo_al_mas_viejo():
+    yo, otro = str(uuid.uuid4()), str(uuid.uuid4())
+    viejo = _pedido_vendido(str(uuid.uuid4()), 40, usuario=uuid.UUID(yo), cuando=main.datetime.utcnow() - timedelta(days=3))
+    nuevo = _pedido_vendido(str(uuid.uuid4()), 50, estado="pendiente", usuario=uuid.UUID(yo))
+    _pedido_vendido(str(uuid.uuid4()), 60, usuario=uuid.UUID(otro))
+    _como(yo, "comprador")
+    try:
+        datos = client.get("/pedidos/mios", headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert [p["id"] for p in datos] == [nuevo, viejo]
+    assert datos[0]["items"][0]["producto_nombre"] == "Quinua"
+
+
+def test_mis_pedidos_es_solo_para_compradores():
+    _como(str(uuid.uuid4()), "productor")
+    try:
+        assert client.get("/pedidos/mios", headers=CON_TOKEN).status_code == 403
+        assert client.get("/pedidos/mios/productos-recibidos", headers=CON_TOKEN).status_code == 403
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+
+
+def test_productos_recibidos_son_solo_los_de_pedidos_entregados_del_comprador():
+    yo = uuid.uuid4()
+    recibido, en_camino, ajeno = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    _pedido_vendido(str(uuid.uuid4()), 40, estado="entregado", usuario=yo, producto=recibido)
+    _pedido_vendido(str(uuid.uuid4()), 40, estado="entregado", usuario=yo, producto=recibido)
+    _pedido_vendido(str(uuid.uuid4()), 40, estado="confirmado", usuario=yo, producto=en_camino)
+    _pedido_vendido(str(uuid.uuid4()), 40, estado="entregado", usuario=uuid.uuid4(), producto=ajeno)
+    _como(str(yo), "comprador")
+    try:
+        datos = client.get("/pedidos/mios/productos-recibidos", headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert datos == {"productos": [str(recibido)]}
 
 
 def test_el_admin_ve_las_ventas_de_la_plataforma_y_los_cancelados():

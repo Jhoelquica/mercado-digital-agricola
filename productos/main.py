@@ -32,6 +32,20 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def _asegurar_una_resena_por_comprador():
+    """El índice único de Resena en una base creada antes de que existiera (create_all no lo agrega). Si hubiera
+    reseñas repetidas de antes, no se crea y lo sigue cuidando la comprobación de crear_resena."""
+    try:
+        with engine.begin() as conexion:
+            conexion.exec_driver_sql(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_resena_producto_usuario ON resenas (producto_id, usuario_id)")
+    except Exception as error:  # noqa: BLE001 - no impedir que el servicio arranque
+        logging.getLogger(__name__).warning("No se creó el índice único de reseñas: %s", error)
+
+
+_asegurar_una_resena_por_comprador()
 breaker_productores = pybreaker.CircuitBreaker(fail_max=3, reset_timeout=30)
 
 app = FastAPI()
@@ -279,6 +293,7 @@ def salud():
     return {"estado": "ok", "servicio": "productos"}
 
 USUARIOS_URL = os.getenv("USUARIOS_URL", "http://localhost:8006")
+PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 
 @app.get("/productos/{producto_id}/resenas")
 def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
@@ -286,12 +301,26 @@ def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
         models.Resena.producto_id == producto_id
     ).order_by(models.Resena.fecha_creacion.desc()).all()
 
+# Antes cualquiera con sesión (también el agricultor dueño del producto) dejaba reseñas sin haber comprado, y cuantas
+# quisiera: el promedio que se ve en el catálogo se podía inflar o hundir a mano. Ahora solo califica un comprador que
+# RECIBIÓ el producto (Pedidos lo dice con el token del propio comprador) y una sola vez.
+def _productos_que_recibio(client: httpx.Client, token: str) -> set[str]:
+    try:
+        resp = client.get(f"{PEDIDOS_URL}/pedidos/mios/productos-recibidos",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=5)
+    except httpx.RequestError:
+        resp = None
+    if resp is None or resp.status_code != 200:
+        raise HTTPException(status_code=503, detail="No pudimos comprobar tu compra. Intenta de nuevo en un momento.")
+    return set(resp.json().get("productos") or [])
+
+
 @app.post("/productos/{producto_id}/resenas")
 def crear_resena(
-        producto_id: str,
+        producto_id: uuid.UUID,
         datos: ResenaCrear,
         db: Session = Depends(get_db),
-        usuario: dict = Depends(verificar_token),
+        usuario: dict = Depends(requiere_rol("comprador")),
         credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
     if datos.calificacion < 1 or datos.calificacion > 5:
@@ -302,7 +331,14 @@ def crear_resena(
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     usuario_id = usuario.get("sub")
+    ya_califico = db.query(models.Resena).filter(models.Resena.producto_id == producto_id,
+                                                 models.Resena.usuario_id == usuario_id).first()
+    if ya_califico:
+        raise HTTPException(status_code=409, detail="Ya calificaste este producto.")
+
     with httpx.Client() as client:
+        if str(producto_id) not in _productos_que_recibio(client, credenciales.credentials):
+            raise HTTPException(status_code=403, detail="Solo quien compró y recibió este producto puede calificarlo.")
         try:
             resp = client.get(
                 f"{USUARIOS_URL}/usuarios/{usuario_id}",
@@ -322,7 +358,11 @@ def crear_resena(
         comentario=datos.comentario,
     )
     db.add(nueva_resena)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:  # doble clic: la otra petición ya la guardó (índice uq_resena_producto_usuario)
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ya calificaste este producto.")
     db.refresh(nueva_resena)
     # calificacion_promedio/total_resenas se muestran tanto en el catálogo como en el detalle,
     # así que una reseña nueva deja ambos cachés desactualizados igual que un cambio de stock.

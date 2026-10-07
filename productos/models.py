@@ -60,6 +60,11 @@ class ProductoImagen(Base):
 
 class Resena(Base):
     __tablename__ = "resenas"
+    __table_args__ = (
+        # Una reseña por comprador y producto (antes se podía repetir sin límite y subir el promedio a mano). En una
+        # base que ya existía, create_all no agrega la restricción: main.py crea el mismo índice al arrancar.
+        UniqueConstraint("producto_id", "usuario_id", name="uq_resena_producto_usuario"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     producto_id = Column(UUID(as_uuid=True), ForeignKey("productos.id"), nullable=False)

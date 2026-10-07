@@ -1071,6 +1071,48 @@ def test_unidad_alternativa_con_numeros_no_finitos_o_gigantes_falla_422(monkeypa
         assert resp.status_code == 422, (precio, factor, resp.text)
 
 
+class _ClientePorRuta(_ClienteFalso):
+    """Responde según la ruta: Pedidos dice qué productos recibió el comprador, Usuarios su nombre."""
+    def __init__(self, recibidos, estado_pedidos=200):
+        self._recibidos, self._estado_pedidos = recibidos, estado_pedidos
+
+    def get(self, url, *args, **kwargs):
+        if "/pedidos/mios/productos-recibidos" in url:
+            return _RespuestaFalsa(self._estado_pedidos, {"productos": [str(p) for p in self._recibidos]})
+        return _RespuestaFalsa(200, {"nombre": "Rosa QA"})
+
+
+def _resenar(producto_id, calificacion=5):
+    return client.post(f"/productos/{producto_id}/resenas", json={"calificacion": calificacion, "comentario": "Rica"},
+                       headers=HEADERS_AUTH)
+
+
+def test_solo_califica_un_comprador_que_recibio_el_producto_y_una_sola_vez(monkeypatch):
+    producto = _crear_producto_directo()
+    otro = _crear_producto_directo()
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClientePorRuta([producto.id]))
+    _auth(str(uuid.uuid4()), "comprador")
+
+    respuesta = _resenar(otro.id)
+    assert respuesta.status_code == 403 and "recibió" in respuesta.json()["detail"]
+    respuesta = _resenar(producto.id)
+    assert respuesta.status_code == 200 and respuesta.json()["usuario_nombre"] == "Rosa QA"
+    assert _resenar(producto.id, 1).status_code == 409
+    assert [r["calificacion"] for r in client.get(f"/productos/{producto.id}/resenas").json()] == [5]
+
+
+def test_un_agricultor_no_califica_y_sin_pedidos_no_se_acepta(monkeypatch):
+    producto = _crear_producto_directo()
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClientePorRuta([producto.id]))
+    _auth(str(uuid.uuid4()), "productor")
+    assert _resenar(producto.id).status_code == 403
+
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClientePorRuta([producto.id], estado_pedidos=503))
+    _auth(str(uuid.uuid4()), "comprador")
+    assert _resenar(producto.id).status_code == 503
+    assert client.get(f"/productos/{producto.id}/resenas").json() == []
+
+
 def test_resena_y_busqueda_limitan_el_largo_del_texto():
     import pytest
     from pydantic import ValidationError

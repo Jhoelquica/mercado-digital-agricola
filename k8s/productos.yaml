@@ -70,6 +70,8 @@ spec:
                   key: JWT_SECRET
             - name: USUARIOS_URL
               value: http://usuarios:8006
+            - name: PEDIDOS_URL
+              value: http://pedidos:8003
             - name: RABBITMQ_HOST
               value: rabbitmq
             - name: RABBITMQ_USER
