@@ -11363,6 +11363,7 @@ function renderCtaSiembraInicio(registros) {
       </div>
       <div class="cta-siembra-acciones">
         ${accion}
+        <button type="button" class="btn btn-outline cta-siembra-ver" data-ir-tab="que-sembrar"><i class="ti ti-bulb" aria-hidden="true"></i> ¿Qué me conviene sembrar?</button>
         ${enCurso ? `<button type="button" class="btn btn-ghost cta-siembra-ver" data-ir-tab="siembras"><i class="ti ti-list-check" aria-hidden="true"></i> ${enCurso === 1 ? 'Ver la que está en curso' : `Ver las ${enCurso} en curso`}</button>` : ''}
       </div>
     </section>`;
