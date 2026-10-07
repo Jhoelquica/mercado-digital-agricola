@@ -139,6 +139,9 @@ class ProductoCrearDesdeCosecha(BaseModel):
     # Productores (obligatorio solo si unidad_medida != "kg", validado abajo) — Productores ya lo
     # valida al crear el registro, esto es una segunda barrera del lado de Productos.
     equivalencia_kg: float | None = None
+    # La categoría que corresponde al alimento (huevos → huevo, queso → lacteo...), ver
+    # productores/plantillas_produccion.categoria_de. Si no es una de las 8, el borrador nace sin categoría.
+    categoria: str | None = None
 
 class ProductoActualizar(BaseModel):
     categoria: str | None = None
@@ -1278,7 +1281,7 @@ def crear_producto_desde_cosecha(
         x_servicio_secreto: str = Header(None),
 ):
     """Llamado por Productores cuando el agricultor completa su cosecha (completar_cosecha). Nace en "borrador", sin
-    precio ni categoría: el productor todavía tiene que completar precio + imágenes y publicar
+    precio y con la categoría que corresponde al alimento (si se conoce): el productor completa precio + imágenes y publica
     a mano (PATCH /productos/{id}/publicar) antes de que sea visible en el catálogo.
 
     productor_nombre viaja en el body en vez de resolverse acá: quien llama (Productores) ya
@@ -1303,7 +1306,7 @@ def crear_producto_desde_cosecha(
         productor_id=datos.productor_id,
         productor_nombre=datos.productor_nombre,
         nombre=datos.nombre,
-        categoria=None,
+        categoria=normalizar_categoria(datos.categoria),
         precio=None,
         stock=datos.stock,
         unidad_medida=datos.unidad_medida,

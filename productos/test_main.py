@@ -1681,3 +1681,15 @@ def test_reponer_lote_devuelve_exactamente_lo_que_se_desconto(monkeypatch):
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"repuestos": 1, "no_encontrados": [str(otro_id)]}
     assert _stock_de(producto.id) == 20
+
+
+
+def test_crear_desde_cosecha_trae_la_categoria_del_alimento_si_es_valida():
+    def crear(categoria):
+        return client.post("/productos/interno/crear-desde-cosecha", json={
+            "productor_id": str(uuid.uuid4()), "productor_nombre": "Granja QA", "nombre": "Huevo de campo",
+            "unidad_medida": "kg", "stock": 10, "registro_produccion_id": str(uuid.uuid4()), "categoria": categoria,
+        }, headers={"X-Servicio-Secreto": main.PRODUCTORES_A_PRODUCTOS_SECRETO})
+    assert crear("huevo").json()["categoria"] == "huevo"
+    assert crear("Lácteo").json()["categoria"] == "lacteo"
+    assert crear("cohetes").json()["categoria"] is None

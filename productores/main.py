@@ -882,6 +882,9 @@ def _crear_producto_en_catalogo(registro, productor):
         # Sin esto el peso de estos productos sería indeterminable en Pedidos (ver Producto.equivalencia_kg en
         # productos/models.py). float(...) porque es un Numeric (Decimal) y httpx no serializa Decimal a JSON.
         "equivalencia_kg": float(registro.equivalencia_kg) if registro.equivalencia_kg is not None else None,
+        # Con lo que se sabe del alimento, el borrador ya trae su categoría (huevos → huevo, queso → lacteo...).
+        "categoria": plantillas.categoria_de(registro.plantilla if registro.plantilla in plantillas.ALIMENTOS
+                                             else plantillas.clave_para(registro.cultivo)),
     }
     error = HTTPException(
         status_code=502,

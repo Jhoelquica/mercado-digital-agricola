@@ -278,6 +278,22 @@ ALIMENTOS = {
 }
 
 
+# La categoría del catálogo (Productos.CATEGORIAS_VALIDAS) de cada familia; algunos alimentos la cambian (la fresa y la
+# sandía se plantan como hortalizas pero se venden como fruta). None = el agricultor la elige al completar el borrador.
+CATEGORIA_POR_FAMILIA = {
+    "tuberculos": "tuberculo", "granos_andinos": "grano", "cereales": "grano", "maiz": "grano", "legumbres": "legumbre",
+    "hortalizas_trasplante": "verdura", "hortalizas_directas": "verdura", "hierbas": "hierba", "frutales": "fruta",
+    "aves_huevos": "huevo", "vacas_leche": "lacteo", "queso": "lacteo", "yogurt": "lacteo", "mantequilla": "lacteo",
+}
+CATEGORIA_POR_ALIMENTO = {"fresa": "fruta", "sandia": "fruta"}
+
+
+def categoria_de(clave: str | None) -> str | None:
+    if not clave or clave not in ALIMENTOS:
+        return None
+    return CATEGORIA_POR_ALIMENTO.get(clave) or CATEGORIA_POR_FAMILIA.get(ALIMENTOS[clave][1])
+
+
 def normalizar(texto: str) -> str:
     sin_tildes = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode()
     return " ".join(sin_tildes.lower().replace("ñ", "n").split())

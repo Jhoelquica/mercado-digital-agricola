@@ -35,3 +35,14 @@ def test_cada_familia_tiene_inicio_y_final_y_solo_rubros_conocidos():
         assert familia in p.FAMILIAS and alias and unidad in ("kg", "unidad", "litro"), clave
     assert p.columna_de("semilla") == "costo_semillas" and p.columna_de("mano_obra") == "costo_mano_obra"
     assert p.columna_de("alimento") == "costo_insumos"
+
+
+
+def test_cada_alimento_trae_su_categoria_del_catalogo():
+    casos = {"papa": "tuberculo", "quinua": "grano", "maiz": "grano", "haba": "legumbre", "cebolla": "verdura",
+             "fresa": "fruta", "sandia": "fruta", "palta": "fruta", "cilantro": "hierba", "huevo": "huevo",
+             "leche": "lacteo", "queso": "lacteo", "miel": None}
+    assert {clave: p.categoria_de(clave) for clave in casos} == casos
+    assert p.categoria_de(None) is None and p.categoria_de("generica_temporada") is None
+    validas = {"fruta", "verdura", "tuberculo", "grano", "legumbre", "lacteo", "huevo", "hierba"}
+    assert set(p.CATEGORIA_POR_FAMILIA.values()) <= validas

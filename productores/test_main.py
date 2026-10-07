@@ -1157,3 +1157,19 @@ def test_que_sembrar_junta_ventas_catalogo_y_siembras_de_otros(monkeypatch):
     assert datos["consejo"] == "Siembra papa." and datos["ventas_disponibles"] is True and datos["referencias"]
     _auth(str(uuid.uuid4()), rol="comprador")
     assert client.get("/que-sembrar", headers={"Authorization": "Bearer token"}).status_code == 403
+
+
+def test_el_borrador_de_huevos_nace_con_su_categoria(monkeypatch):
+    payloads = []
+
+    def crear(payload):
+        payloads.append(payload)
+        return _RespuestaFalsaProductos(200, {"id": "producto-huevos"})
+
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha", crear)
+    registro = _crear_con_etapas(cultivo="Huevo de campo", unidad_medida="unidad", equivalencia_kg=0.06)
+    assert _subir_foto(registro["id"]).status_code == 200
+    resp = client.patch(f"/productores/produccion/{registro['id']}/completar-cosecha",
+                        json={"cantidad_cosechada": 300, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat()})
+    assert resp.status_code == 200, resp.text
+    assert payloads[0]["categoria"] == "huevo"
