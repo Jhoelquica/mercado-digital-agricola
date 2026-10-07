@@ -147,6 +147,10 @@ input, select { font-family: inherit; }
      declarar solo un eje) — un panel absolute quedaría recortado verticalmente por ese overflow del
      ancestro. fixed escapa de esa cadena de clipping; top/left se calculan en JS (abrirNavCat). */
   position: fixed;
+  /* Posición segura mientras está cerrado: sin top/left (los pone abrirNavCat al abrirlo), cada panel quedaba donde
+     está su botón y, con 900 px de ancho, sobresalía del borde derecho; el navegador podía correr la página de lado. */
+  top: 0;
+  left: 0;
   width: min(620px, 92vw);
   padding-top: 10px;
   opacity: 0;
@@ -2766,6 +2770,17 @@ input, select { font-family: inherit; }
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .carrito-item:hover { border-color: var(--color-borde); box-shadow: var(--sombra); }
+/* La columna del carrito mide distinto según el modal (dos columnas en escritorio, una en pantallas medianas): cuando
+   es angosta, la línea pasa a dos filas. Antes, con ~450 px, el nombre quedaba con 0 px y la cantidad lo tapaba. */
+.carrito-items { container-type: inline-size; }
+@container (max-width: 560px) {
+  .carrito-item {
+    grid-template-columns: 68px minmax(0, 1fr) auto; grid-template-areas: "media info remove" "qty qty subtotal";
+    gap: 10px 12px;
+  }
+  .carrito-item .carrito-qty { justify-self: start; }
+  .carrito-item-media { width: 68px; height: 68px; }
+}
 .carrito-item-media, .checkout-recap-media {
   display: grid; place-items: center; overflow: hidden; background: var(--color-superficie); font-size: 2.1rem;
 }
@@ -4450,6 +4465,16 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .detalle-compra .detalle-stock.low { background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); }
 .detalle-stock.low::before { background: var(--acento-cosecha); }
 .detalle-stock.agotado { background: #eceeed; color: #555; }
+.detalle-compra .detalle-stock.transito { background: #e3f0fd; color: #14538a; }
+.detalle-stock.transito::before { background: #2b7bc4; }
+.detalle-reserva { flex-direction: column; align-items: stretch; gap: 14px; }
+.detalle-reserva-texto { margin: 0; color: var(--texto-suave); line-height: 1.5; }
+.detalle-reserva-hecha { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border-radius: 16px; background: #e3f0fd; color: #14538a; }
+.detalle-reserva-hecha strong { display: block; font-size: 1.05rem; margin-bottom: 2px; }
+.detalle-reserva-hecha span { font-size: 0.92rem; line-height: 1.45; }
+.detalle-reserva-icono { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px; background: #fff; font-size: 1.4rem; }
+.detalle-reserva-quitar { align-self: flex-start; min-height: 44px; font-size: 0.95rem; }
+.detalle-sticky-reservado { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: #14538a; }
 .detalle-stock.agotado::before { background: #888; }
 
 .detalle-compra .detalle-unidad-label { margin: 0; }
@@ -4563,6 +4588,10 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .resena-login > i { font-size: 1.5rem; color: var(--color-primario); }
 .resena-login p { margin: 0; }
 .resena-login .btn { min-height: 44px; }
+.resena-aviso { gap: 6px; }
+.resena-aviso strong { color: var(--color-primario); font-size: 1rem; }
+.resena-form-nota { display: flex; align-items: flex-start; gap: 6px; margin: -4px 0 8px; font-size: .9rem; color: var(--texto-suave); }
+.resena-form-nota i { color: var(--color-primario); margin-top: 2px; }
 
 /* ---- También te puede gustar ---- */
 .detalle-relacionados { margin-top: 72px; }

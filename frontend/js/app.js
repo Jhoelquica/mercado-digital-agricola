@@ -926,6 +926,8 @@ function actualizarUIAuth() {
   document.querySelector('.nav-repartidor').classList.toggle('hidden', !(logueado && Estado.rol === 'repartidor'));
   document.querySelector('.nav-admin').classList.toggle('hidden', !(logueado && Estado.rol === 'admin'));
   document.getElementById('footer-ctas').classList.toggle('hidden', logueado);
+  // Con la sesión abierta, "Crear cuenta gratis" y la sección "Únete" abrían el registro: se ocultan.
+  document.querySelectorAll('[data-landing-cta="registro"], .landing-roles').forEach((el) => el.classList.toggle('hidden', logueado));
 
   // Categorías, búsqueda y carrito son controles de compra — solo tienen sentido para comprador
   // (o un visitante anónimo, comprador potencial). Los demás roles no compran, así que no los ven.
@@ -1723,7 +1725,7 @@ function renderBloqueProductor(p, productor) {
 
 function renderResumenCalificacion(p) {
   if (!p.calificacion_promedio || !p.total_resenas) {
-    return '<p class="rating-row"><span class="rating-count">Sin reseñas todavía — ¡sé el primero en opinar!</span></p>';
+    return '<p class="rating-row"><span class="rating-count">Sin reseñas todavía</span></p>';
   }
   return `
     <p class="rating-row">
@@ -1736,6 +1738,122 @@ function renderResumenCalificacion(p) {
 // Reseñas de la página de detalle: a la izquierda el resumen (promedio, barras por estrellas — calculadas
 // con las reseñas reales) y el formulario; a la derecha las opiniones. El título de la sección lo pone
 // renderPaginaDetalleProducto, igual que en las demás secciones.
+// Solo califica un comprador que ya RECIBIÓ el producto, una vez (el servidor lo exige igual). null = no se pudo
+// consultar; se carga al abrir el detalle (ver cargarDetalleProducto).
+let productosRecibidosComprador = null;
+// Lo que el comprador reservó (solo se consulta al abrir algo que viene en camino).
+let productosReservadosComprador = null;
+let productoDetalleActual = null;
+
+// ---- Producto en camino al almacén: no se compra todavía, se reserva gratis y se avisa al llegar ----
+function productoEnCamino(p) {
+  return (p.estado ?? Estado.productos.find((x) => x.id === p.id)?.estado) === 'en_transito';
+}
+
+function renderAccionReserva(p) {
+  const explicacion = '<p class="detalle-reserva-texto">Viene de la chacra al almacén y todavía no se puede comprar. Resérvalo gratis: te avisamos apenas llegue para que lo compres.</p>';
+  if (Estado.token && Estado.rol !== 'comprador') {
+    return '<p class="detalle-reserva-texto">Viene de la chacra al almacén: se podrá comprar cuando llegue.</p>';
+  }
+  if (productosReservadosComprador?.has(String(p.id))) {
+    return `
+      <div class="detalle-reserva-hecha" role="status">
+        <span class="detalle-reserva-icono" aria-hidden="true"><i class="ti ti-bell-check"></i></span>
+        <div>
+          <strong>Te avisaremos cuando llegue</strong>
+          <span>El aviso te llegará en Notificaciones. Reservar no te obliga a comprar.</span>
+        </div>
+      </div>
+      <button type="button" class="btn-link detalle-reserva-quitar" data-accion-reserva="quitar">Ya no me avises</button>`;
+  }
+  return `${explicacion}
+      <button type="button" class="btn btn-primary btn-lg btn-block" data-accion-reserva="reservar"><i class="ti ti-bell" aria-hidden="true"></i> Avisarme cuando llegue</button>`;
+}
+
+function renderBotonReservaSticky(p) {
+  if (Estado.token && Estado.rol !== 'comprador') return '';
+  return productosReservadosComprador?.has(String(p.id))
+    ? '<span class="detalle-sticky-reservado"><i class="ti ti-bell-check" aria-hidden="true"></i> Te avisaremos</span>'
+    : '<button type="button" class="btn btn-primary" data-accion-reserva="reservar"><i class="ti ti-bell" aria-hidden="true"></i> Avisarme</button>';
+}
+
+function pintarReservaDetalle(p) {
+  const panel = document.getElementById('detalle-reserva');
+  if (panel) panel.innerHTML = renderAccionReserva(p);
+  const sticky = document.getElementById('detalle-reserva-sticky');
+  if (sticky) sticky.innerHTML = renderBotonReservaSticky(p);
+}
+
+async function alternarReservaDetalle(p, accion, boton) {
+  if (!Estado.token) {
+    toast('Inicia sesión para reservar y recibir el aviso 🔔');
+    cambiarTabAuth('login');
+    abrirModal('modal-auth');
+    return;
+  }
+  boton.disabled = true;
+  try {
+    if (accion === 'quitar') {
+      await Api.productos.quitarReserva(p.id);
+      productosReservadosComprador?.delete(String(p.id));
+      toast('Listo: ya no te avisaremos de este producto.');
+    } else {
+      await Api.productos.reservar(p.id);
+      (productosReservadosComprador ||= new Set()).add(String(p.id));
+      toast('Reservado: te avisaremos cuando llegue al almacén 🔔');
+    }
+  } catch (err) {
+    if (accion !== 'quitar' && /ya reservaste/i.test(err.message || '')) {
+      (productosReservadosComprador ||= new Set()).add(String(p.id));
+    } else {
+      manejarError(err, accion === 'quitar' ? 'quitar tu reserva' : 'reservar el producto');
+      boton.disabled = false;
+      return;
+    }
+  }
+  pintarReservaDetalle(p);
+}
+
+function renderAvisoResena(icono, titulo, texto) {
+  return `
+    <div class="resena-login resena-aviso" role="status">
+      <i class="ti ti-${icono}" aria-hidden="true"></i>
+      <strong>${titulo}</strong>
+      <p>${texto}</p>
+    </div>`;
+}
+
+function renderAccionResena(resenas, p) {
+  if (!Estado.token) {
+    return `
+    <div class="resena-login">
+      <i class="ti ti-lock" aria-hidden="true"></i>
+      <p>Inicia sesión para calificar un producto que compraste y recibiste.</p>
+      <button type="button" class="btn btn-outline" id="btn-resena-login">Iniciar sesión</button>
+    </div>`;
+  }
+  if (Estado.rol !== 'comprador') return '';
+  if (resenas.some((r) => String(r.usuario_id) === String(Estado.usuarioId))) {
+    return renderAvisoResena('circle-check', 'Ya calificaste este producto', 'Gracias: tu opinión ayuda a otros compradores a elegir.');
+  }
+  if (!productosRecibidosComprador) {
+    return renderAvisoResena('alert-circle', 'No pudimos revisar tus compras', 'Vuelve a abrir el producto en un momento para calificarlo.');
+  }
+  if (!productosRecibidosComprador.has(String(p.id))) {
+    return renderAvisoResena('package', 'Califícalo cuando lo recibas', 'Solo califican quienes compraron este producto y ya lo recibieron.');
+  }
+  return `
+    <form id="form-resena" class="resena-form">
+      <h4>Deja tu reseña</h4>
+      <p class="resena-form-nota"><i class="ti ti-circle-check" aria-hidden="true"></i> Ya recibiste este producto: cuéntales a otros qué tal llegó.</p>
+      <div class="estrellas-selector" role="group" aria-label="Tu calificación">
+        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}" aria-label="${v} estrella${v === 1 ? '' : 's'}" aria-pressed="false"><i class="ti ti-star" aria-hidden="true"></i></button>`).join('')}
+      </div>
+      <textarea placeholder="Cuéntanos qué te pareció (opcional)" aria-label="Tu comentario" maxlength="1000"></textarea>
+      <button type="submit" class="btn btn-primary">Publicar reseña</button>
+    </form>`;
+}
+
 function renderSeccionResenas(resenas, p) {
   const total = resenas.length;
   const promedio = total ? (p?.calificacion_promedio ?? resenas.reduce((suma, r) => suma + r.calificacion, 0) / total) : null;
@@ -1776,25 +1894,9 @@ function renderSeccionResenas(resenas, p) {
           <p>Cuando alguien pruebe este producto, su opinión aparecerá aquí.</p>
         </div>`;
 
-  const formularioHtml = Estado.token ? `
-    <form id="form-resena" class="resena-form">
-      <h4>Deja tu reseña</h4>
-      <div class="estrellas-selector" role="group" aria-label="Tu calificación">
-        ${[1, 2, 3, 4, 5].map((v) => `<button type="button" data-valor="${v}" aria-label="${v} estrella${v === 1 ? '' : 's'}" aria-pressed="false"><i class="ti ti-star" aria-hidden="true"></i></button>`).join('')}
-      </div>
-      <textarea placeholder="Cuéntanos qué te pareció (opcional)" aria-label="Tu comentario"></textarea>
-      <button type="submit" class="btn btn-primary">Publicar reseña</button>
-    </form>`
-    : `
-    <div class="resena-login">
-      <i class="ti ti-lock" aria-hidden="true"></i>
-      <p>Inicia sesión para dejar tu propia reseña.</p>
-      <button type="button" class="btn btn-outline" id="btn-resena-login">Iniciar sesión</button>
-    </div>`;
-
   return `
     <div class="detalle-resenas-grid">
-      <div class="detalle-resenas-lateral">${resumenHtml}${formularioHtml}</div>
+      <div class="detalle-resenas-lateral">${resumenHtml}${renderAccionResena(resenas, p)}</div>
       <div class="detalle-resenas-lista">${listaHtml}</div>
     </div>`;
 }
@@ -1836,10 +1938,16 @@ async function cargarDetalleProducto(id) {
     return;
   }
 
-  let resenas = [];
-  let productor = null;
-  try { resenas = await Api.productos.listarResenas(id); } catch { /* sin reseñas disponibles por ahora */ }
-  try { productor = await Api.productores.obtener(p.productor_id); } catch { /* seguimos sin mapa */ }
+  const esComprador = Boolean(Estado.token) && Estado.rol === 'comprador';
+  const enCamino = productoEnCamino(p);
+  const [resenas, productor, recibidos, reservas] = await Promise.all([
+    Api.productos.listarResenas(id).catch(() => []), // sin reseñas disponibles por ahora
+    Api.productores.obtener(p.productor_id).catch(() => null), // seguimos sin mapa
+    esComprador ? Api.pedidos.productosRecibidos().catch(() => null) : null,
+    esComprador && enCamino ? Api.productos.misReservas().catch(() => null) : null,
+  ]);
+  productosRecibidosComprador = recibidos ? new Set(recibidos.productos.map(String)) : null;
+  productosReservadosComprador = reservas ? new Set(reservas.productos.map(String)) : null;
 
   renderPaginaDetalleProducto(p, resenas, productor);
 }
@@ -2114,7 +2222,7 @@ function opcionesUnidadCompraHtml(p, seleccion = null) {
 // Tarjeta de compra (columna derecha de la ficha): todo lo necesario para decidir y comprar sin ir a
 // buscarlo más abajo. Los ids se conservan: renderPaginaDetalleProducto
 // los cablea (precio, stock, unidad, cantidad, botones).
-function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml }) {
+function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml, enCamino = false }) {
   const nombreProductor = productor?.nombre || p.productor_nombre || 'Productor local';
   const ubicacion = productor?.comunidad || productor?.ubicacion || '';
   return `
@@ -2133,16 +2241,20 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
 
       <div class="detalle-precio-row">
         <span class="product-price" id="detalle-precio-principal">${precioHtml}</span>
-        <span class="product-stock detalle-stock ${sinStock ? 'agotado' : stockBajo ? 'low' : ''}" id="detalle-stock-texto">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>
+        ${enCamino
+    ? `<span class="product-stock detalle-stock transito" id="detalle-stock-texto">${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} en camino al almacén</span>`
+    : `<span class="product-stock detalle-stock ${sinStock ? 'agotado' : stockBajo ? 'low' : ''}" id="detalle-stock-texto">${sinStock ? 'Sin stock disponible' : `${p.stock} ${unidadPlural(p.unidad_medida, p.stock)} disponibles`}</span>`}
       </div>
 
-      ${!sinStock && tieneAlternativas ? `
+      ${enCamino ? `<div class="detalle-accion-principal detalle-reserva" id="detalle-reserva">${renderAccionReserva(p)}</div>` : ''}
+
+      ${!enCamino && !sinStock && tieneAlternativas ? `
       <fieldset class="detalle-unidades" id="detalle-unidad-selector">
         <legend>¿Cómo lo quieres?</legend>
         ${opcionesUnidadCompraHtml(p, unidadInicialDetalle(p))}
       </fieldset>` : ''}
 
-      <div class="detalle-accion-principal">
+      ${enCamino ? '' : `<div class="detalle-accion-principal">
         ${!sinStock ? `
         <div class="detalle-cantidad-fila">
           <div class="carrito-qty detalle-cantidad-selector" role="group" aria-label="Cantidad">
@@ -2158,7 +2270,7 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
         <button class="btn btn-primary btn-lg btn-block" data-id="${p.id}" id="btn-agregar-detalle" ${sinStock ? 'disabled' : ''}>
           ${sinStock ? 'Agotado' : '+ Agregar al pedido'}
         </button>
-      </div>
+      </div>`}
 
       <ul class="detalle-confianza">
         <li><i class="ti ti-shield-check" aria-hidden="true"></i><span>Origen verificado</span></li>
@@ -2195,6 +2307,7 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   // El detalle no trae "estado"; si el producto está en el catálogo cargado se usa el de allí (igual que las tarjetas).
   const enCatalogo = Estado.productos.find((x) => x.id === p.id);
   const insignia = insigniaProducto({ ...p, estado: p.estado ?? enCatalogo?.estado });
+  const enCamino = productoEnCamino(p);
 
   contenido.innerHTML = `
     <header class="detalle-barra" id="detalle-barra">
@@ -2208,15 +2321,16 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
       <div class="detalle-barra-compra" id="detalle-barra-compra">
         <span class="detalle-sticky-nombre">${escapeAttr(p.nombre)}</span>
         <span class="detalle-sticky-precio" id="detalle-sticky-precio">${precioHtml}</span>
+        ${enCamino ? `<span id="detalle-reserva-sticky">${renderBotonReservaSticky(p)}</span>` : `
         <button type="button" class="btn btn-primary" id="btn-agregar-sticky" ${sinStock ? 'disabled' : ''}>
           ${sinStock ? 'Agotado' : '+ Agregar al carrito'}
-        </button>
+        </button>`}
       </div>
     </header>
 
     <section class="detalle-principal" id="detalle-seccion-descripcion">
       ${renderGaleriaDetalle(p, fotos, insignia)}
-      ${renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml })}
+      ${renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tieneAlternativas, precioHtml, enCamino })}
     </section>
 
     ${renderVideosDetalle(p, fotos)}
@@ -2325,6 +2439,16 @@ function renderPaginaDetalleProducto(p, resenas, productor) {
   };
   document.getElementById('btn-agregar-detalle')?.addEventListener('click', (e) => agregarConFeedback(e.currentTarget));
   document.getElementById('btn-agregar-sticky')?.addEventListener('click', (e) => agregarConFeedback(e.currentTarget));
+  // En camino: reservar / ya no me avises (panel de compra y barra fija; se repintan tras cada acción). El contenedor
+  // sobrevive a cada repintado del detalle: el listener se conecta una sola vez y usa el producto que se ve ahora.
+  productoDetalleActual = p;
+  if (!contenido.dataset.reservaConectada) {
+    contenido.dataset.reservaConectada = '1';
+    contenido.addEventListener('click', (e) => {
+      const boton = e.target.closest('[data-accion-reserva]');
+      if (boton && productoDetalleActual) alternarReservaDetalle(productoDetalleActual, boton.dataset.accionReserva, boton);
+    });
+  }
 
   contenido.querySelector('.btn-favorito-detalle')?.addEventListener('click', (e) => {
     manejarClickFavorito(e.currentTarget);
@@ -2671,6 +2795,10 @@ function agregarAlCarrito(productoId, cantidad = 1, unidad = null) {
   }
   const producto = Estado.productos.find((p) => p.id === productoId);
   if (!producto) return;
+  if (producto.estado && producto.estado !== 'disponible') {
+    toast('Este producto todavía viene en camino: resérvalo y te avisamos cuando llegue.', 'error');
+    return;
+  }
 
   const stockMax = stockEnUnidad(producto, unidad);
   const existente = Estado.carrito.find((i) => i.producto_id === productoId && (i.unidad || null) === unidad);
@@ -2985,7 +3113,7 @@ async function pintarInfoLejanos() {
     </tr>`).join('');
   caja.innerHTML = `
     <p class="lejanos-cobertura"><i class="ti ti-map-2" aria-hidden="true"></i>
-      Entregamos en la región de Ayacucho y en <strong>${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}</strong>.</p>
+      <span>Entregamos en la región de Ayacucho y en <strong>${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}</strong>.</span></p>
     <details class="lejanos-reglas">
       <summary><i class="ti ti-help-circle" aria-hidden="true"></i> ¿Compras desde otra ciudad? Así funciona</summary>
       <div class="lejanos-reglas-grid">
@@ -3733,7 +3861,10 @@ function renderResumenPedidos() {
   if (!pedidosCargados.length) { cont.innerHTML = ''; return; }
 
   const { todos, en_curso: enCurso, entregados } = conteosPedidos();
-  const gastado = pedidosCargados.reduce((acc, d) => acc + totalPedido(d.pedido), 0);
+  // Solo lo pagado: un pedido sin pagar, rechazado o devuelto no es plata gastada.
+  const gastado = pedidosCargados
+    .filter((d) => pagoConfirmadoPedido(d) && d.pago?.estado !== 'reembolsado' && d.pedido.estado !== 'cancelado')
+    .reduce((acc, d) => acc + totalPedido(d.pedido), 0);
   const enCamino = pedidosCargados.filter((d) => d.envio?.estado === 'en_camino' && !esPedidoEntregado(d));
 
   const aviso = enCamino.length ? `
@@ -3876,8 +4007,17 @@ async function cargarMisPedidos() {
     return;
   }
 
-  const ids = obtenerPedidosTrackeados();
+  cont.setAttribute('aria-busy', 'true');
+  cont.innerHTML = renderSkeletonPedidos(2);
+  resumen.innerHTML = renderSkeletonResumen(4);
+
+  // Los pedidos salen de la cuenta (se ven igual en otro celular). Si no se pudo consultar, al menos los que
+  // este navegador recuerda.
+  let pedidosDeLaCuenta = null;
+  try { pedidosDeLaCuenta = await Api.pedidos.mios(); } catch { /* abajo: los recordados */ }
+  const ids = pedidosDeLaCuenta ? pedidosDeLaCuenta.map((p) => p.id) : obtenerPedidosTrackeados();
   if (!ids.length) {
+    cont.removeAttribute('aria-busy');
     cont.innerHTML = '';
     resumen.innerHTML = '';
     pedidosCargados = [];
@@ -3885,15 +4025,12 @@ async function cargarMisPedidos() {
     renderEmptyPedidos('sin-pedidos');
     return;
   }
-  cont.setAttribute('aria-busy', 'true');
-  cont.innerHTML = renderSkeletonPedidos(Math.min(ids.length, 2));
-  resumen.innerHTML = renderSkeletonResumen(4);
 
   if (!Estado.productos.length) {
     try { Estado.productos = await Api.productos.listar(); } catch { /* seguimos sin fotos si falla */ }
   }
 
-  const datos = await Promise.all(ids.map((id) => cargarDatosPedido(id)));
+  const datos = await Promise.all(ids.map((id, i) => cargarDatosPedido(id, pedidosDeLaCuenta?.[i])));
   pedidosCargados = datos.filter(Boolean);
   cont.removeAttribute('aria-busy');
 
@@ -3964,19 +4101,22 @@ async function cargarEstadosResenaPedidos(filtrados) {
 
     if (pendientes.length) {
       contenedor.innerHTML = pendientes.map((pid) => {
-        const nombre = Estado.productos.find((p) => p.id === pid)?.nombre || 'este producto';
+        const nombre = d.pedido.items.find((i) => i.producto_id === pid)?.producto_nombre
+          || Estado.productos.find((p) => p.id === pid)?.nombre || 'este producto';
         return `<button type="button" class="btn btn-outline btn-sm btn-calificar-producto" data-producto-id="${pid}"><i class="ti ti-star"></i> Califica ${escapeAttr(nombre)}</button>`;
       }).join('');
     }
   }
 }
 
-async function cargarDatosPedido(pedidoId) {
-  let pedido;
-  try {
-    pedido = await Api.pedidos.obtener(pedidoId);
-  } catch {
-    return null;
+async function cargarDatosPedido(pedidoId, pedidoCargado = null) {
+  let pedido = pedidoCargado;
+  if (!pedido) {
+    try {
+      pedido = await Api.pedidos.obtener(pedidoId);
+    } catch {
+      return null;
+    }
   }
 
   let envio = null;

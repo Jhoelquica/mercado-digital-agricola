@@ -287,6 +287,11 @@ const Api = {
     // el servidor deja ambos escritos en la cadena de certificación del producto.
     confirmarLlegadaAlmacen: (id, cantidadRecibida, observaciones = '') => request('productos', `/productos/${id}/confirmar-llegada-almacen`, { method: 'PATCH', body: { cantidad_recibida: cantidadRecibida, observaciones: observaciones || null }, auth: true }),
     reservas: (id) => request('productos', `/productos/${id}/reservas`, { auth: true }),
+    // Comprador: reservar lo que todavía viene en camino (sin pagar; se le avisa cuando llega), ver qué reservó y
+    // quitar su reserva ("ya no me avises").
+    reservar: (id) => request('productos', `/productos/${id}/reservar`, { method: 'POST', auth: true }),
+    misReservas: () => request('productos', '/productos/mis-reservas', { auth: true }),
+    quitarReserva: (id) => request('productos', `/productos/${id}/reservar`, { method: 'DELETE', auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),
     crearResena: (id, datos) => request('productos', `/productos/${id}/resenas`, { method: 'POST', body: datos, auth: true }),
     subirImagen: (id, archivo, orden = 0) => {
@@ -312,6 +317,10 @@ const Api = {
   pedidos: {
     crear: (datos) => request('pedidos', '/pedidos', { method: 'POST', body: datos, auth: true }),
     obtener: (id) => request('pedidos', `/pedidos/${id}`, { auth: true }),
+    // Los pedidos del comprador con sesión (del más nuevo al más viejo) y los productos que ya recibió (solo esos se
+    // pueden calificar).
+    mios: () => request('pedidos', '/pedidos/mios', { auth: true }),
+    productosRecibidos: () => request('pedidos', '/pedidos/mios/productos-recibidos', { auth: true }),
     // Costo de envío según la distancia del destino al almacén (público): permite mostrar el total
     // real antes de crear el pedido.
     // Lo que hay que saber antes de armar el pedido (hoy: { monto_minimo }).
