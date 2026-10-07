@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=f0ab148c">
+<link rel="stylesheet" href="css/style.css?v=94cecb00">
 </head>
 <body>
 
@@ -745,6 +745,16 @@
             <div id="grafico-productores-admin-vacio" class="mapa-bloque-neutro hidden"><span class="icon"><i class="ti ti-plant-2"></i></span> Todavía ningún productor tiene productos publicados.</div>
           </div>
         </div>
+
+        <div class="section-header inner ventas-encabezado admin-ventas-encabezado">
+          <h3><i class="ti ti-chart-line"></i> Ventas de la plataforma</h3>
+          <div class="ventas-periodo" role="group" aria-label="Periodo de las ventas" data-ventas="admin">
+            <button type="button" class="ventas-periodo-btn" data-meses="6" aria-pressed="false">6 meses</button>
+            <button type="button" class="ventas-periodo-btn" data-meses="12" aria-pressed="true">12 meses</button>
+          </div>
+        </div>
+        <p class="muted ventas-intro">Pedidos pagados de todos los productores, mes a mes: qué se vende, quién vende más, cuántos compradores llegan y cuántos pedidos se caen.</p>
+        <div id="admin-ventas" class="ventas"></div>
       </div>
 
       <div class="admin-tab-panel" data-admin-panel="productores">
@@ -1285,6 +1295,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=8fdae1b0"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=1d6f052a"></script>
+<script src="js/app.js?v=b4e51c19"></script>
 </body>
 </html>

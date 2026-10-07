@@ -6888,7 +6888,7 @@ async function iniciarPanelAdmin() {
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
   activarTabAdmin('inicio');
   await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
-    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar(), cargarPagosPorHacer()]);
+    cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar(), cargarPagosPorHacer(), cargarVentasAdmin()]);
 }
 
 // ---- Productores (vista de solo lectura para el Admin) ----
@@ -8148,7 +8148,7 @@ function frasesVentas(d, esAdmin) {
     frases.push(['history', `Hace un año (${etiquetaMes(anioPasado.mes, true)}) ${esAdmin ? 'se vendió' : 'vendiste'} ${formatearMoneda(anioPasado.soles)}; este mes van ${formatearMoneda(actual.soles)}.`]);
   }
   if (estrella?.precio_promedio_kg) {
-    frases.push(['scale', `${esAdmin ? 'El' : 'Tu'} ${escapeAttr(estrella.nombre)} se vendió en promedio a <strong>${formatearMoneda(estrella.precio_promedio_kg)} el kg</strong>.`]);
+    frases.push(['scale', `${esAdmin ? '' : 'Tu '}${escapeAttr(estrella.nombre)} se vendió en promedio a <strong>${formatearMoneda(estrella.precio_promedio_kg)} el kg</strong>.`]);
   }
   // Productos que se vendían y dejaron de venderse en los dos últimos meses: quizá sin stock o con un precio alto.
   const n = d.meses.length;
@@ -8206,6 +8206,108 @@ function renderVentasProductor(d) {
       ${renderReparto('Dónde vendes', 'map-pin', d.por_destino)}
       ${renderReparto('Por mayor o por menor', 'packages', d.por_tipo)}
     </div>`;
+}
+
+// ---- Admin: ventas de toda la plataforma ----
+function renderRankingProductores(d, nombres) {
+  if (!d.productores.length) return '';
+  const total = d.totales.soles || 1;
+  const maximo = d.productores[0].soles || 1;
+  const filas = d.productores.slice(0, 8).map((p, i) => `
+    <li>
+      <div class="vr-cabeza"><span class="vr-nombre">${i + 1}. ${escapeAttr(nombres[p.productor_id] || `Productor #${p.productor_id.slice(0, 8)}`)}</span><span class="vr-valor">${formatearMoneda(p.soles)}</span></div>
+      <div class="vr-barra" aria-hidden="true"><span style="width:${Math.max(2, (p.soles / maximo) * 100)}%"></span></div>
+      <small>${kilos(p.kg)} · ${p.pedidos} pedido${p.pedidos === 1 ? '' : 's'} · ${Math.round((p.soles / total) * 100)}% del total</small>
+    </li>`).join('');
+  return `
+    <section class="card-panel ventas-card" aria-label="Productores que más venden">
+      <h5><i class="ti ti-tractor" aria-hidden="true"></i> Productores que más venden</h5>
+      <p class="ventas-card-sub">Por lo vendido en soles en el periodo.</p>
+      <ol class="ventas-ranking">${filas}</ol>
+    </section>`;
+}
+
+function renderTablaMesAMes(d, comision) {
+  const filas = [...d.por_mes].reverse().map((m) => `
+    <tr>
+      <th scope="row">${etiquetaMes(m.mes, true).replace(/^./, (c) => c.toUpperCase())}</th>
+      <td class="num">${formatearMoneda(m.soles)}</td>
+      <td class="num">${formatearMoneda(m.soles_envio)}</td>
+      <td class="num">${formatearMoneda((m.soles + m.soles_envio) * comision)}</td>
+      <td class="num">${m.pedidos}</td>
+      <td class="num">${m.compradores}</td>
+      <td class="num">${m.compradores_nuevos}</td>
+      <td class="num">${m.cancelados_devueltos}</td>
+      <td class="num">${m.sin_pagar}</td>
+    </tr>`).join('');
+  return `
+    <section class="card-panel ventas-card" aria-label="Mes a mes">
+      <h5><i class="ti ti-table" aria-hidden="true"></i> Mes a mes</h5>
+      <p class="ventas-card-sub">Comisión = ${Math.round(comision * 100)}% de lo vendido y de los envíos. "Devueltos": pedidos pagados que se cancelaron con devolución; "Sin pagar": pedidos que vencieron sin pagarse.</p>
+      <div class="tabla-wrap"><table class="tabla-simple tabla-ganancias tabla-mes-a-mes">
+        <thead><tr><th>Mes</th><th class="num">Ventas</th><th class="num">Envíos</th><th class="num">Comisión</th><th class="num">Pedidos</th><th class="num">Compradores</th><th class="num">Nuevos</th><th class="num">Devueltos</th><th class="num">Sin pagar</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table></div>
+    </section>`;
+}
+
+function frasesAdmin(d, nombres) {
+  const frases = frasesVentas(d, true);
+  const t = d.totales;
+  const lider = d.productores[0];
+  if (lider && t.soles > 0) {
+    frases.splice(1, 0, ['tractor', `<strong>${escapeAttr(nombres[lider.productor_id] || 'Un productor')}</strong> vende el ${Math.round((lider.soles / t.soles) * 100)}% de todo lo de la plataforma.`]);
+  }
+  const actual = d.por_mes[d.por_mes.length - 1];
+  if (actual.compradores_nuevos) frases.push(['user-plus', `Este mes llegaron ${actual.compradores_nuevos} comprador${actual.compradores_nuevos === 1 ? '' : 'es'} nuevo${actual.compradores_nuevos === 1 ? '' : 's'}.`]);
+  const sinPagar = d.por_mes.reduce((s, m) => s + m.sin_pagar, 0);
+  const pedidosTotales = t.pedidos + sinPagar;
+  if (sinPagar && pedidosTotales) frases.push(['clock-x', `${Math.round((sinPagar / pedidosTotales) * 100)}% de los pedidos del periodo vencieron sin pagarse (${sinPagar}).`]);
+  return frases;
+}
+
+async function cargarVentasAdmin(meses = mesesVentas.admin) {
+  const cont = document.getElementById('admin-ventas');
+  if (!cont) return;
+  mesesVentas.admin = meses;
+  marcarPeriodoVentas('admin', meses);
+  cont.classList.add('cargando');
+  if (!cont.innerHTML.trim()) cont.innerHTML = renderSkeletonFilas(1);
+  try {
+    const [d, productores, condiciones] = await Promise.all([
+      Api.ventas.admin(meses), Api.productores.listar().catch(() => []), Api.pagos.condiciones().catch(() => null)]);
+    const nombres = Object.fromEntries(productores.map((p) => [p.id, p.nombre]));
+    const comision = (condiciones?.comision_plataforma_porcentaje ?? 10) / 100;
+    if (!d.totales.pedidos) {
+      cont.innerHTML = renderVentasVacias(true);
+      return;
+    }
+    const frases = frasesAdmin(d, nombres);
+    cont.innerHTML = `
+      <div class="ventas-arriba">${renderHeroVentas(d, true)}${renderKpisVentas(d)}</div>
+      <div class="ventas-grid">
+        ${renderGraficoVentasMes(d, 'grafico-ventas-admin')}
+        <section class="card-panel ventas-card ventas-frases" aria-label="Lo que dicen los números">
+          <h5><i class="ti ti-bulb" aria-hidden="true"></i> Lo que dicen los números</h5>
+          <ul>${frases.map(([icono, texto]) => `<li><i class="ti ti-${icono}" aria-hidden="true"></i><span>${texto}</span></li>`).join('')}</ul>
+        </section>
+      </div>
+      <div class="ventas-grid ventas-grid-pares">
+        ${renderRankingProductos(d, 'Productos más vendidos')}
+        ${renderRankingProductores(d, nombres)}
+      </div>
+      ${renderTablaMesAMes(d, comision)}
+      ${renderTablaProductoMes(d)}
+      <div class="ventas-grid ventas-grid-pares">
+        ${renderReparto('Dónde se vende', 'map-pin', d.por_destino)}
+        ${renderReparto('Por mayor o por menor', 'packages', d.por_tipo)}
+      </div>`;
+    dibujarGraficoVentasMes('grafico-ventas-admin', d);
+  } catch (err) {
+    cont.innerHTML = `<p class="muted">${escapeAttr(err.message || 'No se pudieron cargar las ventas.')}</p>`;
+  } finally {
+    cont.classList.remove('cargando');
+  }
 }
 
 async function cargarMisVentas(meses = mesesVentas.productor) {
@@ -8311,8 +8413,38 @@ function renderMisGanancias(g) {
       <div class="ganancias-cuenta-wrap">${renderCuentaCobro(g)}</div>
       ${renderProximosPagos(g)}
     </div>
+    ${renderGananciasPorMes(g)}
     ${renderMovimientosGanancias(g)}
     ${renderPagosRecibidos(g)}`;
+}
+
+// Lo ganado (neto, sin lo anulado) en cada uno de los últimos 6 meses, con barras de un solo color y el monto escrito.
+function renderGananciasPorMes(g) {
+  const hoy = new Date();
+  const meses = Array.from({ length: 6 }, (_, i) => {
+    const f = new Date(hoy.getFullYear(), hoy.getMonth() - 5 + i, 1);
+    return `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const suma = Object.fromEntries(meses.map((m) => [m, 0]));
+  g.movimientos.filter((m) => m.estado !== 'anulada').forEach((m) => {
+    const f = parsearFechaServidor(m.fecha);
+    const clave = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`;
+    if (clave in suma) suma[clave] += m.monto_neto;
+  });
+  const maximo = Math.max(...Object.values(suma));
+  if (!maximo) return '';
+  const filas = meses.map((m) => `
+    <li class="${m === meses[5] ? 'actual' : ''}">
+      <span class="gm-mes">${etiquetaMes(m)}</span>
+      <span class="gm-barra" aria-hidden="true"><span style="width:${suma[m] ? Math.max(2, (suma[m] / maximo) * 100) : 0}%"></span></span>
+      <span class="gm-valor">${formatearMoneda(suma[m])}</span>
+    </li>`).join('');
+  return `
+    <section class="card-panel ganancias-por-mes" aria-label="Lo que ganaste por mes">
+      <h4><i class="ti ti-chart-bar" aria-hidden="true"></i> Lo que ganaste por mes</h4>
+      <p class="ventas-card-sub">Neto (ya sin la comisión ni los descuentos), por la fecha de cada ${g.beneficiario.tipo === 'productor' ? 'venta' : 'envío o recojo'}. Lo anulado no cuenta.</p>
+      <ul>${filas}</ul>
+    </section>`;
 }
 
 function renderCuentaCobro(g, editando = false) {

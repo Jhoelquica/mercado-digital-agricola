@@ -5703,3 +5703,18 @@ body.asistente-abierto { overflow: hidden; }
 .ventas-heat-leyenda span { width: 22px; height: 12px; border-radius: 3px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .ventas { transition: none; } }
+
+/* Ventas de la plataforma (admin) y ganancias por mes */
+.admin-ventas-encabezado { margin-top: 30px; }
+.tabla-mes-a-mes th[scope="row"] { text-align: left; font-weight: 700; white-space: nowrap; }
+.tabla-mes-a-mes td, .tabla-mes-a-mes th { white-space: nowrap; }
+.ganancias-por-mes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ganancias-por-mes li { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.gm-mes { font-size: 0.85rem; font-weight: 700; color: var(--texto-suave); text-transform: capitalize; }
+.gm-barra { height: 12px; border-radius: 999px; background: #eef1ec; overflow: hidden; }
+.gm-barra span { display: block; height: 100%; border-radius: 999px; background: #C3CDBE; }
+.ganancias-por-mes li.actual .gm-barra span { background: #3E8E41; }
+.gm-valor { font-weight: 800; color: var(--color-primario); font-variant-numeric: tabular-nums; }
+/* El panel admin limita sus .card-panel a 560px (pensado para tarjetas sueltas): las de ventas y el historial de pagos
+   ocupan todo el ancho, como el resto de las pantallas nuevas. */
+#view-panel-admin .ventas-card, #view-panel-admin .pph-historial { max-width: none; }
