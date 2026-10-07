@@ -614,6 +614,14 @@ def listar_productos(db: Session = Depends(get_db)):
     cache.guardar(cache.CLAVE_CATALOGO, resultado)
     return resultado
 
+# Lo que el comprador reservó (para que la página del producto diga "te avisaremos" en vez de ofrecer reservar otra
+# vez). Va antes de /productos/{producto_id}, que se comería "mis-reservas" como id.
+@app.get("/productos/mis-reservas")
+def mis_reservas(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
+    filas = db.query(models.Reserva.producto_id).filter(models.Reserva.comprador_id == usuario.get("sub")).all()
+    return {"productos": sorted(str(producto_id) for (producto_id,) in filas)}
+
+
 @app.get("/productos/mios")
 def listar_mis_productos(
         db: Session = Depends(get_db),
@@ -1280,6 +1288,21 @@ def reservar_producto(
         raise HTTPException(status_code=400, detail="Ya reservaste este producto")
     db.refresh(nueva_reserva)
     return nueva_reserva
+
+@app.delete("/productos/{producto_id}/reservar")
+def cancelar_reserva(
+        producto_id: uuid.UUID,
+        db: Session = Depends(get_db),
+        usuario: dict = Depends(requiere_rol("comprador")),
+):
+    """"Ya no me avises": el comprador quita SU reserva (nunca la de otro)."""
+    borradas = db.query(models.Reserva).filter(models.Reserva.producto_id == producto_id,
+                                               models.Reserva.comprador_id == usuario.get("sub")).delete()
+    db.commit()
+    if not borradas:
+        raise HTTPException(status_code=404, detail="No tenías una reserva de este producto")
+    return {"mensaje": "Listo: ya no te avisaremos de este producto"}
+
 
 @app.get("/productos/{producto_id}/reservas")
 def listar_reservas(

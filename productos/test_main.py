@@ -541,6 +541,29 @@ def test_reservar_dos_veces_el_mismo_comprador_falla_400():
     assert segunda.json()["detail"] == "Ya reservaste este producto"
 
 
+def test_mis_reservas_y_ya_no_me_avises():
+    producto = _crear_producto_directo(estado="en_transito")
+    otro = _crear_producto_directo(estado="en_transito")
+    yo, vecino = str(uuid.uuid4()), str(uuid.uuid4())
+    _auth(vecino, rol="comprador")
+    assert client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
+    _auth(yo, rol="comprador")
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": []}
+    assert client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": [str(producto.id)]}
+
+    assert client.delete(f"/productos/{otro.id}/reservar", headers=HEADERS_AUTH).status_code == 404
+    assert client.delete(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": []}
+    _auth(vecino, rol="comprador")  # la del vecino sigue en pie
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": [str(producto.id)]}
+
+
+def test_mis_reservas_es_solo_para_compradores():
+    _auth(str(uuid.uuid4()), rol="productor")
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).status_code == 403
+
+
 # ============ GET /productos/{id}/reservas ============
 
 def test_listar_reservas_admin_funciona():
