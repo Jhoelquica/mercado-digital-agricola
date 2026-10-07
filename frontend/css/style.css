@@ -5645,3 +5645,61 @@ body.asistente-abierto { overflow: hidden; }
 .pph-ayuda:empty { display: none; }
 .pph-form .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
 .pph-historial { margin-top: 22px; }
+
+/* ===== Ventas (agricultor y admin) =====
+   Skill dataviz: una cifra principal, indicadores con variación (flecha + signo, nunca solo color), columnas finas
+   (24px máx., 4px redondeadas arriba) con énfasis en el mes actual, escala secuencial de un solo tono para la tabla
+   producto × mes, rejilla de 1px, texto en tinta (nunca del color de la serie) y cifras tabulares solo en columnas.
+   21st.dev "Charts & KPI Cards" y "Total Sales Chart" (filtro de periodo en una fila arriba). */
+.ventas { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; transition: opacity .2s ease; }
+.ventas.cargando { opacity: .55; }
+.ventas-encabezado { flex-wrap: wrap; gap: 12px; }
+.ventas-intro { margin: -4px 0 14px; }
+.economia-estimada-titulo { margin-top: 34px; }
+.ventas-periodo { display: inline-flex; padding: 4px; border-radius: 999px; background: var(--color-superficie); gap: 4px; }
+.ventas-periodo-btn { min-height: 40px; padding: 6px 16px; border: none; border-radius: 999px; background: transparent; font-weight: 700; color: var(--texto-suave); cursor: pointer; }
+.ventas-periodo-btn[aria-pressed="true"] { background: #fff; color: var(--color-primario); box-shadow: var(--sombra); }
+.ventas-periodo-btn:focus-visible { outline: 3px solid var(--color-primario); outline-offset: 2px; }
+.ventas-arriba { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1100px) { .ventas-arriba { grid-template-columns: minmax(280px, 1fr) minmax(0, 2.4fr); align-items: stretch; } }
+.ventas-hero { display: grid; gap: 6px; align-content: center; padding: 22px 24px; border-radius: var(--radio); background: linear-gradient(135deg, var(--color-primario), #3f5a3a); color: #fff; box-shadow: var(--sombra); }
+.ventas-hero-etiqueta { font-size: 0.82rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .85; }
+.ventas-hero-valor { font-family: var(--font-titulo); font-size: clamp(2.2rem, 4vw, 3rem); line-height: 1.05; }
+.ventas-hero-sub { font-size: 0.9rem; opacity: .9; line-height: 1.45; }
+.ventas-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 14px; }
+.ventas-kpi { display: grid; gap: 6px; align-content: start; padding: 16px 18px; border-radius: var(--radio); background: #fff; border: 1px solid color-mix(in srgb, var(--color-borde) 35%, transparent); box-shadow: var(--sombra); }
+.ventas-kpi-etiqueta { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; font-weight: 700; color: var(--texto-suave); }
+.ventas-kpi-valor { font-family: var(--font-titulo); font-size: 1.6rem; font-weight: 800; color: var(--color-primario); }
+.ventas-kpi-pie { font-size: 0.78rem; color: var(--texto-suave); }
+.ventas-delta { display: inline-flex; align-items: center; gap: 4px; align-self: start; width: fit-content; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; }
+.ventas-delta span { font-weight: 500; }
+.ventas-delta.sube { background: #e5f2e3; color: #1d5a1d; }
+.ventas-delta.baja { background: #fbe9e4; color: #9b2c12; }
+.ventas-delta.igual, .ventas-delta.sin-dato { background: var(--color-superficie); color: var(--texto-suave); font-weight: 600; }
+.ventas-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+@media (min-width: 1000px) { .ventas-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: start; } .ventas-grid-pares { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.ventas-card h5 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.02rem; color: var(--color-primario); }
+.ventas-card-sub { margin: 4px 0 14px; font-size: 0.85rem; color: var(--texto-suave); }
+.ventas-chart-wrap { position: relative; height: 280px; }
+.ventas-detalle { margin-top: 12px; }
+.ventas-detalle summary { cursor: pointer; font-weight: 700; color: var(--color-primario); font-size: 0.9rem; min-height: 32px; display: flex; align-items: center; }
+.ventas-ranking { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.ventas-ranking li { display: grid; gap: 5px; }
+.vr-cabeza { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.vr-nombre { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.vr-valor { font-weight: 800; white-space: nowrap; color: var(--color-primario); }
+.vr-barra { height: 10px; border-radius: 999px; background: #eef1ec; overflow: hidden; }
+.vr-barra span { display: block; height: 100%; border-radius: 999px; background: #3E8E41; }
+.ventas-ranking small { font-size: 0.8rem; color: var(--texto-suave); }
+.ventas-frases ul { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.ventas-frases li { display: flex; gap: 10px; align-items: flex-start; line-height: 1.45; }
+.ventas-frases li i { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.05rem; }
+.ventas-heat { width: 100%; border-collapse: separate; border-spacing: 2px; font-size: 0.82rem; }
+.ventas-heat th { padding: 6px 8px; font-size: 0.72rem; font-weight: 700; color: var(--texto-suave); text-align: center; white-space: nowrap; }
+.ventas-heat tbody th { text-align: left; color: var(--texto); font-size: 0.85rem; max-width: 160px; white-space: normal; }
+.ventas-heat td { min-width: 58px; padding: 8px 6px; border-radius: 6px; text-align: center; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ventas-heat td.vh-vacia { background: #f6f7f4; color: #aab2a6; }
+.ventas-heat-leyenda { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 10px; font-size: 0.78rem; color: var(--texto-suave); }
+.ventas-heat-leyenda span { width: 22px; height: 12px; border-radius: 3px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+@media (prefers-reduced-motion: reduce) { .ventas { transition: none; } }

@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=58db7b31">
+<link rel="stylesheet" href="css/style.css?v=f0ab148c">
 </head>
 <body>
 
@@ -574,9 +574,20 @@
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="economia">
-        <div class="section-header inner">
-          <h3><i class="ti ti-chart-bar"></i> Gestión económica</h3>
+        <div class="section-header inner ventas-encabezado">
+          <h3><i class="ti ti-chart-bar"></i> Mis ventas</h3>
+          <div class="ventas-periodo" role="group" aria-label="Periodo de las ventas" data-ventas="productor">
+            <button type="button" class="ventas-periodo-btn" data-meses="6" aria-pressed="false">6 meses</button>
+            <button type="button" class="ventas-periodo-btn" data-meses="12" aria-pressed="true">12 meses</button>
+          </div>
         </div>
+        <p class="muted ventas-intro">Lo que vendiste en ChakraShop: solo pedidos pagados, por mes y por producto, para decidir qué y cuándo vender.</p>
+        <div id="productor-ventas" class="ventas"></div>
+
+        <div class="section-header inner economia-estimada-titulo">
+          <h3><i class="ti ti-calculator"></i> Costos y ganancia de tus cosechas</h3>
+        </div>
+        <p class="muted ventas-intro">Calculado con lo que anotaste al sembrar y cosechar (inversión, kilos y precio estimado).</p>
         <div id="productor-economia-stats"></div>
         <div class="economia-graficos">
           <div class="card-panel grafico-card">
@@ -1272,8 +1283,8 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=ed1546b6"></script>
+<script src="js/api.js?v=8fdae1b0"></script>
 <script src="js/asistente.js?v=cbcdff95"></script>
-<script src="js/app.js?v=3d2df679"></script>
+<script src="js/app.js?v=1d6f052a"></script>
 </body>
 </html>

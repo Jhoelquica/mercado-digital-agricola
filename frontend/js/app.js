@@ -4843,6 +4843,7 @@ async function iniciarPanelProductor() {
     document.getElementById('productor-economia-historial').innerHTML = renderTablaHistorialCosechas(registros);
     dibujarGraficoCosechasPorMes(registros);
     graficosEconomiaProductorListos = false;
+    cargarMisVentas();
     activarTabProductor(Estado.tabProductorInicial || 'inicio');
     Estado.tabProductorInicial = null;
   } else {
@@ -7907,6 +7908,328 @@ function renderTarjetaPendienteCapacidad(envio, indice = 0) {
       </div>
       <p class="muted">Este pedido necesita un vehículo con más capacidad — ningún repartidor disponible alcanzaba. Contrata o coordina uno, y pide a quien lo va a manejar que se registre como Repartidor desde su propia cuenta (pantalla de inicio → "Soy repartidor" → completar perfil con capacidad y tipo de vehículo).</p>
     </div>`;
+}
+
+// ============ VENTAS (panel del agricultor y del admin) ============
+// Datos: GET /ventas/mias y /ventas/admin (pedidos/ventas.py): solo pedidos pagados, por mes de Perú.
+// Forma (skill dataviz): una cifra principal + indicadores del mes con su variación; un gráfico de columnas de una sola
+// serie con ÉNFASIS en el mes actual (verde) y el resto en gris de contexto (verde y dorado se confunden con daltonismo:
+// validado con validate_palette.js, por eso no van como dos series); ranking de productos en barras horizontales de un
+// solo color; tabla producto × mes con una escala secuencial de verdes (claro = poco, oscuro = mucho) y su leyenda.
+// Cada gráfico tiene su tabla. 21st.dev: "Charts & KPI Cards" (indicadores que saben si subir es bueno, tabla para lectores
+// de pantalla) y "Total Sales Chart" (filtro de periodo arriba de todo lo que afecta).
+const VENTAS_VERDE = '#3E8E41';
+const VENTAS_CONTEXTO = '#C3CDBE';
+const VENTAS_ESCALA = ['#E6F1E1', '#C5E0BB', '#9BC98C', '#6AAC5C', '#3E8E41', '#2A6B2E'];
+const graficosVentas = {};
+const mesesVentas = { productor: 12, admin: 12 };
+
+function etiquetaMes(mes, largo = false) {
+  const [anio, numero] = mes.split('-').map(Number);
+  const fecha = new Date(anio, numero - 1, 1);
+  return largo
+    ? fecha.toLocaleDateString('es-PE', { month: 'long', year: 'numeric' })
+    : `${fecha.toLocaleDateString('es-PE', { month: 'short' }).replace('.', '')} ${String(anio).slice(2)}`;
+}
+
+function kilos(valor) {
+  const n = Number(valor) || 0;
+  return `${n.toLocaleString('es-PE', { maximumFractionDigits: n >= 100 ? 0 : 1 })} kg`;
+}
+
+// Variación contra otro periodo, con flecha y signo (el color nunca va solo). null si no hay con qué comparar.
+function variacion(actual, antes) {
+  if (!antes) return actual > 0 ? { texto: 'nuevo', clase: 'sube', icono: 'arrow-up-right' } : null;
+  const pct = Math.round(((actual - antes) / antes) * 100);
+  if (pct === 0) return { texto: 'igual', clase: 'igual', icono: 'equal' };
+  return { texto: `${pct > 0 ? '+' : '−'}${Math.abs(pct)}%`, clase: pct > 0 ? 'sube' : 'baja', icono: pct > 0 ? 'arrow-up-right' : 'arrow-down-right' };
+}
+
+function renderVariacion(v, contra) {
+  if (!v) return `<span class="ventas-delta sin-dato">Sin ventas en ${contra}</span>`;
+  return `<span class="ventas-delta ${v.clase}"><i class="ti ti-${v.icono}" aria-hidden="true"></i> ${v.texto} <span>vs ${contra}</span></span>`;
+}
+
+function renderKpisVentas(d) {
+  const { actual, anterior, anio_pasado: anioPasado } = d.comparativa;
+  const mesCorto = etiquetaMes(anterior.mes).split(' ')[0].toLowerCase();
+  const tile = (icono, etiqueta, valor, v, pie = '') => `
+    <div class="ventas-kpi">
+      <span class="ventas-kpi-etiqueta"><i class="ti ti-${icono}" aria-hidden="true"></i> ${etiqueta}</span>
+      <span class="ventas-kpi-valor">${valor}</span>
+      ${renderVariacion(v, mesCorto)}
+      ${pie}
+    </div>`;
+  const haceUnAnio = anioPasado.soles > 0
+    ? `<span class="ventas-kpi-pie">${etiquetaMes(anioPasado.mes)}: ${formatearMoneda(anioPasado.soles)} (${variacion(actual.soles, anioPasado.soles).texto})</span>`
+    : '';
+  return `
+    <div class="ventas-kpis" aria-label="Este mes comparado con el anterior">
+      ${tile('cash', `Ventas de ${etiquetaMes(actual.mes, true).split(' ')[0]}`, formatearMoneda(actual.soles), variacion(actual.soles, anterior.soles), haceUnAnio)}
+      ${tile('scale', 'Kilos vendidos', kilos(actual.kg), variacion(actual.kg, anterior.kg))}
+      ${tile('receipt', 'Pedidos', actual.pedidos, variacion(actual.pedidos, anterior.pedidos))}
+      ${tile('users', 'Compradores', actual.compradores, variacion(actual.compradores, anterior.compradores))}
+    </div>`;
+}
+
+function renderHeroVentas(d, esAdmin) {
+  const t = d.totales;
+  const partes = [`${t.pedidos} pedido${t.pedidos === 1 ? '' : 's'}`, kilos(t.kg),
+    `${t.compradores} comprador${t.compradores === 1 ? '' : 'es'}${t.compradores_recurrentes ? ` (${t.compradores_recurrentes} repite${t.compradores_recurrentes === 1 ? '' : 'n'})` : ''}`,
+    `ticket promedio ${formatearMoneda(t.ticket_promedio)}`];
+  return `
+    <div class="ventas-hero">
+      <span class="ventas-hero-etiqueta">${esAdmin ? 'Se vendió' : 'Vendiste'} en los últimos ${d.meses.length} meses</span>
+      <strong class="ventas-hero-valor">${formatearMoneda(t.soles)}</strong>
+      <span class="ventas-hero-sub">${partes.join(' · ')}</span>
+    </div>`;
+}
+
+function renderGraficoVentasMes(d, id) {
+  const filas = d.por_mes.map((m) => `<tr><td>${etiquetaMes(m.mes, true)}</td><td class="num">${formatearMoneda(m.soles)}</td><td class="num">${kilos(m.kg)}</td><td class="num">${m.pedidos}</td></tr>`).join('');
+  return `
+    <section class="card-panel ventas-card" aria-labelledby="${id}-titulo">
+      <h5 id="${id}-titulo"><i class="ti ti-chart-bar" aria-hidden="true"></i> Ventas por mes</h5>
+      <p class="ventas-card-sub">En soles. Resaltado: ${etiquetaMes(d.comparativa.actual.mes, true)} (va en curso).</p>
+      <div class="ventas-chart-wrap"><canvas id="${id}" role="img" aria-label="Ventas en soles de cada mes; la tabla de abajo tiene los mismos datos"></canvas></div>
+      <details class="ventas-detalle"><summary>Ver como tabla</summary>
+        <div class="tabla-wrap"><table class="tabla-simple tabla-ganancias"><thead><tr><th>Mes</th><th class="num">Ventas</th><th class="num">Kilos</th><th class="num">Pedidos</th></tr></thead><tbody>${filas}</tbody></table></div>
+      </details>
+    </section>`;
+}
+
+// Una etiqueta con el valor solo sobre la columna resaltada (el resto va en el eje y en el tooltip).
+const etiquetaColumnaResaltada = {
+  id: 'etiquetaColumnaResaltada',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    const meta = chart.getDatasetMeta(0);
+    const i = meta.data.length - 1;
+    const valor = chart.data.datasets[0].data[i];
+    if (!valor || !meta.data[i]) return;
+    ctx.save();
+    ctx.fillStyle = '#1f2a1d';
+    ctx.font = '700 12px "Nunito Sans", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(formatearMoneda(valor), meta.data[i].x, meta.data[i].y - 6);
+    ctx.restore();
+  },
+};
+
+function dibujarGraficoVentasMes(id, d) {
+  const canvas = document.getElementById(id);
+  if (!canvas || typeof Chart === 'undefined') return;
+  graficosVentas[id]?.destroy();
+  const ultimo = d.por_mes.length - 1;
+  graficosVentas[id] = new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: d.por_mes.map((m) => etiquetaMes(m.mes)),
+      datasets: [{
+        label: 'Ventas (S/)', data: d.por_mes.map((m) => m.soles),
+        backgroundColor: d.por_mes.map((_, i) => (i === ultimo ? VENTAS_VERDE : VENTAS_CONTEXTO)),
+        hoverBackgroundColor: VENTAS_VERDE,
+        borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: 'bottom', maxBarThickness: 24,
+      }],
+    },
+    options: {
+      maintainAspectRatio: false,
+      layout: { padding: { top: 22 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => etiquetaMes(d.por_mes[items[0].dataIndex].mes, true),
+            label: (c) => {
+              const m = d.por_mes[c.dataIndex];
+              return [formatearMoneda(m.soles), kilos(m.kg), `${m.pedidos} pedido${m.pedidos === 1 ? '' : 's'}`];
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, border: { color: '#c3c2b7' }, ticks: { color: '#5b6458', font: { size: 11 } } },
+        y: {
+          beginAtZero: true, border: { display: false }, grid: { color: '#e1e0d9' },
+          ticks: { color: '#5b6458', font: { size: 11 }, maxTicksLimit: 5, callback: (v) => `S/ ${Number(v).toLocaleString('es-PE')}` },
+        },
+      },
+    },
+    plugins: [etiquetaColumnaResaltada],
+  });
+}
+
+function renderRankingProductos(d, titulo, nombreDe = (p) => p.nombre) {
+  if (!d.productos.length) return '';
+  const total = d.totales.soles || 1;
+  const visibles = d.productos.slice(0, 8);
+  const resto = d.productos.slice(8);
+  if (resto.length) {
+    visibles.push({ nombre: `Otros ${resto.length} productos`, otros: true, soles: resto.reduce((s, p) => s + p.soles, 0),
+      kg: resto.reduce((s, p) => s + p.kg, 0), pedidos: null, precio_promedio_kg: null });
+  }
+  const maximo = Math.max(...visibles.map((p) => p.soles)) || 1;
+  const filas = visibles.map((p, i) => {
+    const detalle = [kilos(p.kg), p.precio_promedio_kg ? `${formatearMoneda(p.precio_promedio_kg)} el kg` : '',
+      p.pedidos ? `${p.pedidos} pedido${p.pedidos === 1 ? '' : 's'}` : '', `${Math.round((p.soles / total) * 100)}% del total`].filter(Boolean).join(' · ');
+    return `
+      <li>
+        <div class="vr-cabeza"><span class="vr-nombre">${p.otros ? '' : `${i + 1}. `}${escapeAttr(p.otros ? p.nombre : (nombreDe(p) || 'Producto sin nombre'))}</span><span class="vr-valor">${formatearMoneda(p.soles)}</span></div>
+        <div class="vr-barra" aria-hidden="true"><span style="width:${Math.max(2, (p.soles / maximo) * 100)}%"></span></div>
+        <small>${detalle}</small>
+      </li>`;
+  }).join('');
+  return `
+    <section class="card-panel ventas-card" aria-label="${titulo}">
+      <h5><i class="ti ti-trophy" aria-hidden="true"></i> ${titulo}</h5>
+      <p class="ventas-card-sub">Por lo vendido en soles en el periodo.</p>
+      <ol class="ventas-ranking">${filas}</ol>
+    </section>`;
+}
+
+// Tabla producto × mes: cada celda pintada con la escala secuencial (más oscuro = más vendido) y el valor escrito.
+function renderTablaProductoMes(d) {
+  const productos = d.productos.slice(0, 6);
+  if (!productos.length) return '';
+  const maximo = Math.max(...productos.flatMap((p) => p.soles_por_mes)) || 1;
+  const celda = (v) => {
+    if (!v) return '<td class="vh-vacia"><span aria-hidden="true">·</span><span class="sr-only">sin ventas</span></td>';
+    const paso = Math.min(VENTAS_ESCALA.length - 1, Math.floor((v / maximo) * VENTAS_ESCALA.length));
+    return `<td style="background:${VENTAS_ESCALA[paso]};color:${paso >= 3 ? '#fff' : '#1f2a1d'}">S/ ${Math.round(v).toLocaleString('es-PE')}</td>`;
+  };
+  const cabeza = d.meses.map((m) => `<th scope="col">${etiquetaMes(m)}</th>`).join('');
+  const filas = productos.map((p) => `<tr><th scope="row">${escapeAttr(p.nombre || 'Producto sin nombre')}</th>${p.soles_por_mes.map(celda).join('')}</tr>`).join('');
+  const leyenda = VENTAS_ESCALA.map((c) => `<span style="background:${c}"></span>`).join('');
+  return `
+    <section class="card-panel ventas-card" aria-label="Ventas de cada producto por mes">
+      <h5><i class="ti ti-table" aria-hidden="true"></i> Cada producto, mes a mes</h5>
+      <p class="ventas-card-sub">En soles. Compara en qué meses se vende más cada uno.</p>
+      <div class="tabla-wrap"><table class="ventas-heat"><thead><tr><th scope="col">Producto</th>${cabeza}</tr></thead><tbody>${filas}</tbody></table></div>
+      <div class="ventas-heat-leyenda" aria-hidden="true">Menos ${leyenda} Más</div>
+    </section>`;
+}
+
+function renderReparto(titulo, icono, grupos) {
+  if (!grupos.length) return '';
+  const total = grupos.reduce((s, g) => s + g.soles, 0) || 1;
+  const filas = grupos.slice(0, 5).map((g) => `
+    <li><div class="vr-cabeza"><span class="vr-nombre">${escapeAttr(g.nombre)}</span><span class="vr-valor">${Math.round((g.soles / total) * 100)}%</span></div>
+      <div class="vr-barra" aria-hidden="true"><span style="width:${Math.max(2, (g.soles / total) * 100)}%"></span></div>
+      <small>${formatearMoneda(g.soles)}</small></li>`).join('');
+  return `<section class="card-panel ventas-card ventas-reparto"><h5><i class="ti ti-${icono}" aria-hidden="true"></i> ${titulo}</h5><ul class="ventas-ranking">${filas}</ul></section>`;
+}
+
+function diasQueQuedanDelMes() {
+  const hoy = new Date();
+  return new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate() - hoy.getDate();
+}
+
+// Frases con lo que dicen los números (solo hechos de los datos, sin inventar).
+function frasesVentas(d, esAdmin) {
+  const frases = [];
+  const t = d.totales;
+  const tu = esAdmin ? 'El' : 'Tu';
+  const estrella = d.productos[0];
+  if (estrella && t.soles > 0) {
+    frases.push(['star', `${tu} producto más vendido es <strong>${escapeAttr(estrella.nombre || 'sin nombre')}</strong>: ${Math.round((estrella.soles / t.soles) * 100)}% de lo vendido (${formatearMoneda(estrella.soles)}).`]);
+  }
+  const mejor = d.por_mes.reduce((a, b) => (b.soles > a.soles ? b : a), d.por_mes[0]);
+  if (mejor && mejor.soles > 0) frases.push(['calendar-star', `${esAdmin ? 'El mejor mes fue' : 'Tu mejor mes fue'} <strong>${etiquetaMes(mejor.mes, true)}</strong>, con ${formatearMoneda(mejor.soles)}.`]);
+  const { actual, anterior, anio_pasado: anioPasado } = d.comparativa;
+  const quedan = diasQueQuedanDelMes();
+  if (anterior.soles > 0) {
+    const v = variacion(actual.soles, anterior.soles);
+    frases.push([actual.soles >= anterior.soles ? 'trending-up' : 'trending-down',
+      actual.soles >= anterior.soles
+        ? `Este mes ${esAdmin ? 'ya se vendió' : 'ya vendiste'} ${v.texto === 'igual' ? 'lo mismo que' : `${v.texto} más que`} en ${etiquetaMes(anterior.mes, true).split(' ')[0]}.`
+        : `Este mes ${esAdmin ? 'se lleva' : 'llevas'} ${formatearMoneda(actual.soles)}: ${formatearMoneda(anterior.soles - actual.soles)} menos que en ${etiquetaMes(anterior.mes, true).split(' ')[0]}${quedan ? `, y quedan ${quedan} días` : ''}.`]);
+  }
+  if (anioPasado.soles > 0) {
+    frases.push(['history', `Hace un año (${etiquetaMes(anioPasado.mes, true)}) ${esAdmin ? 'se vendió' : 'vendiste'} ${formatearMoneda(anioPasado.soles)}; este mes van ${formatearMoneda(actual.soles)}.`]);
+  }
+  if (estrella?.precio_promedio_kg) {
+    frases.push(['scale', `${esAdmin ? 'El' : 'Tu'} ${escapeAttr(estrella.nombre)} se vendió en promedio a <strong>${formatearMoneda(estrella.precio_promedio_kg)} el kg</strong>.`]);
+  }
+  // Productos que se vendían y dejaron de venderse en los dos últimos meses: quizá sin stock o con un precio alto.
+  const n = d.meses.length;
+  d.productos.filter((p) => p.soles_por_mes.slice(0, n - 2).some((v) => v > 0) && !p.soles_por_mes.slice(n - 2).some((v) => v > 0))
+    .slice(0, 2).forEach((p) => {
+      const ultimo = d.meses[p.soles_por_mes.map((v) => v > 0).lastIndexOf(true)];
+      frases.push(['alert-circle', `<strong>${escapeAttr(p.nombre || 'Un producto')}</strong> no se vende desde ${etiquetaMes(ultimo, true)}: revisa si le queda stock o si su precio sigue bien.`]);
+    });
+  if (t.compradores > 0) {
+    frases.push(['users', t.compradores_recurrentes
+      ? `${t.compradores_recurrentes} de ${t.compradores} compradores volvieron a comprar${esAdmin ? '' : 'te'}.`
+      : `${t.compradores} comprador${t.compradores === 1 ? '' : 'es'}; ninguno volvió a comprar${esAdmin ? '' : 'te'} todavía.`]);
+  }
+  const porMayor = d.por_tipo.find((g) => g.nombre === 'Por mayor');
+  if (porMayor && t.soles > 0) frases.push(['packages', `${Math.round((porMayor.soles / t.soles) * 100)}% de lo vendido fue por mayor (pedidos grandes).`]);
+  const fuera = d.por_destino.filter((g) => g.nombre !== 'Ayacucho');
+  if (fuera.length && t.soles > 0) {
+    frases.push(['map-pin', `${Math.round((fuera.reduce((s, g) => s + g.soles, 0) / t.soles) * 100)}% se vendió fuera de Ayacucho (${fuera.map((g) => escapeAttr(g.nombre)).join(', ')}).`]);
+  }
+  return frases;
+}
+
+function renderFrasesVentas(d, esAdmin) {
+  const frases = frasesVentas(d, esAdmin);
+  if (!frases.length) return '';
+  return `
+    <section class="card-panel ventas-card ventas-frases" aria-label="Lo que dicen los números">
+      <h5><i class="ti ti-bulb" aria-hidden="true"></i> Lo que dicen ${esAdmin ? 'los' : 'tus'} números</h5>
+      <ul>${frases.map(([icono, texto]) => `<li><i class="ti ti-${icono}" aria-hidden="true"></i><span>${texto}</span></li>`).join('')}</ul>
+    </section>`;
+}
+
+function renderVentasVacias(esAdmin) {
+  return `
+    <div class="empty-state">
+      <span class="empty-state-icon"><i class="ti ti-chart-bar"></i></span>
+      <p><strong>${esAdmin ? 'Todavía no hay ventas pagadas en este periodo' : 'Todavía no tienes ventas pagadas en este periodo'}</strong></p>
+      <p class="muted">${esAdmin ? 'Cuando los compradores paguen sus pedidos, aquí se ven las ventas de cada mes.' : 'Cuando un comprador pague un pedido con tus productos, aquí ves cuánto vendiste cada mes y qué producto se vende más.'}</p>
+    </div>`;
+}
+
+function renderVentasProductor(d) {
+  if (!d.totales.pedidos) return renderVentasVacias(false);
+  return `
+    <div class="ventas-arriba">${renderHeroVentas(d, false)}${renderKpisVentas(d)}</div>
+    <div class="ventas-grid">
+      ${renderGraficoVentasMes(d, 'grafico-ventas-productor')}
+      ${renderRankingProductos(d, 'Tus productos más vendidos')}
+    </div>
+    <div class="ventas-grid">
+      ${renderFrasesVentas(d, false)}
+      ${renderTablaProductoMes(d)}
+    </div>
+    <div class="ventas-grid ventas-grid-pares">
+      ${renderReparto('Dónde vendes', 'map-pin', d.por_destino)}
+      ${renderReparto('Por mayor o por menor', 'packages', d.por_tipo)}
+    </div>`;
+}
+
+async function cargarMisVentas(meses = mesesVentas.productor) {
+  const cont = document.getElementById('productor-ventas');
+  if (!cont) return;
+  mesesVentas.productor = meses;
+  marcarPeriodoVentas('productor', meses);
+  cont.classList.add('cargando');
+  if (!cont.innerHTML.trim()) cont.innerHTML = renderSkeletonFilas(1);
+  try {
+    const d = await Api.ventas.mias(meses);
+    cont.innerHTML = renderVentasProductor(d);
+    if (d.totales.pedidos) dibujarGraficoVentasMes('grafico-ventas-productor', d);
+  } catch (err) {
+    cont.innerHTML = `<p class="muted">${escapeAttr(err.message || 'No se pudieron cargar tus ventas.')}</p>`;
+  } finally {
+    cont.classList.remove('cargando');
+  }
+}
+
+function marcarPeriodoVentas(cual, meses) {
+  document.querySelectorAll(`.ventas-periodo[data-ventas="${cual}"] .ventas-periodo-btn`).forEach((b) => {
+    b.setAttribute('aria-pressed', String(Number(b.dataset.meses) === meses));
+  });
 }
 
 // ============ MIS GANANCIAS (agricultor y repartidor) ============
@@ -11464,6 +11787,13 @@ function inicializarEventos() {
     e.preventDefault();
     registrarPagoBeneficiario(form);
   });
+  document.querySelectorAll('.ventas-periodo').forEach((grupo) => grupo.addEventListener('click', (e) => {
+    const boton = e.target.closest('.ventas-periodo-btn');
+    if (!boton) return;
+    const meses = Number(boton.dataset.meses);
+    if (grupo.dataset.ventas === 'admin') cargarVentasAdmin(meses);
+    else cargarMisVentas(meses);
+  }));
   ['productor-ganancias', 'repartidor-ganancias'].forEach((id) => {
     const cont = document.getElementById(id);
     cont.addEventListener('click', manejarClickGanancias);

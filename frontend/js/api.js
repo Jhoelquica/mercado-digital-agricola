@@ -438,6 +438,11 @@ const Api = {
       rechazar: (pedidoId, motivo) => request('pagos', `/pagos/admin/transferencias/${pedidoId}/rechazar`, { method: 'POST', body: { motivo }, auth: true }),
     },
   },
+  // Ventas pagadas por mes y por producto: las del agricultor con sesión, o las de toda la plataforma (admin).
+  ventas: {
+    mias: (meses) => request('pedidos', `/ventas/mias?meses=${meses}`, { auth: true }),
+    admin: (meses) => request('pedidos', `/ventas/admin?meses=${meses}`, { auth: true }),
+  },
   // Agricultor o repartidor: lo que gana, qué lunes se le paga y cómo cobra. El admin registra el pago semanal.
   ganancias: {
     mias: () => request('pagos', '/ganancias/me', { auth: true }),
