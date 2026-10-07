@@ -5777,3 +5777,7 @@ body.asistente-abierto { overflow: hidden; }
 .eg-lista .btn-borrar-gasto { min-width: 44px; min-height: 40px; }
 
 .form-gasto .perfil-campo small { display: inline; }
+
+/* Tipo de producción en la tarjeta (crianza, elaboración, frutal): un chip neutro junto al estado. */
+.produccion-card-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.pill-tipo-produccion { background: #eef1f6; color: #3c4a63; }

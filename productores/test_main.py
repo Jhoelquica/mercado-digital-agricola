@@ -1109,3 +1109,14 @@ def test_las_plantillas_son_publicas_y_reconocen_el_nombre():
     assert client.get("/plantillas/para", params={"nombre": "Queso andino"}).json()["tipo"] == "elaboracion"
     desconocido = client.get("/plantillas/para", params={"nombre": "Chuño"}).json()
     assert desconocido["reconocido"] is False and desconocido["tipo"] == "temporada"
+
+
+
+def test_la_cadena_dice_recogidos_en_la_granja_para_los_huevos(monkeypatch):
+    capturado = _capturar_post_a_certificacion(monkeypatch)
+    registro = _registro_para_la_cadena(cultivo="Huevo de campo", unidad_medida="unidad", cantidad_cosechada=360,
+                                        tipo_produccion="crianza")
+    _registrar_certificacion_real(registro, SimpleNamespace(nombre="Granja Sol"), SimpleNamespace(codigo="GR-1", nombre=None), "p-1")
+    texto = capturado["json"]["datos_cosecha"]
+    assert "360 unidad de Huevo de campo recogidos en granja GR-1 por Granja Sol (periodo desde el 01/01/2026, hasta el 20/08/2026)." in texto
+    assert "Al registrar lo recogido: a 3,10 km de la granja" in texto and "Foto de lo recogido" in texto

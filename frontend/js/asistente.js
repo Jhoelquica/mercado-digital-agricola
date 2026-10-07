@@ -268,8 +268,13 @@ const Asistente = (() => {
     return typeof valor === 'function' ? valor(estado) : valor;
   }
 
+  // Un paso con omitir(estado) = true no se muestra (p. ej. las parcelas cuando se elabora un queso).
+  function visibles() {
+    return config.pasos.filter((p) => !p.omitir?.(estado));
+  }
+
   function pasos() {
-    return [...config.pasos, {
+    return [...visibles(), {
       id: 'revisar',
       pregunta: 'Revisa y confirma',
       ayuda: 'Mira que todo esté bien. Si algo no está bien, toca "Cambiar" en esa línea.',
@@ -279,7 +284,7 @@ const Asistente = (() => {
 
   function textoParaLeer(paso) {
     if (paso.id === 'revisar') {
-      const lineas = config.pasos.filter((p) => p.resumen).map((p) => {
+      const lineas = visibles().filter((p) => p.resumen).map((p) => {
         const r = p.resumen(estado);
         return `${r.etiqueta}: ${r.textoVoz || r.valor}.`;
       });
@@ -291,7 +296,7 @@ const Asistente = (() => {
   function renderRevisar() {
     return `
       <ul class="asistente-resumen">
-        ${config.pasos.map((p, i) => {
+        ${visibles().map((p, i) => {
           if (!p.resumen) return '';
           const r = p.resumen(estado);
           return `

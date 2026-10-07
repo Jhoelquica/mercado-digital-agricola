@@ -18,15 +18,24 @@ leche, palta), Gestión (huevo). Los valores de referencia para "¿qué me convi
 """
 import unicodedata
 
+# Las palabras de cada tipo: en las pantallas y en el texto que queda sellado en la cadena de certificación.
 TIPOS = {
     "temporada": {"nombre": "Cultivo de temporada", "inicio": "Siembra", "fin": "Cosecha", "verbo_inicio": "sembrar",
-                  "verbo_fin": "cosechar", "lugar": "chacra"},
+                  "verbo_fin": "cosechar", "lugar": "chacra", "obtenidos": "cosechados", "desde": "sembrado el",
+                  "hasta": "cosechado el", "al_inicio": "registrar la siembra", "al_fin": "completar la cosecha",
+                  "foto": "Foto de la cosecha"},
     "frutal": {"nombre": "Frutal", "inicio": "Inicio de la campaña", "fin": "Cosecha", "verbo_inicio": "empezar la campaña",
-               "verbo_fin": "cosechar", "lugar": "huerto"},
+               "verbo_fin": "cosechar", "lugar": "huerto", "obtenidos": "cosechados", "desde": "campaña desde el",
+               "hasta": "cosechado el", "al_inicio": "registrar el inicio de la campaña", "al_fin": "completar la cosecha",
+               "foto": "Foto de la cosecha"},
     "crianza": {"nombre": "Crianza de animales", "inicio": "Inicio del periodo", "fin": "Recolección",
-                "verbo_inicio": "empezar el periodo", "verbo_fin": "recoger", "lugar": "granja"},
+                "verbo_inicio": "empezar el periodo", "verbo_fin": "recoger", "lugar": "granja", "obtenidos": "recogidos",
+                "desde": "periodo desde el", "hasta": "hasta el", "al_inicio": "registrar el inicio del periodo",
+                "al_fin": "registrar lo recogido", "foto": "Foto de lo recogido"},
     "elaboracion": {"nombre": "Elaboración", "inicio": "Inicio de la elaboración", "fin": "Producto listo",
-                    "verbo_inicio": "empezar a elaborar", "verbo_fin": "terminar", "lugar": "taller"},
+                    "verbo_inicio": "empezar a elaborar", "verbo_fin": "terminar", "lugar": "taller",
+                    "obtenidos": "elaborados", "desde": "elaboración desde el", "hasta": "listo el",
+                    "al_inicio": "registrar la elaboración", "al_fin": "registrar lo elaborado", "foto": "Foto de lo elaborado"},
 }
 
 # Rubro: (nombre, ícono). La columna de siempre a la que suma (para la ganancia y los gráficos de antes): semilla →
@@ -321,6 +330,7 @@ def catalogo() -> dict:
         "tipos": TIPOS,
         "rubros": {k: {"nombre": n, "icono": i} for k, (n, i) in RUBROS.items()},
         "familias": FAMILIAS,
-        "alimentos": [{"clave": k, "nombre": n, "familia": f, "tipo": FAMILIAS[f]["tipo"], "unidad": u}
-                      for k, (n, f, _a, u) in ALIMENTOS.items()],
+        # Con sus alias, para que la pantalla reconozca el alimento igual que clave_para (sin esperar al servidor).
+        "alimentos": [{"clave": k, "nombre": n, "familia": f, "tipo": FAMILIAS[f]["tipo"], "unidad": u, "alias": list(a)}
+                      for k, (n, f, a, u) in ALIMENTOS.items()],
     }

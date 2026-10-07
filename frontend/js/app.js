@@ -5301,9 +5301,9 @@ function pasosAsistenteSiembra() {
   return [
     {
       id: 'chacra',
-      pregunta: '¿En qué chacra sembraste?',
-      ayuda: 'Toca la chacra donde está esta siembra. Si no aparece, primero regístrala en "Mis chacras".',
-      voz: () => `¿En qué chacra sembraste? Tus chacras son: ${chacras.map((c) => nombreChacra(c).replace(' — ', ', ')).join('; ')}. Toca una.`,
+      pregunta: '¿En qué chacra o granja es?',
+      ayuda: 'Toca el lugar donde está esta siembra o tu producción (tu chacra, tu granja o tu taller). Si no aparece, primero regístralo en "Mis chacras".',
+      voz: () => `¿En qué chacra o granja es? Tus lugares son: ${chacras.map((c) => nombreChacra(c).replace(' — ', ', ')).join('; ')}. Toca uno.`,
       render: (estado) => campoOpcionesAsistente({
         nombre: 'asistente-chacra',
         valor: estado.chacraId,
@@ -5314,7 +5314,7 @@ function pasosAsistenteSiembra() {
         if (elegida) estado.chacraId = elegida.value;
       },
       validar: (estado) => (estado.chacraId ? null : 'Toca una de tus chacras para seguir.'),
-      resumen: (estado) => ({ etiqueta: 'Chacra', valor: nombreChacra(chacraPorId(estado.chacraId)), icono: 'map-2' }),
+      resumen: (estado) => ({ etiqueta: 'Lugar', valor: nombreChacra(chacraPorId(estado.chacraId)), icono: 'map-2' }),
     },
     pasoUbicacionAsistente('registrar la siembra', 'siembra'),
     {
@@ -5340,27 +5340,39 @@ function pasosAsistenteSiembra() {
         pintarPrecioReferenciaAsistente(campo.value.trim(), destino);
         pintarPlantillaReconocida(campo.value.trim(), plantilla);
       },
-      recoger: (cont, estado) => { estado.cultivo = cont.querySelector('#asistente-cultivo').value.trim(); },
-      validar: (estado) => (estado.cultivo.length >= 2 ? null : 'Escribe o di qué sembraste.'),
-      resumen: (estado) => ({ etiqueta: 'Cultivo', valor: estado.cultivo, icono: 'plant' }),
+      recoger: (cont, estado) => {
+        estado.cultivo = cont.querySelector('#asistente-cultivo').value.trim();
+        const alimento = alimentoPorNombre(estado.cultivo);
+        estado.tipo = alimento?.tipo || 'temporada';
+        if (!estado.unidadTocada) estado.unidad = alimento?.unidad || 'kg';
+      },
+      validar: (estado) => (estado.cultivo.length >= 2 ? null : 'Escribe o di qué sembraste o qué produces.'),
+      resumen: (estado) => ({ etiqueta: ['temporada', 'frutal'].includes(estado.tipo || 'temporada') ? 'Cultivo' : 'Producto', valor: estado.cultivo, icono: 'plant' }),
     },
     {
       id: 'parcelas',
-      pregunta: '¿En cuántas parcelas sembraste?',
-      ayuda: 'Cuenta las parcelas donde está este cultivo. Usa los botones de menos y más, o di el número.',
+      omitir: (estado) => estado.tipo === 'elaboracion',
+      pregunta: (estado) => palabrasDe(estado.tipo).preguntaCantidad,
+      ayuda: (estado) => (estado.tipo === 'crianza'
+        ? 'Cuenta las gallinas, vacas o colmenas de este lote. Usa los botones de menos y más, o di el número.'
+        : 'Cuenta las parcelas donde está este cultivo. Usa los botones de menos y más, o di el número.'),
       render: (estado) => campoNumeroAsistente({
-        id: 'asistente-parcelas', etiqueta: 'Número de parcelas', valor: estado.parcelas ?? 1, minimo: 1, maximo: 1000, decimales: false,
-        unidad: 'parc.',
+        id: 'asistente-parcelas', etiqueta: estado.tipo === 'crianza' ? 'Número de animales' : 'Número de parcelas', valor: estado.parcelas ?? 1,
+        minimo: 1, maximo: 1000, decimales: false, unidad: palabrasDe(estado.tipo).unidadCantidad,
       }),
       recoger: (cont, estado) => { estado.parcelas = Number(cont.querySelector('#asistente-parcelas').value); },
       validar: (estado) => (Number.isInteger(estado.parcelas) && estado.parcelas >= 1 && estado.parcelas <= 1000
-        ? null : 'El número de parcelas debe ser un número entero, de 1 a 1000.'),
-      resumen: (estado) => ({ etiqueta: 'Parcelas', valor: String(estado.parcelas), icono: 'layout-grid' }),
+        ? null : 'Debe ser un número entero, de 1 a 1000.'),
+      resumen: (estado) => ({ etiqueta: palabrasDe(estado.tipo).cantidad, valor: String(estado.parcelas), icono: estado.tipo === 'crianza' ? 'paw' : 'layout-grid' }),
     },
     {
       id: 'fecha-siembra',
-      pregunta: '¿Cuándo sembraste?',
-      ayuda: 'Toca "Hoy", "Ayer" u otra opción. Si todavía vas a sembrar, elige el día en el calendario.',
+      pregunta: (estado) => palabrasDe(estado.tipo).cuandoInicio,
+      ayuda: (estado) => ({
+        crianza: 'El día en que empezaste a contar este periodo (por ejemplo, el lunes de esta semana). Toca una opción o elige en el calendario.',
+        elaboracion: 'El día en que empezaste a elaborar este lote. Toca una opción o elige en el calendario.',
+        frutal: 'El día en que empezaste los trabajos de esta campaña (la poda o el abonamiento). Toca una opción o elige en el calendario.',
+      }[estado.tipo] || 'Toca "Hoy", "Ayer" u otra opción. Si todavía vas a sembrar, elige el día en el calendario.'),
       render: (estado) => campoFechaAsistente({
         id: 'asistente-fecha-siembra',
         valor: estado.fechaSiembra || '',
@@ -5375,50 +5387,61 @@ function pasosAsistenteSiembra() {
       }),
       recoger: (cont, estado) => { estado.fechaSiembra = cont.querySelector('#asistente-fecha-siembra').value; },
       validar: (estado) => {
-        if (!estado.fechaSiembra) return 'Elige el día en que sembraste.';
+        if (!estado.fechaSiembra) return 'Elige el día.';
         if (estado.fechaSiembra < '2000-01-01' || estado.fechaSiembra > fechaIso(sumarDias(hoy, 730))) {
           return 'Esa fecha no es válida: puede ser desde el año 2000 hasta dos años desde hoy.';
         }
         return null;
       },
-      resumen: (estado) => ({ etiqueta: 'Sembraste', valor: fechaLegible(estado.fechaSiembra), icono: 'calendar' }),
+      resumen: (estado) => ({ etiqueta: palabrasDe(estado.tipo).resumenInicio, valor: fechaLegible(estado.fechaSiembra), icono: 'calendar' }),
     },
     {
       id: 'fecha-cosecha',
-      pregunta: '¿Cuándo crees que vas a cosechar?',
-      ayuda: 'Arriba te damos una fecha sugerida para tu cultivo y tu zona: si te parece bien, toca "Usar esta fecha". '
-        + 'No tiene que ser exacto: también puedes elegir cuántos meses después de la siembra, o un día en el calendario.',
+      pregunta: (estado) => palabrasDe(estado.tipo).cuandoFin,
+      ayuda: (estado) => ({
+        crianza: 'Elige hasta cuándo cuentas este periodo: por ejemplo una semana o un mes. Al terminar registras lo que recogiste.',
+        elaboracion: 'El día en que el producto estará listo para vender (el queso fresco, el mismo día o al siguiente).',
+      }[estado.tipo] || 'Arriba te damos una fecha sugerida para tu cultivo y tu zona: si te parece bien, toca "Usar esta fecha". '
+        + 'No tiene que ser exacto: también puedes elegir cuántos meses después de la siembra, o un día en el calendario.'),
       voz: (estado) => {
+        if (estado.tipo && estado.tipo !== 'temporada') return `${palabrasDe(estado.tipo).cuandoFin} Toca una de las opciones o elige el día en el calendario.`;
         const lista = estado.sugerenciaCosecha?.clave === claveSugerenciaCosecha(estado) && estado.sugerenciaCosecha.datos;
         return lista ? `¿Cuándo crees que vas a cosechar? ${vozSugerenciaCosecha(lista)}`
           : '¿Cuándo crees que vas a cosechar? Un momento: estamos calculando una fecha sugerida para tu cultivo.';
       },
-      alMostrar: (cont, estado) => pintarSugerenciaCosecha(cont, estado),
+      alMostrar: (cont, estado) => { if ((estado.tipo || 'temporada') === 'temporada') pintarSugerenciaCosecha(cont, estado); },
       render: (estado) => {
         const siembra = new Date(`${estado.fechaSiembra}T00:00:00`);
-        return `<div id="asistente-sugerencia-cosecha" aria-live="polite"></div>${campoFechaAsistente({
+        // Atajos según el tipo: un cultivo tarda meses; un periodo de huevos, semanas; un queso, días.
+        const enDias = (dias, etiqueta) => ({ etiqueta, fecha: fechaIso(sumarDias(siembra, dias)) });
+        const atajos = {
+          crianza: [enDias(7, 'En 1 semana'), enDias(14, 'En 2 semanas'), enDias(30, 'En 1 mes'), enDias(60, 'En 2 meses')],
+          elaboracion: [enDias(0, 'El mismo día'), enDias(1, 'Al día siguiente'), enDias(7, 'En 1 semana'), enDias(30, 'En 1 mes')],
+        }[estado.tipo] || [3, 4, 5, 6].map((meses) => {
+          const fecha = new Date(siembra);
+          fecha.setMonth(fecha.getMonth() + meses);
+          return { etiqueta: `En ${meses} meses`, fecha: fechaIso(fecha) };
+        });
+        const conSugerencia = (estado.tipo || 'temporada') === 'temporada';
+        return `${conSugerencia ? '<div id="asistente-sugerencia-cosecha" aria-live="polite"></div>' : ''}${campoFechaAsistente({
           id: 'asistente-fecha-cosecha',
           valor: estado.fechaCosecha || '',
           minimo: estado.fechaSiembra,
           maximo: fechaIso(sumarDias(siembra, 1826)),
-          atajos: [3, 4, 5, 6].map((meses) => {
-            const fecha = new Date(siembra);
-            fecha.setMonth(fecha.getMonth() + meses);
-            return { etiqueta: `En ${meses} meses`, fecha: fechaIso(fecha) };
-          }),
+          atajos,
         })}`;
       },
       recoger: (cont, estado) => { estado.fechaCosecha = cont.querySelector('#asistente-fecha-cosecha').value; },
       validar: (estado) => {
-        if (!estado.fechaCosecha) return 'Elige cuándo crees que vas a cosechar.';
-        if (estado.fechaCosecha < estado.fechaSiembra) return 'La cosecha no puede ser antes de la siembra.';
+        if (!estado.fechaCosecha) return 'Elige la fecha.';
+        if (estado.fechaCosecha < estado.fechaSiembra) return 'No puede ser antes del inicio.';
         return null;
       },
-      resumen: (estado) => ({ etiqueta: 'Cosecharías', valor: fechaLegible(estado.fechaCosecha), icono: 'calendar-event' }),
+      resumen: (estado) => ({ etiqueta: palabrasDe(estado.tipo).resumenFin, valor: fechaLegible(estado.fechaCosecha), icono: 'calendar-event' }),
     },
     {
       id: 'unidad',
-      pregunta: '¿Cómo vas a medir tu cosecha?',
+      pregunta: (estado) => palabrasDe(estado.tipo).medir,
       ayuda: 'Casi siempre es por kilos. Si la cuentas por unidades o por litros, dinos cuánto pesa cada una.',
       voz: () => '¿Cómo vas a medir tu cosecha? Puedes elegir: por kilos, por unidades o por litros.',
       render: (estado) => `${campoOpcionesAsistente({ nombre: 'asistente-unidad', valor: estado.unidad || 'kg', opciones: OPCIONES_UNIDAD_SIEMBRA })}
@@ -5437,6 +5460,7 @@ function pasosAsistenteSiembra() {
       },
       recoger: (cont, estado) => {
         estado.unidad = cont.querySelector('input[name="asistente-unidad"]:checked')?.value || 'kg';
+        estado.unidadTocada = true;
         const equivalencia = cont.querySelector('#asistente-equivalencia').value;
         estado.equivalencia = equivalencia === '' ? null : Number(equivalencia);
       },
@@ -5454,8 +5478,11 @@ function pasosAsistenteSiembra() {
     {
       id: 'gastos',
       pregunta: '¿Cuánto gastaste para empezar?',
-      ayuda: 'Lo que gastaste en las primeras etapas, en soles. Si no gastaste en algo o no lo sabes, déjalo vacío. '
-        + 'Lo que gastes después (por ejemplo el deshierbo o la fumigación) lo anotas en tu siembra, en "Mi perfil", cuando pase.',
+      ayuda: (estado) => 'Lo que gastaste en las primeras etapas, en soles. Si no gastaste en algo o no lo sabes, déjalo vacío. '
+        + ({
+          crianza: 'Lo que gastes después (vacunas, limpieza) lo anotas en tu registro, en "Mi perfil", cuando pase.',
+          elaboracion: 'Lo que gastes al terminar (la mano de obra, el gas, los envases) te lo preguntamos al registrar lo elaborado.',
+        }[estado.tipo] || 'Lo que gastes después (por ejemplo el deshierbo o la fumigación) lo anotas en tu siembra, en "Mi perfil", cuando pase.'),
       render: () => '<div id="asistente-gastos-etapas" class="asistente-gastos" aria-live="polite"><p class="muted">Buscando las etapas de tu cultivo…</p></div>',
       alMostrar: (cont, estado) => pintarGastosInicioAsistente(cont, estado),
       recoger: (cont, estado) => { estado.gastosInicio = recogerGastosAsistente(cont, estado, 'gastosInicioValores'); },
@@ -5466,6 +5493,52 @@ function pasosAsistenteSiembra() {
 }
 
 // ---- Etapas de cada alimento (ver productores/plantillas_produccion.py) ----
+// Cómo se habla de cada tipo de producción en las pantallas (los huevos no se "siembran" ni se "cosechan").
+const PALABRAS_TIPO = {
+  temporada: {
+    nombre: 'Cultivo', inicio: 'Siembra', fin: 'Cosecha estimada', cuandoInicio: '¿Cuándo sembraste?', cuandoFin: '¿Cuándo crees que vas a cosechar?',
+    resumenInicio: 'Sembraste', resumenFin: 'Cosecharías', cantidad: 'Parcelas', preguntaCantidad: '¿En cuántas parcelas sembraste?', unidadCantidad: 'parc.',
+    completar: 'Completar cosecha', tituloFin: 'Completar cosecha', accionFin: 'completar la cosecha', foto: 'Toma una foto de tu cosecha',
+    cuanto: '¿Cuánto cosechaste?', cuando: '¿Cuándo cosechaste?', resumenCuanto: 'Cosechaste', resumenCuando: 'Cosechaste el',
+    confirmar: 'Confirmar cosecha', listo: 'Cosechado', medir: '¿Cómo vas a medir tu cosecha?',
+  },
+  frutal: {
+    nombre: 'Frutal', inicio: 'Inicio de campaña', fin: 'Cosecha estimada', cuandoInicio: '¿Cuándo empezó esta campaña?', cuandoFin: '¿Cuándo crees que vas a cosechar?',
+    resumenInicio: 'Empezó', resumenFin: 'Cosecharías', cantidad: 'Parcelas', preguntaCantidad: '¿En cuántas parcelas están tus plantas?', unidadCantidad: 'parc.',
+    completar: 'Completar cosecha', tituloFin: 'Completar cosecha', accionFin: 'completar la cosecha', foto: 'Toma una foto de tu cosecha',
+    cuanto: '¿Cuánto cosechaste?', cuando: '¿Cuándo cosechaste?', resumenCuanto: 'Cosechaste', resumenCuando: 'Cosechaste el',
+    confirmar: 'Confirmar cosecha', listo: 'Cosechado', medir: '¿Cómo vas a medir tu cosecha?',
+  },
+  crianza: {
+    nombre: 'Crianza', inicio: 'Inicio del periodo', fin: 'Fin del periodo', cuandoInicio: '¿Cuándo empezó este periodo?', cuandoFin: '¿Hasta cuándo es este periodo?',
+    resumenInicio: 'Empezó', resumenFin: 'Termina', cantidad: 'Animales', preguntaCantidad: '¿Cuántos animales tiene tu lote?', unidadCantidad: 'anim.',
+    completar: 'Registrar lo recogido', tituloFin: 'Registrar lo recogido', accionFin: 'registrar lo recogido', foto: 'Toma una foto de lo que recogiste',
+    cuanto: '¿Cuánto recogiste en este periodo?', cuando: '¿Cuándo terminaste de recoger?', resumenCuanto: 'Recogiste', resumenCuando: 'Terminaste el',
+    confirmar: 'Confirmar lo recogido', listo: 'Recogido', medir: '¿Cómo vas a medir lo que recojas?',
+  },
+  elaboracion: {
+    nombre: 'Elaboración', inicio: 'Inicio', fin: 'Listo para', cuandoInicio: '¿Cuándo empezaste a elaborar?', cuandoFin: '¿Cuándo estará listo?',
+    resumenInicio: 'Empezaste', resumenFin: 'Listo', cantidad: null, preguntaCantidad: '', unidadCantidad: '',
+    completar: 'Registrar lo elaborado', tituloFin: 'Registrar lo elaborado', accionFin: 'registrar lo elaborado', foto: 'Toma una foto de lo que elaboraste',
+    cuanto: '¿Cuánto elaboraste?', cuando: '¿Cuándo terminaste?', resumenCuanto: 'Elaboraste', resumenCuando: 'Terminaste el',
+    confirmar: 'Confirmar lo elaborado', listo: 'Listo', medir: '¿Cómo vas a medir lo que elabores?',
+  },
+};
+
+function palabrasDe(tipo) {
+  return PALABRAS_TIPO[tipo] || PALABRAS_TIPO.temporada;
+}
+
+// El alimento que se reconoce en un nombre: mismo criterio que plantillas_produccion.clave_para (palabra completa o su
+// plural), con los alias que manda el catálogo; así el asistente sabe el tipo sin esperar al servidor.
+function alimentoPorNombre(nombre) {
+  if (!catalogoProduccion) return null;
+  const palabras = (nombre || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .split(/\s+/).map((p) => p.replace(/[.,;:()]/g, ''));
+  return catalogoProduccion.alimentos.find((a) => (a.alias || []).some((al) => palabras.includes(al)
+    || palabras.includes(`${al}s`) || palabras.includes(`${al}es`))) || null;
+}
+
 let catalogoProduccion = null;
 const FAMILIA_GENERICA = { temporada: 'temporada_generica', frutal: 'frutales', crianza: 'crianza_generica', elaboracion: 'elaboracion_generica' };
 
@@ -5591,9 +5664,9 @@ async function abrirAsistenteSiembra() {
     return;
   }
   Asistente.abrir({
-    titulo: 'Registrar siembra',
+    titulo: 'Registrar siembra o producción',
     icono: 'seedling',
-    textoFinal: 'Registrar siembra',
+    textoFinal: 'Registrar',
     estado: { chacraId: chacras.length === 1 ? chacras[0].id : null },
     pasos: pasosAsistenteSiembra(),
     alClic: alClicAsistenteAgricultor,
@@ -5602,7 +5675,7 @@ async function abrirAsistenteSiembra() {
       const datos = {
         chacra_id: estado.chacraId,
         cultivo: estado.cultivo,
-        numero_parcelas: estado.parcelas,
+        numero_parcelas: estado.parcelas ?? 1, // una elaboración no pregunta parcelas
         plantilla: estado.plantilla?.clave || null,
         gastos: estado.gastosInicio || [],
         unidad_medida: estado.unidad || 'kg',
@@ -5618,8 +5691,8 @@ async function abrirAsistenteSiembra() {
         ui.error(err.message || 'No se pudo registrar la siembra. Intenta de nuevo.');
         return false;
       }
-      toast('Siembra registrada 🌱');
-      if (Voz.leerSolo) Voz.hablar('Listo. Tu siembra quedó registrada.');
+      toast(estado.tipo === 'temporada' || !estado.tipo ? 'Siembra registrada 🌱' : 'Registrado 🌱');
+      if (Voz.leerSolo) Voz.hablar('Listo. Quedó registrado.');
       recargarVistaDelAgricultor();
       return true;
     },
@@ -5630,8 +5703,8 @@ function renderTarjetaAbrirSiembra() {
   const chacras = Estado.chacras || [];
   return `
     <div class="card-panel siembra-cta">
-      <h4><i class="ti ti-seedling"></i> Registrar nueva siembra</h4>
-      <p>Te haremos unas preguntas, una por una: dónde sembraste, qué, cuándo y cuánto gastaste.</p>
+      <h4><i class="ti ti-seedling"></i> Registrar siembra o producción</h4>
+      <p>Te haremos unas preguntas, una por una: dónde, qué (un cultivo, frutas, huevos, leche, queso…), cuándo y cuánto gastaste.</p>
       ${Voz.puedeHablar ? '<span class="siembra-cta-voz"><i class="ti ti-volume" aria-hidden="true"></i> Puedes escuchar las preguntas y responder hablando.</span>' : ''}
       ${chacras.length ? `
         <button type="button" class="btn btn-primary btn-abrir-asistente-siembra"><i class="ti ti-player-play" aria-hidden="true"></i> Empezar</button>` : `
@@ -5671,32 +5744,33 @@ function renderFotoCosechaAsistente(estado) {
 }
 
 function pasosAsistenteCosecha(registro) {
+  const palabras = palabrasDe(registro.tipo_produccion);
   const hoy = new Date();
   const unidad = registro.unidad_medida || 'kg';
   const nombreUnidad = { kg: 'kilos', unidad: 'unidades', litro: 'litros' }[unidad] || unidadPlural(unidad, 2);
   const siembra = String(registro.fecha_siembra || '').slice(0, 10);
   return [
-    pasoUbicacionAsistente('completar la cosecha', 'cosecha'),
+    pasoUbicacionAsistente(palabras.accionFin, 'cosecha'),
     {
       id: 'foto',
-      pregunta: 'Toma una foto de tu cosecha',
-      ayuda: 'Toca el botón grande: se abre la cámara del teléfono. Toma la foto ahí mismo, en tu chacra, donde se vea lo '
-        + 'que cosechaste. La foto queda en el certificado que ve el comprador.',
+      pregunta: palabras.foto,
+      ayuda: 'Toca el botón grande: se abre la cámara del teléfono. Toma la foto ahí mismo, donde se vea lo que '
+        + 'obtuviste. La foto queda en el certificado que ve el comprador.',
       render: renderFotoCosechaAsistente,
       alMostrar: (cont, estado) => {
         if (estado.archivoFoto) {
           pintarFotoEntrega(cont.querySelector('.foto-entrega'), 'lista', { archivo: estado.archivoFoto, mensaje: 'Foto lista.' });
         }
       },
-      validar: (estado) => (estado.archivoFoto || estado.fotoGuardadaUrl ? null : 'Falta la foto de tu cosecha: tómala aquí, en tu chacra.'),
+      validar: (estado) => (estado.archivoFoto || estado.fotoGuardadaUrl ? null : 'Falta la foto: tómala aquí, donde está lo que obtuviste.'),
       resumen: (estado) => ({ etiqueta: 'Foto', valor: estado.archivoFoto ? 'Foto tomada' : 'Foto ya guardada', icono: 'camera' }),
     },
     {
       id: 'cantidad',
-      pregunta: '¿Cuánto cosechaste?',
+      pregunta: palabras.cuanto,
       ayuda: unidad === 'kg'
-        ? 'Escribe o di cuántos kilos cosechaste. No tiene que ser exacto: en el almacén lo vuelven a pesar.'
-        : `Escribe o di cuántos ${nombreUnidad} cosechaste.`,
+        ? 'Escribe o di cuántos kilos fueron. No tiene que ser exacto: en el almacén lo vuelven a pesar.'
+        : `Escribe o di cuántos ${nombreUnidad} fueron.`,
       render: (estado) => campoNumeroAsistente({
         id: 'asistente-cantidad', etiqueta: `Cantidad en ${nombreUnidad}`, valor: estado.cantidad ?? '',
         minimo: 0, maximo: 1000000, paso: 10, unidad: unidadCorta(unidad),
@@ -5706,12 +5780,12 @@ function pasosAsistenteCosecha(registro) {
         estado.cantidad = valor === '' ? null : Number(valor);
       },
       validar: (estado) => (estado.cantidad > 0 && estado.cantidad <= 1000000
-        ? null : `Escribe cuántos ${nombreUnidad} cosechaste (más de cero).`),
-      resumen: (estado) => ({ etiqueta: 'Cosechaste', valor: `${String(estado.cantidad).replace('.', ',')} ${nombreUnidad}`, icono: 'basket' }),
+        ? null : `Escribe cuántos ${nombreUnidad} fueron (más de cero).`),
+      resumen: (estado) => ({ etiqueta: palabras.resumenCuanto, valor: `${String(estado.cantidad).replace('.', ',')} ${nombreUnidad}`, icono: 'basket' }),
     },
     {
       id: 'fecha',
-      pregunta: '¿Cuándo cosechaste?',
+      pregunta: palabras.cuando,
       ayuda: 'Toca "Hoy", "Ayer" u otra opción, o elige el día en el calendario.',
       render: (estado) => campoFechaAsistente({
         id: 'asistente-fecha-cosecha-real',
@@ -5727,12 +5801,12 @@ function pasosAsistenteCosecha(registro) {
       }),
       recoger: (cont, estado) => { estado.fecha = cont.querySelector('#asistente-fecha-cosecha-real').value; },
       validar: (estado) => {
-        if (!estado.fecha) return 'Elige el día en que cosechaste.';
-        if (siembra && estado.fecha < siembra) return 'La cosecha no puede ser antes de la siembra.';
-        if (estado.fecha > fechaIso(hoy)) return 'La cosecha no puede ser en el futuro.';
+        if (!estado.fecha) return 'Elige el día.';
+        if (siembra && estado.fecha < siembra) return 'No puede ser antes del inicio.';
+        if (estado.fecha > fechaIso(hoy)) return 'No puede ser en el futuro.';
         return null;
       },
-      resumen: (estado) => ({ etiqueta: 'Cosechaste el', valor: fechaLegible(estado.fecha), icono: 'calendar' }),
+      resumen: (estado) => ({ etiqueta: palabras.resumenCuando, valor: fechaLegible(estado.fecha), icono: 'calendar' }),
     },
     ...(registro.plantilla ? [pasoGastosFinalesCosecha(registro)] : [{
       id: 'mano-obra',
@@ -5791,10 +5865,11 @@ async function abrirAsistenteCosecha(registroId) {
   await cargarCatalogoProduccion();
   const registro = (Estado.registrosProduccion || []).find((r) => String(r.id) === String(registroId));
   if (!registro) { toast('No se encontró esa siembra. Recarga la página.', 'error'); return; }
+  const palabras = palabrasDe(registro.tipo_produccion);
   Asistente.abrir({
-    titulo: `Completar cosecha · ${registro.cultivo}`,
+    titulo: `${palabras.tituloFin} · ${registro.cultivo}`,
     icono: 'basket-check',
-    textoFinal: 'Confirmar cosecha',
+    textoFinal: palabras.confirmar,
     estado: {
       chacraId: registro.chacra_id,
       fotoGuardadaUrl: registro.foto_cosecha_url || null,
@@ -5825,8 +5900,8 @@ async function abrirAsistenteCosecha(registroId) {
         ui.error(err.message || 'No se pudo completar la cosecha. Intenta de nuevo.');
         return false;
       }
-      toast('Cosecha completada ✅ Tu producto ya está en "Mis productos" como borrador: ponle precio y publícalo.');
-      if (Voz.leerSolo) Voz.hablar('Listo. Tu cosecha quedó registrada. Ahora ponle precio a tu producto en Mis productos.');
+      toast('Listo ✅ Tu producto ya está en "Mis productos" como borrador: ponle precio y publícalo.');
+      if (Voz.leerSolo) Voz.hablar('Listo. Quedó registrado. Ahora ponle precio a tu producto en Mis productos.');
       recargarVistaDelAgricultor();
       return true;
     },
@@ -10955,22 +11030,27 @@ async function anularSiembra(boton) {
 function renderTarjetaRegistroProduccion(r, indice = 0) {
   const retraso = Math.min(indice, 12) * 35;
   const porCompletar = ESTADOS_POR_COMPLETAR.includes(r.estado);
+  const palabras = palabrasDe(r.tipo_produccion);
   const infoEstado = BADGES_ESTADO_REGISTRO[r.estado] || BADGES_ESTADO_REGISTRO.planificado;
-  const badge = `<span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${infoEstado.etiqueta}</span>`;
+  const enCurso = r.estado === 'planificado' && ['crianza', 'elaboracion'].includes(r.tipo_produccion);
+  const etiquetaEstado = ['cosechado', 'aprobado'].includes(r.estado) ? palabras.listo : enCurso ? 'En curso' : infoEstado.etiqueta;
+  const badge = `<span class="pill pill-estado ${infoEstado.clase}"><i class="ti ti-${infoEstado.icono}"></i> ${etiquetaEstado}</span>`;
+  const chipTipo = r.tipo_produccion && r.tipo_produccion !== 'temporada'
+    ? `<span class="pill pill-tipo-produccion">${palabras.nombre}${r.alimento ? ` · ${escapeAttr(r.alimento)}` : ''}</span>` : '';
 
   const datosBase = `
     <div class="perfil-datos-grid">
-      <div class="perfil-dato"><span class="perfil-dato-label">Parcelas</span><span class="perfil-dato-valor">${r.numero_parcelas}</span></div>
+      ${palabras.cantidad ? `<div class="perfil-dato"><span class="perfil-dato-label">${palabras.cantidad}</span><span class="perfil-dato-valor">${r.numero_parcelas}</span></div>` : ''}
       <div class="perfil-dato"><span class="perfil-dato-label">Ubicación</span><span class="perfil-dato-valor">${escapeAttr(r.ubicacion_cosecha || '—')}</span></div>
-      <div class="perfil-dato"><span class="perfil-dato-label">Siembra</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_siembra)}</span></div>
-      <div class="perfil-dato"><span class="perfil-dato-label">Cosecha estimada</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_cosecha_estimada)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">${palabras.inicio}</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_siembra)}</span></div>
+      <div class="perfil-dato"><span class="perfil-dato-label">${palabras.fin}</span><span class="perfil-dato-valor">${formatearFechaCorta(r.fecha_cosecha_estimada)}</span></div>
       <div class="perfil-dato"><span class="perfil-dato-label">Costo total</span><span class="perfil-dato-valor">${formatearMoneda(r.costo_total)}</span></div>
     </div>`;
 
   let bloqueEstado;
   if (porCompletar) {
     const aMedioCamino = r.estado !== 'planificado';
-    const completar = `<button type="button" class="btn btn-primary btn-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> Completar cosecha</button>`;
+    const completar = `<button type="button" class="btn btn-primary btn-completar-cosecha" data-id="${r.id}"><i class="ti ti-basket-check" aria-hidden="true"></i> ${palabras.completar}</button>`;
     bloqueEstado = aMedioCamino ? `
       <p class="produccion-sin-calculo"><i class="ti ti-camera"></i> Esta cosecha quedó pendiente de revisión. Ya no hace falta: complétala con la foto de tu cosecha.</p>
       ${completar}` : `
@@ -10981,7 +11061,7 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
       </div>
       ${renderFormCorregirSiembra(r)}
       <div class="anular-siembra-confirmar hidden" role="group" aria-label="Confirmar anulación">
-        <p><i class="ti ti-alert-triangle" aria-hidden="true"></i> ¿Anular la siembra de ${escapeAttr(r.cultivo)}? Deja de aparecer en tu lista y ya no se podrá cosechar. No se puede deshacer.</p>
+        <p><i class="ti ti-alert-triangle" aria-hidden="true"></i> ¿Anular el registro de ${escapeAttr(r.cultivo)}? Deja de aparecer en tu lista y ya no se podrá completar. No se puede deshacer.</p>
         <div class="tarjeta-acciones">
           <button type="button" class="btn btn-ghost btn-cancelar-anular">No, dejarla</button>
           <button type="button" class="btn btn-danger btn-confirmar-anular" data-id="${r.id}">Sí, anular</button>
@@ -10990,7 +11070,7 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
   } else if (r.ingreso_estimado != null) {
     bloqueEstado = `
       <div class="perfil-datos-grid">
-        <div class="perfil-dato"><span class="perfil-dato-label">Cosechado</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
+        <div class="perfil-dato"><span class="perfil-dato-label">${palabras.listo}</span><span class="perfil-dato-valor">${Number(r.cantidad_cosechada).toFixed(2)} ${escapeAttr(r.unidad_medida)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Precio de referencia</span><span class="perfil-dato-valor">${formatearMoneda(r.precio_referencia_kg)}/kg</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Ingreso estimado</span><span class="perfil-dato-valor">${formatearMoneda(r.ingreso_estimado)}</span></div>
         <div class="perfil-dato"><span class="perfil-dato-label">Ganancia</span><span class="perfil-dato-valor ${r.ganancia_estimada >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}">${formatearMoneda(r.ganancia_estimada)} (${r.margen_porcentaje}%)</span></div>
@@ -11009,7 +11089,7 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
     <div class="card-panel produccion-card" style="animation-delay:${retraso}ms">
       <div class="produccion-card-header">
         <h4>${escapeAttr(r.cultivo)}</h4>
-        ${badge}
+        <span class="produccion-card-chips">${chipTipo}${badge}</span>
       </div>
       ${datosBase}
       ${r.gastos_por_etapa ? renderGastosPorEtapa(r, r.estado === 'planificado') : ''}
@@ -11040,7 +11120,7 @@ function renderGastosPorEtapa(r, editable) {
         <h5><i class="ti ti-list-check" aria-hidden="true"></i> Gastos por etapa</h5>
         <strong>${formatearMoneda(total)}</strong>
       </div>
-      <p class="eg-ayuda">${editable ? 'Anota cada gasto en su etapa cuando ocurra: al cosechar sabrás cuánto te costó de verdad.' : 'Lo que gastaste en cada etapa.'}</p>
+      <p class="eg-ayuda">${editable ? 'Anota cada gasto en su etapa cuando ocurra: al final sabrás cuánto te costó de verdad.' : 'Lo que gastaste en cada etapa.'}</p>
       <ol class="eg-linea">${filas}</ol>
       <div class="eg-form-wrap"></div>
       <details class="eg-detalle"><summary>Ver cada gasto</summary><div class="eg-lista"></div></details>
@@ -11231,7 +11311,7 @@ function renderPerfil(usuario, extra, registrosProduccion) {
     if (extra) {
       siembras = `
         <section class="perfil-siembras">
-          <h3 class="perfil-titulo-seccion"><i class="ti ti-plant-2" aria-hidden="true"></i> Mis siembras</h3>
+          <h3 class="perfil-titulo-seccion"><i class="ti ti-plant-2" aria-hidden="true"></i> Mis siembras y producciones</h3>
           ${renderProduccionSeccion(registrosProduccion || [])}
         </section>`;
     }

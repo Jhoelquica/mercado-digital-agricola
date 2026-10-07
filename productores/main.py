@@ -515,13 +515,13 @@ def _km(valor: float, formato: str) -> str:
     return format(valor, formato).replace(".", ",")
 
 
-def _texto_ubicacion(momento: str, distancia_km) -> str:
+def _texto_ubicacion(momento: str, distancia_km, lugar: str = "chacra") -> str:
     if distancia_km is None:
         return f"Al {momento}: sin ubicación GPS (advertencia)."
     radio = _km(RADIO_CHACRA_KM, "g")
     if distancia_km > RADIO_CHACRA_KM:
-        return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la chacra, fuera del radio de {radio} km (advertencia)."
-    return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la chacra (dentro del radio de {radio} km)."
+        return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la {lugar}, fuera del radio de {radio} km (advertencia)."
+    return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la {lugar} (dentro del radio de {radio} km)."
 
 
 def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: str) -> bool:
@@ -534,16 +534,19 @@ def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: s
     def _fecha(valor):
         return valor.strftime("%d/%m/%Y") if valor else "—"
 
-    ubicacion = f"chacra {chacra.codigo}" + (f" ({chacra.nombre})" if chacra and chacra.nombre else "") if chacra else "chacra no especificada"
+    # Las palabras según cómo se obtiene: huevos "recogidos en la granja", queso "elaborado en el taller"...
+    t = plantillas.TIPOS.get(getattr(registro, "tipo_produccion", None) or "temporada", plantillas.TIPOS["temporada"])
+    lugar = t["lugar"]
+    ubicacion = f"{lugar} {chacra.codigo}" + (f" ({chacra.nombre})" if chacra and chacra.nombre else "") if chacra else f"{lugar} no especificada"
     partes = [
-        f"{float(registro.cantidad_cosechada):g} {registro.unidad_medida} de {registro.cultivo} cosechados en "
-        f"{ubicacion} por {productor.nombre} (sembrado el {_fecha(registro.fecha_siembra)}, "
-        f"cosechado el {_fecha(registro.fecha_cosecha_real)}).",
-        _texto_ubicacion("registrar la siembra", registro.siembra_distancia_km),
-        _texto_ubicacion("completar la cosecha", registro.cosecha_distancia_km),
+        f"{float(registro.cantidad_cosechada):g} {registro.unidad_medida} de {registro.cultivo} {t['obtenidos']} en "
+        f"{ubicacion} por {productor.nombre} ({t['desde']} {_fecha(registro.fecha_siembra)}, "
+        f"{t['hasta']} {_fecha(registro.fecha_cosecha_real)}).",
+        _texto_ubicacion(t["al_inicio"], registro.siembra_distancia_km, lugar),
+        _texto_ubicacion(t["al_fin"], registro.cosecha_distancia_km, lugar),
     ]
     if registro.foto_cosecha_sha256:
-        partes.append(f"Foto de la cosecha (SHA-256 {registro.foto_cosecha_sha256}).")
+        partes.append(f"{t['foto']} (SHA-256 {registro.foto_cosecha_sha256}).")
     try:
         resp = httpx.post(
             f"{CERTIFICACION_URL}/certificacion/{producto_id}/cosecha-aprobada",
