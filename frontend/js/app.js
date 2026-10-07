@@ -4829,6 +4829,8 @@ async function iniciarPanelProductor() {
       cargarEntregasDirectasPendientes(),
     ]);
     pintarResumenChacras();
+    await cargarCatalogoProduccion();
+    pintarSiembrasProductor();
     cargarMisGanancias();
     queSembrarCargado = false;
     document.getElementById('productor-resumen').innerHTML = renderResumenProductor();
@@ -5165,7 +5167,11 @@ function alClicAsistenteAgricultor(e, estado) {
 function recargarVistaDelAgricultor() {
   const vista = document.querySelector('.view.active')?.id?.replace('view-', '');
   if (vista === 'perfil') cargarPerfil();
-  else if (vista === 'panel-productor') iniciarPanelProductor();
+  else if (vista === 'panel-productor') {
+    // Vuelve a la pestaña en la que estaba (p. ej. "Mis siembras" después de completar una cosecha).
+    Estado.tabProductorInicial = document.querySelector('.productor-tab-panel.active')?.dataset.tabPanel || null;
+    iniciarPanelProductor();
+  }
 }
 
 // ---- Registrar siembra ----
@@ -5481,9 +5487,9 @@ function pasosAsistenteSiembra() {
       pregunta: '¿Cuánto gastaste para empezar?',
       ayuda: (estado) => 'Lo que gastaste en las primeras etapas, en soles. Si no gastaste en algo o no lo sabes, déjalo vacío. '
         + ({
-          crianza: 'Lo que gastes después (vacunas, limpieza) lo anotas en tu registro, en "Mi perfil", cuando pase.',
+          crianza: 'Lo que gastes después (vacunas, limpieza) lo anotas en "Mis siembras", cuando pase.',
           elaboracion: 'Lo que gastes al terminar (la mano de obra, el gas, los envases) te lo preguntamos al registrar lo elaborado.',
-        }[estado.tipo] || 'Lo que gastes después (por ejemplo el deshierbo o la fumigación) lo anotas en tu siembra, en "Mi perfil", cuando pase.'),
+        }[estado.tipo] || 'Lo que gastes después (por ejemplo el deshierbo o la fumigación) lo anotas en "Mis siembras", cuando pase.'),
       render: () => '<div id="asistente-gastos-etapas" class="asistente-gastos" aria-live="polite"><p class="muted">Buscando las etapas de tu cultivo…</p></div>',
       alMostrar: (cont, estado) => pintarGastosInicioAsistente(cont, estado),
       recoger: (cont, estado) => { estado.gastosInicio = recogerGastosAsistente(cont, estado, 'gastosInicioValores'); },
@@ -6850,7 +6856,7 @@ function renderResumenProductor() {
       </div>` : ''}
       <div class="resumen-acciones">
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-publicar"><i class="ti ti-pencil"></i> Completar borradores</button>
-        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-siembra"><i class="ti ti-plant-2"></i> Registrar siembra</button>
+        <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-siembra"><i class="ti ti-list-check"></i> Ver mis siembras</button>
         <button type="button" class="btn btn-primary btn-sm" id="btn-resumen-chacra"><i class="ti ti-map-pin"></i> Registrar chacra</button>
       </div>
     </div>`;
@@ -11091,7 +11097,7 @@ async function guardarCorreccionSiembra(form) {
   try {
     await Api.productores.produccion.corregir(form.dataset.id, datos);
     toast('Siembra corregida ✅');
-    await cargarPerfil();
+    await recargarSiembrasProductor();
   } catch (err) {
     boton.disabled = false;
     mostrarMensajeEntrega(form, err.message, 'error');
@@ -11103,7 +11109,7 @@ async function anularSiembra(boton) {
   try {
     await Api.productores.produccion.anular(boton.dataset.id);
     toast('Siembra anulada.');
-    await cargarPerfil();
+    await recargarSiembrasProductor();
   } catch (err) {
     boton.disabled = false;
     manejarError(err, 'anular la siembra');
@@ -11283,7 +11289,7 @@ async function guardarGasto(form) {
   try {
     await Api.productores.produccion.anotarGasto(seccion.dataset.registro, datos);
     toast('Gasto anotado 🧾');
-    await cargarPerfil();
+    await recargarSiembrasProductor();
   } catch (err) {
     boton.disabled = false;
     mostrarMensajeEntrega(form, err.message || 'No se pudo anotar el gasto.', 'error');
@@ -11331,11 +11337,105 @@ async function borrarGasto(boton) {
   try {
     await Api.productores.produccion.borrarGasto(boton.closest('.etapas-gastos').dataset.registro, boton.dataset.gasto);
     toast('Gasto borrado.');
-    await cargarPerfil();
+    await recargarSiembrasProductor();
   } catch (err) {
     boton.disabled = false;
     manejarError(err, 'borrar el gasto');
   }
+}
+
+// ---- Siembras en el panel del productor: botón claro en Inicio + pestaña "Mis siembras" ----
+// 21st.dev "call to action" + "Icon Link Card": una sola acción principal, grande, con lo que pasa al tocarla; ui-ux-pro-max
+// (reglas base): botón de 56px, texto que dice la acción, y el acceso a lo que ya está en curso al lado.
+function renderCtaSiembraInicio(registros) {
+  const chacras = Estado.chacras || [];
+  const enCurso = registros.filter((r) => ESTADOS_POR_COMPLETAR.includes(r.estado)).length;
+  const accion = chacras.length
+    ? '<button type="button" class="btn btn-primary btn-cta-siembra btn-abrir-asistente-siembra"><i class="ti ti-seedling" aria-hidden="true"></i> Registrar siembra o producción</button>'
+    : '<button type="button" class="btn btn-primary btn-cta-siembra" data-ir-tab="chacras"><i class="ti ti-map-pin" aria-hidden="true"></i> Primero registra tu chacra</button>';
+  return `
+    <section class="cta-siembra" aria-labelledby="cta-siembra-titulo">
+      <span class="cta-siembra-icono" aria-hidden="true"><i class="ti ti-plant-2"></i></span>
+      <div class="cta-siembra-texto">
+        <h3 id="cta-siembra-titulo">¿Sembraste o empezaste a producir algo?</h3>
+        <p>Regístralo en unos pasos: dónde, qué, cuándo y cuánto gastaste. Así sabrás cuánto te cuesta y, al cosechar, tu producto llega al catálogo.</p>
+        ${Voz.puedeHablar ? '<span class="cta-siembra-voz"><i class="ti ti-volume" aria-hidden="true"></i> Puedes escuchar las preguntas y responder hablando.</span>' : ''}
+      </div>
+      <div class="cta-siembra-acciones">
+        ${accion}
+        ${enCurso ? `<button type="button" class="btn btn-ghost cta-siembra-ver" data-ir-tab="siembras"><i class="ti ti-list-check" aria-hidden="true"></i> ${enCurso === 1 ? 'Ver la que está en curso' : `Ver las ${enCurso} en curso`}</button>` : ''}
+      </div>
+    </section>`;
+}
+
+function pintarSiembrasProductor() {
+  const registros = Estado.registrosProduccion || [];
+  const cta = document.getElementById('productor-cta-siembra');
+  const lista = document.getElementById('productor-siembras');
+  if (cta) cta.innerHTML = renderCtaSiembraInicio(registros);
+  if (lista) lista.innerHTML = renderProduccionSeccion(registros);
+  const badge = document.getElementById('productor-siembras-total');
+  const enCurso = registros.filter((r) => ESTADOS_POR_COMPLETAR.includes(r.estado)).length;
+  if (badge) {
+    badge.textContent = enCurso;
+    badge.classList.toggle('hidden', !enCurso);
+  }
+}
+
+// Después de corregir, anular o anotar un gasto: solo vuelve a traer los registros y repinta lo que depende de ellos.
+async function recargarSiembrasProductor() {
+  try {
+    Estado.registrosProduccion = await Api.productores.produccion.listarMe();
+  } catch (err) {
+    manejarError(err, 'actualizar tus siembras');
+    return;
+  }
+  const registros = Estado.registrosProduccion;
+  pintarSiembrasProductor();
+  document.getElementById('productor-ultimas-siembras').innerHTML = renderTablaUltimasSiembras(registros);
+  document.getElementById('productor-economia-stats').innerHTML = renderEconomiaStatsProductor(registros);
+  document.getElementById('productor-economia-historial').innerHTML = renderTablaHistorialCosechas(registros);
+  graficosEconomiaProductorListos = false;
+}
+
+// Los botones de las siembras (asistente, gastos por etapa, corregir, anular): en el panel del productor.
+function conectarEventosSiembras(contenedor) {
+  contenedor.addEventListener('click', (e) => {
+    const irTab = e.target.closest('[data-ir-tab]');
+    if (irTab) { activarTabProductor(irTab.dataset.irTab); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (e.target.closest('.btn-abrir-asistente-siembra')) { abrirAsistenteSiembra(); return; }
+    if (e.target.closest('#btn-ir-a-chacras')) { activarTabProductor('chacras'); return; }
+    // Siembra y cosecha se registran con el asistente paso a paso (ver js/asistente.js).
+    const btnCompletar = e.target.closest('.btn-completar-cosecha');
+    if (btnCompletar) { abrirAsistenteCosecha(btnCompletar.dataset.id); return; }
+    const anotar = e.target.closest('.btn-anotar-gasto');
+    if (anotar) { abrirFormGasto(anotar); return; }
+    if (e.target.closest('.btn-cancelar-gasto')) { e.target.closest('.eg-form-wrap').innerHTML = ''; return; }
+    const borrar = e.target.closest('.btn-borrar-gasto');
+    if (borrar) { borrarGasto(borrar); return; }
+    const verGastos = e.target.closest('.eg-detalle summary');
+    if (verGastos) cargarDetalleGastos(verGastos.closest('.etapas-gastos'));
+    const tarjetaSiembra = e.target.closest('.produccion-card');
+    if (tarjetaSiembra) {
+      if (e.target.closest('.btn-corregir-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'corregir'); return; }
+      if (e.target.closest('.btn-anular-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'anular'); return; }
+      if (e.target.closest('.btn-cancelar-corregir, .btn-cancelar-anular')) { mostrarPasoSiembra(tarjetaSiembra, 'acciones'); return; }
+      const confirmar = e.target.closest('.btn-confirmar-anular');
+      if (confirmar) anularSiembra(confirmar);
+    }
+  });
+  contenedor.addEventListener('submit', (e) => {
+    if (e.target.matches('.form-corregir-siembra')) { e.preventDefault(); guardarCorreccionSiembra(e.target); }
+    if (e.target.matches('.form-gasto')) { e.preventDefault(); guardarGasto(e.target); }
+  });
+  contenedor.addEventListener('input', (e) => {
+    const form = e.target.closest('.form-gasto');
+    if (form) ajustarFormGasto(form);
+  });
+  contenedor.addEventListener('change', (e) => {
+    const form = e.target.closest('.form-gasto');
+    if (form) ajustarFormGasto(form);
+  });
 }
 
 function renderProduccionSeccion(registros) {
@@ -11393,9 +11493,11 @@ function renderPerfil(usuario, extra, registrosProduccion) {
     principal = renderPerfilProductor(extra, registrosProduccion);
     if (extra) {
       siembras = `
-        <section class="perfil-siembras">
-          <h3 class="perfil-titulo-seccion"><i class="ti ti-plant-2" aria-hidden="true"></i> Mis siembras y producciones</h3>
-          ${renderProduccionSeccion(registrosProduccion || [])}
+        <section class="perfil-siembras-acceso card-panel">
+          <span class="perfil-siembras-icono" aria-hidden="true"><i class="ti ti-plant-2"></i></span>
+          <div><strong>Tus siembras y producciones están en tu panel</strong>
+            <p>Ahí las registras con un botón grande en "Inicio" y anotas sus gastos en "Mis siembras".</p></div>
+          <button type="button" class="btn btn-primary" id="btn-perfil-ir-siembras"><i class="ti ti-arrow-right" aria-hidden="true"></i> Ir a Mis siembras</button>
         </section>`;
     }
   } else if (usuario.rol === 'repartidor') {
@@ -12151,7 +12253,7 @@ function inicializarEventos() {
       return;
     }
     if (e.target.closest('#btn-resumen-siembra')) {
-      abrirAsistenteSiembra(); // el mismo asistente que en Mi Perfil; al terminar recarga este panel
+      activarTabProductor('siembras'); // registrar va en el botón grande de arriba; aquí, lo que ya está en curso
       return;
     }
     if (e.target.closest('#btn-resumen-entregas-directas')) {
@@ -12623,16 +12725,8 @@ function inicializarEventos() {
   document.getElementById('perfil-contenido').addEventListener('submit', (e) => {
     if (e.target.id === 'perfil-form-comprador') { e.preventDefault(); guardarPerfilComprador(e.target); }
     if (e.target.id === 'perfil-form-reclamo') { e.preventDefault(); enviarReclamoRuc(e.target); }
-    if (e.target.matches('.form-corregir-siembra')) { e.preventDefault(); guardarCorreccionSiembra(e.target); }
-    if (e.target.matches('.form-gasto')) { e.preventDefault(); guardarGasto(e.target); }
-  });
-  document.getElementById('perfil-contenido').addEventListener('input', (e) => {
-    const form = e.target.closest('.form-gasto');
-    if (form) ajustarFormGasto(form);
   });
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
-    const form = e.target.closest('.form-gasto');
-    if (form) { ajustarFormGasto(form); return; }
     const archivo = e.target.closest('.reclamo-archivo input[type="file"]');
     if (!archivo) return;
     const nombre = archivo.closest('.reclamo-archivo').querySelector('.reclamo-archivo-nombre');
@@ -12655,6 +12749,7 @@ function inicializarEventos() {
     if (abrirReclamo) { abrirReclamoRuc(abrirReclamo.dataset.abrirReclamo); return; }
     if (e.target.closest('.btn-cancelar-reclamo')) { document.getElementById('perfil-reclamo-ruc')?.classList.add('hidden'); return; }
     if (e.target.closest('#btn-perfil-ir-panel')) { cambiarVista('panel-productor'); return; }
+    if (e.target.closest('#btn-perfil-ir-siembras')) { Estado.tabProductorInicial = 'siembras'; cambiarVista('panel-productor'); return; }
     if (e.target.closest('#btn-perfil-ir-envios')) { cambiarVista('gestion-envios'); return; }
     const acceso = e.target.closest('[data-perfil-ir]');
     if (acceso) {
@@ -12662,31 +12757,8 @@ function inicializarEventos() {
       else cambiarVista(acceso.dataset.perfilIr);
       return;
     }
-    if (e.target.closest('#btn-ir-a-chacras')) {
-      cambiarVista('panel-productor');
-      document.getElementById('form-chacra')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      return;
-    }
-    if (e.target.closest('.btn-abrir-asistente-siembra')) { abrirAsistenteSiembra(); return; }
-    // Siembra y cosecha se registran con el asistente paso a paso (ver js/asistente.js).
-    const btnCompletar = e.target.closest('.btn-completar-cosecha');
-    if (btnCompletar) { abrirAsistenteCosecha(btnCompletar.dataset.id); return; }
-    const anotar = e.target.closest('.btn-anotar-gasto');
-    if (anotar) { abrirFormGasto(anotar); return; }
-    if (e.target.closest('.btn-cancelar-gasto')) { e.target.closest('.eg-form-wrap').innerHTML = ''; return; }
-    const borrar = e.target.closest('.btn-borrar-gasto');
-    if (borrar) { borrarGasto(borrar); return; }
-    const verGastos = e.target.closest('.eg-detalle summary');
-    if (verGastos) cargarDetalleGastos(verGastos.closest('.etapas-gastos'));
-    const tarjetaSiembra = e.target.closest('.produccion-card');
-    if (tarjetaSiembra) {
-      if (e.target.closest('.btn-corregir-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'corregir'); return; }
-      if (e.target.closest('.btn-anular-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'anular'); return; }
-      if (e.target.closest('.btn-cancelar-corregir, .btn-cancelar-anular')) { mostrarPasoSiembra(tarjetaSiembra, 'acciones'); return; }
-      const confirmar = e.target.closest('.btn-confirmar-anular');
-      if (confirmar) anularSiembra(confirmar);
-    }
   });
+  conectarEventosSiembras(document.getElementById('view-panel-productor'));
 }
 
 function cambiarTabAuth(tab) {

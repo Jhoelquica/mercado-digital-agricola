@@ -5817,3 +5817,25 @@ body.asistente-abierto { overflow: hidden; }
 .qs-fuentes { padding: 14px 16px; border-radius: 12px; background: var(--color-superficie); }
 .qs-fuentes p { margin: 8px 0 0; font-size: 0.86rem; color: var(--texto-suave); line-height: 1.45; }
 @media (prefers-reduced-motion: reduce) { .qs-card { animation: none; } }
+
+/* ===== Registrar siembra: la acción principal del Inicio del agricultor =====
+   21st.dev "call to action" + "Icon Link Card"; reglas base de ui-ux-pro-max: una sola acción principal, botón de 56px
+   con el verbo, y lo que está en curso a un toque. */
+.cta-siembra { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px 22px; align-items: center; margin-bottom: 22px;
+  padding: 24px 26px; border-radius: var(--radio); background: linear-gradient(135deg, #f2f7ee, #e3eedc); border: 2px solid #3E8E41; box-shadow: var(--sombra); }
+.cta-siembra-icono { display: grid; place-items: center; width: 64px; height: 64px; border-radius: 18px; background: #3E8E41; color: #fff; font-size: 2rem; }
+.cta-siembra-texto h3 { margin: 0 0 6px; font-size: 1.35rem; color: var(--color-primario); }
+.cta-siembra-texto p { margin: 0; font-size: 1rem; line-height: 1.5; color: var(--texto); }
+.cta-siembra-voz { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 0.88rem; font-weight: 700; color: var(--acento-cosecha-texto); }
+.cta-siembra-acciones { display: grid; gap: 8px; justify-items: stretch; }
+.btn-cta-siembra { min-height: 56px; padding: 0 26px; font-size: 1.1rem; font-weight: 800; white-space: nowrap; }
+.cta-siembra-ver { min-height: 44px; }
+@media (max-width: 860px) {
+  .cta-siembra { grid-template-columns: auto minmax(0, 1fr); }
+  .cta-siembra-acciones { grid-column: 1 / -1; }
+  .btn-cta-siembra { white-space: normal; }
+}
+.perfil-siembras-acceso { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: center; max-width: none; }
+.perfil-siembras-acceso p { margin: 4px 0 0; font-size: 0.92rem; color: var(--texto-suave); }
+.perfil-siembras-icono { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.5rem; }
+@media (max-width: 640px) { .perfil-siembras-acceso { grid-template-columns: auto minmax(0, 1fr); } .perfil-siembras-acceso .btn { grid-column: 1 / -1; } }
