@@ -295,11 +295,21 @@ def salud():
 USUARIOS_URL = os.getenv("USUARIOS_URL", "http://localhost:8006")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 
+def _nombre_publico(nombre: str | None) -> str:
+    """Cómo se ve quién escribió una reseña: nombre e inicial del apellido ("Rosa Q."). La lista es pública y antes
+    mostraba el nombre completo del comprador a cualquiera."""
+    partes = (nombre or "").split()
+    if not partes:
+        return "Comprador"
+    return partes[0] if len(partes) == 1 else f"{partes[0]} {partes[1][0].upper()}."
+
+
 @app.get("/productos/{producto_id}/resenas")
 def listar_resenas(producto_id: str, db: Session = Depends(get_db)):
-    return db.query(models.Resena).filter(
+    resenas = db.query(models.Resena).filter(
         models.Resena.producto_id == producto_id
     ).order_by(models.Resena.fecha_creacion.desc()).all()
+    return [{**jsonable_encoder(r), "usuario_nombre": _nombre_publico(r.usuario_nombre)} for r in resenas]
 
 # Antes cualquiera con sesión (también el agricultor dueño del producto) dejaba reseñas sin haber comprado, y cuantas
 # quisiera: el promedio que se ve en el catálogo se podía inflar o hundir a mano. Ahora solo califica un comprador que

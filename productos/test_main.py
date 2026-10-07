@@ -1136,6 +1136,20 @@ def test_un_agricultor_no_califica_y_sin_pedidos_no_se_acepta(monkeypatch):
     assert client.get(f"/productos/{producto.id}/resenas").json() == []
 
 
+def test_la_lista_publica_de_resenas_no_muestra_el_nombre_completo():
+    producto = _crear_producto_directo()
+    db = main.SessionLocal()
+    try:
+        for nombre in ("Rosa Quispe Huamán", "Juan", ""):
+            db.add(main.models.Resena(producto_id=producto.id, usuario_id=uuid.uuid4(), usuario_nombre=nombre, calificacion=5))
+        db.commit()
+    finally:
+        db.close()
+    nombres = sorted(r["usuario_nombre"] for r in client.get(f"/productos/{producto.id}/resenas").json())
+    assert nombres == ["Comprador", "Juan", "Rosa Q."]
+    assert main._nombre_publico("  maría   elena  ") == "maría E."
+
+
 def test_resena_y_busqueda_limitan_el_largo_del_texto():
     import pytest
     from pydantic import ValidationError
