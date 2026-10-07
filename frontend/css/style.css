@@ -5718,3 +5718,62 @@ body.asistente-abierto { overflow: hidden; }
 /* El panel admin limita sus .card-panel a 560px (pensado para tarjetas sueltas): las de ventas y el historial de pagos
    ocupan todo el ancho, como el resto de las pantallas nuevas. */
 #view-panel-admin .ventas-card, #view-panel-admin .pph-historial { max-width: none; }
+
+/* ===== Etapas y gastos de cada alimento =====
+   21st.dev "Process Timeline" (etapas con gasto marcadas con check, la siguiente resaltada, las demás numeradas) y
+   "Vertical Titled Stepper". ui-ux-pro-max: etiqueta visible en cada campo, campos grandes (agricultores mayores),
+   el total de los jornales a la vista, aviso al guardar y confirmación en el mismo botón antes de borrar. */
+.asistente-plantilla { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 0; padding: 10px 12px; border-radius: 12px; background: var(--verde-pastel); color: var(--color-primario); font-size: 0.95rem; line-height: 1.45; }
+.asistente-plantilla:empty { display: none; }
+.asistente-plantilla i { font-size: 1.2rem; flex: none; margin-top: 1px; }
+.asistente-gastos { display: grid; gap: 14px; }
+.ag-etapa { margin: 0; padding: 14px; border: 1px solid var(--borde); border-radius: 14px; background: #fff; }
+.ag-etapa legend { padding: 0 6px; font-weight: 800; font-size: 1.05rem; color: var(--color-primario); }
+.ag-etapa > p { margin: 0 0 10px; font-size: 0.9rem; color: var(--texto-suave); line-height: 1.4; }
+.ag-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 10px; }
+.ag-jornales { display: contents; }
+.ag-campo { display: grid; gap: 4px; font-weight: 700; font-size: 0.92rem; }
+.ag-entrada { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 0 12px; border: 2px solid var(--borde); border-radius: 12px; background: #fff; }
+.ag-entrada:focus-within { border-color: var(--color-primario); box-shadow: 0 0 0 3px rgba(45, 59, 42, 0.15); }
+.ag-entrada > span { color: var(--texto-suave); font-weight: 700; }
+.ag-campo { min-width: 0; }
+.ag-entrada { box-sizing: border-box; width: 100%; min-width: 0; }
+.asistente-gastos .ag-entrada input { flex: 1 1 0; width: auto; min-width: 0; border: none; outline: none; box-shadow: none; background: transparent; font-size: 1.15rem; padding: 10px 0; }
+
+.etapas-gastos { display: grid; gap: 10px; margin: 6px 0 4px; padding: 16px; border-radius: 14px; background: var(--color-superficie); }
+.eg-cabeza { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.eg-cabeza h5 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; color: var(--color-primario); }
+.eg-cabeza strong { font-size: 1.1rem; color: var(--color-primario); }
+.eg-ayuda { margin: 0; font-size: 0.86rem; color: var(--texto-suave); }
+.eg-linea { list-style: none; margin: 0; padding: 0; display: grid; }
+.eg-etapa { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 10px 0; }
+.eg-etapa:not(:last-child)::after { content: ''; position: absolute; left: 15px; top: 42px; bottom: -10px; width: 2px; background: #d7ddd3; }
+.eg-marca { position: relative; z-index: 1; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: #fff; border: 2px solid #c9d1c4; font-weight: 800; font-size: 0.85rem; color: var(--texto-suave); }
+.eg-etapa.hecha .eg-marca { background: #3E8E41; border-color: #3E8E41; color: #fff; }
+.eg-etapa.siguiente .eg-marca { border-color: var(--color-primario); color: var(--color-primario); box-shadow: 0 0 0 4px rgba(62, 142, 65, 0.15); }
+.eg-texto { display: grid; gap: 2px; min-width: 0; }
+.eg-texto strong { font-size: 0.95rem; }
+.eg-texto small { font-size: 0.8rem; color: var(--texto-suave); line-height: 1.35; }
+.eg-monto { display: grid; justify-items: end; font-weight: 800; color: var(--color-primario); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.eg-monto small { font-weight: 500; font-size: 0.75rem; color: var(--texto-suave); }
+.eg-etapa .btn-anotar-gasto { min-height: 40px; }
+@media (max-width: 560px) {
+  .eg-etapa { grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .eg-etapa .btn-anotar-gasto { grid-column: 2 / -1; justify-self: start; }
+}
+.form-gasto { display: grid; gap: 12px; padding: 14px; border-radius: 14px; border: 2px solid var(--color-primario); background: #fff; }
+.form-gasto h6 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1rem; color: var(--color-primario); }
+.fg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 10px; }
+.form-gasto .perfil-campo input, .form-gasto .perfil-campo select { min-height: 48px; font-size: 1rem; }
+.form-gasto .perfil-campo small { font-weight: 500; color: var(--texto-suave); }
+.fg-total { margin: 0; font-weight: 800; color: var(--color-primario); }
+.fg-total:empty { display: none; }
+.form-gasto .tarjeta-acciones { justify-content: flex-end; margin-top: 0; }
+.eg-detalle summary { cursor: pointer; font-weight: 700; color: var(--color-primario); min-height: 36px; display: flex; align-items: center; }
+.eg-lista ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
+.eg-lista li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; background: #fff; }
+.eg-lista li small { display: block; font-size: 0.8rem; color: var(--texto-suave); }
+.eg-lista-monto { font-weight: 800; font-variant-numeric: tabular-nums; }
+.eg-lista .btn-borrar-gasto { min-width: 44px; min-height: 40px; }
+
+.form-gasto .perfil-campo small { display: inline; }

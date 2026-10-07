@@ -5319,16 +5319,26 @@ function pasosAsistenteSiembra() {
     pasoUbicacionAsistente('registrar la siembra', 'siembra'),
     {
       id: 'cultivo',
-      pregunta: '¿Qué sembraste?',
-      ayuda: 'Escribe o di el nombre del cultivo, por ejemplo "papa amarilla". También puedes tocar uno de la lista.',
+      pregunta: '¿Qué sembraste o qué produces?',
+      ayuda: 'Escribe o di el nombre, por ejemplo "papa amarilla", "quinua", "huevos de gallina" o "queso fresco". '
+        + 'También puedes tocar uno de la lista.',
       render: (estado) => `${campoTextoAsistente({
-        id: 'asistente-cultivo', etiqueta: 'Nombre del cultivo', valor: estado.cultivo || '', ejemplo: 'Ej. Papa amarilla', sugerencias: CULTIVOS_FRECUENTES,
-      })}<p class="asistente-nota" id="asistente-precio-referencia" aria-live="polite"></p>`,
+        id: 'asistente-cultivo', etiqueta: 'Nombre del cultivo o producto', valor: estado.cultivo || '', ejemplo: 'Ej. Papa amarilla', sugerencias: CULTIVOS_FRECUENTES,
+      })}<p class="asistente-plantilla" id="asistente-plantilla" aria-live="polite"></p>
+        <p class="asistente-nota" id="asistente-precio-referencia" aria-live="polite"></p>`,
       alMostrar: (cont) => {
         const campo = cont.querySelector('#asistente-cultivo');
         const destino = cont.querySelector('#asistente-precio-referencia');
-        campo.addEventListener('input', () => pintarPrecioReferenciaAsistente(campo.value.trim(), destino));
+        const plantilla = cont.querySelector('#asistente-plantilla');
+        let espera = null;
+        const actualizar = () => {
+          pintarPrecioReferenciaAsistente(campo.value.trim(), destino);
+          clearTimeout(espera);
+          espera = setTimeout(() => pintarPlantillaReconocida(campo.value.trim(), plantilla), 350);
+        };
+        campo.addEventListener('input', actualizar);
         pintarPrecioReferenciaAsistente(campo.value.trim(), destino);
+        pintarPlantillaReconocida(campo.value.trim(), plantilla);
       },
       recoger: (cont, estado) => { estado.cultivo = cont.querySelector('#asistente-cultivo').value.trim(); },
       validar: (estado) => (estado.cultivo.length >= 2 ? null : 'Escribe o di qué sembraste.'),
@@ -5443,23 +5453,136 @@ function pasosAsistenteSiembra() {
     },
     {
       id: 'gastos',
-      pregunta: '¿Cuánto gastaste para sembrar?',
-      ayuda: 'Lo que pagaste en semillas y en abono o insumos, en soles. Si no sabes, déjalo en cero: lo puedes calcular después.',
-      render: (estado) => `
-        ${campoNumeroAsistente({ id: 'asistente-semillas', etiqueta: 'En semillas', valor: estado.semillas ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/' })}
-        ${campoNumeroAsistente({ id: 'asistente-insumos', etiqueta: 'En abono e insumos', valor: estado.insumos ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/' })}`,
-      recoger: (cont, estado) => {
-        estado.semillas = Number(cont.querySelector('#asistente-semillas').value || 0);
-        estado.insumos = Number(cont.querySelector('#asistente-insumos').value || 0);
-      },
-      validar: (estado) => ([estado.semillas, estado.insumos].every((v) => Number.isFinite(v) && v >= 0 && v <= 9999999.99)
-        ? null : 'Los gastos deben ser montos desde cero, sin signos.'),
-      resumen: (estado) => ({ etiqueta: 'Gastos', valor: `Semillas ${formatearMoneda(estado.semillas)} · Insumos ${formatearMoneda(estado.insumos)}`, icono: 'coin' }),
+      pregunta: '¿Cuánto gastaste para empezar?',
+      ayuda: 'Lo que gastaste en las primeras etapas, en soles. Si no gastaste en algo o no lo sabes, déjalo vacío. '
+        + 'Lo que gastes después (por ejemplo el deshierbo o la fumigación) lo anotas en tu siembra, en "Mi perfil", cuando pase.',
+      render: () => '<div id="asistente-gastos-etapas" class="asistente-gastos" aria-live="polite"><p class="muted">Buscando las etapas de tu cultivo…</p></div>',
+      alMostrar: (cont, estado) => pintarGastosInicioAsistente(cont, estado),
+      recoger: (cont, estado) => { estado.gastosInicio = recogerGastosAsistente(cont, estado, 'gastosInicioValores'); },
+      validar: (estado) => validarGastosAsistente(estado.gastosInicio),
+      resumen: (estado) => ({ etiqueta: 'Gastos para empezar', valor: resumenGastosAsistente(estado.gastosInicio), icono: 'coin' }),
     },
   ];
 }
 
-function abrirAsistenteSiembra() {
+// ---- Etapas de cada alimento (ver productores/plantillas_produccion.py) ----
+let catalogoProduccion = null;
+const FAMILIA_GENERICA = { temporada: 'temporada_generica', frutal: 'frutales', crianza: 'crianza_generica', elaboracion: 'elaboracion_generica' };
+
+async function cargarCatalogoProduccion() {
+  if (catalogoProduccion) return catalogoProduccion;
+  try { catalogoProduccion = await Api.productores.plantillas(); } catch { catalogoProduccion = null; }
+  return catalogoProduccion;
+}
+
+function etapasDePlantilla(clave) {
+  const c = catalogoProduccion;
+  if (!c || !clave) return [];
+  const familia = clave.startsWith('generica_') ? FAMILIA_GENERICA[clave.slice('generica_'.length)]
+    : c.alimentos.find((a) => a.clave === clave)?.familia;
+  return c.familias[familia]?.etapas || [];
+}
+
+function nombreRubro(rubro) {
+  return catalogoProduccion?.rubros?.[rubro]?.nombre || rubro;
+}
+
+async function pintarPlantillaReconocida(nombre, destino) {
+  if (!destino) return;
+  if (nombre.length < 2) { destino.innerHTML = ''; return; }
+  let p;
+  try { p = await Api.productores.plantillaPara(nombre); } catch { destino.innerHTML = ''; return; }
+  if (!destino.isConnected) return;
+  const etapas = p.etapas.map((e) => escapeAttr(e.nombre)).join(' → ');
+  destino.innerHTML = p.reconocido
+    ? `<i class="ti ti-circle-check" aria-hidden="true"></i><span><strong>${escapeAttr(p.nombre)}</strong> · ${escapeAttr(p.etiquetas.nombre.toLowerCase())}. Etapas: ${etapas}.</span>`
+    : `<i class="ti ti-info-circle" aria-hidden="true"></i><span>No lo tenemos en la lista: usaremos las etapas de un cultivo común (${etapas}).</span>`;
+}
+
+// Un campo de gasto por rubro de cada etapa; la mano de obra va en jornales × precio del jornal.
+function renderCamposGastos(etapas, valores = {}) {
+  const campo = (id, etiqueta, valor, extra = '') => `
+    <label class="ag-campo" for="${id}"><span>${etiqueta}</span>
+      <span class="ag-entrada"><span aria-hidden="true">S/</span><input id="${id}" type="number" inputmode="decimal" min="0" step="any" value="${escapeAttr(valor ?? '')}" ${extra}></span>
+    </label>`;
+  return etapas.map((e) => `
+    <fieldset class="ag-etapa">
+      <legend>${escapeAttr(e.nombre)}</legend>
+      <p>${escapeAttr(e.que_se_hace)}</p>
+      <div class="ag-campos">
+        ${e.rubros.map((r) => {
+          const base = `ag-${e.clave}-${r}`;
+          if (r !== 'mano_obra') return campo(base, escapeAttr(nombreRubro(r)), valores[base], `data-etapa="${e.clave}" data-rubro="${r}" data-campo="monto"`);
+          return `
+            <div class="ag-jornales" data-etapa="${e.clave}">
+              <label class="ag-campo" for="${base}-cantidad"><span>Jornales</span>
+                <span class="ag-entrada"><input id="${base}-cantidad" type="number" inputmode="decimal" min="0" step="0.5" value="${escapeAttr(valores[`${base}-cantidad`] ?? '')}" data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="cantidad"><span aria-hidden="true">días</span></span>
+              </label>
+              ${campo(`${base}-precio`, 'Pago por jornal', valores[`${base}-precio`], `data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="precio"`)}
+            </div>`;
+        }).join('')}
+      </div>
+    </fieldset>`).join('');
+}
+
+async function pintarGastosInicioAsistente(cont, estado) {
+  const caja = cont.querySelector('#asistente-gastos-etapas');
+  if (estado.plantilla?.nombrePedido !== estado.cultivo) {
+    try {
+      estado.plantilla = { ...(await Api.productores.plantillaPara(estado.cultivo)), nombrePedido: estado.cultivo };
+    } catch {
+      estado.plantilla = null;
+    }
+  }
+  if (!caja.isConnected) return;
+  const etapas = (estado.plantilla?.etapas || []).filter((e) => e.momento === 'inicio');
+  caja.innerHTML = etapas.length
+    ? renderCamposGastos(etapas, estado.gastosInicioValores)
+    : '<p class="muted">Ahora no pudimos traer las etapas. Puedes seguir: anota tus gastos después en tu siembra.</p>';
+}
+
+// Lee los campos de gastos: [{etapa, rubro, monto}] o la mano de obra como {cantidad, precio_unitario, unidad: 'jornal'}.
+function recogerGastosAsistente(cont, estado, claveValores) {
+  const valores = {};
+  const gastos = [];
+  const numero = (input) => (input && input.value !== '' ? Number(input.value) : null);
+  cont.querySelectorAll('.ag-campo input').forEach((i) => { valores[i.id] = i.value; });
+  estado[claveValores] = valores;
+  cont.querySelectorAll('input[data-campo="monto"]').forEach((i) => {
+    const monto = numero(i);
+    if (monto) gastos.push({ etapa: i.dataset.etapa, rubro: i.dataset.rubro, monto });
+  });
+  cont.querySelectorAll('.ag-jornales').forEach((caja) => {
+    const cantidad = numero(caja.querySelector('[data-campo="cantidad"]'));
+    const precio = numero(caja.querySelector('[data-campo="precio"]'));
+    if (cantidad || precio) gastos.push({ etapa: caja.dataset.etapa, rubro: 'mano_obra', cantidad, precio_unitario: precio, unidad: 'jornal' });
+  });
+  return gastos;
+}
+
+function validarGastosAsistente(gastos = []) {
+  for (const g of gastos) {
+    if (g.rubro === 'mano_obra' && g.unidad === 'jornal') {
+      if (!(g.cantidad > 0) || !(g.precio_unitario > 0)) return 'En la mano de obra escribe cuántos jornales y cuánto pagaste por cada uno (o deja los dos vacíos).';
+      if (g.cantidad * g.precio_unitario > 9999999.99) return 'Ese gasto de mano de obra es demasiado grande: revisa los jornales y el pago.';
+    } else if (!(g.monto > 0) || g.monto > 9999999.99) {
+      return 'Los gastos deben ser montos mayores a cero, sin signos.';
+    }
+  }
+  return null;
+}
+
+function totalGastos(gastos = []) {
+  return gastos.reduce((s, g) => s + (g.monto ?? (g.cantidad || 0) * (g.precio_unitario || 0)), 0);
+}
+
+function resumenGastosAsistente(gastos = []) {
+  if (!gastos.length) return 'Sin gastos por ahora';
+  return `${formatearMoneda(totalGastos(gastos))} en ${gastos.length} gasto${gastos.length === 1 ? '' : 's'}`;
+}
+
+async function abrirAsistenteSiembra() {
+  await cargarCatalogoProduccion();
   const chacras = Estado.chacras || [];
   if (!chacras.length) {
     toast('Primero registra tu chacra en "Mis chacras".', 'error');
@@ -5480,8 +5603,8 @@ function abrirAsistenteSiembra() {
         chacra_id: estado.chacraId,
         cultivo: estado.cultivo,
         numero_parcelas: estado.parcelas,
-        costo_semillas: estado.semillas,
-        costo_insumos: estado.insumos,
+        plantilla: estado.plantilla?.clave || null,
+        gastos: estado.gastosInicio || [],
         unidad_medida: estado.unidad || 'kg',
         equivalencia_kg: (estado.unidad || 'kg') !== 'kg' ? estado.equivalencia : null,
         fecha_siembra: estado.fechaSiembra,
@@ -5611,7 +5734,7 @@ function pasosAsistenteCosecha(registro) {
       },
       resumen: (estado) => ({ etiqueta: 'Cosechaste el', valor: fechaLegible(estado.fecha), icono: 'calendar' }),
     },
-    {
+    ...(registro.plantilla ? [pasoGastosFinalesCosecha(registro)] : [{
       id: 'mano-obra',
       pregunta: '¿Cuánto pagaste por la mano de obra?',
       ayuda: 'Lo que pagaste a quienes te ayudaron a sembrar, cuidar y cosechar, en soles. Si trabajaste solo con tu familia, deja cero.',
@@ -5622,8 +5745,24 @@ function pasosAsistenteCosecha(registro) {
       validar: (estado) => (Number.isFinite(estado.manoObra) && estado.manoObra >= 0 && estado.manoObra <= 9999999.99
         ? null : 'El monto debe ser desde cero, sin signos.'),
       resumen: (estado) => ({ etiqueta: 'Mano de obra', valor: formatearMoneda(estado.manoObra), icono: 'users' }),
-    },
+    }]),
   ];
+}
+
+// Con etapas: lo que se gastó al final (cosechar, trillar, recoger los huevos, empacar el queso...).
+function pasoGastosFinalesCosecha(registro) {
+  const etapas = etapasDePlantilla(registro.plantilla).filter((e) => e.momento === 'final');
+  const verbo = catalogoProduccion?.tipos?.[registro.tipo_produccion]?.verbo_fin || 'cosechar';
+  return {
+    id: 'gastos-finales',
+    pregunta: `¿Cuánto gastaste al ${verbo}?`,
+    ayuda: 'En soles. La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste en algo, déjalo vacío.',
+    render: (estado) => `<div class="asistente-gastos">${etapas.length ? renderCamposGastos(etapas, estado.gastosFinalValores)
+      : '<p class="muted">No pudimos traer las etapas: anota tus gastos en tu siembra.</p>'}</div>`,
+    recoger: (cont, estado) => { estado.gastosFinal = recogerGastosAsistente(cont, estado, 'gastosFinalValores'); },
+    validar: (estado) => validarGastosAsistente(estado.gastosFinal),
+    resumen: (estado) => ({ etiqueta: 'Gastos del final', valor: resumenGastosAsistente(estado.gastosFinal), icono: 'coin' }),
+  };
 }
 
 // La foto es el mismo selector de la foto de entrega del repartidor: aquí solo se guarda el archivo en el estado.
@@ -5648,7 +5787,8 @@ function alClicAsistenteCosecha(e, estado) {
   if (cambiar) cambiar.closest('.foto-entrega').querySelector('.foto-entrega-input').click();
 }
 
-function abrirAsistenteCosecha(registroId) {
+async function abrirAsistenteCosecha(registroId) {
+  await cargarCatalogoProduccion();
   const registro = (Estado.registrosProduccion || []).find((r) => String(r.id) === String(registroId));
   if (!registro) { toast('No se encontró esa siembra. Recarga la página.', 'error'); return; }
   Asistente.abrir({
@@ -5677,7 +5817,7 @@ function abrirAsistenteCosecha(registroId) {
         await Api.productores.produccion.completarCosecha(registro.id, {
           cantidad_cosechada: estado.cantidad,
           fecha_cosecha_real: estado.fecha,
-          costo_mano_obra: estado.manoObra,
+          ...(registro.plantilla ? { gastos: estado.gastosFinal || [] } : { costo_mano_obra: estado.manoObra }),
           ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng } : {}),
         });
       } catch (err) {
@@ -10743,10 +10883,11 @@ function renderFormCorregirSiembra(r) {
           ${campo('Parcelas', `name="numero_parcelas" type="number" min="1" step="1" required value="${escapeAttr(r.numero_parcelas)}"`)}
           ${campo('Fecha de siembra', `name="fecha_siembra" type="date" required value="${fecha(r.fecha_siembra)}"`)}
           ${campo('Cosecha estimada', `name="fecha_cosecha_estimada" type="date" required value="${fecha(r.fecha_cosecha_estimada)}"`)}
+          ${r.plantilla ? '' : `
           ${campo('Semillas (S/)', `name="costo_semillas" type="number" min="0" step="0.01" value="${escapeAttr(Number(r.costo_semillas) || 0)}"`)}
-          ${campo('Insumos (S/)', `name="costo_insumos" type="number" min="0" step="0.01" value="${escapeAttr(Number(r.costo_insumos) || 0)}"`)}
+          ${campo('Insumos (S/)', `name="costo_insumos" type="number" min="0" step="0.01" value="${escapeAttr(Number(r.costo_insumos) || 0)}"`)}`}
         </div>
-        <p class="form-corregir-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> La chacra y el lugar donde marcaste la siembra no se cambian: son la prueba de origen de tu cosecha.</p>
+        <p class="form-corregir-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> La chacra y el lugar donde marcaste la siembra no se cambian: son la prueba de origen de tu cosecha.${r.plantilla ? ' Los gastos se corrigen en "Gastos por etapa".' : ''}</p>
         <p class="form-entrega-mensaje hidden" role="alert"></p>
         <div class="tarjeta-acciones">
           <button type="button" class="btn btn-ghost btn-cancelar-corregir">Cancelar</button>
@@ -10772,8 +10913,8 @@ async function guardarCorreccionSiembra(form) {
     numero_parcelas: Number(valor('numero_parcelas')),
     fecha_siembra: valor('fecha_siembra') ? `${valor('fecha_siembra')}T00:00:00` : '',
     fecha_cosecha_estimada: valor('fecha_cosecha_estimada') ? `${valor('fecha_cosecha_estimada')}T00:00:00` : '',
-    costo_semillas: Number(valor('costo_semillas') || 0),
-    costo_insumos: Number(valor('costo_insumos') || 0),
+    costo_semillas: form.elements.costo_semillas ? Number(valor('costo_semillas') || 0) : 0,
+    costo_insumos: form.elements.costo_insumos ? Number(valor('costo_insumos') || 0) : 0,
     unidad_medida: form.dataset.unidad,
     equivalencia_kg: form.dataset.equivalencia === '' ? null : Number(form.dataset.equivalencia),
   };
@@ -10871,8 +11012,167 @@ function renderTarjetaRegistroProduccion(r, indice = 0) {
         ${badge}
       </div>
       ${datosBase}
+      ${r.gastos_por_etapa ? renderGastosPorEtapa(r, r.estado === 'planificado') : ''}
       ${bloqueEstado}
     </div>`;
+}
+
+// ---- Gastos por etapa de una siembra (21st.dev "Process Timeline": etapas con gasto marcadas, la siguiente resaltada;
+// ui-ux-pro-max: etiqueta visible en cada campo, aviso al guardar, botones de 44px+) ----
+function renderGastosPorEtapa(r, editable) {
+  const etapas = r.gastos_por_etapa;
+  const ultimaConGasto = etapas.map((e) => e.total > 0).lastIndexOf(true);
+  const detalles = Object.fromEntries(etapasDePlantilla(r.plantilla).map((e) => [e.clave, e]));
+  const total = etapas.reduce((s, e) => s + e.total, 0);
+  const filas = etapas.map((e, i) => {
+    const estado = e.total > 0 ? 'hecha' : i === ultimaConGasto + 1 ? 'siguiente' : 'pendiente';
+    return `
+      <li class="eg-etapa ${estado}">
+        <span class="eg-marca" aria-hidden="true">${e.total > 0 ? '<i class="ti ti-check"></i>' : i + 1}</span>
+        <div class="eg-texto"><strong>${escapeAttr(e.nombre)}</strong>${detalles[e.clave] ? `<small>${escapeAttr(detalles[e.clave].que_se_hace)}</small>` : ''}</div>
+        <span class="eg-monto">${e.total > 0 ? formatearMoneda(e.total) : '<span class="sr-only">sin gastos</span>—'}${e.gastos > 1 ? `<small>${e.gastos} gastos</small>` : ''}</span>
+        ${editable && e.clave !== 'otras' ? `<button type="button" class="btn btn-outline btn-sm btn-anotar-gasto" data-etapa="${e.clave}" aria-label="Anotar un gasto en ${escapeAttr(e.nombre)}"><i class="ti ti-plus" aria-hidden="true"></i> Anotar</button>` : ''}
+      </li>`;
+  }).join('');
+  return `
+    <section class="etapas-gastos" aria-label="Gastos por etapa de ${escapeAttr(r.cultivo)}" data-registro="${r.id}" data-plantilla="${escapeAttr(r.plantilla)}" data-editable="${editable}">
+      <div class="eg-cabeza">
+        <h5><i class="ti ti-list-check" aria-hidden="true"></i> Gastos por etapa</h5>
+        <strong>${formatearMoneda(total)}</strong>
+      </div>
+      <p class="eg-ayuda">${editable ? 'Anota cada gasto en su etapa cuando ocurra: al cosechar sabrás cuánto te costó de verdad.' : 'Lo que gastaste en cada etapa.'}</p>
+      <ol class="eg-linea">${filas}</ol>
+      <div class="eg-form-wrap"></div>
+      <details class="eg-detalle"><summary>Ver cada gasto</summary><div class="eg-lista"></div></details>
+    </section>`;
+}
+
+function renderFormGasto(seccion, etapaClave) {
+  const etapas = etapasDePlantilla(seccion.dataset.plantilla);
+  const etapa = etapas.find((e) => e.clave === etapaClave) || { clave: etapaClave, nombre: etapaClave, rubros: [] };
+  const otros = Object.keys(catalogoProduccion?.rubros || {}).filter((r) => !etapa.rubros.includes(r));
+  const opcion = (r) => `<option value="${r}">${escapeAttr(nombreRubro(r))}</option>`;
+  const hoy = fechaIso(new Date());
+  return `
+    <form class="form-gasto" data-etapa="${etapa.clave}" novalidate>
+      <h6><i class="ti ti-coin" aria-hidden="true"></i> Anotar un gasto · ${escapeAttr(etapa.nombre)}</h6>
+      <div class="fg-grid">
+        <label class="perfil-campo">¿En qué gastaste?
+          <select name="rubro">
+            <optgroup label="Lo más común en esta etapa">${etapa.rubros.map(opcion).join('')}</optgroup>
+            ${otros.length ? `<optgroup label="Otros">${otros.map(opcion).join('')}</optgroup>` : ''}
+          </select>
+        </label>
+        <label class="perfil-campo fg-monto">Monto (S/)<input name="monto" type="number" inputmode="decimal" min="0" step="0.01"></label>
+        <label class="perfil-campo fg-jornal hidden">Jornales<input name="cantidad" type="number" inputmode="decimal" min="0" step="0.5"></label>
+        <label class="perfil-campo fg-jornal hidden">Pago por jornal (S/)<input name="precio" type="number" inputmode="decimal" min="0" step="0.5"></label>
+        <label class="perfil-campo">Detalle <small>(opcional)</small><input name="descripcion" type="text" maxlength="120" placeholder="Ej.: 2 sacos de urea"></label>
+        <label class="perfil-campo">Fecha<input name="fecha" type="date" value="${hoy}" max="${hoy}"></label>
+      </div>
+      <p class="fg-total" aria-live="polite"></p>
+      <p class="form-entrega-mensaje hidden" role="alert"></p>
+      <div class="tarjeta-acciones">
+        <button type="button" class="btn btn-ghost btn-cancelar-gasto">Cancelar</button>
+        <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar gasto</button>
+      </div>
+    </form>`;
+}
+
+function ajustarFormGasto(form) {
+  const jornales = form.rubro.value === 'mano_obra';
+  form.querySelectorAll('.fg-jornal').forEach((el) => el.classList.toggle('hidden', !jornales));
+  form.querySelector('.fg-monto').classList.toggle('hidden', jornales);
+  const total = Number(form.cantidad.value) * Number(form.precio.value);
+  form.querySelector('.fg-total').textContent = jornales && total > 0 ? `Total: ${formatearMoneda(total)}` : '';
+}
+
+function abrirFormGasto(boton) {
+  const seccion = boton.closest('.etapas-gastos');
+  const wrap = seccion.querySelector('.eg-form-wrap');
+  wrap.innerHTML = renderFormGasto(seccion, boton.dataset.etapa);
+  const form = wrap.querySelector('.form-gasto');
+  ajustarFormGasto(form);
+  form.rubro.focus();
+}
+
+async function guardarGasto(form) {
+  const seccion = form.closest('.etapas-gastos');
+  const jornales = form.rubro.value === 'mano_obra';
+  const datos = {
+    etapa: form.dataset.etapa,
+    rubro: form.rubro.value,
+    descripcion: form.descripcion.value.trim() || null,
+    fecha: form.fecha.value ? `${form.fecha.value}T12:00:00` : null,
+    ...(jornales
+      ? { cantidad: Number(form.cantidad.value) || null, precio_unitario: Number(form.precio.value) || null, unidad: 'jornal' }
+      : { monto: Number(form.monto.value) || null }),
+  };
+  const problema = jornales
+    ? (!(datos.cantidad > 0) ? ['Escribe cuántos jornales fueron.', 'cantidad'] : !(datos.precio_unitario > 0) ? ['Escribe cuánto pagaste por cada jornal.', 'precio'] : null)
+    : (!(datos.monto > 0) ? ['Escribe cuánto gastaste.', 'monto'] : null);
+  if (problema) {
+    mostrarMensajeEntrega(form, problema[0], 'error');
+    form[problema[1]].focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    await Api.productores.produccion.anotarGasto(seccion.dataset.registro, datos);
+    toast('Gasto anotado 🧾');
+    await cargarPerfil();
+  } catch (err) {
+    boton.disabled = false;
+    mostrarMensajeEntrega(form, err.message || 'No se pudo anotar el gasto.', 'error');
+  }
+}
+
+async function cargarDetalleGastos(seccion) {
+  const lista = seccion.querySelector('.eg-lista');
+  if (lista.dataset.cargado) return;
+  lista.innerHTML = '<p class="muted">Cargando…</p>';
+  let d;
+  try {
+    d = await Api.productores.produccion.gastos(seccion.dataset.registro);
+  } catch (err) {
+    lista.innerHTML = `<p class="muted">${escapeAttr(err.message || 'No se pudieron cargar los gastos.')}</p>`;
+    return;
+  }
+  lista.dataset.cargado = '1';
+  const editable = seccion.dataset.editable === 'true';
+  const nombreEtapa = Object.fromEntries(d.etapas.map((e) => [e.clave, e.nombre]));
+  lista.innerHTML = d.gastos.length ? `<ul>${d.gastos.map((g) => `
+    <li>
+      <div><strong>${escapeAttr(nombreRubro(g.rubro))}</strong> <span class="muted">· ${escapeAttr(nombreEtapa[g.etapa] || 'Otra etapa')} · ${formatearFechaCorta(String(g.fecha).slice(0, 10))}</span>
+        ${g.descripcion || g.cantidad ? `<small>${[g.descripcion ? escapeAttr(g.descripcion) : '', g.cantidad ? `${String(g.cantidad).replace('.', ',')} ${escapeAttr(unidadDeGasto(g.unidad, g.cantidad))} × ${formatearMoneda(g.precio_unitario)}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>
+      <span class="eg-lista-monto">${formatearMoneda(g.monto)}</span>
+      ${editable ? `<button type="button" class="btn btn-ghost btn-sm btn-borrar-gasto" data-gasto="${g.id}" aria-label="Borrar este gasto"><i class="ti ti-trash" aria-hidden="true"></i></button>` : ''}
+    </li>`).join('')}</ul>` : '<p class="muted">Todavía no anotaste gastos.</p>';
+}
+
+// "jornal" → "jornales" cuando son varios (la fecha del gasto se muestra como día, sin zona horaria: es un día del campo).
+function unidadDeGasto(unidad, cantidad) {
+  if (!unidad) return '';
+  return Number(cantidad) === 1 ? unidad : unidad === 'jornal' ? 'jornales' : unidad;
+}
+
+async function borrarGasto(boton) {
+  // Primer toque: pide confirmar en el mismo botón; segundo toque: borra.
+  if (!boton.dataset.confirmar) {
+    boton.dataset.confirmar = '1';
+    boton.innerHTML = '¿Borrar?';
+    boton.classList.add('btn-danger');
+    return;
+  }
+  boton.disabled = true;
+  try {
+    await Api.productores.produccion.borrarGasto(boton.closest('.etapas-gastos').dataset.registro, boton.dataset.gasto);
+    toast('Gasto borrado.');
+    await cargarPerfil();
+  } catch (err) {
+    boton.disabled = false;
+    manejarError(err, 'borrar el gasto');
+  }
 }
 
 function renderProduccionSeccion(registros) {
@@ -10973,6 +11273,7 @@ async function cargarPerfil() {
     try { extra = await Api.productores.miPerfil(); } catch { /* aún no tiene perfil de productor */ }
     if (extra) {
       try { registrosProduccion = await Api.productores.produccion.listarMe(); Estado.registrosProduccion = registrosProduccion; } catch (err) { manejarError(err, 'cargar tu gestión económica'); }
+      await cargarCatalogoProduccion();
       try { Estado.chacras = await Api.chacras.misChacras(); } catch (err) { manejarError(err, 'cargar tus chacras'); }
     }
   } else if (usuario.rol === 'repartidor') {
@@ -12159,8 +12460,15 @@ function inicializarEventos() {
     if (e.target.id === 'perfil-form-comprador') { e.preventDefault(); guardarPerfilComprador(e.target); }
     if (e.target.id === 'perfil-form-reclamo') { e.preventDefault(); enviarReclamoRuc(e.target); }
     if (e.target.matches('.form-corregir-siembra')) { e.preventDefault(); guardarCorreccionSiembra(e.target); }
+    if (e.target.matches('.form-gasto')) { e.preventDefault(); guardarGasto(e.target); }
+  });
+  document.getElementById('perfil-contenido').addEventListener('input', (e) => {
+    const form = e.target.closest('.form-gasto');
+    if (form) ajustarFormGasto(form);
   });
   document.getElementById('perfil-contenido').addEventListener('change', (e) => {
+    const form = e.target.closest('.form-gasto');
+    if (form) { ajustarFormGasto(form); return; }
     const archivo = e.target.closest('.reclamo-archivo input[type="file"]');
     if (!archivo) return;
     const nombre = archivo.closest('.reclamo-archivo').querySelector('.reclamo-archivo-nombre');
@@ -12199,6 +12507,13 @@ function inicializarEventos() {
     // Siembra y cosecha se registran con el asistente paso a paso (ver js/asistente.js).
     const btnCompletar = e.target.closest('.btn-completar-cosecha');
     if (btnCompletar) { abrirAsistenteCosecha(btnCompletar.dataset.id); return; }
+    const anotar = e.target.closest('.btn-anotar-gasto');
+    if (anotar) { abrirFormGasto(anotar); return; }
+    if (e.target.closest('.btn-cancelar-gasto')) { e.target.closest('.eg-form-wrap').innerHTML = ''; return; }
+    const borrar = e.target.closest('.btn-borrar-gasto');
+    if (borrar) { borrarGasto(borrar); return; }
+    const verGastos = e.target.closest('.eg-detalle summary');
+    if (verGastos) cargarDetalleGastos(verGastos.closest('.etapas-gastos'));
     const tarjetaSiembra = e.target.closest('.produccion-card');
     if (tarjetaSiembra) {
       if (e.target.closest('.btn-corregir-siembra')) { mostrarPasoSiembra(tarjetaSiembra, 'corregir'); return; }

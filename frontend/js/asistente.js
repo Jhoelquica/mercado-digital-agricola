@@ -262,6 +262,12 @@ const Asistente = (() => {
 
   const $ = (sel) => document.querySelector(`#modal-asistente ${sel}`);
 
+  // La pregunta y la ayuda pueden ser texto o una función del estado (p. ej. "¿Cuándo sembraste?" o "¿Cuándo empezó el
+  // periodo?" según lo que produce).
+  function textoDelPaso(valor) {
+    return typeof valor === 'function' ? valor(estado) : valor;
+  }
+
   function pasos() {
     return [...config.pasos, {
       id: 'revisar',
@@ -279,7 +285,7 @@ const Asistente = (() => {
       });
       return `Revisa y confirma. ${lineas.join(' ')} Si todo está bien, toca ${config.textoFinal}.`;
     }
-    return paso.voz ? paso.voz(estado) : `${paso.pregunta}. ${paso.ayuda || ''}`;
+    return paso.voz ? paso.voz(estado) : `${textoDelPaso(paso.pregunta)}. ${textoDelPaso(paso.ayuda) || ''}`;
   }
 
   function renderRevisar() {
@@ -316,11 +322,11 @@ const Asistente = (() => {
     $('.asistente-progreso').setAttribute('aria-valuenow', String(indice + 1));
     $('.asistente-progreso').setAttribute('aria-valuemax', String(total));
     const pregunta = $('#asistente-pregunta');
-    pregunta.textContent = paso.pregunta;
-    $('.asistente-ayuda-texto').textContent = paso.ayuda || '';
+    pregunta.textContent = textoDelPaso(paso.pregunta);
+    $('.asistente-ayuda-texto').textContent = textoDelPaso(paso.ayuda) || '';
     $('.asistente-ayuda').classList.add('hidden');
     $('.btn-asistente-ayuda').setAttribute('aria-expanded', 'false');
-    $('.btn-asistente-ayuda').classList.toggle('hidden', !paso.ayuda);
+    $('.btn-asistente-ayuda').classList.toggle('hidden', !textoDelPaso(paso.ayuda));
     $('.asistente-contenido').innerHTML = paso.render(estado);
     mostrarError('');
     const esUltimo = indice === total - 1;
@@ -473,7 +479,7 @@ const Asistente = (() => {
       const abrir = caja.classList.contains('hidden');
       caja.classList.toggle('hidden', !abrir);
       ayuda.setAttribute('aria-expanded', String(abrir));
-      if (abrir) Voz.hablar(pasos()[indice].ayuda);
+      if (abrir) Voz.hablar(textoDelPaso(pasos()[indice].ayuda));
       return;
     }
     const mic = t.closest('.asistente-mic');

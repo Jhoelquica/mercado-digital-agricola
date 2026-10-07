@@ -246,8 +246,15 @@ const Api = {
     obtener: (id) => request('productores', `/productores/${id}`),
     miPerfil: () => request('productores', '/productores/me', { auth: true }),
     crear: (datos) => request('productores', '/productores', { method: 'POST', body: datos, auth: true }),
+    // Cómo se obtiene cada alimento: tipos, rubros de gasto y etapas (público).
+    plantillas: () => request('productores', '/plantillas'),
+    plantillaPara: (nombre) => request('productores', `/plantillas/para?nombre=${encodeURIComponent(nombre)}`),
     produccion: {
       crear: (datos) => request('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
+      // Gastos por etapa de un registro (con plantilla): se anotan cuando ocurren.
+      gastos: (id) => request('productores', `/productores/produccion/${id}/gastos`, { auth: true }),
+      anotarGasto: (id, datos) => request('productores', `/productores/produccion/${id}/gastos`, { method: 'POST', body: datos, auth: true }),
+      borrarGasto: (id, gastoId) => request('productores', `/productores/produccion/${id}/gastos/${gastoId}`, { method: 'DELETE', auth: true }),
       sugerirCosecha: (datos) => request('productores', '/productores/produccion/sugerir-cosecha', { method: 'POST', body: datos, auth: true }),
       listarMe: () => request('productores', '/productores/produccion/me', { auth: true }),
       completarCosecha: (id, datos) => request('productores', `/productores/produccion/${id}/completar-cosecha`, { method: 'PATCH', body: datos, auth: true }),
