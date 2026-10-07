@@ -57,6 +57,9 @@ spec:
             # Cancelar un pedido pagado le pide a Pagos que devuelva el dinero.
             - name: PAGOS_URL
               value: http://pagos:8007
+            # "Mis ventas": quién es el agricultor con sesión.
+            - name: PRODUCTORES_URL
+              value: http://productores:8001
             - name: PRODUCTOS_URL
               value: http://productos:8002
             - name: RABBITMQ_HOST

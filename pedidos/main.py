@@ -27,6 +27,8 @@ from database import Base, engine, SessionLocal
 from migraciones import agregar_columnas_faltantes
 import models
 import reniec
+import ventas
+from sqlalchemy import func
 from fastapi.encoders import jsonable_encoder
 
 logger = logging.getLogger("pedidos")
@@ -163,6 +165,8 @@ app.add_middleware(
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 TRANSPORTE_URL = os.getenv("TRANSPORTE_URL", "http://localhost:8004")
 PAGOS_URL = os.getenv("PAGOS_URL", "http://localhost:8007")
+# "Mis ventas": quién es el agricultor con sesión.
+PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
@@ -745,6 +749,8 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 unidad=item.unidad,
                 precio_unitario=precio_unitario,
                 peso_kg=peso_kg,
+                productor_id=producto.get("productor_id"),
+                producto_nombre=producto.get("nombre"),
             )
             db.add(nuevo_item)
             filas_con_base.append((nuevo_item, cantidad_base))
@@ -1150,3 +1156,79 @@ def eliminar_pedido(pedido_id: str, db: Session = Depends(get_db), x_servicio_se
     db.delete(pedido)
     db.commit()
     return {"mensaje": "Pedido eliminado"}
+
+
+# ============ Ventas para los paneles (ver ventas.py) ============
+def _productor_autenticado(token: str) -> str:
+    """El id de productor del agricultor con sesión (Productores lo resuelve con su token)."""
+    try:
+        with httpx.Client() as client:
+            resp = client.get(f"{PRODUCTORES_URL}/productores/me", headers={"Authorization": f"Bearer {token}"}, timeout=5)
+    except httpx.RequestError:
+        raise HTTPException(status_code=503, detail="No se pudo consultar tu perfil. Intenta de nuevo en un momento.")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Completa primero tu perfil de productor para ver tus ventas.")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=503, detail="No se pudo consultar tu perfil. Intenta de nuevo en un momento.")
+    return str(resp.json()["id"])
+
+
+def _lineas_vendidas(db: Session, desde: datetime, productor_id: str | None = None) -> list[dict]:
+    consulta = (db.query(models.Pedido, models.PedidoItem)
+                .join(models.PedidoItem, models.PedidoItem.pedido_id == models.Pedido.id)
+                .filter(models.Pedido.estado.in_(ventas.ESTADOS_VENDIDOS), models.Pedido.fecha_creacion >= desde))
+    if productor_id:
+        consulta = consulta.filter(models.PedidoItem.productor_id == productor_id)
+    return [ventas.linea(p, i) for p, i in consulta.all()]
+
+
+def _ventana(meses: int, ahora: datetime):
+    """Los meses del panel y desde cuándo leer: al menos 13 meses, para comparar con el mismo mes del año pasado."""
+    ventana = ventas.meses_hasta(ahora, meses)
+    lectura = ventas.meses_hasta(ahora, max(meses, 13))[0]
+    desde = datetime(int(lectura[:4]), int(lectura[5:]), 1) + ventas.HORAS_PERU
+    return ventana, desde
+
+
+@app.get("/ventas/mias")
+def mis_ventas(meses: int = Query(12, ge=1, le=24), db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor")),
+               credenciales: HTTPAuthorizationCredentials = Depends(security)):
+    """El agricultor: lo que vendió (pedidos pagados) por mes y por producto, y las comparativas."""
+    productor_id = _productor_autenticado(credenciales.credentials)
+    ahora = datetime.utcnow()
+    ventana, desde = _ventana(meses, ahora)
+    return ventas.resumen(_lineas_vendidas(db, desde, productor_id), ventana, ventana[-1])
+
+
+@app.get("/ventas/admin")
+def ventas_de_la_plataforma(meses: int = Query(12, ge=1, le=24), db: Session = Depends(get_db),
+                            usuario: dict = Depends(requiere_rol("admin"))):
+    """El admin: lo vendido en toda la plataforma, los productores que más venden, los compradores nuevos de cada mes y
+    los pedidos cancelados (pagados y devueltos) o que no se pagaron."""
+    ahora = datetime.utcnow()
+    ventana, desde = _ventana(meses, ahora)
+    lineas = _lineas_vendidas(db, desde)
+    datos = ventas.resumen(lineas, ventana, ventana[-1])
+    datos["productos"] = datos["productos"][:10]
+    datos["productores"] = ventas.productores_que_mas_venden(lineas, ventana)
+    primeras = (db.query(models.Pedido.usuario_id, func.min(models.Pedido.fecha_creacion))
+                .filter(models.Pedido.estado.in_(ventas.ESTADOS_VENDIDOS), models.Pedido.usuario_id.isnot(None))
+                .group_by(models.Pedido.usuario_id).all())
+    nuevos = ventas.compradores_nuevos_por_mes({str(u): ventas.mes_peru(f) for u, f in primeras}, ventana)
+    cancelados = (db.query(models.Pedido.fecha_creacion, models.Pedido.motivo_cancelacion)
+                  .filter(models.Pedido.estado == "cancelado", models.Pedido.fecha_creacion >= desde).all())
+    devueltos, sin_pagar = {}, {}
+    for fecha, motivo in cancelados:
+        destino = devueltos if motivo else sin_pagar
+        mes = ventas.mes_peru(fecha)
+        destino[mes] = destino.get(mes, 0) + 1
+    envio = (db.query(models.Pedido.fecha_creacion, models.Pedido.costo_envio)
+             .filter(models.Pedido.estado.in_(ventas.ESTADOS_VENDIDOS), models.Pedido.fecha_creacion >= desde).all())
+    envio_por_mes = {}
+    for fecha, costo in envio:
+        mes = ventas.mes_peru(fecha)
+        envio_por_mes[mes] = envio_por_mes.get(mes, 0.0) + float(costo or 0)
+    for i, fila in enumerate(datos["por_mes"]):
+        fila.update({"compradores_nuevos": nuevos[i], "cancelados_devueltos": devueltos.get(fila["mes"], 0),
+                     "sin_pagar": sin_pagar.get(fila["mes"], 0), "soles_envio": round(envio_por_mes.get(fila["mes"], 0.0), 2)})
+    return datos

@@ -1514,3 +1514,69 @@ def test_solo_el_admin_cancela_y_solo_un_pedido_pagado():
         assert pedido_id in [p["id"] for p in client.get("/pedidos/admin/sin-entregar", headers=CON_TOKEN).json()]
     finally:
         _como(str(uuid.uuid4()), "comprador")
+
+
+
+# ============ Ventas para los paneles ============
+
+def test_cada_linea_vendida_guarda_de_quien_es_el_producto():
+    productor = str(uuid.uuid4())
+    mock = _mock_httpx_client(precio=50.0, nombre="Papa amarilla")
+    mock.get.return_value.json.return_value["productor_id"] = productor
+    with patch("main.httpx.Client", return_value=mock), patch("main.publicar_evento"):
+        pedido_id = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+    db = main.SessionLocal()
+    try:
+        item = db.query(main.models.PedidoItem).filter(main.models.PedidoItem.pedido_id == pedido_id).one()
+        assert (str(item.productor_id), item.producto_nombre) == (productor, "Papa amarilla")
+    finally:
+        db.close()
+
+
+def _pedido_vendido(productor, soles, estado="confirmado", usuario=None, cuando=None, producto=None):
+    db = main.SessionLocal()
+    try:
+        pedido = main.models.Pedido(usuario_id=usuario or uuid.uuid4(), comprador_nombre="QA", estado=estado,
+                                    destino_latitud=-13.16, destino_longitud=-74.22, costo_envio=5,
+                                    fecha_creacion=cuando or main.datetime.utcnow())
+        db.add(pedido)
+        db.flush()
+        db.add(main.models.PedidoItem(pedido_id=pedido.id, producto_id=producto or uuid.uuid4(), cantidad=1, precio_unitario=soles,
+                                      peso_kg=4, productor_id=productor, producto_nombre="Quinua"))
+        db.commit()
+        return str(pedido.id)
+    finally:
+        db.close()
+
+
+def test_mis_ventas_solo_cuenta_lo_pagado_de_ese_agricultor(monkeypatch):
+    productor, comprador, quinua = str(uuid.uuid4()), uuid.uuid4(), uuid.uuid4()
+    _pedido_vendido(productor, 30, usuario=comprador, producto=quinua)
+    _pedido_vendido(productor, 20, estado="entregado", usuario=comprador, producto=quinua)
+    _pedido_vendido(productor, 99, estado="pendiente")  # sin pagar: no cuenta
+    _pedido_vendido(productor, 99, estado="cancelado")  # cancelado: no cuenta
+    _pedido_vendido(str(uuid.uuid4()), 77)  # de otro agricultor
+    monkeypatch.setattr(main, "_productor_autenticado", lambda token: productor)
+    _como(str(uuid.uuid4()), "productor")
+    try:
+        datos = client.get("/ventas/mias", params={"meses": 6}, headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert len(datos["meses"]) == 6 and datos["por_mes"][-1]["soles"] == 50.0
+    assert (datos["totales"]["pedidos"], datos["totales"]["compradores"], datos["totales"]["compradores_recurrentes"]) == (2, 1, 1)
+    assert datos["productos"][0]["nombre"] == "Quinua" and datos["productos"][0]["kg"] == 8.0
+    assert client.get("/ventas/mias", headers=CON_TOKEN).status_code == 403  # un comprador no tiene ventas
+
+
+def test_el_admin_ve_las_ventas_de_la_plataforma_y_los_cancelados():
+    productor = str(uuid.uuid4())
+    _pedido_vendido(productor, 1234.5)
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        datos = client.get("/ventas/admin", params={"meses": 3}, headers=CON_TOKEN).json()
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert productor in [p["productor_id"] for p in datos["productores"]]
+    actual = datos["por_mes"][-1]
+    assert actual["soles"] >= 1234.5 and actual["soles_envio"] >= 5 and actual["compradores_nuevos"] >= 1
+    assert {"cancelados_devueltos", "sin_pagar"} <= set(actual)

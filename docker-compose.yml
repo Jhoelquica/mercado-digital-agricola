@@ -218,6 +218,7 @@ services:
       PRODUCTOS_URL: http://productos:8002
       TRANSPORTE_URL: http://transporte:8004
       PAGOS_URL: http://pagos:8007
+      PRODUCTORES_URL: http://productores:8001
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: admin
       RABBITMQ_PASSWORD: admin123
