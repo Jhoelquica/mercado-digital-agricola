@@ -14,7 +14,8 @@ spec:
     spec:
       containers:
         - name: grafana
-          image: grafana/grafana:latest
+          # Versión fija (antes :latest): la misma que ya corría, 13.2.3.
+          image: grafana/grafana:13.2.3
           ports:
             - containerPort: 3000
           env:
@@ -22,6 +23,31 @@ spec:
               value: admin
             - name: GF_SECURITY_ADMIN_PASSWORD
               value: admin123
+            # El tablero se puede mirar sin iniciar sesión (solo lectura); editar sigue pidiendo la cuenta admin.
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/chakrashop/servicios.json
+          # Fuente de datos y tablero provisionados (ver k8s/grafana-provisioning.yaml).
+          volumeMounts:
+            - name: fuentes
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: proveedor-tableros
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: tableros
+              mountPath: /var/lib/grafana/dashboards/chakrashop
+      volumes:
+        - name: fuentes
+          configMap:
+            name: grafana-fuentes
+        - name: proveedor-tableros
+          configMap:
+            name: grafana-proveedor-tableros
+        - name: tableros
+          configMap:
+            name: grafana-tableros
 ---
 apiVersion: v1
 kind: Service
