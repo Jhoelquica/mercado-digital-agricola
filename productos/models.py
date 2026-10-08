@@ -20,6 +20,9 @@ class Producto(Base):
     productor_id = Column(UUID(as_uuid=True), nullable=False)
     productor_nombre = Column(String, nullable=False)  # copia replicada
     nombre = Column(String, nullable=False)
+    # Lo que el agricultor cuenta del producto (variedad, cómo se cultivó, para qué sirve). Opcional, hasta 600
+    # caracteres; se edita en el borrador y se muestra en la página del producto.
+    descripcion = Column(String, nullable=True)
     imagen_url = Column(String, nullable=True)
     categoria = Column(String)
     # Nullable: un producto en estado "borrador" puede no tener precio todavía (ver estado).

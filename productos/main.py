@@ -19,6 +19,7 @@ from auth import verificar_token, requiere_rol, security, security_opcional, usu
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
+from migraciones import agregar_columnas_faltantes
 import models
 from sqlalchemy import func
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -32,6 +33,8 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 
 
 Base.metadata.create_all(bind=engine)
+# create_all() no agrega columnas a una tabla que ya existe (p. ej. productos.descripcion).
+agregar_columnas_faltantes(engine, Base)
 
 
 def _asegurar_una_resena_por_comprador():
@@ -112,6 +115,7 @@ def normalizar_categoria(valor):
 PRECIO_MAXIMO = 100_000            # soles por unidad de venta
 FACTOR_MAXIMO = 10_000             # unidades base por unidad alternativa (ej. un saco de 50 kg)
 COMENTARIO_RESENA_MAXIMO = 1_000
+DESCRIPCION_MAXIMA = 600
 TERMINO_BUSQUEDA_MAXIMO = 100
 
 
@@ -160,6 +164,13 @@ class ProductoCrearDesdeCosecha(BaseModel):
 class ProductoActualizar(BaseModel):
     categoria: str | None = None
     precio: float | None = None
+    # None = no tocar; "" = borrarla.
+    descripcion: str | None = None
+
+    @field_validator("descripcion")
+    @classmethod
+    def _descripcion_acotada(cls, valor):
+        return _texto_acotado(valor, DESCRIPCION_MAXIMA)
 
     @field_validator("categoria")
     @classmethod
@@ -674,6 +685,7 @@ def listar_mis_productos(
             "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
             "estado": p.estado,
             "registro_produccion_id": p.registro_produccion_id,
+            "descripcion": p.descripcion,
         }
         for p in productos
     ]
@@ -759,6 +771,7 @@ def obtener_producto(
         "productor_id": producto.productor_id,
         "productor_nombre": producto.productor_nombre,
         "nombre": producto.nombre,
+        "descripcion": producto.descripcion,
         "categoria": producto.categoria,
         "precio": producto.precio,
         "stock": producto.stock,
@@ -871,7 +884,7 @@ def actualizar_producto(
         usuario: dict = Depends(requiere_rol("productor")),
         credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
-    """Edita categoria/precio de un producto propio — de a uno o los dos juntos, lo que venga en
+    """Edita categoria/precio/descripcion de un producto propio — de a uno o juntos, lo que venga en
     el body (None = no tocar ese campo). Solo mientras está en "borrador": editar un producto ya
     publicado es una conversación aparte (¿republicar? ¿efecto inmediato en el catálogo?), no se
     resuelve acá."""
@@ -897,6 +910,8 @@ def actualizar_producto(
         producto.precio = datos.precio
     if datos.categoria is not None:
         producto.categoria = datos.categoria
+    if datos.descripcion is not None:
+        producto.descripcion = datos.descripcion or None
 
     db.commit()
     db.refresh(producto)

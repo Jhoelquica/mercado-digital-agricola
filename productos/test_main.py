@@ -1161,6 +1161,36 @@ def test_la_lista_publica_de_resenas_no_muestra_el_nombre_completo():
     assert main._nombre_publico("  maría   elena  ") == "maría E."
 
 
+def test_el_agricultor_escribe_la_descripcion_del_borrador_y_se_ve_en_el_detalle(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador")
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+
+    texto = "  Papa amarilla de altura, cosechada a mano. Ideal para puré.  "
+    resp = client.patch(f"/productos/{producto.id}", json={"descripcion": texto}, headers=HEADERS_AUTH)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["descripcion"] == texto.strip()
+    # el detalle de un borrador lo decodifica usuario_opcional con un token firmado de verdad
+    detalle = client.get(f"/productos/{producto.id}", headers=_con_sesion(uuid.uuid4(), "productor"))
+    assert detalle.status_code == 200, detalle.text
+    assert detalle.json()["descripcion"] == texto.strip()
+    assert client.get("/productos/mios", headers=HEADERS_AUTH).json()[0]["descripcion"] == texto.strip()
+
+    # cambiar solo el precio no la borra; "" sí
+    assert client.patch(f"/productos/{producto.id}", json={"precio": 4}, headers=HEADERS_AUTH).json()["descripcion"] == texto.strip()
+    assert client.patch(f"/productos/{producto.id}", json={"descripcion": ""}, headers=HEADERS_AUTH).json()["descripcion"] is None
+
+
+def test_la_descripcion_tiene_tope_y_no_acepta_caracteres_nulos(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, estado="borrador")
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+    for malo in ("x" * 601, "texto\u0000raro"):
+        assert client.patch(f"/productos/{producto.id}", json={"descripcion": malo}, headers=HEADERS_AUTH).status_code == 422
+
+
 def test_resena_y_busqueda_limitan_el_largo_del_texto():
     import pytest
     from pydantic import ValidationError
