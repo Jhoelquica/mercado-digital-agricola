@@ -36,6 +36,8 @@ POST /productos, para no depender de ese mock en cada test que no está probando
 puntual.
 """
 import uuid
+
+import pytest
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -51,6 +53,15 @@ client = TestClient(main.app)
 # Authorization real en la petición, FastAPI lo rechaza con 401 antes de llegar al cuerpo del
 # endpoint. El valor en sí no importa (verificar_token está overrideado y nunca lo decodifica).
 HEADERS_AUTH = {"Authorization": "Bearer faketoken"}
+
+
+@pytest.fixture(autouse=True)
+def _circuito_hacia_productores_cerrado():
+    """El breaker es un objeto del módulo: los tests que simulan a Productores caído no deben dejarlo abierto para el
+    siguiente."""
+    main.breaker_productores.close()
+    yield
+    main.breaker_productores.close()
 
 
 def _auth(sub: str, rol: str = "productor"):
@@ -1772,3 +1783,30 @@ def test_crear_desde_cosecha_trae_la_categoria_del_alimento_si_es_valida():
     assert crear("huevo").json()["categoria"] == "huevo"
     assert crear("Lácteo").json()["categoria"] == "lacteo"
     assert crear("cohetes").json()["categoria"] is None
+
+
+def test_el_circuit_breaker_hacia_productores_se_abre_al_tercer_fallo_y_ya_no_intenta(monkeypatch):
+    intentos = []
+
+    class _ProductoresCaido(_ClienteFalso):
+        def __init__(self):
+            pass
+
+        def get(self, *args, **kwargs):
+            intentos.append(1)
+            raise main.httpx.ConnectError("Productores no responde")
+
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ProductoresCaido())
+    _auth(str(uuid.uuid4()))
+    respuestas = [client.get("/productos/mios", headers=HEADERS_AUTH).status_code for _ in range(5)]
+    assert respuestas == [503] * 5
+    assert len(intentos) == 3  # del 4.º en adelante el circuito está abierto: responde 503 sin intentar conectar
+    assert main.breaker_productores.current_state == "open"
+
+
+def test_un_404_de_productores_no_cuenta_como_fallo_del_circuito(monkeypatch):
+    _mockear_productores_me(monkeypatch, str(uuid.uuid4()), status_code=404)
+    _auth(str(uuid.uuid4()))
+    for _ in range(4):
+        assert client.get("/productos/mios", headers=HEADERS_AUTH).status_code == 404
+    assert main.breaker_productores.current_state == "closed"

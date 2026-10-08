@@ -267,16 +267,28 @@ class UnidadAlternativaActualizar(BaseModel):
     def _factor_acotado(cls, valor):
         return _numero_acotado(valor, FACTOR_MAXIMO)
 
+# Circuit Breaker de Productos hacia Productores (RNF01). Todas las rutas que preguntan "¿quién es el productor de
+# este token?" pasan por acá. Antes el breaker envolvía una función que nadie llamaba y cada ruta iba directo a
+# Productores: con Productores caído, cada petición esperaba su propio intento. Ahora, tras 3 fallos seguidos, el
+# circuito se abre 30 s y las rutas responden 503 al instante, sin intentar conectar.
+# Solo cuentan como fallo los errores de red: un 404 ("todavía no tienes perfil") es una respuesta válida.
 @breaker_productores
-def llamar_productores_me(token: str):
+def _pedir_productor_me(token: str):
     with httpx.Client() as client:
-        resp = client.get(
+        return client.get(
             f"{PRODUCTORES_URL}/productores/me",
             headers={"Authorization": f"Bearer {token}"},
             timeout=5,
         )
-        resp.raise_for_status()
-        return resp
+
+
+def productor_del_token(token: str):
+    """GET /productores/me con el token del usuario, a través del breaker. Productores caído (o el circuito abierto)
+    es 503; cualquier otra respuesta (200, 404 sin perfil) la decide quien llama."""
+    try:
+        return _pedir_productor_me(token)
+    except (pybreaker.CircuitBreakerError, httpx.RequestError):
+        raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
 
 @app.on_event("startup")
 def preparar_almacen_de_imagenes():
@@ -426,15 +438,7 @@ def subir_imagen_producto(
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor para subir imágenes")
@@ -481,15 +485,7 @@ def eliminar_imagen(
 
     producto = db.query(models.Producto).filter(models.Producto.id == imagen.producto_id).first()
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -643,15 +639,7 @@ def listar_mis_productos(
     catálogo público, incluye los productos en "borrador" (para que el productor pueda verlos y
     completarlos). Sin caché a propósito: es data personal de bajo tráfico, no el catálogo
     compartido por todos los compradores."""
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes crear tu perfil de productor antes de ver tus productos")
@@ -724,15 +712,7 @@ def _puede_ver_el_borrador(producto, usuario, credenciales) -> bool:
         return True
     if usuario.get("rol") != "productor" or credenciales is None:
         return False
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
     return resp.status_code == 200 and str(producto.productor_id) == str(resp.json().get("id"))
 
 
@@ -899,15 +879,7 @@ def actualizar_producto(
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -966,15 +938,7 @@ def crear_unidad_alternativa(
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -1031,15 +995,7 @@ def actualizar_unidad_alternativa(
 
     producto = db.query(models.Producto).filter(models.Producto.id == unidad_alt.producto_id).first()
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -1075,15 +1031,7 @@ def eliminar_unidad_alternativa(
 
     producto = db.query(models.Producto).filter(models.Producto.id == unidad_alt.producto_id).first()
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -1109,15 +1057,7 @@ def publicar_producto(
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
@@ -1330,15 +1270,7 @@ def listar_reservas(
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
     if usuario.get("rol") != "admin":
-        with httpx.Client() as client:
-            try:
-                resp = client.get(
-                    f"{PRODUCTORES_URL}/productores/me",
-                    headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                    timeout=5,
-                )
-            except httpx.RequestError:
-                raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+        resp = productor_del_token(credenciales.credentials)
 
         if resp.status_code != 200 or str(producto.productor_id) != str(resp.json().get("id")):
             raise HTTPException(status_code=403, detail="No tienes permiso para ver las reservas de este producto")
@@ -1413,15 +1345,7 @@ def actualizar_orden_imagen(
 
     producto = db.query(models.Producto).filter(models.Producto.id == imagen.producto_id).first()
 
-    with httpx.Client() as client:
-        try:
-            resp = client.get(
-                f"{PRODUCTORES_URL}/productores/me",
-                headers={"Authorization": f"Bearer {credenciales.credentials}"},
-                timeout=5,
-            )
-        except httpx.RequestError:
-            raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+    resp = productor_del_token(credenciales.credentials)
 
     if resp.status_code != 200:
         raise HTTPException(status_code=404, detail="Debes tener un perfil de productor")
