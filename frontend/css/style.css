@@ -1186,6 +1186,13 @@ input, select { font-family: inherit; }
 }
 .detalle-cabecera h2 { font-size: 1.5rem; line-height: 1.25; }
 .detalle-cabecera .rating-row { margin: 0; }
+/* Descripción que escribe el agricultor (texto plano; se respetan sus saltos de línea). */
+.detalle-descripcion { margin: -12px 0 24px; color: var(--texto-suave); font-size: 1rem; line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+.borrador-opcional { font-weight: 400; color: var(--texto-suave); }
+.borrador-descripcion { resize: vertical; min-height: 96px; line-height: 1.5; font: inherit; font-weight: 400; }
+.borrador-descripcion-pie { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8rem; font-weight: 400; color: var(--texto-suave); }
+.borrador-descripcion-contador { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.borrador-descripcion-contador.cerca { color: var(--acento-cosecha-texto); font-weight: 700; }
 .detalle-precio-row {
   display: flex;
   align-items: baseline;

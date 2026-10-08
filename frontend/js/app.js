@@ -2238,6 +2238,7 @@ function renderCompraDetalle(p, productor, { favorito, stockBajo, sinStock, tien
         <h2>${escapeAttr(p.nombre)}</h2>
         ${renderResumenCalificacion(p)}
       </div>
+      ${p.descripcion ? `<p class="detalle-descripcion">${escapeAttr(p.descripcion)}</p>` : ''}
 
       <div class="detalle-precio-row">
         <span class="product-price" id="detalle-precio-principal">${precioHtml}</span>
@@ -6322,6 +6323,17 @@ async function eliminarUnidadAlternativa(productoId, unidadId) {
 
 // ---- Borradores (nacen al completar una cosecha con su foto — ver
 // crear_producto_desde_cosecha en productos/main.py) ----
+// Mismo tope que el servidor (DESCRIPCION_MAXIMA en productos/main.py).
+const DESCRIPCION_MAXIMA = 600;
+
+function actualizarContadorDescripcion(textarea) {
+  const contador = textarea.closest('label')?.querySelector('.borrador-descripcion-contador');
+  if (!contador) return;
+  const largo = textarea.value.length;
+  contador.textContent = `${largo}/${DESCRIPCION_MAXIMA}`;
+  contador.classList.toggle('cerca', largo >= DESCRIPCION_MAXIMA * 0.9);
+}
+
 function renderTarjetaBorrador(p, indice, imagenes) {
   const retraso = Math.min(indice, 12) * 35;
   const puedePublicar = p.precio != null && Number(p.precio) > 0 && imagenes.length > 0;
@@ -6345,6 +6357,14 @@ function renderTarjetaBorrador(p, indice, imagenes) {
           </label>
           <label>Precio (S/)
             <input type="number" class="borrador-precio" min="0" step="0.01" placeholder="0.00" value="${p.precio != null ? p.precio : ''}">
+          </label>
+          <label><span>Descripción <span class="borrador-opcional">(opcional)</span></span>
+            <textarea class="borrador-descripcion" rows="4" maxlength="${DESCRIPCION_MAXIMA}" aria-describedby="borrador-desc-ayuda-${escapeAttr(p.id)}"
+              placeholder="Ej.: Papa amarilla de altura, cosechada a mano en Quinua. Ideal para puré y sancochado.">${escapeAttr(p.descripcion || '')}</textarea>
+            <span class="borrador-descripcion-pie" id="borrador-desc-ayuda-${escapeAttr(p.id)}">
+              <span>Cuenta la variedad, cómo la cultivaste o para qué sirve. Sale en la página del producto.</span>
+              <span class="borrador-descripcion-contador" aria-live="polite">${(p.descripcion || '').length}/${DESCRIPCION_MAXIMA}</span>
+            </span>
           </label>
         </div>
         <div class="publicar-preview">
@@ -6424,9 +6444,10 @@ async function publicarBorrador(productoId) {
   if (!card) return;
   const categoria = card.querySelector('.borrador-categoria').value || null;
   const precio = parseFloat(card.querySelector('.borrador-precio').value);
-  card.querySelectorAll('button, select, input').forEach((el) => { el.disabled = true; });
+  const descripcion = card.querySelector('.borrador-descripcion')?.value.trim() ?? null;
+  card.querySelectorAll('button, select, input, textarea').forEach((el) => { el.disabled = true; });
   try {
-    await Api.productos.actualizar(productoId, { categoria, precio: Number.isFinite(precio) ? precio : null });
+    await Api.productos.actualizar(productoId, { categoria, precio: Number.isFinite(precio) ? precio : null, descripcion });
     await Api.productos.publicar(productoId);
     toast('Producto publicado — ya está visible en el catálogo 🎉');
     // Recarga la sección completa (no toda la vista): más simple y correcto que mover la tarjeta a mano, porque "publicados"
@@ -6435,7 +6456,7 @@ async function publicarBorrador(productoId) {
     cargarMisProductos();
   } catch (err) {
     manejarError(err, 'publicar el producto');
-    card.querySelectorAll('button, select, input').forEach((el) => { el.disabled = false; });
+    card.querySelectorAll('button, select, input, textarea').forEach((el) => { el.disabled = false; });
   }
 }
 
@@ -12415,6 +12436,7 @@ function inicializarEventos() {
   // completo en cada cargarMisProductos(), así que listeners directos sobre cada tarjeta no
   // sobrevivirían a un refresco).
   document.getElementById('productor-borradores-lista').addEventListener('input', (e) => {
+    if (e.target.matches('.borrador-descripcion')) { actualizarContadorDescripcion(e.target); return; }
     if (!e.target.matches('.borrador-precio')) return;
     const productoId = e.target.closest('.pedido-card')?.dataset.productoId;
     if (!productoId) return;
