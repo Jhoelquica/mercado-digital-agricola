@@ -92,6 +92,28 @@ kubectl rollout restart deployment/pedidos && kubectl rollout status deployment/
 
 Para el frontend, corre antes `python frontend/bump_cache_version.py`, para que el navegador no use archivos viejos.
 
+### Respaldo y restauración
+
+Antes de algo que llene la plataforma de datos (por ejemplo, una validación con usuarios), se guarda el estado completo y
+después se vuelve a él:
+
+```bash
+bash scripts/respaldo_completo.sh                                     # crea backups/<fecha>/
+bash scripts/restaurar_completo.sh backups/<fecha> --simular          # compara con el estado actual, sin cambiar nada
+bash scripts/restaurar_completo.sh backups/<fecha>                    # restaura (pide escribir "restaurar")
+```
+
+**Qué guarda el respaldo:** las 8 bases (`pg_dump` en formato personalizado), un inventario de filas por tabla y todos
+los archivos de MinIO. La carpeta `backups/` no se sube a git.
+
+**Qué hace la restauración, en orden:**
+1. Guarda primero otro respaldo del estado de ese momento.
+2. Deja MinIO igual que en el respaldo.
+3. Detiene los 8 servicios mientras restaura cada base (`pg_restore --clean`, todo o nada).
+4. Levanta los servicios.
+5. Vacía la caché de Redis.
+6. Comprueba las filas contra el inventario.
+
 ## Arranque sin Kubernetes (Docker Compose)
 
 `docker compose up -d --build` levanta los 8 servicios, sus bases, Redis, RabbitMQ, MinIO y el frontend
@@ -127,7 +149,7 @@ k8s/                   manifiestos del clúster local (servicios, bases con volu
                        Prometheus, Grafana con su tablero)
 deploy/gcp/            guía y scripts para Google Kubernetes Engine
 deploy/local/          plantilla del Secret del clúster local
-scripts/               pruebas, verificación del despliegue, tablero de Grafana, respaldo y restauración de bases
+scripts/               pruebas, verificación del despliegue, tablero de Grafana, respaldo y restauración completos
 seed_datos_demo.py     semilla de demostración (y crear_productos_seed.py, seed_imagenes.py)
 docker-compose.yml     entorno sin Kubernetes
 ```
