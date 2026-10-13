@@ -221,6 +221,46 @@ def intentar_resolver_envio_huerfano(db, excluir_id=None):
 
 
 
+def reofrecer_entregas_directas(db) -> int:
+    """Vuelve a ofrecer a un repartidor los envíos que quedaron en "pendiente_entrega_directa" porque, al pagarse,
+    NINGÚN vehículo podía llevarlos. Antes se quedaban así aunque después apareciera un repartidor con espacio
+    (validación con usuarios del 2026-10-13: un saco de 120 kg se pagó cuando solo había una moto de 30 kg y no le llegó
+    al repartidor con camioneta que se registró minutos después). Solo se toca el envío si HAY un repartidor disponible
+    que pueda cargarlo; si no, sigue en entrega directa y el agricultor lo puede llevar él mismo. Devuelve cuántos se
+    volvieron a ofrecer."""
+    reofrecidos = 0
+    for envio_id, pedido_id in (db.query(models.Envio.id, models.Envio.pedido_id)
+                                .filter(models.Envio.estado == "pendiente_entrega_directa")
+                                .order_by(models.Envio.fecha_creacion.asc()).all()):
+        pedido = _obtener_pedido(pedido_id)
+        peso_total_kg = pedido.get("peso_total_kg") if pedido else None
+        if peso_total_kg is None:
+            continue
+        rechazaron = db.query(models.EnvioRechazo.repartidor_id).filter(
+            models.EnvioRechazo.envio_id == envio_id,
+            or_(models.EnvioRechazo.motivo.is_(None), models.EnvioRechazo.motivo != SIN_RESPUESTA),
+        )
+        alguien_puede = (db.query(models.Repartidor.id)
+                         .filter(models.Repartidor.estado_disponibilidad == "disponible",
+                                 models.Repartidor.capacidad_maxima_kg >= peso_total_kg,
+                                 ~models.Repartidor.id.in_(rechazaron))
+                         .first())
+        if not alguien_puede:
+            continue
+        # Con el envío bloqueado: si el agricultor justo lo marcó como entregado, ya no está en entrega directa y no se toca.
+        envio = (db.query(models.Envio).filter(models.Envio.id == envio_id,
+                                               models.Envio.estado == "pendiente_entrega_directa")
+                 .with_for_update().first())
+        if not envio:
+            db.rollback()
+            continue
+        envio.estado = "pendiente_asignacion"
+        db.commit()
+        proponer_envio_a_repartidor(envio_id, db)
+        reofrecidos += 1
+    return reofrecidos
+
+
 def tiene_otro_trabajo(db, repartidor_id, salvo_envio=None, salvo_recojo=None) -> bool:
     """Si el repartidor sigue con algo entre manos (otra propuesta, un envío o un recojo en curso): en ese caso no se
     lo deja "disponible" al quitarle una propuesta."""

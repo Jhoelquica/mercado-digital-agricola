@@ -1880,3 +1880,79 @@ def test_una_propuesta_vencida_de_un_repartidor_borrado_no_traba_a_las_demas(mon
         db.close()
     recargado = _envio_recargado(envio.id)
     assert (recargado.estado, recargado.repartidor_id) == ("pendiente_asignacion", None)
+
+
+
+# ============ Hallazgos de la validación con usuarios (2026-10-13) ============
+
+def _sin_otras_entregas_directas():
+    """La base de pruebas es compartida: otros tests dejan envíos esperando repartidor ("pendiente_asignacion" o
+    "pendiente_entrega_directa"), y como se ofrecen del más antiguo al más nuevo se llevarían al repartidor de este test.
+    Se dan por cerrados antes de empezar."""
+    db = main.SessionLocal()
+    try:
+        esperando = ("pendiente_entrega_directa", "pendiente_asignacion")
+        db.query(main.models.Envio).filter(main.models.Envio.estado.in_(esperando)).update(
+            {"estado": "entregado"}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_una_entrega_directa_se_vuelve_a_ofrecer_cuando_aparece_un_vehiculo_con_espacio(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    _sin_otras_entregas_directas()
+    envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=uuid.uuid4())
+    envio_ids.append(envio.id)
+    moto = _crear_repartidor_disponible(capacidad_maxima_kg=30)
+    repartidor_ids.append(moto.id)
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=120, requiere_vehiculo_grande=True))
+
+    db = main.SessionLocal()
+    try:
+        assert logica_repartidores.reofrecer_entregas_directas(db) == 0  # la moto no alcanza: no se toca
+        assert _envio_recargado(envio.id).estado == "pendiente_entrega_directa"
+        camioneta = _crear_repartidor_disponible(capacidad_maxima_kg=500, tipo_vehiculo="camioneta")
+        repartidor_ids.append(camioneta.id)
+        assert logica_repartidores.reofrecer_entregas_directas(db) == 1
+    finally:
+        db.close()
+    recargado = _envio_recargado(envio.id)
+    assert (recargado.estado, str(recargado.repartidor_id)) == ("propuesto", str(camioneta.id))
+
+
+def test_el_repartidor_cambia_su_vehiculo_y_le_llega_lo_que_ahora_puede_llevar(monkeypatch, matching):
+    repartidor_ids, envio_ids = matching
+    _sin_otras_entregas_directas()
+    yo = _crear_repartidor_disponible(capacidad_maxima_kg=30)
+    repartidor_ids.append(yo.id)
+    envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=uuid.uuid4())
+    envio_ids.append(envio.id)
+    _mockear_pedido(monkeypatch, _pedido_falso(peso_total_kg=120, requiere_vehiculo_grande=True))
+    _auth(str(yo.usuario_id), "repartidor")
+
+    resp = client.patch("/repartidores/me/vehiculo", json={"tipo_vehiculo": "camion", "capacidad_maxima_kg": 3000})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["tipo_vehiculo"] == "camion" and float(resp.json()["capacidad_maxima_kg"]) == 3000
+    recargado = _envio_recargado(envio.id)
+    assert (recargado.estado, str(recargado.repartidor_id)) == ("propuesto", str(yo.id))
+
+
+def test_editar_el_vehiculo_valida_el_tipo_y_la_capacidad():
+    yo = _crear_repartidor_directo()
+    _auth(str(yo.usuario_id), "repartidor")
+    for cuerpo in ({"tipo_vehiculo": "avion", "capacidad_maxima_kg": 100}, {"tipo_vehiculo": "moto", "capacidad_maxima_kg": 0},
+                   {"tipo_vehiculo": "moto", "capacidad_maxima_kg": 40001}):
+        assert client.patch("/repartidores/me/vehiculo", json=cuerpo).status_code == 422, cuerpo
+    _auth(str(uuid.uuid4()), "repartidor")
+    assert client.patch("/repartidores/me/vehiculo", json={"tipo_vehiculo": "moto", "capacidad_maxima_kg": 30}).status_code == 404
+    _auth(str(uuid.uuid4()), "comprador")
+    assert client.patch("/repartidores/me/vehiculo", json={"tipo_vehiculo": "moto", "capacidad_maxima_kg": 30}).status_code == 403
+
+
+def test_si_un_transportista_verificado_cambia_de_vehiculo_vuelve_a_revision():
+    transportista = _repartidor(capacidad=5000, verificado=True, disponible="ocupado")
+    _auth(str(transportista.usuario_id), "repartidor")
+    resp = client.patch("/repartidores/me/vehiculo", json={"tipo_vehiculo": "camion", "capacidad_maxima_kg": 8000})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["verificacion_estado"] == "pendiente"

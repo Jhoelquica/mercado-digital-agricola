@@ -36,6 +36,7 @@ import re
 import logica_viajes
 import logica_recojos
 from logica_repartidores import proponer_envio_a_repartidor, intentar_resolver_envio_huerfano, PLAZO_RESPUESTA_MINUTOS, tiene_otro_trabajo
+from logica_repartidores import reofrecer_entregas_directas
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
@@ -117,6 +118,15 @@ class RepartidorCrear(BaseModel):
     dni: str
     tipo_vehiculo: str
     capacidad_maxima_kg: float
+
+# Tope de la capacidad que declara un repartidor: un camión grande de carga lleva unas 30 t.
+CAPACIDAD_MAXIMA_VEHICULO_KG = 40_000
+
+
+class VehiculoActualizar(BaseModel):
+    tipo_vehiculo: str
+    capacidad_maxima_kg: float = Field(gt=0, le=CAPACIDAD_MAXIMA_VEHICULO_KG, allow_inf_nan=False)
+
 
 class UbicacionActualizar(BaseModel):
     latitud: str
@@ -1041,6 +1051,8 @@ def crear_repartidor(datos: RepartidorCrear, db: Session = Depends(get_db), usua
     # lista original de lugares donde esto pasa, pero es el mismo principio aplicado de forma
     # consistente, y es justo lo que hace falta para el caso de prueba de "registrar uno nuevo".
     intentar_resolver_envio_huerfano(db)
+    # Y también lo que quedó para entrega directa porque nadie tenía espacio (hallazgo de la validación del 2026-10-13).
+    reofrecer_entregas_directas(db)
     return nuevo
 
 
@@ -1052,6 +1064,37 @@ def mi_perfil_repartidor(db: Session = Depends(get_db), usuario: dict = Depends(
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor. Créalo primero.")
     return repartidor
+
+# El repartidor cambia de vehículo (o corrige su capacidad). Antes no había cómo: en la validación con usuarios del
+# 2026-10-13 un repartidor registrado con moto no podía tomar un recojo de 1600 kg ni pasarse a un camión.
+@app.patch("/repartidores/me/vehiculo")
+def actualizar_mi_vehiculo(datos: VehiculoActualizar, db: Session = Depends(get_db),
+                           usuario: dict = Depends(requiere_rol("repartidor"))):
+    if datos.tipo_vehiculo not in TIPOS_VEHICULO_VALIDOS:
+        raise HTTPException(status_code=422, detail=f"El tipo de vehículo debe ser uno de: {', '.join(TIPOS_VEHICULO_VALIDOS)}")
+    repartidor = db.query(models.Repartidor).filter(models.Repartidor.usuario_id == usuario.get("sub")).with_for_update().first()
+    if not repartidor:
+        raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor. Créalo primero.")
+    cambio = (repartidor.tipo_vehiculo != datos.tipo_vehiculo
+              or repartidor.capacidad_maxima_kg is None
+              or float(repartidor.capacidad_maxima_kg) != float(datos.capacidad_maxima_kg))
+    repartidor.tipo_vehiculo = datos.tipo_vehiculo
+    repartidor.capacidad_maxima_kg = datos.capacidad_maxima_kg
+    # Los documentos de carga (tarjeta de propiedad, SOAT) se revisaron para el vehículo de antes: con otro, el admin los
+    # vuelve a revisar antes de asignarle viajes en camión.
+    if cambio and repartidor.verificacion_estado == "verificado":
+        repartidor.verificacion_estado = "pendiente"
+        repartidor.verificacion_motivo = "Cambió su vehículo: revisar de nuevo los documentos de carga."
+    db.commit()
+    db.refresh(repartidor)
+    if repartidor.estado_disponibilidad == "disponible":
+        # Con más capacidad puede tomar lo que estaba esperando un vehículo así: envíos, entregas directas y recojos.
+        intentar_resolver_envio_huerfano(db)
+        reofrecer_entregas_directas(db)
+        logica_recojos.asignar_recojos_pendientes(db)
+        db.refresh(repartidor)
+    return repartidor
+
 
 @app.delete("/repartidores/{repartidor_id}")
 def eliminar_repartidor(repartidor_id: str, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):

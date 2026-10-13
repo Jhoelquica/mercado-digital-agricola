@@ -16,7 +16,7 @@ import threading
 
 from database import SessionLocal
 import models
-from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido, pasar_propuestas_sin_respuesta
+from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido, pasar_propuestas_sin_respuesta, reofrecer_entregas_directas
 import logica_viajes
 import logica_recojos
 
@@ -34,6 +34,8 @@ def _revisar_envios_huerfanos():
         # Recojos en chacras sin repartidor y los ya completados cuya liquidación no llegó a Pagos.
         logica_recojos.asignar_recojos_pendientes(db)
         logica_recojos.reintentar_liquidaciones(db)
+        # Envíos que quedaron para entrega directa porque ningún vehículo alcanzaba: si ya hay uno con espacio, se ofrecen.
+        reofrecer_entregas_directas(db)
         huerfanos = (
             db.query(models.Envio)
             .filter(models.Envio.estado == "pendiente_asignacion")
