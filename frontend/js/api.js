@@ -421,6 +421,8 @@ const Api = {
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),
     crear: (datos) => request('transporte', '/repartidores', { method: 'POST', body: datos, auth: true }),
+    // Cambiar de vehículo o corregir su capacidad: le llega lo que ahora puede cargar.
+    actualizarVehiculo: (datos) => request('transporte', '/repartidores/me/vehiculo', { method: 'PATCH', body: datos, auth: true }),
     // Transportista de carga: placa, licencia y los documentos (licencia, tarjeta de propiedad, SOAT) que revisa el admin.
     enviarDocumentosCarga: ({ placa, licenciaNumero, licencia, tarjetaPropiedad, soat }) => {
       const formData = new FormData();

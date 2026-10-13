@@ -10178,6 +10178,77 @@ function renderFormCarga(perfil, oculto) {
       </form>`;
 }
 
+// ---- Mi vehículo: el repartidor lo cambia cuando quiera (hallazgo de la validación con usuarios del 2026-10-13) ----
+const VEHICULOS = [
+  { valor: 'moto', texto: 'Moto', icono: 'motorbike' },
+  { valor: 'auto', texto: 'Auto', icono: 'car' },
+  { valor: 'camioneta', texto: 'Camioneta', icono: 'truck' },
+  { valor: 'camion', texto: 'Camión', icono: 'truck' },
+];
+
+function renderTarjetaVehiculo(perfil) {
+  const vehiculo = VEHICULOS.find((v) => v.valor === perfil.tipo_vehiculo) || { texto: 'Vehículo', icono: 'truck' };
+  const capacidad = Number(perfil.capacidad_maxima_kg) || 0;
+  const kg = capacidad.toLocaleString('es-PE', { maximumFractionDigits: 0 });
+  return `
+    <div class="card-panel vehiculo-panel">
+      <div class="carga-cabecera">
+        <span class="carga-cabecera-icono"><i class="ti ti-${vehiculo.icono}" aria-hidden="true"></i></span>
+        <div>
+          <h3>Mi vehículo</h3>
+          <p>${vehiculo.texto} · carga hasta <b>${kg} kg</b></p>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm btn-editar-vehiculo" aria-expanded="false" aria-controls="form-vehiculo"><i class="ti ti-pencil" aria-hidden="true"></i> Cambiar</button>
+      </div>
+      <p class="vehiculo-ayuda">Solo te llegan envíos y recojos que tu vehículo puede cargar. Si cambias de vehículo, actualízalo aquí.</p>
+      <form id="form-vehiculo" class="form-vehiculo hidden" novalidate>
+        <div class="form-carga-grid">
+          <label class="perfil-campo">Tipo de vehículo
+            <select name="tipo_vehiculo" required>
+              ${VEHICULOS.map((v) => `<option value="${v.valor}" ${v.valor === perfil.tipo_vehiculo ? 'selected' : ''}>${v.texto}</option>`).join('')}
+            </select>
+          </label>
+          <label class="perfil-campo">Capacidad máxima (kg)
+            <input type="number" name="capacidad_maxima_kg" min="1" max="40000" step="1" inputmode="numeric" required value="${capacidad || ''}">
+          </label>
+        </div>
+        ${perfil.verificacion_estado === 'verificado' ? `
+        <p class="envio-aviso info"><i class="ti ti-info-circle" aria-hidden="true"></i>
+          <span>Tus documentos de carga son de este vehículo: si lo cambias, el admin los vuelve a revisar antes de asignarte viajes largos.</span></p>` : ''}
+        <p class="form-entrega-mensaje hidden" role="alert"></p>
+        <div class="form-carga-acciones">
+          <button type="button" class="btn btn-ghost btn-cancelar-vehiculo">Cancelar</button>
+          <button type="submit" class="btn btn-primary"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+async function guardarVehiculo(form) {
+  const mensaje = form.querySelector('.form-entrega-mensaje');
+  const tipo = form.tipo_vehiculo.value;
+  const capacidad = Number(form.capacidad_maxima_kg.value);
+  if (!Number.isFinite(capacidad) || capacidad < 1 || capacidad > 40000) {
+    mensaje.textContent = 'Escribe cuántos kilos carga tu vehículo: de 1 a 40 000 kg.';
+    mensaje.classList.remove('hidden');
+    form.capacidad_maxima_kg.focus();
+    return;
+  }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  boton.innerHTML = '<i class="ti ti-loader-2" aria-hidden="true"></i> Guardando…';
+  try {
+    await Api.repartidores.actualizarVehiculo({ tipo_vehiculo: tipo, capacidad_maxima_kg: capacidad });
+    toast('Vehículo actualizado: te llegarán los envíos y recojos que ahora puedes cargar 🚚');
+    await refrescarPanelRepartidor();
+  } catch (err) {
+    mensaje.textContent = err.message || 'No se pudo guardar. Intenta de nuevo.';
+    mensaje.classList.remove('hidden');
+    boton.disabled = false;
+    boton.innerHTML = '<i class="ti ti-device-floppy" aria-hidden="true"></i> Guardar';
+  }
+}
+
 function renderSeccionCarga(perfil) {
   const capacidad = Number(perfil.capacidad_maxima_kg) || 0;
   const numero = (n) => Number(n).toLocaleString('es-PE', { maximumFractionDigits: 0 });
@@ -10377,7 +10448,7 @@ async function cargarCargaYViajes(perfil) {
   const seccionCarga = document.getElementById('carga-section');
   const seccionViajes = document.getElementById('viajes-section');
   if (!seccionCarga || !seccionViajes || !perfil) return;
-  seccionCarga.innerHTML = renderSeccionCarga(perfil);
+  seccionCarga.innerHTML = renderTarjetaVehiculo(perfil) + renderSeccionCarga(perfil);
   seccionCarga.classList.remove('hidden');
   if (!perfil.transportista_carga) {
     seccionViajes.classList.add('hidden');
@@ -12866,6 +12937,16 @@ function inicializarEventos() {
     if (input) pintarDocumentoElegido(input);
   });
   seccionCarga.addEventListener('click', (e) => {
+    const editar = e.target.closest('.btn-editar-vehiculo, .btn-cancelar-vehiculo');
+    if (editar) {
+      const form = document.getElementById('form-vehiculo');
+      const abierto = editar.classList.contains('btn-editar-vehiculo') && form.classList.contains('hidden');
+      form.classList.toggle('hidden', !abierto);
+      const boton = seccionCarga.querySelector('.btn-editar-vehiculo');
+      boton.setAttribute('aria-expanded', String(abierto));
+      if (abierto) form.capacidad_maxima_kg.focus(); else boton.focus();
+      return;
+    }
     const abrir = e.target.closest('.btn-abrir-carga');
     if (!abrir) return;
     const form = document.getElementById('form-carga');
@@ -12874,6 +12955,7 @@ function inicializarEventos() {
     if (abierto) form.placa.focus();
   });
   seccionCarga.addEventListener('submit', (e) => {
+    if (e.target.id === 'form-vehiculo') { e.preventDefault(); guardarVehiculo(e.target); return; }
     if (e.target.id !== 'form-carga') return;
     e.preventDefault();
     enviarDocumentosCarga(e.target);
