@@ -98,6 +98,36 @@ UNIDADES_VALIDAS = ["kg", "unidad", "saco", "arroba", "litro"]
 # cosa que un productor escribiera terminaba en la página pública del producto.
 CATEGORIAS_VALIDAS = ("fruta", "verdura", "tuberculo", "grano", "legumbre", "lacteo", "huevo", "hierba")
 
+# Unidades de venta de cada categoría, para los productos creados antes de que Productores mandara la de su alimento
+# (H1 de la validación del 2026-10-13: la papa no se vende por unidades). Es la unión de las familias de cada categoría
+# en productores/plantillas_produccion.UNIDADES_VENTA_POR_FAMILIA: si cambia allá, revisar acá.
+UNIDADES_POR_CATEGORIA = {
+    "tuberculo": ("kg", "saco", "arroba"),
+    "grano": ("kg", "unidad", "saco", "arroba"),
+    "legumbre": ("kg", "saco", "arroba"),
+    "verdura": ("kg", "unidad", "saco"),
+    "fruta": ("kg", "unidad", "saco"),
+    "hierba": ("kg", "unidad"),
+    "huevo": ("unidad",),
+    "lacteo": ("kg", "unidad", "litro"),
+}
+
+
+def unidades_permitidas_de(producto) -> list[str] | None:
+    """En qué unidades se puede vender el producto (la base siempre): la lista de su alimento o, en los de antes, la de
+    su categoría. None = sin restricción (producto sin alimento ni categoría conocidos)."""
+    if producto.unidades_permitidas:
+        return producto.unidades_permitidas.split(",")
+    unidades = UNIDADES_POR_CATEGORIA.get(producto.categoria)
+    return list(unidades) if unidades else None
+
+
+def alternativas_a_la_venta(producto, alternativas):
+    """Las unidades alternativas que se ofrecen al comprador: las que el alimento permite. Las que no (p. ej. "unidad" en
+    una papa de antes) no se publican; como Pedidos busca la unidad en esta misma respuesta, tampoco se pueden comprar."""
+    permitidas = unidades_permitidas_de(producto)
+    return [a for a in alternativas if permitidas is None or a["unidad"] in permitidas]
+
 
 def normalizar_categoria(valor):
     """Devuelve la categoría canónica (minúsculas, sin tildes) o None si no es una de las 8."""
@@ -160,6 +190,18 @@ class ProductoCrearDesdeCosecha(BaseModel):
     # La categoría que corresponde al alimento (huevos → huevo, queso → lacteo...), ver
     # productores/plantillas_produccion.categoria_de. Si no es una de las 8, el borrador nace sin categoría.
     categoria: str | None = None
+    # Las unidades en que se vende el alimento (productores/plantillas_produccion.unidades_venta); None = sin restricción.
+    unidades_permitidas: list[str] | None = None
+
+    @field_validator("unidades_permitidas")
+    @classmethod
+    def _unidades_conocidas(cls, valor):
+        if valor is None:
+            return None
+        limpias = list(dict.fromkeys(valor))
+        if not limpias or any(u not in UNIDADES_VALIDAS for u in limpias):
+            raise ValueError(f"Las unidades deben ser de: {', '.join(UNIDADES_VALIDAS)}")
+        return limpias
 
 class ProductoActualizar(BaseModel):
     categoria: str | None = None
@@ -624,7 +666,8 @@ def listar_productos(db: Session = Depends(get_db)):
             "calificacion_promedio": stats_por_producto.get(str(p.id), (None, 0))[0],
             "total_resenas": stats_por_producto.get(str(p.id), (None, 0))[1],
             "estado": p.estado,
-            "unidades_alternativas": unidades_por_producto.get(str(p.id), []),
+            "unidades_alternativas": alternativas_a_la_venta(p, unidades_por_producto.get(str(p.id), [])),
+            "unidades_permitidas": unidades_permitidas_de(p),
         }
         for p in productos
     ]
@@ -686,6 +729,7 @@ def listar_mis_productos(
             "estado": p.estado,
             "registro_produccion_id": p.registro_produccion_id,
             "descripcion": p.descripcion,
+            "unidades_permitidas": unidades_permitidas_de(p),
         }
         for p in productos
     ]
@@ -783,10 +827,11 @@ def obtener_producto(
         "imagenes": [{"id": img.id, "url": img.url, "orden": img.orden} for img in imagenes],
         "calificacion_promedio": promedio,
         "total_resenas": total_resenas,
-        "unidades_alternativas": [
+        "unidades_alternativas": alternativas_a_la_venta(producto, [
             {"id": u.id, "unidad": u.unidad, "precio": u.precio, "factor_a_base": u.factor_a_base}
             for u in unidades_alt
-        ],
+        ]),
+        "unidades_permitidas": unidades_permitidas_de(producto),
     }
     if producto.estado != "borrador":
         cache.guardar(clave, resultado)
@@ -964,6 +1009,9 @@ def crear_unidad_alternativa(
 
     if datos.unidad not in UNIDADES_VALIDAS:
         raise HTTPException(status_code=422, detail=f"Unidad no válida. Debe ser una de: {', '.join(UNIDADES_VALIDAS)}")
+    permitidas = unidades_permitidas_de(producto)
+    if permitidas is not None and datos.unidad not in permitidas:
+        raise HTTPException(status_code=422, detail=f"{producto.nombre} se vende por {', '.join(permitidas)}: no por {datos.unidad}.")
     if datos.unidad == producto.unidad_medida:
         raise HTTPException(status_code=400, detail="Esa unidad ya es la unidad base del producto, no tiene sentido agregarla como alternativa")
     if datos.precio <= 0:
@@ -1330,6 +1378,7 @@ def crear_producto_desde_cosecha(
         precio=None,
         stock=datos.stock,
         unidad_medida=datos.unidad_medida,
+        unidades_permitidas=",".join(datos.unidades_permitidas) if datos.unidades_permitidas else None,
         estado="borrador",
         registro_produccion_id=datos.registro_produccion_id,
         equivalencia_kg=datos.equivalencia_kg,

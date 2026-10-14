@@ -5492,7 +5492,9 @@ function pasosAsistenteSiembra() {
         estado.cultivo = cont.querySelector('#asistente-cultivo').value.trim();
         const alimento = alimentoPorNombre(estado.cultivo);
         estado.tipo = alimento?.tipo || 'temporada';
-        if (!estado.unidadTocada) estado.unidad = alimento?.unidad || 'kg';
+        // H1 (validación con usuarios): cada alimento se mide solo en sus unidades (la papa en kilos, los huevos por unidad).
+        estado.unidadesCosecha = alimento?.unidades_cosecha || null;
+        estado.unidad = Reglas.unidadDeCosecha(estado.unidadTocada ? estado.unidad : null, alimento?.unidad || 'kg', estado.unidadesCosecha);
       },
       validar: (estado) => (estado.cultivo.length >= 2 ? null : 'Escribe o di qué sembraste o qué produces.'),
       resumen: (estado) => ({ etiqueta: ['temporada', 'frutal'].includes(estado.tipo || 'temporada') ? 'Cultivo' : 'Producto', valor: estado.cultivo, icono: 'plant' }),
@@ -5589,10 +5591,13 @@ function pasosAsistenteSiembra() {
     },
     {
       id: 'unidad',
+      // Si el alimento solo se mide en kilos (papa, quinua...), no se pregunta: ya se sabe.
+      omitir: (estado) => (estado.unidadesCosecha || []).length === 1 && estado.unidadesCosecha[0] === 'kg',
       pregunta: (estado) => palabrasDe(estado.tipo).medir,
       ayuda: 'Casi siempre es por kilos. Si la cuentas por unidades o por litros, dinos cuánto pesa cada una.',
-      voz: () => '¿Cómo vas a medir tu cosecha? Puedes elegir: por kilos, por unidades o por litros.',
-      render: (estado) => `${campoOpcionesAsistente({ nombre: 'asistente-unidad', valor: estado.unidad || 'kg', opciones: OPCIONES_UNIDAD_SIEMBRA })}
+      voz: (estado) => `¿Cómo vas a medir tu cosecha? Puedes elegir: ${Reglas.opcionesPermitidas(OPCIONES_UNIDAD_SIEMBRA, estado.unidadesCosecha)
+        .map((o) => o.titulo.toLowerCase()).join(', ')}.`,
+      render: (estado) => `${campoOpcionesAsistente({ nombre: 'asistente-unidad', valor: estado.unidad || 'kg', opciones: Reglas.opcionesPermitidas(OPCIONES_UNIDAD_SIEMBRA, estado.unidadesCosecha) })}
         <div class="asistente-equivalencia ${(estado.unidad || 'kg') === 'kg' ? 'hidden' : ''}">
           ${campoNumeroAsistente({
             id: 'asistente-equivalencia', etiqueta: '¿Cuántos kilos pesa una unidad (o un litro)?', valor: estado.equivalencia ?? '',
@@ -6145,7 +6150,7 @@ async function alternarFotosProductor(id) {
 // tanto en la tarjeta de publicados (que ya tiene ese mecanismo) como en la de borradores (que
 // hoy no tiene ninguno, se agrega acá por primera vez). ----
 
-function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
+function renderUnidadAltFila(u, unidadBase, modoEdicion = false, permitidas = null) {
   const factorLimpio = formatearFactor(u.factor_a_base);
   if (modoEdicion) {
     return `
@@ -6169,6 +6174,8 @@ function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
     <div class="unidades-alt-fila" data-unidad-id="${u.id}">
       <div class="unidades-alt-info">
         <strong>${escapeAttr(infoUnidad(u.unidad).label)}</strong>
+        ${Array.isArray(permitidas) && permitidas.length && !permitidas.includes(u.unidad)
+          ? '<span class="unidad-alt-no-permitida"><i class="ti ti-eye-off" aria-hidden="true"></i> Este producto no se vende por esta unidad: el comprador no la ve. Puedes borrarla.</span>' : ''}
         <span>${formatearMoneda(u.precio)} / ${unidadCorta(u.unidad)}</span>
         <span class="muted">1 ${unidadCorta(u.unidad)} = ${factorLimpio} ${unidadPlural(unidadBase, factorLimpio)}</span>
       </div>
@@ -6181,15 +6188,18 @@ function renderUnidadAltFila(u, unidadBase, modoEdicion = false) {
 
 function renderUnidadesAlternativasHTML(producto, unidades) {
   const unidadBase = producto.unidad_medida;
-  // Excluye del selector la unidad base y las que ya están agregadas — no tiene sentido
-  // ofrecerlas de nuevo (la base ya sale 400 del backend, las repetidas también).
-  const opciones = opcionesUnidadMedidaHtml([unidadBase, ...unidades.map((u) => u.unidad)]);
+  // Solo las unidades en que se vende el alimento (H1 de la validación: una papa no va por unidades), sin la base ni las
+  // que ya están agregadas.
+  const permitidas = producto.unidades_permitidas;
+  const opciones = Reglas.unidadesParaAgregar(Object.keys(UNIDADES_MEDIDA), permitidas, unidadBase, unidades.map((u) => u.unidad))
+    .map((u) => `<option value="${escapeAttr(u)}">${escapeAttr(infoUnidad(u).label)}</option>`).join('');
+  const listaPermitidas = (permitidas || []).map((u) => infoUnidad(u).etiqueta).join(', ');
 
   return `
     <div class="unidades-alt-gestor" data-producto-id="${escapeAttr(producto.id)}" data-unidad-base="${escapeAttr(unidadBase)}">
       <div class="unidades-alt-lista">
         ${unidades.length
-          ? unidades.map((u) => renderUnidadAltFila(u, unidadBase)).join('')
+          ? unidades.map((u) => renderUnidadAltFila(u, unidadBase, false, permitidas)).join('')
           : '<p class="muted">Todavía no agregaste unidades de venta adicionales.</p>'}
       </div>
       ${opciones ? `
@@ -6205,7 +6215,8 @@ function renderUnidadesAlternativasHTML(producto, unidades) {
         </label>
         <p class="unidad-alt-factor-ayuda muted"></p>
         <button type="submit" class="btn btn-outline btn-sm">Agregar unidad</button>
-      </form>` : '<p class="muted">Ya agregaste todas las unidades de medida disponibles para este producto.</p>'}
+      </form>` : `<p class="muted">${listaPermitidas ? `Este producto se vende por ${escapeAttr(listaPermitidas)}: ya agregaste todas.`
+        : 'Ya agregaste todas las unidades de medida disponibles para este producto.'}</p>`}
     </div>`;
 }
 

@@ -728,6 +728,7 @@ def crear_registro_produccion(
     _validar_datos_de_siembra(datos)
 
     plantilla = _plantilla_pedida(datos.plantilla, datos.cultivo)
+    _validar_unidad_de_la_plantilla(plantilla, datos.unidad_medida)
     nuevo = models.RegistroProduccion(
         productor_id=productor.id,
         chacra_id=datos.chacra_id,
@@ -807,6 +808,7 @@ def corregir_siembra(
         if datos.cultivo != registro.cultivo:
             nueva = plantillas.plantilla_para(datos.cultivo)
             registro.plantilla, registro.tipo_produccion = nueva["clave"], nueva["tipo"]
+        _validar_unidad_de_la_plantilla(plantillas.plantilla_por_clave(registro.plantilla) or {}, datos.unidad_medida)
     for campo, valor in valores.items():
         setattr(registro, campo, valor)
     db.commit()
@@ -864,6 +866,10 @@ def _registro_propio_por_completar(registro_id, productor, db: Session) -> model
     return registro
 
 
+def _clave_del_alimento(registro) -> str | None:
+    return registro.plantilla if registro.plantilla in plantillas.ALIMENTOS else plantillas.clave_para(registro.cultivo)
+
+
 def _crear_producto_en_catalogo(registro, productor):
     """Crea en Productos el borrador de la cosecha y devuelve su id. None si ya existía: un intento anterior llegó a
     crearlo pero falló después, antes de confirmar acá (UniqueConstraint sobre registro_produccion_id en
@@ -883,8 +889,9 @@ def _crear_producto_en_catalogo(registro, productor):
         # productos/models.py). float(...) porque es un Numeric (Decimal) y httpx no serializa Decimal a JSON.
         "equivalencia_kg": float(registro.equivalencia_kg) if registro.equivalencia_kg is not None else None,
         # Con lo que se sabe del alimento, el borrador ya trae su categoría (huevos → huevo, queso → lacteo...).
-        "categoria": plantillas.categoria_de(registro.plantilla if registro.plantilla in plantillas.ALIMENTOS
-                                             else plantillas.clave_para(registro.cultivo)),
+        "categoria": plantillas.categoria_de(_clave_del_alimento(registro)),
+        # Y las unidades en que se puede vender (papa: kg, saco o arroba; nunca por unidad). None = sin restricción.
+        "unidades_permitidas": plantillas.unidades_venta(_clave_del_alimento(registro)),
     }
     error = HTTPException(
         status_code=502,
@@ -1013,6 +1020,20 @@ def eliminar_registro_produccion(
 
 
 # ============ Etapas y gastos de cada alimento (ver plantillas_produccion.py) ============
+NOMBRES_UNIDAD = {"kg": "kilos", "unidad": "unidades", "litro": "litros", "saco": "sacos", "arroba": "arrobas"}
+
+
+def _validar_unidad_de_la_plantilla(plantilla: dict, unidad_medida: str) -> None:
+    """Un alimento conocido solo se mide en sus unidades (H1 de la validación del 2026-10-13: la papa no va por
+    unidades). Sin alimento reconocido no se restringe."""
+    permitidas = plantillas.unidades_cosecha(plantilla.get("clave"))
+    if permitidas and unidad_medida not in permitidas:
+        nombre = (plantilla.get("nombre") or "Este cultivo").lower()
+        venta = " o ".join(NOMBRES_UNIDAD.get(u, u) for u in plantillas.unidades_venta(plantilla["clave"]))
+        raise HTTPException(status_code=422, detail=f"La cosecha de {nombre} se mide en {' o '.join(NOMBRES_UNIDAD[u] for u in permitidas)} "
+                                                    f"(se vende por {venta}).")
+
+
 def _plantilla_pedida(clave: str | None, cultivo: str) -> dict:
     """La plantilla que eligió la pantalla (si existe) o la que se reconoce por el nombre del cultivo."""
     return plantillas.plantilla_por_clave(clave) or plantillas.plantilla_para(cultivo)

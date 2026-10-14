@@ -23,6 +23,9 @@ class Producto(Base):
     # Lo que el agricultor cuenta del producto (variedad, cómo se cultivó, para qué sirve). Opcional, hasta 600
     # caracteres; se edita en el borrador y se muestra en la página del producto.
     descripcion = Column(String, nullable=True)
+    # Unidades en que se puede vender ("kg,saco,arroba"), según el alimento (las manda Productores al crear el borrador).
+    # NULL en los productos de antes: para esos rige la lista de su categoría (ver unidades_permitidas_de en main.py).
+    unidades_permitidas = Column(String, nullable=True)
     imagen_url = Column(String, nullable=True)
     categoria = Column(String)
     # Nullable: un producto en estado "borrador" puede no tener precio todavía (ver estado).

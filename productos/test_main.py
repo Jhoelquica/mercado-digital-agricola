@@ -769,7 +769,8 @@ def test_listar_productos_incluye_unidades_alternativas(monkeypatch):
 
 def test_obtener_producto_incluye_unidades_alternativas(monkeypatch):
     productor_id = str(uuid.uuid4())
-    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg")
+    # Tubérculo: se vende por arroba (una fruta ya no, ver H1).
+    producto = _crear_producto_directo(productor_id=productor_id, unidad_medida="kg", categoria="tuberculo")
 
     _auth(str(uuid.uuid4()))
     _mockear_productores_me(monkeypatch, productor_id)
@@ -1840,3 +1841,62 @@ def test_un_404_de_productores_no_cuenta_como_fallo_del_circuito(monkeypatch):
     for _ in range(4):
         assert client.get("/productos/mios", headers=HEADERS_AUTH).status_code == 404
     assert main.breaker_productores.current_state == "closed"
+
+
+# ============ H1 (validación con usuarios del 2026-10-13): cada producto en sus unidades de venta ============
+
+def _borrador_desde_cosecha(**extra):
+    cuerpo = {"productor_id": str(uuid.uuid4()), "productor_nombre": "QA", "nombre": "Papa amarilla", "stock": 100,
+              "registro_produccion_id": str(uuid.uuid4()), "categoria": "tuberculo", **extra}
+    return client.post("/productos/interno/crear-desde-cosecha", json=cuerpo,
+                       headers={"X-Servicio-Secreto": "secreto-de-prueba-productores"})
+
+
+def _agregar_unidad(monkeypatch, producto_id, productor_id, unidad):
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+    return client.post(f"/productos/{producto_id}/unidades", json={"unidad": unidad, "precio": 30, "factor_a_base": 10},
+                       headers=HEADERS_AUTH)
+
+
+def test_el_borrador_guarda_sus_unidades_y_no_acepta_otras(monkeypatch):
+    monkeypatch.setattr(main, "PRODUCTORES_A_PRODUCTOS_SECRETO", "secreto-de-prueba-productores")
+    resp = _borrador_desde_cosecha(unidades_permitidas=["kg", "saco", "arroba"])
+    assert resp.status_code == 200, resp.text
+    producto_id, productor_id = resp.json()["id"], resp.json()["productor_id"]
+    assert _agregar_unidad(monkeypatch, producto_id, productor_id, "unidad").status_code == 422
+    assert _agregar_unidad(monkeypatch, producto_id, productor_id, "saco").status_code == 200
+    mios = client.get("/productos/mios", headers=HEADERS_AUTH).json()
+    assert next(p for p in mios if p["id"] == producto_id)["unidades_permitidas"] == ["kg", "saco", "arroba"]
+    assert _borrador_desde_cosecha(unidades_permitidas=["docena"]).status_code == 422
+
+
+def test_una_unidad_de_antes_que_su_alimento_no_permite_no_se_publica_ni_se_compra(monkeypatch):
+    """La papa de antes tenía "unidad" (0,5 kg) además del saco: el comprador ya no la ve (y Pedidos, que busca la
+    unidad en esta respuesta, tampoco la acepta); el agricultor sí, para poder borrarla."""
+    productor_id = uuid.uuid4()
+    producto = _crear_producto_directo(productor_id=productor_id, nombre="papa blanca", categoria="tuberculo")
+    db = main.SessionLocal()
+    try:
+        for unidad, factor in (("unidad", 0.5), ("saco", 120)):
+            db.add(main.models.UnidadAlternativa(producto_id=producto.id, unidad=unidad, precio=10, factor_a_base=factor))
+        db.commit()
+    finally:
+        db.close()
+    main.cache.invalidar(main.cache.CLAVE_CATALOGO, main.cache.clave_detalle(str(producto.id)))
+    detalle = client.get(f"/productos/{producto.id}").json()
+    assert [u["unidad"] for u in detalle["unidades_alternativas"]] == ["saco"]
+    assert detalle["unidades_permitidas"] == ["kg", "saco", "arroba"]
+    en_catalogo = next(p for p in client.get("/productos").json() if p["id"] == str(producto.id))
+    assert [u["unidad"] for u in en_catalogo["unidades_alternativas"]] == ["saco"]
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, str(productor_id))
+    del_agricultor = client.get(f"/productos/{producto.id}/unidades", headers=HEADERS_AUTH).json()
+    assert sorted(u["unidad"] for u in del_agricultor) == ["saco", "unidad"]
+
+
+def test_sin_alimento_ni_categoria_no_se_restringe(monkeypatch):
+    productor_id = str(uuid.uuid4())
+    producto = _crear_producto_directo(productor_id=productor_id, categoria=None)
+    assert client.get(f"/productos/{producto.id}").json()["unidades_permitidas"] is None
+    assert _agregar_unidad(monkeypatch, producto.id, productor_id, "litro").status_code == 200

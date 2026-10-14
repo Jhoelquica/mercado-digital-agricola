@@ -5306,6 +5306,7 @@ body.asistente-abierto { overflow: hidden; }
 /* Viajes largos: documentos del transportista */
 .carga-section { margin-top: 28px; }
 .carga-panel { display: grid; gap: 16px; }
+.unidad-alt-no-permitida { display: inline-flex; align-items: flex-start; gap: 6px; font-size: 0.85rem; color: var(--acento-cosecha-texto); }
 /* Mi vehículo: tarjeta corta sobre la de viajes largos, con edición en el lugar (Cambiar → Guardar / Cancelar). */
 .vehiculo-panel { display: grid; gap: 12px; margin-bottom: 18px; }
 .vehiculo-panel h3 { margin: 0; }

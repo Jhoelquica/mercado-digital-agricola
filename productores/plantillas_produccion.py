@@ -278,6 +278,45 @@ ALIMENTOS = {
 }
 
 
+# En qué unidades se VENDE cada familia (H1 de la validación con usuarios del 2026-10-13: "cuando es un producto que
+# solo se vende por kilos y sacos, se debe convertir solo en por esos"; "para papa ya no saldría por unidades"). Las
+# chicas (kg, unidad, litro) sirven para medir la cosecha; las de empaque (saco, arroba) se agregan al publicar. Las
+# familias genéricas no están: sin alimento reconocido no se restringe nada. Productos guarda la lista de cada borrador
+# (ver _crear_producto_en_catalogo) y, para los productos de antes, usa una por categoría que debe coincidir con esta.
+UNIDADES_VENTA_POR_FAMILIA = {
+    "tuberculos": ("kg", "saco", "arroba"),
+    "granos_andinos": ("kg", "saco", "arroba"),
+    "cereales": ("kg", "saco", "arroba"),
+    "maiz": ("kg", "unidad", "saco", "arroba"),  # el choclo también se vende por unidad
+    "legumbres": ("kg", "saco", "arroba"),
+    "hortalizas_trasplante": ("kg", "unidad", "saco"),
+    "hortalizas_directas": ("kg", "unidad", "saco"),
+    "hierbas": ("kg", "unidad"),
+    "frutales": ("kg", "unidad", "saco"),
+    "aves_huevos": ("unidad",),
+    "vacas_leche": ("litro",),
+    "abejas_miel": ("kg", "litro", "unidad"),
+    "queso": ("kg", "unidad"),
+    "yogurt": ("litro", "unidad"),
+    "mantequilla": ("kg", "unidad"),
+}
+UNIDADES_PARA_MEDIR_COSECHA = ("kg", "unidad", "litro")  # mismo conjunto que UNIDADES_COSECHA_VALIDAS en main.py
+
+
+def unidades_venta(clave: str | None) -> list[str] | None:
+    """Las unidades en que se vende el alimento, o None si no se conoce (sin restricción)."""
+    if not clave or clave not in ALIMENTOS:
+        return None
+    unidades = UNIDADES_VENTA_POR_FAMILIA.get(ALIMENTOS[clave][1])
+    return list(unidades) if unidades else None
+
+
+def unidades_cosecha(clave: str | None) -> list[str] | None:
+    """Con cuáles de esas se puede medir la cosecha (papa: solo kg; huevos: solo unidad), o None si no se conoce."""
+    venta = unidades_venta(clave)
+    return [u for u in venta if u in UNIDADES_PARA_MEDIR_COSECHA] if venta else None
+
+
 # La categoría del catálogo (Productos.CATEGORIAS_VALIDAS) de cada familia; algunos alimentos la cambian (la fresa y la
 # sandía se plantan como hortalizas pero se venden como fruta). None = el agricultor la elige al completar el borrador.
 CATEGORIA_POR_FAMILIA = {
@@ -324,6 +363,7 @@ def plantilla(clave: str, tipo: str | None = None) -> dict:
         clave = f"generica_{FAMILIAS[familia]['tipo']}"
     tipo_real = FAMILIAS[familia]["tipo"]
     return {"clave": clave, "nombre": nombre, "familia": familia, "tipo": tipo_real, "unidad": unidad,
+            "unidades_venta": unidades_venta(clave), "unidades_cosecha": unidades_cosecha(clave),
             "etiquetas": TIPOS[tipo_real], "etapas": FAMILIAS[familia]["etapas"]}
 
 
@@ -347,6 +387,7 @@ def catalogo() -> dict:
         "rubros": {k: {"nombre": n, "icono": i} for k, (n, i) in RUBROS.items()},
         "familias": FAMILIAS,
         # Con sus alias, para que la pantalla reconozca el alimento igual que clave_para (sin esperar al servidor).
-        "alimentos": [{"clave": k, "nombre": n, "familia": f, "tipo": FAMILIAS[f]["tipo"], "unidad": u, "alias": list(a)}
+        "alimentos": [{"clave": k, "nombre": n, "familia": f, "tipo": FAMILIAS[f]["tipo"], "unidad": u, "alias": list(a),
+                       "unidades_venta": unidades_venta(k), "unidades_cosecha": unidades_cosecha(k)}
                       for k, (n, f, a, u) in ALIMENTOS.items()],
     }

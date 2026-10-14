@@ -29,6 +29,7 @@ ARCHIVOS = [
     ("js/api.js", FRONTEND / "js" / "api.js"),
     ("js/app.js", FRONTEND / "js" / "app.js"),
     ("js/asistente.js", FRONTEND / "js" / "asistente.js"),
+    ("js/reglas.js", FRONTEND / "js" / "reglas.js"),
     ("js/verificar.js", FRONTEND / "js" / "verificar.js"),
 ]
 

@@ -191,6 +191,7 @@ def test_crear_registro_produccion_con_unidad_chica_valida_funciona():
 
     for unidad in ["kg", "unidad", "litro"]:
         payload = _registro_payload(chacra_id)
+        payload["cultivo"] = "Producto sin plantilla"  # un alimento reconocido solo admite sus unidades (ver H1)
         payload["unidad_medida"] = unidad
         if unidad != "kg":
             payload["equivalencia_kg"] = 1.5
@@ -580,7 +581,7 @@ def test_completar_envia_el_payload_correcto_a_productos(monkeypatch):
 
 
 def test_completar_envia_equivalencia_kg_cuando_la_cosecha_no_es_en_kg(monkeypatch):
-    registro_id = _crear_registro_con_foto(unidad_medida="litro", equivalencia_kg=1.03)
+    registro_id = _crear_registro_con_foto(unidad_medida="litro", equivalencia_kg=1.03, cultivo="Producto sin plantilla")
     capturado = _capturar_payload_a_productos(monkeypatch)
 
     assert _completar_cosecha(registro_id).status_code == 200
@@ -1068,10 +1069,11 @@ def test_al_cosechar_se_anotan_los_gastos_de_la_cosecha_y_despues_se_cierran():
 
 
 def test_huevos_y_leche_no_se_siembran_tienen_sus_propias_etapas():
-    huevos = _crear_con_etapas(cultivo="Huevo de campo", gastos=[{"etapa": "alimentacion", "rubro": "alimento", "monto": 900}])
+    huevos = _crear_con_etapas(cultivo="Huevo de campo", gastos=[{"etapa": "alimentacion", "rubro": "alimento", "monto": 900}],
+                               unidad_medida="unidad", equivalencia_kg=0.06)
     assert huevos["tipo_produccion"] == "crianza" and [e["clave"] for e in huevos["gastos_por_etapa"]][0] == "alimentacion"
     assert float(huevos["costo_insumos"]) == 900
-    leche = _crear_con_etapas(cultivo="Leche fresca")
+    leche = _crear_con_etapas(cultivo="Leche fresca", unidad_medida="litro", equivalencia_kg=1.03)
     assert leche["plantilla"] == "leche" and "ordeno" in [e["clave"] for e in leche["gastos_por_etapa"]]
 
 
@@ -1173,3 +1175,47 @@ def test_el_borrador_de_huevos_nace_con_su_categoria(monkeypatch):
                         json={"cantidad_cosechada": 300, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat()})
     assert resp.status_code == 200, resp.text
     assert payloads[0]["categoria"] == "huevo"
+
+
+# ============ H1 (validación con usuarios del 2026-10-13): cada alimento en sus unidades ============
+
+def test_la_papa_se_siembra_por_kilos_y_no_por_unidades():
+    _nuevo_productor()
+    chacra = client.post("/chacras", json=_chacra_payload(codigo="CH-H1"))
+    payload = {**_registro_payload(chacra.json()["id"]), "cultivo": "Papa amarilla", "unidad_medida": "unidad", "equivalencia_kg": 0.5}
+    resp = client.post("/productores/produccion", json=payload)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "La cosecha de papa se mide en kilos (se vende por kilos o sacos o arrobas)."
+    payload.update(unidad_medida="kg", equivalencia_kg=None)
+    assert client.post("/productores/produccion", json=payload).status_code == 200
+
+
+def test_los_huevos_se_registran_por_unidad_y_no_en_kilos():
+    respuesta = client.post("/productores/produccion", json={**_registro_payload(_crear_chacra_para_h1()), "cultivo": "Huevo de campo"})
+    assert respuesta.status_code == 422 and "unidades" in respuesta.json()["detail"]
+
+
+def _crear_chacra_para_h1():
+    _nuevo_productor()
+    return client.post("/chacras", json=_chacra_payload(codigo="CH-H1B")).json()["id"]
+
+
+def test_corregir_una_siembra_tampoco_acepta_otra_unidad():
+    registro = _crear_con_etapas(cultivo="Papa amarilla")
+    datos = {**_registro_payload(registro["chacra_id"]), "cultivo": "Papa amarilla", "unidad_medida": "litro", "equivalencia_kg": 1}
+    resp = client.put(f"/productores/produccion/{registro['id']}", json=datos)
+    assert resp.status_code == 422, resp.text
+
+
+def test_el_borrador_lleva_las_unidades_en_que_se_vende_su_alimento(monkeypatch):
+    payloads = []
+    monkeypatch.setattr(main, "_pedir_crear_producto_desde_cosecha",
+                        lambda payload: payloads.append(payload) or _RespuestaFalsaProductos(200, {"id": "p"}))
+    for cultivo, unidad, equivalencia in (("Papa amarilla", "kg", None), ("Producto sin plantilla", "kg", None)):
+        registro = _crear_con_etapas(cultivo=cultivo, unidad_medida=unidad, equivalencia_kg=equivalencia)
+        assert _subir_foto(registro["id"]).status_code == 200
+        resp = client.patch(f"/productores/produccion/{registro['id']}/completar-cosecha",
+                            json={"cantidad_cosechada": 100, "fecha_cosecha_real": datetime(2026, 5, 1).isoformat()})
+        assert resp.status_code == 200, resp.text
+    assert payloads[0]["unidades_permitidas"] == ["kg", "saco", "arroba"]
+    assert payloads[1]["unidades_permitidas"] is None

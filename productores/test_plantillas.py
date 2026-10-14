@@ -46,3 +46,19 @@ def test_cada_alimento_trae_su_categoria_del_catalogo():
     assert p.categoria_de(None) is None and p.categoria_de("generica_temporada") is None
     validas = {"fruta", "verdura", "tuberculo", "grano", "legumbre", "lacteo", "huevo", "hierba"}
     assert set(p.CATEGORIA_POR_FAMILIA.values()) <= validas
+
+
+def test_cada_alimento_se_vende_y_se_mide_en_sus_unidades():
+    """H1 de la validación con usuarios (2026-10-13): la papa no se vende por unidades."""
+    assert p.unidades_venta("papa") == ["kg", "saco", "arroba"]
+    assert p.unidades_cosecha("papa") == ["kg"]
+    assert p.unidades_cosecha("huevo") == ["unidad"]
+    assert p.unidades_cosecha("leche") == ["litro"]
+    assert p.unidades_cosecha("maiz") == ["kg", "unidad"]  # el choclo también por unidad
+    assert p.unidades_venta(None) is None and p.unidades_venta("generica_temporada") is None
+    papa = p.plantilla_para("Papa amarilla")
+    assert papa["unidades_venta"] == ["kg", "saco", "arroba"] and papa["unidades_cosecha"] == ["kg"]
+    catalogo = {a["clave"]: a for a in p.catalogo()["alimentos"]}
+    assert catalogo["huevo"]["unidades_venta"] == ["unidad"]
+    # Toda familia con alimentos tiene sus unidades: un alimento nuevo no queda sin restricción por olvido.
+    assert all(p.unidades_venta(clave) for clave in p.ALIMENTOS)

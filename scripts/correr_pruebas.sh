@@ -4,7 +4,7 @@
 # algunas pruebas crean y borran datos.
 #
 # Uso (desde la raíz del repositorio; en Windows, con Git Bash):
-#   bash scripts/correr_pruebas.sh                       # los 8 servicios
+#   bash scripts/correr_pruebas.sh                       # los 8 servicios y las reglas del frontend (node --test)
 #   bash scripts/correr_pruebas.sh pedidos pagos         # solo esos
 #   bash scripts/correr_pruebas.sh --cobertura           # además mide la cobertura (pytest-cov, solo en el contenedor)
 #   bash scripts/correr_pruebas.sh --limpiar             # borra el Postgres y la red de pruebas
@@ -58,6 +58,17 @@ for s in "${SERVICIOS[@]}"; do
     docker run --rm --network "$RED" "${ENVS[@]}" "chakrashop-pruebas/$s" python -m pytest -q -p no:cacheprovider -p no:warnings || FALLARON+=("$s")
   fi
 done
+
+# Reglas puras del frontend (frontend/js/reglas.js), con el corredor de pruebas que trae node. Solo en la corrida completa.
+if [ ${#SERVICIOS[@]} -eq ${#SERVICIOS_TODOS[@]} ]; then
+  echo "=== frontend (node --test)"
+  if command -v node >/dev/null 2>&1; then
+    node --test "frontend/pruebas/*.test.js" 2>&1 | grep -E "^ℹ (tests|pass|fail)" || FALLARON+=("frontend")
+    node --test "frontend/pruebas/*.test.js" >/dev/null 2>&1 || FALLARON+=("frontend")
+  else
+    echo "node no está instalado: se saltan las pruebas del frontend"
+  fi
+fi
 
 echo
 if [ ${#FALLARON[@]} -eq 0 ]; then
