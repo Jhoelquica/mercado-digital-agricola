@@ -26,3 +26,17 @@ test('H1: al cambiar de cultivo, la unidad pasa a una permitida', () => {
   assert.equal(Reglas.unidadDeCosecha('unidad', 'kg', ['kg', 'unidad']), 'unidad'); // maíz: respeta lo elegido
   assert.equal(Reglas.unidadDeCosecha('litro', 'kg', null), 'litro');         // sin plantilla: lo que eligió
 });
+
+test('H3: al cosechar se muestra lo ya gastado y lo que ya se anotó en la cosecha', () => {
+  const etapas = [
+    { clave: 'siembra', nombre: 'Siembra', momento: 'inicio', total: 300.5 },
+    { clave: 'aporque', nombre: 'Aporque', momento: 'cuidado', total: 0 },
+    { clave: 'fumigacion', nombre: 'Fumigación', momento: 'cuidado', total: 80.25 },
+    { clave: 'cosecha', nombre: 'Cosecha', momento: 'final', total: 50 },
+  ];
+  const ya = Reglas.gastosYaRegistrados(etapas);
+  assert.equal(ya.total, 430.75);
+  assert.deepEqual(ya.etapas.map((e) => e.nombre), ['Siembra', 'Fumigación', 'Cosecha']);
+  assert.deepEqual(ya.enElFinal.map((e) => [e.clave, e.total]), [['cosecha', 50]]);
+  assert.deepEqual(Reglas.gastosYaRegistrados(null), { total: 0, etapas: [], enElFinal: [] });
+});

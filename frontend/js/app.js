@@ -5995,10 +5995,17 @@ function pasosAsistenteCosecha(registro) {
     ...(registro.plantilla ? [pasoGastosFinalesCosecha(registro)] : [{
       id: 'mano-obra',
       pregunta: '¿Cuánto pagaste por la mano de obra?',
-      ayuda: 'Lo que pagaste a quienes te ayudaron a sembrar, cuidar y cosechar, en soles. Si trabajaste solo con tu familia, deja cero.',
-      render: (estado) => campoNumeroAsistente({
-        id: 'asistente-mano-obra', etiqueta: 'Mano de obra', valor: estado.manoObra ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/',
-      }),
+      ayuda: 'Solo la mano de obra: lo que pagaste a quienes te ayudaron a sembrar, cuidar y cosechar, en soles. Si trabajaste solo con tu familia, deja cero.',
+      render: (estado) => {
+        const ya = Reglas.gastosYaRegistrados([
+          { clave: 'semillas', nombre: 'Semillas', total: registro.costo_semillas },
+          { clave: 'insumos', nombre: 'Insumos', total: registro.costo_insumos },
+        ]);
+        return (ya.total > 0 ? `<div class="asistente-gastos">${renderGastosYaRegistrados(ya.etapas, ya.total, 'Eso ya está guardado: aquí va solo la mano de obra.')}</div>` : '')
+          + campoNumeroAsistente({
+            id: 'asistente-mano-obra', etiqueta: 'Mano de obra', valor: estado.manoObra ?? 0, minimo: 0, maximo: 9999999.99, paso: 10, prefijo: 'S/',
+          });
+      },
       recoger: (cont, estado) => { estado.manoObra = Number(cont.querySelector('#asistente-mano-obra').value || 0); },
       validar: (estado) => (Number.isFinite(estado.manoObra) && estado.manoObra >= 0 && estado.manoObra <= 9999999.99
         ? null : 'El monto debe ser desde cero, sin signos.'),
@@ -6007,15 +6014,31 @@ function pasosAsistenteCosecha(registro) {
   ];
 }
 
+// H3 (validación con usuarios del 2026-10-13): al cosechar, lo ya anotado se muestra (no se vuelve a pedir).
+function renderGastosYaRegistrados(etapas, total, nota) {
+  return `
+    <section class="ag-ya-registrado" aria-label="Gastos ya registrados">
+      <div class="ag-ya-cabeza"><i class="ti ti-receipt" aria-hidden="true"></i><span>Gastos ya registrados</span><strong>${formatearMoneda(total)}</strong></div>
+      <ul>${etapas.map((e) => `<li><span>${escapeAttr(e.nombre)}</span><span>${formatearMoneda(e.total)}</span></li>`).join('')}</ul>
+      <p>${nota}</p>
+    </section>`;
+}
+
 // Con etapas: lo que se gastó al final (cosechar, trillar, recoger los huevos, empacar el queso...).
 function pasoGastosFinalesCosecha(registro) {
   const etapas = etapasDePlantilla(registro.plantilla).filter((e) => e.momento === 'final');
   const verbo = catalogoProduccion?.tipos?.[registro.tipo_produccion]?.verbo_fin || 'cosechar';
+  const ya = Reglas.gastosYaRegistrados(registro.gastos_por_etapa);
+  const nota = ya.enElFinal.length
+    ? `En ${ya.enElFinal.map((e) => `${escapeAttr(e.nombre)} ya anotaste ${formatearMoneda(e.total)}`).join(' y ')}: escribe solo lo que falte.`
+    : `Eso ya está guardado: escribe solo lo nuevo de ${verbo === 'cosechar' ? 'la cosecha' : 'este final'}.`;
   return {
     id: 'gastos-finales',
     pregunta: `¿Cuánto gastaste al ${verbo}?`,
-    ayuda: 'En soles. La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste en algo, déjalo vacío.',
-    render: (estado) => `<div class="asistente-gastos">${etapas.length ? renderCamposGastos(etapas, estado.gastosFinalValores)
+    ayuda: ya.total > 0
+      ? `Solo lo nuevo, en soles: lo de antes ya está guardado (${formatearMoneda(ya.total)}). La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste más, déjalo vacío.`
+      : 'En soles. La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste en algo, déjalo vacío.',
+    render: (estado) => `<div class="asistente-gastos">${ya.total > 0 ? renderGastosYaRegistrados(ya.etapas, ya.total, nota) : ''}${etapas.length ? renderCamposGastos(etapas, estado.gastosFinalValores)
       : '<p class="muted">No pudimos traer las etapas: anota tus gastos en tu siembra.</p>'}</div>`,
     recoger: (cont, estado) => { estado.gastosFinal = recogerGastosAsistente(cont, estado, 'gastosFinalValores'); },
     validar: (estado) => validarGastosAsistente(estado.gastosFinal),

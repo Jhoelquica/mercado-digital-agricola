@@ -24,6 +24,15 @@
       if (actual && permitidas.includes(actual)) return actual;
       return permitidas.includes(tipica) ? tipica : permitidas[0];
     },
+
+    // H3: lo que ya se anotó de una siembra (sus gastos por etapa), para no volver a pedirlo al cosechar. Solo las
+    // etapas con gasto; `final` marca las del final (cosecha), donde lo nuevo se suma a lo ya anotado.
+    gastosYaRegistrados(etapas) {
+      const conGasto = (etapas || []).filter((e) => Number(e.total) > 0)
+        .map((e) => ({ clave: e.clave, nombre: e.nombre, total: Number(e.total), final: e.momento === 'final' }));
+      const total = Math.round(conGasto.reduce((s, e) => s + e.total, 0) * 100) / 100;
+      return { total, etapas: conGasto, enElFinal: conGasto.filter((e) => e.final) };
+    },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Reglas;

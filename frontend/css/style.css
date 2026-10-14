@@ -5785,6 +5785,15 @@ body.asistente-abierto { overflow: hidden; }
 .ag-campo { min-width: 0; }
 .ag-entrada { box-sizing: border-box; width: 100%; min-width: 0; }
 .asistente-gastos .ag-entrada input { flex: 1 1 0; width: auto; min-width: 0; border: none; outline: none; box-shadow: none; background: transparent; font-size: 1.15rem; padding: 10px 0; }
+/* H3: lo ya anotado de la siembra, arriba de los campos del final (no se vuelve a pedir). */
+.ag-ya-registrado { display: grid; gap: 8px; margin-bottom: 4px; padding: 14px 16px; border-radius: 14px; background: var(--verde-pastel); color: var(--color-primario); }
+.ag-ya-cabeza { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 1.02rem; }
+.ag-ya-cabeza i { font-size: 1.25rem; }
+.ag-ya-cabeza strong { margin-left: auto; font-size: 1.15rem; }
+.ag-ya-registrado ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.ag-ya-registrado li { display: flex; justify-content: space-between; gap: 10px; font-size: 0.95rem; }
+.ag-ya-registrado li span:last-child { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ag-ya-registrado p { margin: 0; font-size: 0.92rem; line-height: 1.45; color: var(--color-primario); }
 
 .etapas-gastos { display: grid; gap: 10px; margin: 6px 0 4px; padding: 16px; border-radius: 14px; background: var(--color-superficie); }
 .eg-cabeza { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
