@@ -59,3 +59,26 @@ test('H7: al reservar, la cantidad es opcional y si se escribe tiene que ser may
   assert.ok(Reglas.cantidadDeReserva('0', 'kg').error);
   assert.ok(Reglas.cantidadDeReserva('-3', 'kg').error);
 });
+
+test('H6: la clave pública VAPID se pasa a bytes y se reconoce si cambió', () => {
+  const clave = Buffer.from(Uint8Array.from({ length: 65 }, (_, i) => (i * 7 + 4) % 256)).toString('base64url');
+  const bytes = Reglas.claveVapidABytes(clave);
+  assert.equal(bytes.length, 65);
+  assert.equal(bytes[0], 4);
+  assert.equal(Buffer.from(bytes).toString('base64url'), clave);
+  assert.ok(Reglas.mismaClaveVapid(bytes.buffer, clave));
+  const otra = Buffer.from(Uint8Array.from({ length: 65 }, () => 9)).toString('base64url');
+  assert.ok(!Reglas.mismaClaveVapid(bytes.buffer, otra));
+  assert.ok(!Reglas.mismaClaveVapid(null, clave));
+});
+
+test('H6: la tarjeta de avisos dice qué hacer en cada caso', () => {
+  const base = { configurado: true, soportado: true, iphoneSinInstalar: false, permiso: 'default', suscrito: false };
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, configurado: false }), 'apagado-servidor');
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, soportado: false, iphoneSinInstalar: true }), 'instalar-iphone');
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, soportado: false }), 'no-soportado');
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, permiso: 'denied' }), 'bloqueado');
+  assert.equal(Reglas.estadoAvisosCelular(base), 'inactivo');
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, permiso: 'granted', suscrito: true }), 'activo');
+  assert.equal(Reglas.estadoAvisosCelular({ ...base, permiso: 'default', suscrito: true }), 'inactivo');
+});

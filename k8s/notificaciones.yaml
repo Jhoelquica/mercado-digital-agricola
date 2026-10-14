@@ -79,6 +79,65 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: QA_LIMPIEZA_SECRETO
+            # H6: avisos al celular (Web Push) y, de respaldo, por correo (ver notificaciones/avisos_externos.py). Todas
+            # opcionales: sin ellas en el Secret ese canal queda apagado y la aplicación funciona como antes. Las claves
+            # VAPID se crean con scripts/generar_claves_avisos.py; las SMTP son las del proveedor de correo que elijas.
+            - name: USUARIOS_URL
+              value: http://usuarios:8006
+            - name: VAPID_CLAVE_PUBLICA
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: VAPID_CLAVE_PUBLICA
+                  optional: true
+            - name: VAPID_CLAVE_PRIVADA
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: VAPID_CLAVE_PRIVADA
+                  optional: true
+            - name: VAPID_CONTACTO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: VAPID_CONTACTO
+                  optional: true
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SMTP_HOST
+                  optional: true
+            - name: SMTP_PUERTO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SMTP_PUERTO
+                  optional: true
+            - name: SMTP_USUARIO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SMTP_USUARIO
+                  optional: true
+            - name: SMTP_CLAVE
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SMTP_CLAVE
+                  optional: true
+            - name: SMTP_REMITENTE
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: SMTP_REMITENTE
+                  optional: true
+            - name: URL_APP
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: URL_APP
+                  optional: true
 ---
 apiVersion: v1
 kind: Service

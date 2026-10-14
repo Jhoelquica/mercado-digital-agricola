@@ -1966,6 +1966,29 @@ input, select { font-family: inherit; }
 
 /* Columna lateral */
 .notif-lateral { position: sticky; top: 100px; display: flex; flex-direction: column; gap: 20px; }
+/* H6: avisos al celular y por correo (21st.dev "Notification Settings Card"). */
+.avisos-card { display: grid; gap: 14px; padding: 22px; background: white; border: 1px solid var(--borde); border-radius: 22px; box-shadow: var(--sombra); }
+.avisos-card:empty { display: none; }
+.avisos-cabeza { display: flex; gap: 12px; align-items: flex-start; }
+.avisos-icono { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 12px; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.4rem; }
+.avisos-cabeza h3 { margin: 0; font-size: 1.15rem; }
+.avisos-cabeza p { margin: 2px 0 0; font-size: 0.92rem; color: var(--texto-suave); line-height: 1.4; }
+.avisos-fila { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; padding-top: 14px; border-top: 1px solid var(--borde); }
+.avisos-fila-texto { display: grid; gap: 2px; flex: 1 1 180px; min-width: 0; }
+.avisos-fila-texto strong { font-size: 0.98rem; }
+.avisos-fila-texto small { font-size: 0.88rem; color: var(--texto-suave); line-height: 1.4; }
+.avisos-fila-activo .avisos-fila-texto small { color: #2f6b34; font-weight: 600; }
+.avisos-fila-bloqueado .avisos-fila-texto small, .avisos-fila-instalar-iphone .avisos-fila-texto small { color: var(--acento-cosecha-texto, #8a5a00); }
+.avisos-acciones { display: flex; gap: 8px; }
+.avisos-acciones .btn { min-height: 44px; border-radius: 12px; }
+.avisos-fila-correo { cursor: pointer; }
+.avisos-switch { appearance: none; flex: none; width: 52px; height: 30px; border-radius: 999px; background: #cfd6cb; position: relative; cursor: pointer; transition: background-color .2s ease; }
+.avisos-switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .2s ease; }
+.avisos-switch:checked { background: var(--color-primario); }
+.avisos-switch:checked::after { transform: translateX(22px); }
+.avisos-switch:focus-visible { outline: 3px solid rgba(45, 59, 42, .35); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .avisos-switch, .avisos-switch::after { transition: none; } }
+.detalle-reserva-celular { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .notif-resumen, .notif-cta { padding: 24px; background: white; border: 1px solid var(--borde); border-radius: 22px; box-shadow: var(--sombra); }
 .notif-resumen:empty { display: none; }
 .notif-resumen-cab { display: flex; align-items: center; gap: 16px; }
@@ -1997,6 +2020,10 @@ input, select { font-family: inherit; }
   .notif-layout { grid-template-columns: minmax(0, 1fr); }
   .notif-lateral { position: static; }
   .notif-resumen { display: none; }
+  /* H6: en el celular, "Avisos en tu celular" va arriba de la lista (el resto de la columna lateral, abajo). */
+  .notif-layout { display: flex; flex-direction: column; }
+  .notif-lateral { display: contents; }
+  .avisos-card { order: -1; }
 }
 @media (max-width: 700px) {
   /* Filtros en una fila desplazable, a sangre (mismo criterio que las categorías del buscador). */

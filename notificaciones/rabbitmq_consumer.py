@@ -5,6 +5,7 @@ import threading
 import pika
 
 from database import SessionLocal
+import avisos_externos
 import models
 from mensajes import mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo
 
@@ -35,6 +36,8 @@ def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, produc
         print(f"[Notificaciones] {mensaje}")
     finally:
         db.close()
+    # H6: además, al celular (Web Push) o, de respaldo, por correo. En otro hilo y sin poder romper este consumo.
+    avisos_externos.despachar(usuario_id, tipo, mensaje)
 
 
 def _procesar_mensaje(ch, method, properties, body):

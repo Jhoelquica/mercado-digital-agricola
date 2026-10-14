@@ -24,3 +24,26 @@ class Notificacion(Base):
     mensaje = Column(String, nullable=False)
     canal = Column(String, default="email")     # simulado, no se envía de verdad
     fecha_envio = Column(DateTime, default=datetime.utcnow)
+
+class SuscripcionPush(Base):
+    """H6 (validación con usuarios del 2026-10-13): un navegador (celular o computadora) donde el usuario activó "Avisos
+    en este celular". endpoint/p256dh/auth son los que da el navegador al suscribirse (Web Push); el endpoint es único:
+    si otra cuenta lo activa en el mismo navegador, pasa a ser de esa cuenta."""
+    __tablename__ = "suscripciones_push"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    usuario_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    endpoint = Column(String, nullable=False, unique=True)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+
+
+class PreferenciaCorreo(Base):
+    """H6: el usuario pidió que, si un aviso no le llega al celular, le llegue por correo. Si existe la fila, está activo.
+    El correo se copia de Usuarios al activarlo (el token no lo trae)."""
+    __tablename__ = "preferencias_correo"
+
+    usuario_id = Column(UUID(as_uuid=True), primary_key=True)
+    correo = Column(String, nullable=False)
+    fecha_actualizacion = Column(DateTime, default=datetime.utcnow)

@@ -440,6 +440,16 @@ const Api = {
   notificaciones: {
     porPedido: (pedidoId) => request('notificaciones', `/notificaciones/${pedidoId}`, { auth: true }),
     listarTodas: () => request('notificaciones', '/notificaciones', { auth: true }),
+    // H6: avisos al celular (Web Push) y, de respaldo, por correo (notificaciones/avisos_externos.py).
+    avisos: {
+      configuracion: () => request('notificaciones', '/notificaciones/avisos/configuracion'),
+      mios: () => request('notificaciones', '/notificaciones/avisos/mios', { auth: true }),
+      activar: (suscripcion) => request('notificaciones', '/notificaciones/avisos/push', { method: 'POST', body: suscripcion, auth: true }),
+      // Sin sesión a propósito: se llama al cerrar sesión, con el token ya borrado.
+      quitar: (endpoint) => request('notificaciones', '/notificaciones/avisos/push/quitar', { method: 'POST', body: { endpoint } }),
+      correo: (activo) => request('notificaciones', '/notificaciones/avisos/correo', { method: 'PUT', body: { activo }, auth: true }),
+      probar: () => request('notificaciones', '/notificaciones/avisos/prueba', { method: 'POST', auth: true }),
+    },
   },
   pagos: {
     procesar: (datos) => request('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),

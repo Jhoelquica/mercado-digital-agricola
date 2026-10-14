@@ -902,6 +902,7 @@ function manejarSesionExpirada(tokenUsado) {
 }
 
 function cerrarSesion() {
+  quitarAvisosAlCerrarSesion();
   Estado.token = null;
   Estado.usuarioId = null;
   Estado.nombre = null;
@@ -963,6 +964,7 @@ async function iniciarSesionConToken(token) {
 
   guardarSesion();
   actualizarUIAuth();
+  sincronizarAvisosCelular();
 }
 
 // ============ NAVBAR DINÁMICO SEGÚN SCROLL ============
@@ -1767,6 +1769,8 @@ function renderAccionReserva(p) {
           <span>${cuanto}El aviso te llegará en Notificaciones. Reservar no te obliga a comprar.</span>
         </div>
       </div>
+      ${configAvisos?.push && pushSoportado() && !avisosCelularActivos && Notification.permission !== 'denied'
+    ? '<button type="button" class="btn btn-outline detalle-reserva-celular" data-avisos-activar><i class="ti ti-device-mobile-message" aria-hidden="true"></i> Avisarme también al celular</button>' : ''}
       <button type="button" class="btn-link detalle-reserva-quitar" data-accion-reserva="quitar">Ya no me avises</button>`;
   }
   // H7 (validación con usuarios del 2026-10-13): puede decir cuánto le interesa, en las unidades en que se vende.
@@ -4890,6 +4894,7 @@ async function cargarNotificaciones() {
   notificacionesCargadas = [];
   renderNotifFiltros();
   renderNotifResumen();
+  pintarTarjetaAvisos();
 
   if (!Estado.token) {
     cont.innerHTML = '';
@@ -4930,6 +4935,187 @@ async function cargarNotificaciones() {
     cont.innerHTML = '';
     manejarError(err, 'cargar notificaciones');
   }
+}
+
+// ============ AVISOS AL CELULAR (H6 de la validación con usuarios del 2026-10-13) ============
+// Web Push: el comprador se entera de que llegó su reserva (y el agricultor, de que vienen por su cosecha) aunque no tenga
+// ChakraShop abierto; de respaldo, si un aviso no le llega al celular, por correo (notificaciones/avisos_externos.py).
+// 21st.dev "Notification Settings Card": una fila por canal, con lo que pasa y su control. ui-ux-pro-max: el permiso del
+// navegador se pide solo al tocar "Activar" (nunca al abrir la página) y cada estado dice qué hacer.
+let configAvisos = null;
+let avisosCelularActivos = false;
+
+function pushSoportado() {
+  return window.isSecureContext && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+function esIphoneSinInstalar() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const instalada = window.navigator.standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+  return ios && !instalada;
+}
+
+async function cargarConfigAvisos() {
+  if (!configAvisos) configAvisos = await Api.notificaciones.avisos.configuracion().catch(() => null);
+  return configAvisos || { push: false, correo: false };
+}
+
+async function suscripcionPushActual() {
+  if (!pushSoportado()) return null;
+  const registro = await navigator.serviceWorker.getRegistration('/');
+  return registro ? registro.pushManager.getSubscription() : null;
+}
+
+async function activarAvisosCelular() {
+  const config = await cargarConfigAvisos();
+  if (!config.push || !pushSoportado()) {
+    toast('Este celular no puede recibir los avisos de ChakraShop.', 'error');
+    return false;
+  }
+  const permiso = await Notification.requestPermission();
+  if (permiso !== 'granted') {
+    toast('No diste el permiso: los avisos seguirán llegando solo dentro de ChakraShop.', 'error');
+    return false;
+  }
+  const registro = await navigator.serviceWorker.register('/sw.js');
+  await navigator.serviceWorker.ready;
+  let suscripcion = await registro.pushManager.getSubscription();
+  if (suscripcion && !Reglas.mismaClaveVapid(suscripcion.options?.applicationServerKey, config.clave_publica)) {
+    await suscripcion.unsubscribe(); // se cambiaron las claves del servidor: hay que suscribirse de nuevo
+    suscripcion = null;
+  }
+  suscripcion ||= await registro.pushManager.subscribe({
+    userVisibleOnly: true, applicationServerKey: Reglas.claveVapidABytes(config.clave_publica),
+  });
+  await Api.notificaciones.avisos.activar(suscripcion.toJSON());
+  avisosCelularActivos = true;
+  toast('Listo: los avisos te llegarán a este celular 🔔');
+  return true;
+}
+
+async function apagarAvisosCelular() {
+  const suscripcion = await suscripcionPushActual();
+  if (suscripcion) {
+    await Api.notificaciones.avisos.quitar(suscripcion.endpoint).catch(() => {});
+    await suscripcion.unsubscribe().catch(() => {});
+  }
+  avisosCelularActivos = false;
+  toast('Listo: ya no te llegarán avisos a este celular.');
+}
+
+// Al entrar: si este navegador ya tenía los avisos, pasan a la cuenta que entró (el servidor cambia el dueño).
+async function sincronizarAvisosCelular() {
+  try {
+    if (!Estado.token) return;
+    const suscripcion = await suscripcionPushActual();
+    avisosCelularActivos = Boolean(suscripcion) && Notification.permission === 'granted';
+    if (avisosCelularActivos) await Api.notificaciones.avisos.activar(suscripcion.toJSON());
+  } catch { /* sin avisos al celular: no impide usar ChakraShop */ }
+}
+
+// Al cerrar sesión: quien use después este celular no recibe los avisos de esta cuenta.
+async function quitarAvisosAlCerrarSesion() {
+  avisosCelularActivos = false;
+  try {
+    const suscripcion = await suscripcionPushActual();
+    if (suscripcion) {
+      await Api.notificaciones.avisos.quitar(suscripcion.endpoint);
+      await suscripcion.unsubscribe();
+    }
+  } catch { /* nada que quitar */ }
+}
+
+const TEXTOS_AVISOS_CELULAR = {
+  'apagado-servidor': 'Todavía no está disponible en ChakraShop.',
+  'instalar-iphone': 'En iPhone: toca Compartir y luego «Agregar a inicio». Abre ChakraShop desde ese ícono y actívalo aquí.',
+  'no-soportado': 'Este navegador no puede recibir avisos. Prueba con Chrome.',
+  bloqueado: 'Bloqueaste los avisos de ChakraShop: permítelos en los permisos del navegador (el candado junto a la dirección).',
+  inactivo: 'Apagado: los avisos solo se ven aquí, en Notificaciones.',
+  activo: 'Encendido: te llegan a este celular aunque no tengas ChakraShop abierto.',
+};
+
+function renderTarjetaAvisos(estado, config, mios) {
+  const acciones = {
+    inactivo: '<button type="button" class="btn btn-primary" data-avisos="activar"><i class="ti ti-bell-ringing" aria-hidden="true"></i> Activar</button>',
+    activo: `<button type="button" class="btn btn-ghost" data-avisos="probar">Probar</button>
+      <button type="button" class="btn btn-outline" data-avisos="apagar">Apagar</button>`,
+  }[estado] || '';
+  const correo = config.correo ? `
+      <label class="avisos-fila avisos-fila-correo" for="avisos-correo">
+        <span class="avisos-fila-texto"><strong>Por correo, si no te llega al celular</strong>
+          <small>${mios?.correo ? `A ${escapeAttr(mios.correo)}` : 'Te escribimos al correo de tu cuenta.'}</small></span>
+        <input type="checkbox" role="switch" class="avisos-switch" id="avisos-correo" ${mios?.correo ? 'checked' : ''}>
+      </label>` : '';
+  return `
+    <div class="avisos-cabeza">
+      <span class="avisos-icono" aria-hidden="true"><i class="ti ti-device-mobile-message"></i></span>
+      <div>
+        <h3 id="avisos-celular-titulo">Avisos en tu celular</h3>
+        <p>Cuando llegue tu reserva, cambie tu pedido o vengan por tu cosecha.</p>
+      </div>
+    </div>
+    <div class="avisos-fila avisos-fila-${estado}">
+      <span class="avisos-fila-texto"><strong>En este celular</strong><small>${TEXTOS_AVISOS_CELULAR[estado]}</small></span>
+      ${acciones ? `<span class="avisos-acciones">${acciones}</span>` : ''}
+    </div>${correo}`;
+}
+
+async function pintarTarjetaAvisos() {
+  const tarjeta = document.getElementById('avisos-celular');
+  if (!tarjeta) return;
+  const config = Estado.token ? await cargarConfigAvisos() : { push: false, correo: false };
+  tarjeta.classList.toggle('hidden', !config.push && !config.correo);
+  if (!config.push && !config.correo) return;
+  const [suscripcion, mios] = await Promise.all([
+    suscripcionPushActual().catch(() => null),
+    Api.notificaciones.avisos.mios().catch(() => null),
+  ]);
+  const estado = Reglas.estadoAvisosCelular({
+    configurado: config.push, soportado: pushSoportado(), iphoneSinInstalar: esIphoneSinInstalar(),
+    permiso: 'Notification' in window ? Notification.permission : 'default', suscrito: Boolean(suscripcion),
+  });
+  avisosCelularActivos = estado === 'activo';
+  tarjeta.innerHTML = renderTarjetaAvisos(estado, config, mios);
+}
+
+async function alClicTarjetaAvisos(e) {
+  const boton = e.target.closest('[data-avisos]');
+  if (!boton) return;
+  boton.disabled = true;
+  try {
+    if (boton.dataset.avisos === 'activar') await activarAvisosCelular();
+    if (boton.dataset.avisos === 'apagar') await apagarAvisosCelular();
+    if (boton.dataset.avisos === 'probar') {
+      await Api.notificaciones.avisos.probar();
+      toast('Te mandamos un aviso de prueba: mira tu celular.');
+    }
+  } catch (err) {
+    manejarError(err, 'cambiar los avisos al celular');
+  }
+  await pintarTarjetaAvisos();
+}
+
+async function alCambiarAvisoPorCorreo(e) {
+  if (e.target.id !== 'avisos-correo') return;
+  e.target.disabled = true;
+  try {
+    const mios = await Api.notificaciones.avisos.correo(e.target.checked);
+    toast(mios.correo ? `Listo: si un aviso no te llega al celular, te escribimos a ${mios.correo}.` : 'Listo: ya no te mandaremos avisos por correo.');
+  } catch (err) {
+    manejarError(err, 'cambiar el aviso por correo');
+  }
+  await pintarTarjetaAvisos();
+}
+
+// Desde la reserva (H6: el comprador de la validación quería enterarse en su celular de que llegó lo que reservó).
+async function activarAvisosDesdeReserva(boton) {
+  boton.disabled = true;
+  try {
+    await activarAvisosCelular();
+  } catch (err) {
+    manejarError(err, 'activar los avisos al celular');
+  }
+  if (productoDetalleActual) pintarReservaDetalle(productoDetalleActual);
 }
 
 // ============ PANEL PRODUCTOR ============
@@ -12606,6 +12792,12 @@ function inicializarEventos() {
   });
 
   document.getElementById('btn-refrescar-notificaciones').addEventListener('click', cargarNotificaciones);
+  document.getElementById('avisos-celular').addEventListener('click', alClicTarjetaAvisos);
+  document.getElementById('avisos-celular').addEventListener('change', alCambiarAvisoPorCorreo);
+  document.addEventListener('click', (e) => {
+    const boton = e.target.closest('[data-avisos-activar]');
+    if (boton) activarAvisosDesdeReserva(boton);
+  });
   document.getElementById('btn-notif-cargar-mas').addEventListener('click', () => {
     notifMostrar += TAMANO_PAGINA_NOTIF;
     renderNotificacionesPagina();
@@ -13216,6 +13408,16 @@ function iniciar() {
   inicializarGoogleSignIn();
   cambiarVista(vistaInicialPara(Estado.rol));
   if (sesionVencidaAlIniciar) toast('Tu sesión anterior venció. Inicia sesión de nuevo para continuar.');
+  // H6: un aviso del celular abre "/?vista=notificaciones" (frontend/sw.js); con la app ya abierta, llega un mensaje.
+  if (new URLSearchParams(location.search).get('vista') === 'notificaciones') {
+    history.replaceState(null, '', location.pathname);
+    if (Estado.token) cambiarVista('notificaciones');
+  }
+  navigator.serviceWorker?.addEventListener('message', (e) => {
+    if (e.data?.tipo === 'abrir-notificaciones' && Estado.token) cambiarVista('notificaciones');
+  });
+  cargarConfigAvisos();
+  sincronizarAvisosCelular();
 }
 
 document.addEventListener('DOMContentLoaded', iniciar);

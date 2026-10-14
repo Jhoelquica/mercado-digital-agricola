@@ -55,6 +55,32 @@
       if (!Number.isFinite(cantidad) || cantidad <= 0) return { datos: null, error: 'Escribe cuánto te interesa con un número mayor que 0, o déjalo vacío.' };
       return { datos: { cantidad, unidad: unidad || null }, error: null };
     },
+
+    // H6: la clave pública VAPID (base64url, como la da el servidor) en bytes, como la pide pushManager.subscribe.
+    claveVapidABytes(base64url) {
+      const texto = String(base64url || '');
+      const binario = atob((texto + '='.repeat((4 - (texto.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(binario, (c) => c.charCodeAt(0));
+    },
+
+    // H6: ¿la suscripción del navegador es con la clave que tiene hoy el servidor? (si se cambiaron las claves, hay que
+    // volver a suscribirse; si no, el navegador rechaza la suscripción nueva).
+    mismaClaveVapid(bytesDelNavegador, base64url) {
+      if (!bytesDelNavegador) return false;
+      const a = new Uint8Array(bytesDelNavegador);
+      const b = Reglas.claveVapidABytes(base64url);
+      return a.length === b.length && a.every((x, i) => x === b[i]);
+    },
+
+    // H6: qué dice la fila "En este celular" de la tarjeta de avisos. En iPhone los avisos solo existen con ChakraShop
+    // agregado a la pantalla de inicio, por eso se mira antes que el soporte del navegador.
+    estadoAvisosCelular({ configurado, soportado, iphoneSinInstalar, permiso, suscrito }) {
+      if (!configurado) return 'apagado-servidor';
+      if (iphoneSinInstalar) return 'instalar-iphone';
+      if (!soportado) return 'no-soportado';
+      if (permiso === 'denied') return 'bloqueado';
+      return suscrito && permiso === 'granted' ? 'activo' : 'inactivo';
+    },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Reglas;
