@@ -1238,3 +1238,58 @@ def test_el_perfil_con_ubicacion_ya_trae_su_primera_chacra():
 def test_el_perfil_sin_ubicacion_no_inventa_una_chacra():
     _nuevo_productor()
     assert client.get("/chacras/me").json() == []
+
+
+# ============ H4 (validación con usuarios del 2026-10-13): editar y eliminar una chacra ============
+
+def test_una_chacra_sin_siembras_se_elimina():
+    _nuevo_productor()
+    chacra_id = client.post("/chacras", json=_chacra_payload(codigo="CH-H4")).json()["id"]
+
+    resp = client.delete(f"/chacras/{chacra_id}")
+
+    assert resp.status_code == 200, resp.text
+    assert client.get(f"/chacras/{chacra_id}").status_code == 404
+    assert client.get("/chacras/me").json() == []
+
+
+def test_una_chacra_con_una_siembra_en_curso_no_se_elimina():
+    registro_id = _crear_registro_planificado()
+    chacra_id = _fila(registro_id).chacra_id
+
+    resp = client.delete(f"/chacras/{chacra_id}")
+
+    assert resp.status_code == 409 and "1 siembra en curso" in resp.json()["detail"]
+    assert client.get(f"/chacras/{chacra_id}").status_code == 200
+
+
+def test_una_chacra_con_cosechas_o_siembras_anuladas_tampoco_se_elimina():
+    registro_id = _crear_registro_planificado()
+    chacra_id = _fila(registro_id).chacra_id
+    _poner_estado(registro_id, "cosechado")
+    resp = client.delete(f"/chacras/{chacra_id}")
+    assert resp.status_code == 409 and "cadena de certificación" in resp.json()["detail"]
+
+    otra = _crear_registro_planificado()
+    assert client.post(f"/productores/produccion/{otra}/anular").status_code == 200
+    assert client.delete(f"/chacras/{_fila(otra).chacra_id}").status_code == 409
+
+
+def test_otro_productor_no_elimina_una_chacra_ajena():
+    _nuevo_productor()
+    chacra_id = client.post("/chacras", json=_chacra_payload(codigo="CH-H4B")).json()["id"]
+    _nuevo_productor()
+
+    assert client.delete(f"/chacras/{chacra_id}").status_code == 403
+    assert client.delete(f"/chacras/{uuid.uuid4()}").status_code == 404
+
+
+def test_editar_una_chacra_sin_cosechas_cambia_nombre_codigo_y_lugar():
+    _nuevo_productor()
+    chacra_id = client.post("/chacras", json=_chacra_payload(codigo="CH-H4C")).json()["id"]
+
+    resp = client.put(f"/chacras/{chacra_id}", json={**_chacra_payload(codigo="CH-02", nombre="Parcela norte"),
+                                                     "ubicacion_latitud": -13.2, "ubicacion_longitud": -74.3})
+
+    assert resp.status_code == 200, resp.text
+    assert (resp.json()["codigo"], resp.json()["nombre"], resp.json()["ubicacion_latitud"]) == ("CH-02", "Parcela norte", -13.2)

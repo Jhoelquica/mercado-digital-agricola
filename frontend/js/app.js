@@ -6911,6 +6911,62 @@ async function usarMiUbicacionChacra() {
   }
 }
 
+// H4 (validación con usuarios del 2026-10-13): el mismo formulario sirve para corregir una chacra. Con cosechas, el
+// servidor no deja moverla ni cambiarle el código (cadena de certificación) y lo explica.
+let chacraEnEdicion = null;
+
+function editarChacra(chacraId) {
+  const c = (Estado.chacras || []).find((x) => String(x.id) === String(chacraId));
+  if (!c) return;
+  chacraEnEdicion = c;
+  document.getElementById('chacra-codigo').value = c.codigo;
+  document.getElementById('chacra-nombre').value = c.nombre || '';
+  document.getElementById('form-chacra-titulo').textContent = `Editar chacra ${c.codigo}`;
+  document.getElementById('btn-guardar-chacra').textContent = 'Guardar cambios';
+  document.getElementById('btn-cancelar-edicion-chacra').classList.remove('hidden');
+  if (hayCoordenadas(c.ubicacion_latitud, c.ubicacion_longitud)) {
+    ubicacionChacraSeleccionada = { lat: Number(c.ubicacion_latitud), lng: Number(c.ubicacion_longitud) };
+    mapaUbicacionChacra?.moverMarcador(ubicacionChacraSeleccionada.lat, ubicacionChacraSeleccionada.lng);
+    actualizarAyudaUbicacionChacra();
+  }
+  document.getElementById('form-chacra').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('chacra-nombre').focus({ preventScroll: true });
+}
+
+function salirDeEdicionChacra() {
+  chacraEnEdicion = null;
+  document.getElementById('form-chacra').reset();
+  document.getElementById('form-chacra-titulo').textContent = 'Registrar nueva chacra';
+  document.getElementById('btn-guardar-chacra').textContent = 'Registrar chacra';
+  document.getElementById('btn-cancelar-edicion-chacra').classList.add('hidden');
+  inicializarMapaUbicacionChacra();
+}
+
+// Primer toque: pregunta en la misma tarjeta (Sí / No); segundo: elimina. El servidor no deja eliminar una chacra con
+// siembras y dice por qué.
+async function alClicListaChacras(e) {
+  const editar = e.target.closest('.btn-editar-chacra');
+  if (editar) { editarChacra(editar.dataset.chacra); return; }
+  const acciones = e.target.closest('.chacra-card-acciones');
+  if (!acciones) return;
+  if (e.target.closest('.btn-borrar-chacra')) { acciones.classList.add('confirmando'); acciones.querySelector('.btn-no-borrar-chacra').focus(); return; }
+  if (e.target.closest('.btn-no-borrar-chacra')) { acciones.classList.remove('confirmando'); return; }
+  const si = e.target.closest('.btn-si-borrar-chacra');
+  if (!si) return;
+  si.disabled = true;
+  try {
+    await Api.chacras.eliminar(si.dataset.chacra);
+    toast('Chacra eliminada.');
+    if (chacraEnEdicion && String(chacraEnEdicion.id) === String(si.dataset.chacra)) salirDeEdicionChacra();
+    await cargarMisChacras();
+    pintarResumenChacras();
+  } catch (err) {
+    si.disabled = false;
+    acciones.classList.remove('confirmando');
+    manejarError(err, 'eliminar la chacra');
+  }
+}
+
 async function crearChacra(e) {
   e.preventDefault();
   const btn = e.target.querySelector('button[type="submit"]');
@@ -6926,14 +6982,20 @@ async function crearChacra(e) {
       ubicacion_latitud: ubicacionChacraSeleccionada.lat,
       ubicacion_longitud: ubicacionChacraSeleccionada.lng,
     };
-    await Api.chacras.crear(datos);
-    toast('Chacra registrada 🌱');
-    document.getElementById('form-chacra').reset();
-    inicializarMapaUbicacionChacra();
+    if (chacraEnEdicion) {
+      await Api.chacras.actualizar(chacraEnEdicion.id, datos);
+      toast('Chacra actualizada.');
+      salirDeEdicionChacra();
+    } else {
+      await Api.chacras.crear(datos);
+      toast('Chacra registrada 🌱');
+      document.getElementById('form-chacra').reset();
+      inicializarMapaUbicacionChacra();
+    }
     await cargarMisChacras();
     pintarResumenChacras();
   } catch (err) {
-    manejarError(err, 'registrar la chacra');
+    manejarError(err, chacraEnEdicion ? 'guardar los cambios de la chacra' : 'registrar la chacra');
   } finally {
     btn.disabled = false;
   }
@@ -6952,6 +7014,15 @@ function renderTarjetaChacra(c, indice = 0) {
         <div class="chacra-card-cultivos" data-chacra-cultivos="${c.id}"></div>
         <div id="mapa-chacra-mini-${c.id}" class="chacra-card-mapa-mini"></div>
         <div class="chacra-card-ubicacion"><i class="ti ti-map-pin"></i> ${Number(c.ubicacion_latitud).toFixed(5)}, ${Number(c.ubicacion_longitud).toFixed(5)}</div>
+        <div class="chacra-card-acciones">
+          <button type="button" class="btn btn-outline btn-sm btn-editar-chacra" data-chacra="${c.id}"><i class="ti ti-pencil" aria-hidden="true"></i> Editar</button>
+          <button type="button" class="btn btn-ghost btn-sm btn-borrar-chacra" data-chacra="${c.id}"><i class="ti ti-trash" aria-hidden="true"></i> Eliminar</button>
+          <span class="chacra-confirmar" role="group" aria-label="Confirmar eliminación">
+            <span>¿Eliminar esta chacra?</span>
+            <button type="button" class="btn btn-danger btn-sm btn-si-borrar-chacra" data-chacra="${c.id}">Sí, eliminar</button>
+            <button type="button" class="btn btn-ghost btn-sm btn-no-borrar-chacra">No</button>
+          </span>
+        </div>
       </div>
     </div>`;
 }
@@ -12526,6 +12597,8 @@ function inicializarEventos() {
   document.getElementById('btn-ubicacion-productor').addEventListener('click', usarMiUbicacionProductor);
   document.getElementById('form-chacra').addEventListener('submit', crearChacra);
   document.getElementById('btn-ubicacion-chacra').addEventListener('click', usarMiUbicacionChacra);
+  document.getElementById('btn-cancelar-edicion-chacra').addEventListener('click', salirDeEdicionChacra);
+  document.getElementById('chacras-lista').addEventListener('click', alClicListaChacras);
   document.getElementById('btn-refrescar-mis-productos').addEventListener('click', cargarMisProductos);
 
   // Nav de secciones dedicadas del Panel Productor — delegado sobre .productor-tabs (markup

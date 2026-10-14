@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=a119f9a6">
+<link rel="stylesheet" href="css/style.css?v=2ec2baad">
 </head>
 <body>
 
@@ -512,7 +512,7 @@
         </div>
         <div class="chacras-layout">
           <div class="card-panel">
-            <h4>Registrar nueva chacra</h4>
+            <h4 id="form-chacra-titulo">Registrar nueva chacra</h4>
             <p class="muted">Cada siembra que registres en "Mi Perfil" se asocia a una de tus chacras.</p>
             <form id="form-chacra" class="form-grid">
               <label>Código
@@ -529,7 +529,10 @@
                 <div id="mapa-ubicacion-chacra" class="mapa-seleccionable"></div>
                 <p class="mapa-ayuda" id="mapa-chacra-ayuda">Toca el mapa para marcar dónde está la chacra.</p>
               </div>
-              <button type="submit" class="btn btn-primary">Registrar chacra</button>
+              <div class="form-chacra-acciones">
+                <button type="submit" class="btn btn-primary" id="btn-guardar-chacra">Registrar chacra</button>
+                <button type="button" class="btn btn-ghost hidden" id="btn-cancelar-edicion-chacra">Cancelar</button>
+              </div>
             </form>
           </div>
           <div style="flex:1; display:flex; flex-direction:column; gap:18px;">
@@ -1313,9 +1316,9 @@
 <script src="https://checkout.culqi.com/js/v4"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-<script src="js/api.js?v=713c2c86"></script>
+<script src="js/api.js?v=c5992f17"></script>
 <script src="js/asistente.js?v=c0323f7b"></script>
 <script src="js/reglas.js?v=860fabe2"></script>
-<script src="js/app.js?v=f4feb942"></script>
+<script src="js/app.js?v=ec151814"></script>
 </body>
 </html>

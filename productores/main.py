@@ -496,6 +496,37 @@ def editar_chacra(
     return chacra
 
 
+@app.delete("/chacras/{chacra_id}")
+def eliminar_chacra(
+    chacra_id: str,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """H4 (validación con usuarios del 2026-10-13): borrar una chacra registrada por error. Solo si no tiene siembras:
+    las que están en curso la necesitan para cosecharse, y las cosechadas o anuladas son historia (la cadena de
+    certificación guarda su código y su ubicación)."""
+    productor = _obtener_productor_del_token(usuario, db)
+    chacra = _obtener_chacra_propia(chacra_id, productor, db)
+    estados = [e for (e,) in db.query(models.RegistroProduccion.estado)
+               .filter(models.RegistroProduccion.chacra_id == chacra.id).all()]
+    en_curso = estados.count("planificado")
+    if en_curso:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Esta chacra tiene {en_curso} {'siembra' if en_curso == 1 else 'siembras'} en curso: no se puede "
+                   "eliminar. Primero cosecha o anula esas siembras.",
+        )
+    if estados:
+        raise HTTPException(
+            status_code=409,
+            detail="Esta chacra ya tiene cosechas en su historia (quedaron en la cadena de certificación): no se "
+                   "elimina. Si quieres, cámbiale el nombre.",
+        )
+    db.delete(chacra)
+    db.commit()
+    return {"mensaje": "Chacra eliminada"}
+
+
 # Mismo patrón que breaker_productores en productos/main.py (fail_max=3, reset_timeout=30):
 # tras 3 fallos seguidos llamando a Productos, deja de intentar la conexión real durante 30s y
 # falla instantáneo con CircuitBreakerError — así una caída de Productos no le cuesta hasta 5s

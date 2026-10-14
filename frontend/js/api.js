@@ -274,6 +274,8 @@ const Api = {
   chacras: {
     misChacras: () => request('productores', '/chacras/me', { auth: true }),
     crear: (datos) => request('productores', '/chacras', { method: 'POST', body: datos, auth: true }),
+    actualizar: (id, datos) => request('productores', `/chacras/${id}`, { method: 'PUT', body: datos, auth: true }),
+    eliminar: (id) => request('productores', `/chacras/${id}`, { method: 'DELETE', auth: true }),
   },
   productos: {
     listar: () => request('productos', '/productos').then((lista) => lista.map(normalizarImagenesDeProducto)),
