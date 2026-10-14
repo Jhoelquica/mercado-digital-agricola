@@ -1607,7 +1607,21 @@ def test_productos_recibidos_son_solo_los_de_pedidos_entregados_del_comprador():
     assert datos == {"productos": [str(recibido)]}
 
 
+def _sin_ventas_recientes_de_otras_corridas():
+    """La base de pruebas sobrevive entre corridas: cada una deja vendedores con el mismo monto y, como el admin ve solo
+    los 10 que más venden (empatados, en orden cualquiera), el de esta prueba podía quedar fuera. Las ventas que ya
+    estaban se mandan fuera de la ventana de meses antes de empezar."""
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Pedido).update({main.models.Pedido.fecha_creacion: main.datetime(2020, 1, 1)},
+                                            synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
 def test_el_admin_ve_las_ventas_de_la_plataforma_y_los_cancelados():
+    _sin_ventas_recientes_de_otras_corridas()
     productor = str(uuid.uuid4())
     _pedido_vendido(productor, 1234.5)
     _como(str(uuid.uuid4()), "admin")
