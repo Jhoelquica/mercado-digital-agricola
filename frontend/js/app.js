@@ -7142,6 +7142,51 @@ async function usarMiUbicacionChacra() {
   }
 }
 
+// H2 (validación con usuarios del 2026-10-13): quien marcó su parcela en el perfil antes de que el perfil creara la
+// chacra solo (c1e2af3) veía "Aún no registraste ninguna chacra". Se le ofrece guardarla con un toque, sin volver a
+// marcarla. 21st.dev "Empty State" / ui-ux-pro-max: un vacío dice qué hacer y trae la acción.
+let parcelaDelPerfil = null;
+
+async function ofrecerParcelaDelPerfil(cont, vacio) {
+  let perfil = null;
+  try { perfil = await Api.productores.miPerfil(); } catch { return; } // sin perfil: queda el aviso de siempre
+  if (!hayCoordenadas(perfil?.latitud, perfil?.longitud) || (Estado.chacras || []).length) return;
+  parcelaDelPerfil = { lat: Number(perfil.latitud), lng: Number(perfil.longitud) };
+  vacio.classList.add('hidden');
+  cont.innerHTML = `
+    <section class="chacra-del-perfil" aria-labelledby="chacra-del-perfil-titulo">
+      <div class="chacra-del-perfil-texto">
+        <span class="chacra-del-perfil-icono" aria-hidden="true"><i class="ti ti-map-pin-check"></i></span>
+        <div>
+          <h4 id="chacra-del-perfil-titulo">Tu parcela ya está marcada en tu perfil</h4>
+          <p>Guárdala como tu primera chacra y ya puedes registrar tus siembras. No tienes que volver a marcarla.</p>
+        </div>
+      </div>
+      <div id="mapa-chacra-del-perfil" class="chacra-card-mapa-mini"></div>
+      <button type="button" class="btn btn-primary btn-chacra-del-perfil"><i class="ti ti-device-floppy" aria-hidden="true"></i> Guardarla como mi chacra</button>
+      <small class="muted">Si tu chacra está en otro lugar, regístrala con el formulario.</small>
+    </section>`;
+  const mini = crearMapaSoloLectura('mapa-chacra-del-perfil', parcelaDelPerfil.lat, parcelaDelPerfil.lng,
+    '<i class="ti ti-map-pin"></i>', '#2d6a4f', 'Tu parcela');
+  if (mini) mapasChacras.push(mini);
+}
+
+async function guardarParcelaDelPerfil(boton) {
+  if (!parcelaDelPerfil) return;
+  boton.disabled = true;
+  try {
+    await Api.chacras.crear({ codigo: 'CH-01', nombre: 'Mi chacra',
+      ubicacion_latitud: parcelaDelPerfil.lat, ubicacion_longitud: parcelaDelPerfil.lng });
+    parcelaDelPerfil = null;
+    toast('Listo: tu parcela ya es tu chacra CH-01 🌱');
+    await cargarMisChacras();
+    pintarResumenChacras();
+  } catch (err) {
+    boton.disabled = false;
+    manejarError(err, 'guardar tu chacra');
+  }
+}
+
 // H4 (validación con usuarios del 2026-10-13): el mismo formulario sirve para corregir una chacra. Con cosechas, el
 // servidor no deja moverla ni cambiarle el código (cadena de certificación) y lo explica.
 let chacraEnEdicion = null;
@@ -7176,6 +7221,8 @@ function salirDeEdicionChacra() {
 // Primer toque: pregunta en la misma tarjeta (Sí / No); segundo: elimina. El servidor no deja eliminar una chacra con
 // siembras y dice por qué.
 async function alClicListaChacras(e) {
+  const delPerfil = e.target.closest('.btn-chacra-del-perfil');
+  if (delPerfil) { guardarParcelaDelPerfil(delPerfil); return; }
   const editar = e.target.closest('.btn-editar-chacra');
   if (editar) { editarChacra(editar.dataset.chacra); return; }
   const acciones = e.target.closest('.chacra-card-acciones');
@@ -7293,6 +7340,7 @@ async function cargarMisChacras() {
     if (!chacras.length) {
       cont.innerHTML = '';
       vacio.classList.remove('hidden');
+      ofrecerParcelaDelPerfil(cont, vacio);
       return;
     }
     cont.innerHTML = chacras.map(renderTarjetaChacra).join('');
