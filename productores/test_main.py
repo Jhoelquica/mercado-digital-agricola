@@ -1219,3 +1219,22 @@ def test_el_borrador_lleva_las_unidades_en_que_se_vende_su_alimento(monkeypatch)
         assert resp.status_code == 200, resp.text
     assert payloads[0]["unidades_permitidas"] == ["kg", "saco", "arroba"]
     assert payloads[1]["unidades_permitidas"] is None
+
+
+# ============ H2 (validación con usuarios del 2026-10-13): la parcela del perfil ya es su chacra ============
+
+def test_el_perfil_con_ubicacion_ya_trae_su_primera_chacra():
+    _auth(str(uuid.uuid4()))
+    resp = client.post("/productores", json={"nombre": "Con parcela", "latitud": "-13.158812", "longitud": "-74.22394"})
+    assert resp.status_code == 200, resp.text
+    chacras = client.get("/chacras/me").json()
+    assert [(c["codigo"], c["nombre"], c["ubicacion_latitud"], c["ubicacion_longitud"]) for c in chacras] == [
+        ("CH-01", "Mi chacra", -13.158812, -74.22394)]
+    # y con ella ya puede sembrar, sin registrar otra
+    siembra = client.post("/productores/produccion", json=_registro_payload(chacras[0]["id"]))
+    assert siembra.status_code == 200, siembra.text
+
+
+def test_el_perfil_sin_ubicacion_no_inventa_una_chacra():
+    _nuevo_productor()
+    assert client.get("/chacras/me").json() == []

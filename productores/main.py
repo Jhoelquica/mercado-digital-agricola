@@ -316,6 +316,9 @@ def obtener_productor(productor_id: uuid.UUID, db: Session = Depends(get_db)):
 def listar_productores(db: Session = Depends(get_db)):
     return [_a_publico(p) for p in db.query(models.Productor).all()]
 
+CODIGO_CHACRA_DEL_PERFIL = "CH-01"
+
+
 @app.post("/productores")
 def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("productor"))):
     usuario_id = usuario.get("sub")
@@ -335,6 +338,12 @@ def crear_productor(datos: ProductorCrear, db: Session = Depends(get_db), usuari
     )
     
     db.add(nuevo)
+    db.flush()
+    # H2 de la validación con usuarios (2026-10-13): el agricultor marcaba su parcela en el perfil y después tenía que
+    # volver a marcarla como chacra para poder sembrar. Ahora esa ubicación ya es su primera chacra.
+    if datos.latitud and datos.longitud:
+        db.add(models.Chacra(productor_id=nuevo.id, codigo=CODIGO_CHACRA_DEL_PERFIL, nombre="Mi chacra",
+                             ubicacion_latitud=float(datos.latitud), ubicacion_longitud=float(datos.longitud)))
     db.commit()
     db.refresh(nuevo)
     return nuevo

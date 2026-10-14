@@ -5020,7 +5020,7 @@ function inicializarMapaUbicacionProductor() {
   ubicacionProductorSeleccionada = null;
   const ayuda = document.getElementById('mapa-productor-ayuda');
   if (ayuda) {
-    ayuda.textContent = 'Toca el mapa para marcar dónde está tu parcela.';
+    ayuda.textContent = 'Toca el mapa para marcar dónde está tu parcela: será tu primera chacra.';
     ayuda.classList.remove('confirmado');
   }
 
@@ -5223,7 +5223,13 @@ function firmaArchivo(archivo) {
 // ============ ASISTENTES DEL AGRICULTOR (ver js/asistente.js) ============
 // Reemplazan a los formularios de "Registrar siembra" y "Completar cosecha": una pregunta por pantalla, con voz.
 
+// La parcela que el agricultor marcó en su perfil, ofrecida como chacra si todavía no registró ninguna (H2 de la
+// validación con usuarios: no volver a marcarla). Se crea de verdad recién al registrar la siembra.
+const ID_CHACRA_DEL_PERFIL = 'chacra-del-perfil';
+let chacraDelPerfil = null;
+
 function chacraPorId(chacraId) {
+  if (chacraId === ID_CHACRA_DEL_PERFIL) return chacraDelPerfil;
   return (Estado.chacras || []).find((c) => String(c.id) === String(chacraId)) || null;
 }
 
@@ -5445,7 +5451,7 @@ async function pintarSugerenciaCosecha(cont, estado) {
 
 function pasosAsistenteSiembra() {
   const hoy = new Date();
-  const chacras = Estado.chacras || [];
+  const chacras = chacraDelPerfil ? [chacraDelPerfil] : (Estado.chacras || []);
   return [
     {
       id: 'chacra',
@@ -5455,7 +5461,8 @@ function pasosAsistenteSiembra() {
       render: (estado) => campoOpcionesAsistente({
         nombre: 'asistente-chacra',
         valor: estado.chacraId,
-        opciones: chacras.map((c) => ({ valor: c.id, titulo: c.codigo, detalle: c.nombre || 'Sin nombre', icono: 'map-pin' })),
+        opciones: chacras.map((c) => ({ valor: c.id, titulo: c.id === ID_CHACRA_DEL_PERFIL ? 'Usar mi chacra registrada' : c.codigo,
+          detalle: c.id === ID_CHACRA_DEL_PERFIL ? 'La parcela que marcaste en tu perfil' : (c.nombre || 'Sin nombre'), icono: 'map-pin' })),
       }),
       recoger: (cont, estado) => {
         const elegida = cont.querySelector('input[name="asistente-chacra"]:checked');
@@ -5810,21 +5817,45 @@ function resumenGastosAsistente(gastos = []) {
 async function abrirAsistenteSiembra() {
   await cargarCatalogoProduccion();
   const chacras = Estado.chacras || [];
+  chacraDelPerfil = null;
   if (!chacras.length) {
-    toast('Primero registra tu chacra en "Mis chacras".', 'error');
-    cambiarVista('panel-productor');
-    activarTabProductor('chacras');
-    return;
+    let perfil = null;
+    try { perfil = await Api.productores.miPerfil(); } catch { /* sin perfil: se le pide registrar su chacra */ }
+    if (hayCoordenadas(perfil?.latitud, perfil?.longitud)) {
+      chacraDelPerfil = {
+        id: ID_CHACRA_DEL_PERFIL, codigo: 'Mi chacra registrada', nombre: 'la que marcaste en tu perfil',
+        ubicacion_latitud: Number(perfil.latitud), ubicacion_longitud: Number(perfil.longitud),
+      };
+    } else {
+      toast('Primero registra tu chacra en "Mis chacras".', 'error');
+      cambiarVista('panel-productor');
+      activarTabProductor('chacras');
+      return;
+    }
   }
   Asistente.abrir({
     titulo: 'Registrar siembra o producción',
     icono: 'seedling',
     textoFinal: 'Registrar',
-    estado: { chacraId: chacras.length === 1 ? chacras[0].id : null },
+    estado: { chacraId: chacraDelPerfil ? ID_CHACRA_DEL_PERFIL : (chacras.length === 1 ? chacras[0].id : null) },
     pasos: pasosAsistenteSiembra(),
     alClic: alClicAsistenteAgricultor,
     enviar: async (estado, ui) => {
       ui.progreso('Registrando tu siembra…');
+      if (estado.chacraId === ID_CHACRA_DEL_PERFIL) {
+        try {
+          const nueva = await Api.chacras.crear({
+            codigo: 'CH-01', nombre: 'Mi chacra',
+            ubicacion_latitud: chacraDelPerfil.ubicacion_latitud, ubicacion_longitud: chacraDelPerfil.ubicacion_longitud,
+          });
+          estado.chacraId = nueva.id;
+          Estado.chacras = [nueva];
+          chacraDelPerfil = null;
+        } catch (err) {
+          ui.error(err.message || 'No se pudo guardar tu chacra. Intenta de nuevo.');
+          return false;
+        }
+      }
       const datos = {
         chacra_id: estado.chacraId,
         cultivo: estado.cultivo,
