@@ -1760,8 +1760,22 @@ def _disponibilidad_de(repartidor_id):
         db.close()
 
 
+def _sin_otras_propuestas_vencidas():
+    """La base de pruebas es compartida y sobrevive entre corridas: otros tests (y corridas anteriores) dejan envíos
+    "propuesto" a repartidores que ya se borraron. pasar_propuestas_sin_respuesta los procesa todos y alguno se llevaría
+    al repartidor de este test. Se dan por cerrados antes de empezar."""
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Envio).filter(main.models.Envio.estado == "propuesto").update(
+            {"estado": "entregado"}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
 def test_una_propuesta_sin_respuesta_pasa_al_siguiente_y_libera_al_que_no_respondio(monkeypatch, matching):
     repartidor_ids, envio_ids = matching
+    _sin_otras_propuestas_vencidas()
     callado = _crear_repartidor_disponible(capacidad_maxima_kg=50)
     otro = _crear_repartidor_disponible(capacidad_maxima_kg=80)
     envio = _crear_envio_directo(None, estado="pendiente")
@@ -1785,6 +1799,7 @@ def test_una_propuesta_sin_respuesta_pasa_al_siguiente_y_libera_al_que_no_respon
 
 def test_si_no_hay_nadie_mas_se_le_vuelve_a_ofrecer_al_que_no_respondio(monkeypatch, matching):
     repartidor_ids, envio_ids = matching
+    _sin_otras_propuestas_vencidas()
     unico = _crear_repartidor_disponible(capacidad_maxima_kg=50)
     envio = _crear_envio_directo(None, estado="pendiente")
     repartidor_ids.append(unico.id)
@@ -1806,6 +1821,7 @@ def test_si_no_hay_nadie_mas_se_le_vuelve_a_ofrecer_al_que_no_respondio(monkeypa
 
 def test_una_propuesta_todavia_a_tiempo_no_se_toca(monkeypatch, matching):
     repartidor_ids, envio_ids = matching
+    _sin_otras_propuestas_vencidas()
     a_tiempo = _crear_repartidor_disponible(capacidad_maxima_kg=50)
     envio = _crear_envio_directo(None, estado="pendiente")
     repartidor_ids.append(a_tiempo.id)
@@ -1867,6 +1883,7 @@ def test_el_admin_ve_el_nombre_de_los_repartidores():
 
 
 def test_una_propuesta_vencida_de_un_repartidor_borrado_no_traba_a_las_demas(monkeypatch):
+    _sin_otras_propuestas_vencidas()
     from datetime import datetime, timedelta
     monkeypatch.setattr(logica_repartidores, "proponer_envio_a_repartidor", MagicMock())
     envio = _crear_envio_directo(uuid.uuid4(), estado="propuesto")  # su repartidor ya no existe
