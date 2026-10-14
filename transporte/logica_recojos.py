@@ -9,8 +9,15 @@ capacidad para ese peso (como un envío) y recorre:
 Se completa recién cuando el admin pesa la cosecha en el almacén (evento llegada_almacen de Productos): ahí se le
 liquida al repartidor y el agricultor queda debiendo el recojo, que Pagos le descuenta de sus siguientes ventas. Si la
 cosecha llega sin que nadie la haya recogido (el agricultor la trajo igual), el recojo se anula sin cobrar nada.
+
+Transporte contratado (H8 de la validación con usuarios del 2026-10-13: 1600 kg de papa y solo una moto registrada): si
+ningún vehículo registrado carga el peso, se avisa a los admins y el agricultor lo sabe desde la cotización. El admin
+contrata un camión y lo asigna (conductor, celular, placa, capacidad en kg y sacos, día y hora, flete acordado): el
+recojo pasa a "asignado" sin repartidor, el agricultor recibe quién va y cuánto cuesta, el admin marca "recogido" y al
+pesarse se completa. El flete se le descuenta al agricultor como cualquier recojo; al conductor se le paga por fuera.
 """
 import logging
+import math
 import os
 from datetime import datetime
 
@@ -135,6 +142,39 @@ def asignar_recojos_pendientes(db) -> None:
         proponer_recojo(db, recojo)
 
 
+def hay_vehiculo_para(db, peso_kg) -> bool:
+    """¿Algún repartidor registrado (conectado o no) carga ese peso? Si ninguno, hace falta que el admin contrate un
+    transporte. Sin peso conocido no se puede saber: se asume que sí (como en la propuesta, sin filtro de capacidad)."""
+    if peso_kg is None:
+        return True
+    return db.query(models.Repartidor.id).filter(models.Repartidor.capacidad_maxima_kg >= peso_kg).first() is not None
+
+
+def sacos_de(producto: dict, peso_kg):
+    """Cuántos sacos son, si la cosecha se vende por saco (los kg por saco cambian con el alimento: salen de su unidad
+    "saco"). None si no se vende por saco o no se sabe."""
+    saco = next((a for a in producto.get("unidades_alternativas") or [] if a.get("unidad") == "saco"), None)
+    if not saco or not peso_kg:
+        return None
+    factor = float(saco.get("factor_a_base") or 0)
+    if (producto.get("unidad_medida") or "kg") != "kg":
+        factor *= float(producto.get("equivalencia_kg") or 0)
+    return math.ceil(peso_kg / factor) if factor > 0 else None
+
+
+def es_contratado(recojo: models.Recojo) -> bool:
+    return bool(recojo.transportista_nombre)
+
+
+def avisar_a_los_admins(evento: dict) -> None:
+    """Un aviso para todos los admins (Notificaciones lo guarda con rol_destino="admin" y lo manda a sus celulares).
+    Nunca rompe el paso que lo dispara: el recojo igual aparece en "Productos en tránsito"."""
+    try:
+        publicar_evento(evento)
+    except Exception:
+        logger.warning("No se pudo avisar a los admins (%s)", evento.get("evento"), exc_info=True)
+
+
 def liberar_repartidor(db, repartidor_id) -> None:
     repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first() if repartidor_id else None
     if repartidor and repartidor.estado_disponibilidad == "ocupado":
@@ -157,8 +197,13 @@ def avisar_al_agricultor(db, recojo: models.Recojo) -> None:
             "estado": recojo.estado,
             "modalidad": recojo.modalidad,
             "producto_nombre": recojo.producto_nombre,
-            "repartidor_nombre": repartidor.nombre if repartidor else None,
+            "repartidor_nombre": repartidor.nombre if repartidor else recojo.transportista_nombre,
             "costo": float(recojo.costo) if recojo.costo is not None else None,
+            # H8: con transporte contratado, quién va, cómo llamarlo y cuándo (el aviso lo cuenta todo).
+            "contratado": es_contratado(recojo),
+            "transportista_telefono": recojo.transportista_telefono,
+            "transportista_placa": recojo.transportista_placa,
+            "fecha_programada": recojo.fecha_programada.isoformat() if recojo.fecha_programada else None,
         })
     except Exception:
         logger.warning("No se pudo avisar al agricultor del recojo %s (%s)", recojo.id, recojo.estado, exc_info=True)
@@ -170,7 +215,9 @@ def liquidar(recojo: models.Recojo) -> None:
     with httpx.Client() as client:
         resp = client.post(
             f"{PAGOS_URL}/pagos/interno/liquidar-recojo",
-            json={"recojo_id": str(recojo.id), "repartidor_id": str(recojo.repartidor_id), "productor_id": str(recojo.productor_id),
+            # Transporte contratado: sin repartidor (se le paga por fuera); Pagos solo anota el descuento al agricultor.
+            json={"recojo_id": str(recojo.id), "repartidor_id": str(recojo.repartidor_id) if recojo.repartidor_id else None,
+                  "productor_id": str(recojo.productor_id),
                   "producto_id": str(recojo.producto_id), "costo": float(recojo.costo)},
             headers={"X-Servicio-Secreto": TRANSPORTE_A_PAGOS_SECRETO or ""},
             timeout=5,
@@ -258,4 +305,13 @@ def recojo_para_mostrar(db, recojo: models.Recojo) -> dict:
         "fecha_recogido": recojo.fecha_recogido,
         "fecha_en_almacen": recojo.fecha_en_almacen,
         "fecha_completado": recojo.fecha_completado,
+        # H8
+        "sacos": recojo.sacos,
+        "transporte_contratado": {
+            "nombre": recojo.transportista_nombre, "telefono": recojo.transportista_telefono,
+            "placa": recojo.transportista_placa, "capacidad_kg": recojo.transportista_capacidad_kg,
+            "capacidad_sacos": recojo.transportista_capacidad_sacos, "fecha_programada": recojo.fecha_programada,
+        } if es_contratado(recojo) else None,
+        "sin_vehiculo_registrado": (recojo.modalidad == "repartidor" and recojo.estado == "pendiente_asignacion"
+                                    and not hay_vehiculo_para(db, recojo.peso_kg)),
     }

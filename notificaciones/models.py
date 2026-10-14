@@ -24,6 +24,9 @@ class Notificacion(Base):
     mensaje = Column(String, nullable=False)
     canal = Column(String, default="email")     # simulado, no se envía de verdad
     fecha_envio = Column(DateTime, default=datetime.utcnow)
+    # H8: un aviso para TODOS los de un rol (hoy, "admin": un recojo que ningún vehículo registrado carga). Va con
+    # usuario_id vacío; GET /notificaciones se lo muestra a cada usuario de ese rol.
+    rol_destino = Column(String, nullable=True)
 
 class SuscripcionPush(Base):
     """H6 (validación con usuarios del 2026-10-13): un navegador (celular o computadora) donde el usuario activó "Avisos
@@ -36,6 +39,7 @@ class SuscripcionPush(Base):
     endpoint = Column(String, nullable=False, unique=True)
     p256dh = Column(String, nullable=False)
     auth = Column(String, nullable=False)
+    rol = Column(String, nullable=True)  # el del token al activarlo: los avisos de un rol (H8) van a estos navegadores
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 
 
@@ -46,4 +50,5 @@ class PreferenciaCorreo(Base):
 
     usuario_id = Column(UUID(as_uuid=True), primary_key=True)
     correo = Column(String, nullable=False)
+    rol = Column(String, nullable=True)
     fecha_actualizacion = Column(DateTime, default=datetime.utcnow)

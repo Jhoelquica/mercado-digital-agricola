@@ -80,3 +80,27 @@ def test_el_pago_semanal_dice_cuanto_por_donde_y_la_operacion():
     texto = mensaje_cobro({"monto": "120.50", "metodo": "yape", "numero_operacion": "OP123", "beneficiario_tipo": "productor"})
     assert texto.startswith("Te pagamos S/ 120.50 por Yape (operación OP123): lo que vendiste")
     assert "tus entregas" in mensaje_cobro({"monto": "9.00", "metodo": "transferencia", "beneficiario_tipo": "repartidor"})
+
+
+# ============ H8: transporte contratado por el admin ============
+
+def test_el_agricultor_sabe_quien_va_cuando_y_cuanto_cuesta_el_flete():
+    from mensajes import mensaje_recojo
+    texto = mensaje_recojo({"estado": "asignado", "contratado": True, "producto_nombre": "papa blanca",
+                            "repartidor_nombre": "Juan Quispe", "transportista_placa": "ABC-123",
+                            "transportista_telefono": "987654321", "fecha_programada": "2026-10-15T08:30:00",
+                            "costo": 350})
+    assert texto.startswith("Juan Quispe pasa a recoger tu papa blanca el jueves 15/10 a las 8:30 en el vehículo ABC-123.")
+    assert "Su celular: 987654321." in texto and "El flete acordado es S/ 350.00" in texto
+    assert "anula el recojo antes de que pase" in texto
+
+
+def test_los_admins_saben_que_hay_que_contratar_un_transporte_y_cuando_ya_no_va():
+    from mensajes import mensaje_recojo_anulado_contratado, mensaje_recojo_sin_vehiculo
+    assert mensaje_recojo_sin_vehiculo({"productor_nombre": "Agro Andina", "peso_kg": 1600.0, "sacos": 32,
+                                        "producto_nombre": "Papa", "distancia_km": 12.0}) == (
+        "Agro Andina pidió recojo de 1 600 kg (32 sacos) de Papa, a 12 km del almacén, y ningún vehículo registrado lo "
+        "carga. Contrata un transporte y asígnalo en Productos en tránsito.")
+    assert mensaje_recojo_anulado_contratado({"producto_nombre": "Papa", "transportista_nombre": "Juan",
+                                              "transportista_telefono": "987654321"}) == (
+        "El agricultor anuló el recojo de Papa: avísale a Juan (987654321) que ya no vaya.")

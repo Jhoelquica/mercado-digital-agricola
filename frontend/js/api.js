@@ -420,6 +420,9 @@ const Api = {
     enAlmacen: (id) => request('transporte', `/recojos/${id}/en-almacen`, { method: 'POST', auth: true }),
     // Admin: cómo llega cada cosecha que se espera en el almacén.
     enCurso: () => request('transporte', '/recojos', { auth: true }),
+    // Admin (H8): el camión que contrató cuando ningún vehículo registrado carga la cosecha, y cuándo lo recogió.
+    contratarTransporte: (id, datos) => request('transporte', `/recojos/${id}/transporte-contratado`, { method: 'POST', body: datos, auth: true }),
+    recogidoContratado: (id) => request('transporte', `/recojos/${id}/recogido-contratado`, { method: 'POST', auth: true }),
   },
   repartidores: {
     miPerfil: () => request('transporte', '/repartidores/me', { auth: true }),

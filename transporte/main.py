@@ -1170,13 +1170,17 @@ def _peso_conocido(producto: dict) -> float:
 
 
 @app.get("/recojos/cotizacion")
-def cotizar_recojo(producto_id: uuid.UUID, latitud: float, longitud: float,
+def cotizar_recojo(producto_id: uuid.UUID, latitud: float, longitud: float, db: Session = Depends(get_db),
                    usuario: dict = Depends(requiere_rol("productor")),
                    credenciales: HTTPAuthorizationCredentials = Depends(security)):
-    """Cuánto costaría que un repartidor recoja esta cosecha en ese punto (se le descuenta al agricultor al venderla)."""
+    """Cuánto costaría que un repartidor recoja esta cosecha en ese punto (se le descuenta al agricultor al venderla).
+    hay_vehiculo (H8): si ningún vehículo registrado carga el peso, el agricultor lo sabe ANTES de pedirlo (el admin
+    tendrá que contratar uno y le dirá el flete)."""
     productor = _resolver_productor_autenticado(credenciales.credentials)
     producto = _producto_propio_en_transito(producto_id, productor)
-    return logica_recojos.cotizar(latitud, longitud, _peso_conocido(producto))
+    peso = _peso_conocido(producto)
+    return {**logica_recojos.cotizar(latitud, longitud, peso), "hay_vehiculo": logica_recojos.hay_vehiculo_para(db, peso),
+            "sacos": logica_recojos.sacos_de(producto, peso)}
 
 
 @app.post("/recojos")
@@ -1210,10 +1214,18 @@ def pedir_recojo(datos: RecojoCrear, db: Session = Depends(get_db), usuario: dic
     cotizacion = logica_recojos.cotizar(datos.latitud, datos.longitud, peso)
     recojo.latitud, recojo.longitud, recojo.telefono = datos.latitud, datos.longitud, telefono
     recojo.peso_kg, recojo.distancia_km, recojo.costo = peso, cotizacion["distancia_km"], cotizacion["total"]
+    recojo.sacos = logica_recojos.sacos_de(producto, peso)
     recojo.estado = "pendiente_asignacion"
     db.add(recojo)
     db.flush()
     logica_recojos.proponer_recojo(db, recojo)
+    if not logica_recojos.hay_vehiculo_para(db, peso):
+        # H8: ningún vehículo registrado lo carga: los admins tienen que contratar uno (aviso en la app y al celular).
+        logica_recojos.avisar_a_los_admins({
+            "evento": "recojo_sin_vehiculo", "recojo_id": str(recojo.id), "producto_id": str(recojo.producto_id),
+            "producto_nombre": recojo.producto_nombre, "productor_nombre": producto.get("productor_nombre"),
+            "peso_kg": peso, "sacos": recojo.sacos, "distancia_km": recojo.distancia_km,
+        })
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1244,11 +1256,19 @@ def cancelar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario
         raise HTTPException(status_code=409, detail="El repartidor ya recogió tu cosecha: ya no se puede anular.")
     liberado = recojo.repartidor_id if recojo.estado in ("propuesto", "asignado") else None
     logica_recojos.liberar_repartidor(db, liberado)
+    contratado_en_camino = logica_recojos.es_contratado(recojo) and recojo.estado == "asignado"
     recojo.estado = "cancelado"
     recojo.motivo_cancelacion = "Lo anuló el agricultor."
     db.commit()
     if liberado:
         intentar_resolver_envio_huerfano(db)
+    if contratado_en_camino:
+        # H8: el conductor contratado no tiene la app: el admin tiene que avisarle que ya no vaya.
+        logica_recojos.avisar_a_los_admins({
+            "evento": "recojo_anulado_contratado", "recojo_id": str(recojo.id), "producto_id": str(recojo.producto_id),
+            "producto_nombre": recojo.producto_nombre, "transportista_nombre": recojo.transportista_nombre,
+            "transportista_telefono": recojo.transportista_telefono,
+        })
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1321,6 +1341,79 @@ def dejar_en_almacen(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuari
     logica_recojos.avisar_al_agricultor(db, recojo)
     intentar_resolver_envio_huerfano(db)
     logica_recojos.asignar_recojos_pendientes(db)
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+# ---- H8: transporte contratado por el admin (cuando ningún vehículo registrado carga la cosecha) ----
+PLACA_VALIDA = re.compile(r"^[A-Z0-9]{2,4}-?[A-Z0-9]{2,4}$")
+DIAS_MAXIMOS_PARA_PROGRAMAR = 60
+
+
+class TransporteContratado(BaseModel):
+    nombre: str = Field(min_length=2, max_length=80)
+    telefono: str = Field(min_length=9, max_length=15)
+    placa: str = Field(min_length=5, max_length=10)
+    capacidad_kg: float = Field(gt=0, le=60000)
+    capacidad_sacos: int | None = Field(default=None, gt=0, le=5000)
+    fecha_programada: datetime  # hora de Perú, como la escribe el admin
+    flete: float = Field(gt=0, le=100000)
+
+
+@app.post("/recojos/{recojo_id}/transporte-contratado")
+def contratar_transporte(recojo_id: uuid.UUID, datos: TransporteContratado, db: Session = Depends(get_db),
+                         usuario: dict = Depends(requiere_rol("admin"))):
+    """El admin asigna el camión que consiguió: el recojo queda "asignado" (sin repartidor de la app), con el flete
+    acordado como costo, y el agricultor recibe quién va, cuándo y cuánto cuesta (si no está de acuerdo, puede anularlo
+    antes de que lo recojan). Si estaba ofrecido a un repartidor que no respondió, se le libera."""
+    recojo = _recojo_o_404(db, recojo_id)
+    if recojo.modalidad != "repartidor" or recojo.estado not in ("pendiente_asignacion", "propuesto"):
+        raise HTTPException(status_code=409, detail="Este recojo ya tiene quién lo recoja o ya no está en curso. Actualiza la lista.")
+    telefono = re.sub(r"\D", "", datos.telefono)
+    if not re.fullmatch(r"9\d{8}", telefono):
+        raise HTTPException(status_code=422, detail="El celular del conductor debe tener 9 dígitos y empezar con 9.")
+    placa = re.sub(r"\s", "", datos.placa).upper()
+    if not PLACA_VALIDA.fullmatch(placa):
+        raise HTTPException(status_code=422, detail="Escribe la placa como en la tarjeta del vehículo (por ejemplo ABC-123).")
+    if recojo.peso_kg and datos.capacidad_kg < recojo.peso_kg:
+        raise HTTPException(status_code=422, detail=f"Ese vehículo carga {datos.capacidad_kg:g} kg y la cosecha pesa {recojo.peso_kg:g} kg: no alcanza.")
+    if datos.capacidad_sacos and recojo.sacos and datos.capacidad_sacos < recojo.sacos:
+        raise HTTPException(status_code=422, detail=f"Ese vehículo lleva {datos.capacidad_sacos} sacos y la cosecha son {recojo.sacos}: no alcanza.")
+    ahora = datetime.utcnow()
+    programada = datos.fecha_programada.replace(tzinfo=None)
+    if not (ahora - timedelta(days=1) <= programada <= ahora + timedelta(days=DIAS_MAXIMOS_PARA_PROGRAMAR)):
+        raise HTTPException(status_code=422, detail="El día del recojo debe ser desde hoy y hasta dentro de dos meses.")
+
+    liberado = recojo.repartidor_id if recojo.estado == "propuesto" else None
+    logica_recojos.liberar_repartidor(db, liberado)
+    recojo.repartidor_id = None
+    recojo.transportista_nombre = datos.nombre.strip()
+    recojo.transportista_telefono = telefono
+    recojo.transportista_placa = placa
+    recojo.transportista_capacidad_kg = datos.capacidad_kg
+    recojo.transportista_capacidad_sacos = datos.capacidad_sacos
+    recojo.fecha_programada = programada
+    recojo.costo = datos.flete
+    recojo.contratado_por = usuario.get("sub")
+    recojo.estado = "asignado"
+    recojo.fecha_aceptado = ahora
+    db.commit()
+    logica_recojos.avisar_al_agricultor(db, recojo)
+    if liberado:
+        intentar_resolver_envio_huerfano(db)
+    return logica_recojos.recojo_para_mostrar(db, recojo)
+
+
+@app.post("/recojos/{recojo_id}/recogido-contratado")
+def marcar_recogido_por_contratado(recojo_id: uuid.UUID, db: Session = Depends(get_db),
+                                   usuario: dict = Depends(requiere_rol("admin"))):
+    """El conductor contratado no tiene la app: el admin marca que ya recogió la cosecha. Se completa al pesarla."""
+    recojo = _recojo_o_404(db, recojo_id)
+    if not logica_recojos.es_contratado(recojo) or recojo.estado != "asignado":
+        raise HTTPException(status_code=409, detail="Solo se marca así un recojo con transporte contratado que todavía no se recogió.")
+    recojo.estado = "recogido"
+    recojo.fecha_recogido = datetime.utcnow()
+    db.commit()
+    logica_recojos.avisar_al_agricultor(db, recojo)
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 

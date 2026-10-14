@@ -66,6 +66,8 @@ TITULOS = {
     "pago_rechazado": "Tu pago",
     "saldo_rechazado": "Tu pago",
     "pago_reembolsado": "Tu pago",
+    "recojo_sin_vehiculo": "Recojo sin vehículo",
+    "recojo_anulado_contratado": "Recojo anulado",
 }
 
 
@@ -91,14 +93,20 @@ def endpoint_valido(endpoint: str) -> bool:
     return url.scheme == "https" and any(host == s or host.endswith("." + s) for s in SERVICIOS_DE_PUSH)
 
 
-def enviar_push(db, usuario_id, titulo: str, cuerpo: str) -> int:
-    """Manda el aviso a cada navegador activo del usuario. Devuelve a cuántos llegó al servicio de push. Los que el
-    servicio ya no reconoce (404/410: el usuario borró los datos del navegador o quitó el permiso) se borran."""
+def _de(modelo, usuario_id, rol):
+    """Las filas de un usuario o, para un aviso de rol (H8), las de todos los de ese rol."""
+    return modelo.rol == rol if rol else modelo.usuario_id == usuario_id
+
+
+def enviar_push(db, usuario_id, titulo: str, cuerpo: str, rol: str = None) -> int:
+    """Manda el aviso a cada navegador activo del usuario (o de todos los de un rol). Devuelve a cuántos llegó al
+    servicio de push. Los que el servicio ya no reconoce (404/410: el usuario borró los datos del navegador o quitó el
+    permiso) se borran."""
     if not push_disponible():
         return 0
     datos = json.dumps({"titulo": titulo, "cuerpo": cuerpo, "url": URL_AL_TOCAR}, ensure_ascii=False)
     enviados = 0
-    for s in db.query(models.SuscripcionPush).filter(models.SuscripcionPush.usuario_id == usuario_id).all():
+    for s in db.query(models.SuscripcionPush).filter(_de(models.SuscripcionPush, usuario_id, rol)).all():
         try:
             webpush(subscription_info={"endpoint": s.endpoint, "keys": {"p256dh": s.p256dh, "auth": s.auth}},
                     data=datos, vapid_private_key=VAPID_CLAVE_PRIVADA,
@@ -144,18 +152,17 @@ def enviar_correo(destino: str, asunto: str, texto: str) -> bool:
         return False
 
 
-def avisar_fuera_de_la_app(usuario_id, tipo: str, mensaje: str):
-    """Push a sus navegadores y, si no llegó a ninguno, el correo de respaldo (si lo pidió). Devuelve "push", "correo" o
-    None. Nunca lanza: el aviso ya quedó guardado en la aplicación."""
+def avisar_fuera_de_la_app(usuario_id, tipo: str, mensaje: str, rol: str = None):
+    """Push a sus navegadores y, si no llegó a ninguno, el correo de respaldo (si lo pidió). Con rol (H8), a todos los
+    de ese rol. Devuelve "push", "correo" o None. Nunca lanza: el aviso ya quedó guardado en la aplicación."""
     db = SessionLocal()
     try:
         titulo = titulo_de(tipo)
-        if enviar_push(db, usuario_id, titulo, mensaje):
+        if enviar_push(db, usuario_id, titulo, mensaje, rol=rol):
             return "push"
-        preferencia = db.query(models.PreferenciaCorreo).filter(models.PreferenciaCorreo.usuario_id == usuario_id).first()
-        if preferencia and enviar_correo(preferencia.correo, titulo, mensaje):
-            return "correo"
-        return None
+        enviados = [p for p in db.query(models.PreferenciaCorreo).filter(_de(models.PreferenciaCorreo, usuario_id, rol)).all()
+                    if enviar_correo(p.correo, titulo, mensaje)]
+        return "correo" if enviados else None
     except Exception:
         logger.exception("No se pudo avisar fuera de la aplicación")
         return None
@@ -166,10 +173,10 @@ def avisar_fuera_de_la_app(usuario_id, tipo: str, mensaje: str):
 _hilos = ThreadPoolExecutor(max_workers=4, thread_name_prefix="avisos")
 
 
-def despachar(usuario_id, tipo: str, mensaje: str) -> None:
+def despachar(usuario_id, tipo: str, mensaje: str, rol: str = None) -> None:
     """Lo llama el consumidor de RabbitMQ: en otro hilo, para no detenerlo (un correo puede tardar varios segundos)."""
-    if usuario_id and (push_disponible() or correo_disponible()):
-        _hilos.submit(avisar_fuera_de_la_app, usuario_id, tipo, mensaje)
+    if (usuario_id or rol) and (push_disponible() or correo_disponible()):
+        _hilos.submit(avisar_fuera_de_la_app, usuario_id, tipo, mensaje, rol)
 
 
 def correo_del_usuario(usuario_id: str, token: str):

@@ -200,7 +200,8 @@ class LiquidarRepartidor(BaseModel):
 
 class LiquidarRecojo(BaseModel):
     recojo_id: uuid.UUID
-    repartidor_id: uuid.UUID
+    # None (H8): lo llevó un transporte que contrató el admin; al conductor se le paga por fuera de la app.
+    repartidor_id: uuid.UUID | None = None
     productor_id: uuid.UUID
     producto_id: uuid.UUID | None = None
     costo: float = Field(gt=0, le=100000)

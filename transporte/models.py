@@ -178,6 +178,17 @@ class Recojo(Base):
     fecha_recogido = Column(DateTime, nullable=True)
     fecha_en_almacen = Column(DateTime, nullable=True)
     fecha_completado = Column(DateTime, nullable=True)
+    # H8 (validación con usuarios del 2026-10-13): cuántos sacos son (si la cosecha se vende por saco) y el transporte que
+    # el admin contrató cuando ningún vehículo registrado podía con el peso. El conductor no tiene cuenta en la app: el
+    # admin lo asigna, marca cuándo la recogió y le paga por fuera; al agricultor se le descuenta el flete (costo).
+    sacos = Column(Integer, nullable=True)
+    transportista_nombre = Column(String, nullable=True)
+    transportista_telefono = Column(String, nullable=True)
+    transportista_placa = Column(String, nullable=True)
+    transportista_capacidad_kg = Column(Float, nullable=True)
+    transportista_capacidad_sacos = Column(Integer, nullable=True)
+    fecha_programada = Column(DateTime, nullable=True)  # hora de Perú, tal como la escribió el admin
+    contratado_por = Column(UUID(as_uuid=True), nullable=True)  # el admin que lo asignó
 
 
 class RecojoRechazo(Base):

@@ -81,6 +81,42 @@
       if (permiso === 'denied') return 'bloqueado';
       return suscrito && permiso === 'granted' ? 'activo' : 'inactivo';
     },
+
+    // H8: el transporte que contrata el admin. Mismas reglas que el servidor (transporte/main.py, contratar_transporte);
+    // devuelve el campo con problema para mostrar el error junto a él.
+    datosTransporteContratado(campos, { pesoKg = null, sacos = null } = {}) {
+      const error = (campo, texto) => ({ datos: null, campo, error: texto });
+      const nombre = String(campos.nombre || '').trim();
+      const telefono = String(campos.telefono || '').replace(/\D/g, '');
+      const placa = String(campos.placa || '').replace(/\s/g, '').toUpperCase();
+      const capacidadKg = Number(campos.capacidadKg);
+      const capacidadSacos = String(campos.capacidadSacos ?? '').trim() === '' ? null : Number(campos.capacidadSacos);
+      const flete = Number(campos.flete);
+      if (nombre.length < 2) return error('nombre', 'Escribe el nombre del conductor.');
+      if (!/^9\d{8}$/.test(telefono)) return error('telefono', 'El celular debe tener 9 dígitos y empezar con 9.');
+      if (!/^[A-Z0-9]{2,4}-?[A-Z0-9]{2,4}$/.test(placa)) return error('placa', 'Escribe la placa como en la tarjeta del vehículo (ej. ABC-123).');
+      if (!(capacidadKg > 0)) return error('capacidadKg', 'Escribe cuántos kilos carga el vehículo.');
+      if (pesoKg && capacidadKg < pesoKg) return error('capacidadKg', `Carga ${capacidadKg} kg y la cosecha pesa ${pesoKg} kg: no alcanza.`);
+      if (capacidadSacos !== null && !(Number.isInteger(capacidadSacos) && capacidadSacos > 0)) return error('capacidadSacos', 'Los sacos van en número entero (o déjalo vacío).');
+      if (capacidadSacos && sacos && capacidadSacos < sacos) return error('capacidadSacos', `Lleva ${capacidadSacos} sacos y la cosecha son ${sacos}: no alcanza.`);
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(campos.fecha || ''))) return error('fecha', 'Elige el día y la hora del recojo.');
+      if (!(flete > 0)) return error('flete', 'Escribe el flete que acordaste, en soles.');
+      return {
+        datos: { nombre, telefono, placa, capacidad_kg: capacidadKg, capacidad_sacos: capacidadSacos,
+          fecha_programada: String(campos.fecha).slice(0, 16), flete },
+        campo: null,
+        error: null,
+      };
+    },
+
+    // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
+    fechaHoraLegible(iso) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
+      if (!m) return '';
+      const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+      const dia = dias[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()];
+      return `${dia} ${m[3]}/${m[2]} a las ${Number(m[4])}:${m[5]}`;
+    },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Reglas;

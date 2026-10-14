@@ -136,7 +136,9 @@ def test_de_punta_a_punta_se_cobra_recien_con_la_cosecha_pesada(mundo):
     assert {a["usuario_id"] for a in mundo["avisos"]} == {AGRICULTOR}
     assert mundo["avisos"][0] == {"evento": "recojo_actualizado", "recojo_id": recojo_id, "producto_id": mundo["producto_id"],
                                   "usuario_id": AGRICULTOR, "estado": "asignado", "modalidad": "repartidor",
-                                  "producto_nombre": "Papa amarilla QA", "repartidor_nombre": "QA rep 1000", "costo": 42.5}
+                                  "producto_nombre": "Papa amarilla QA", "repartidor_nombre": "QA rep 1000", "costo": 42.5,
+                                  "contratado": False, "transportista_telefono": None, "transportista_placa": None,
+                                  "fecha_programada": None}
 
 
 def test_sin_repartidor_con_capacidad_espera_y_el_job_lo_asigna_despues(mundo):
@@ -236,3 +238,118 @@ def test_un_recojo_sin_respuesta_pasa_al_siguiente_repartidor(mundo):
     fila = _fila(recojo_id)
     assert (fila.estado, str(fila.repartidor_id)) == ("propuesto", str(otro.id))
     assert _disponibilidad(callado.id) == "disponible"
+
+
+# ============ H8 (validación con usuarios del 2026-10-13): transporte contratado por el admin ============
+
+def _mas_pesado_que_todo_vehiculo(mundo, kg_por_saco=50):
+    """La cosecha pesa más que cualquier vehículo registrado en la base de pruebas (que se reusa entre corridas), y se
+    vende también por saco."""
+    db = main.SessionLocal()
+    try:
+        maximo = max([float(c or 0) for (c,) in db.query(models.Repartidor.capacidad_maxima_kg).all()] + [0])
+    finally:
+        db.close()
+    peso = int(maximo) + 1600
+    mundo["producto"].update(stock=peso, productor_nombre="Agro Andina QA",
+                             unidades_alternativas=[{"unidad": "saco", "factor_a_base": kg_por_saco}])
+    return peso
+
+
+def _camion(peso, **cambios):
+    manana = (datetime.utcnow() + timedelta(days=1)).replace(hour=13, minute=30, second=0, microsecond=0)
+    return {"nombre": "Juan Quispe", "telefono": "987 654 321", "placa": "abc-123", "capacidad_kg": peso + 1000,
+            "capacidad_sacos": 2000, "fecha_programada": manana.isoformat(), "flete": 350, **cambios}
+
+
+def test_sin_vehiculo_que_cargue_el_peso_el_agricultor_lo_sabe_y_se_avisa_a_los_admins(mundo):
+    peso = _mas_pesado_que_todo_vehiculo(mundo)
+    _como(AGRICULTOR, "productor")
+    cotizacion = client.get(f"/recojos/cotizacion?producto_id={mundo['producto_id']}&latitud=-13.1&longitud=-74.25").json()
+    assert (cotizacion["hay_vehiculo"], cotizacion["sacos"]) == (False, -(-peso // 50))
+
+    recojo = _pedir(mundo).json()
+    assert (recojo["estado"], recojo["sin_vehiculo_registrado"], recojo["sacos"]) == ("pendiente_asignacion", True, -(-peso // 50))
+    [aviso] = [a for a in mundo["avisos"] if a["evento"] == "recojo_sin_vehiculo"]
+    assert aviso == {"evento": "recojo_sin_vehiculo", "recojo_id": recojo["id"], "producto_id": mundo["producto_id"],
+                     "producto_nombre": "Papa amarilla QA", "productor_nombre": "Agro Andina QA", "peso_kg": float(peso),
+                     "sacos": -(-peso // 50), "distancia_km": 6.5}
+
+
+def test_el_admin_contrata_un_camion_y_el_recojo_se_completa_al_pesarlo(mundo):
+    peso = _mas_pesado_que_todo_vehiculo(mundo)
+    recojo_id = _pedir(mundo).json()["id"]
+    contratar = lambda **c: client.post(f"/recojos/{recojo_id}/transporte-contratado", json=_camion(peso, **c))
+
+    _como(str(uuid.uuid4()), "productor")
+    assert contratar().status_code == 403  # solo el admin
+    _como(str(uuid.uuid4()), "admin")
+    assert "no alcanza" in contratar(capacidad_kg=peso - 1).json()["detail"]
+    assert "sacos" in contratar(capacidad_sacos=10).json()["detail"]
+    assert contratar(telefono="12345").status_code == 422
+    assert contratar(placa="??").status_code == 422
+    assert contratar(fecha_programada=(datetime.utcnow() + timedelta(days=90)).isoformat()).status_code == 422
+
+    resp = contratar()
+    assert resp.status_code == 200, resp.text
+    recojo = resp.json()
+    assert (recojo["estado"], recojo["costo"], recojo["repartidor"]) == ("asignado", 350.0, None)
+    assert recojo["transporte_contratado"]["placa"] == "ABC-123" and recojo["transporte_contratado"]["telefono"] == "987654321"
+    assert contratar().status_code == 409  # ya tiene quién lo recoja
+    aviso = mundo["avisos"][-1]
+    assert (aviso["estado"], aviso["contratado"], aviso["repartidor_nombre"], aviso["transportista_placa"], aviso["costo"]) == (
+        "asignado", True, "Juan Quispe", "ABC-123", 350.0)
+    assert aviso["fecha_programada"].endswith("13:30:00")
+    _como(AGRICULTOR, "productor")
+    assert client.get("/recojos/mios").json()[0]["transporte_contratado"]["nombre"] == "Juan Quispe"
+
+    _como(str(uuid.uuid4()), "admin")
+    assert client.post(f"/recojos/{recojo_id}/recogido-contratado").json()["estado"] == "recogido"
+    assert client.post(f"/recojos/{recojo_id}/recogido-contratado").status_code == 409
+    _llega_al_almacen(mundo["producto_id"])
+    fila = _fila(recojo_id)
+    assert (fila.estado, fila.liquidacion_confirmada, fila.repartidor_id) == ("completado", True, None)
+    assert mundo["liquidados"] == [(recojo_id, 350.0)]  # el flete acordado se le descuenta al agricultor
+    assert [a["estado"] for a in mundo["avisos"] if a["evento"] == "recojo_actualizado"] == ["asignado", "recogido", "completado"]
+
+
+def test_si_el_agricultor_anula_el_camion_contratado_se_avisa_a_los_admins(mundo):
+    peso = _mas_pesado_que_todo_vehiculo(mundo)
+    recojo_id = _pedir(mundo).json()["id"]
+    _como(str(uuid.uuid4()), "admin")
+    assert client.post(f"/recojos/{recojo_id}/transporte-contratado", json=_camion(peso)).status_code == 200
+
+    _como(AGRICULTOR, "productor")
+    assert client.post(f"/recojos/{recojo_id}/cancelar").json()["estado"] == "cancelado"
+    [aviso] = [a for a in mundo["avisos"] if a["evento"] == "recojo_anulado_contratado"]
+    assert (aviso["transportista_nombre"], aviso["transportista_telefono"]) == ("Juan Quispe", "987654321")
+
+
+def test_un_recojo_ofrecido_a_un_repartidor_tambien_se_puede_contratar_y_lo_libera(mundo):
+    repartidor = _repartidor(1000)
+    _como(AGRICULTOR, "productor")
+    assert client.get(f"/recojos/cotizacion?producto_id={mundo['producto_id']}&latitud=-13.1&longitud=-74.25").json()["hay_vehiculo"] is True
+    recojo = _pedir(mundo).json()
+    assert recojo["estado"] == "propuesto" and recojo["sin_vehiculo_registrado"] is False
+    assert not [a for a in mundo["avisos"] if a["evento"] == "recojo_sin_vehiculo"]
+
+    _como(str(uuid.uuid4()), "admin")
+    assert client.post(f"/recojos/{recojo['id']}/transporte-contratado", json=_camion(400, capacidad_kg=500, capacidad_sacos=None)).status_code == 200
+    assert _disponibilidad(repartidor.id) == "disponible" and _fila(recojo["id"]).repartidor_id is None
+
+
+def test_pagos_recibe_el_recojo_contratado_sin_repartidor(monkeypatch):
+    enviado = {}
+
+    class ClienteFalso:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, url, json=None, headers=None, timeout=None):
+            enviado.update(json)
+            return MagicMock(raise_for_status=lambda: None)
+
+    monkeypatch.setattr(logica_recojos.httpx, "Client", ClienteFalso)
+    recojo = models.Recojo(id=uuid.uuid4(), producto_id=uuid.uuid4(), productor_id=uuid.uuid4(), modalidad="repartidor",
+                           estado="completado", costo=350, transportista_nombre="Juan Quispe")
+    logica_recojos.liquidar(recojo)
+    assert enviado["repartidor_id"] is None and enviado["costo"] == 350.0

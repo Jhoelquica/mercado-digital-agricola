@@ -82,3 +82,25 @@ test('H6: la tarjeta de avisos dice qué hacer en cada caso', () => {
   assert.equal(Reglas.estadoAvisosCelular({ ...base, permiso: 'granted', suscrito: true }), 'activo');
   assert.equal(Reglas.estadoAvisosCelular({ ...base, permiso: 'default', suscrito: true }), 'inactivo');
 });
+
+test('H8: el transporte contratado se valida como en el servidor y dice qué campo corregir', () => {
+  const bueno = { nombre: 'Juan Quispe', telefono: '987 654 321', placa: 'abc-123', capacidadKg: '4000', capacidadSacos: '80',
+    fecha: '2026-10-15T08:30', flete: '350' };
+  assert.deepEqual(Reglas.datosTransporteContratado(bueno, { pesoKg: 1600, sacos: 32 }).datos, {
+    nombre: 'Juan Quispe', telefono: '987654321', placa: 'ABC-123', capacidad_kg: 4000, capacidad_sacos: 80,
+    fecha_programada: '2026-10-15T08:30', flete: 350 });
+  assert.equal(Reglas.datosTransporteContratado({ ...bueno, capacidadSacos: '' }).datos.capacidad_sacos, null);
+  const campo = (cambios, contexto = { pesoKg: 1600, sacos: 32 }) => Reglas.datosTransporteContratado({ ...bueno, ...cambios }, contexto).campo;
+  assert.equal(campo({ telefono: '12345' }), 'telefono');
+  assert.equal(campo({ placa: '??' }), 'placa');
+  assert.equal(campo({ capacidadKg: '500' }), 'capacidadKg');
+  assert.equal(campo({ capacidadSacos: '20' }), 'capacidadSacos');
+  assert.equal(campo({ fecha: '' }), 'fecha');
+  assert.equal(campo({ flete: '0' }), 'flete');
+});
+
+test('H8: el día y la hora del recojo se leen sin cambiar de zona horaria', () => {
+  assert.equal(Reglas.fechaHoraLegible('2026-10-15T08:30:00'), 'jueves 15/10 a las 8:30');
+  assert.equal(Reglas.fechaHoraLegible('2026-10-18T17:05'), 'domingo 18/10 a las 17:05');
+  assert.equal(Reglas.fechaHoraLegible(null), '');
+});

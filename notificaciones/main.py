@@ -6,6 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from auth import security, verificar_token
 from auth import secreto_de_servicio_valido
@@ -75,9 +76,11 @@ def historial_por_pedido(pedido_id: uuid.UUID, db: Session = Depends(get_db), us
 
 @app.get("/notificaciones")
 def listar_todas(db: Session = Depends(get_db), usuario: dict = Depends(verificar_token)):
-    return db.query(models.Notificacion).filter(
-        models.Notificacion.usuario_id == usuario.get("sub")
-    ).order_by(models.Notificacion.fecha_envio.desc()).all()
+    # Las propias y (H8) las que van a todo su rol, como los recojos sin vehículo para los admins.
+    propias = models.Notificacion.usuario_id == usuario.get("sub")
+    de_su_rol = models.Notificacion.rol_destino == usuario.get("rol")
+    return db.query(models.Notificacion).filter(or_(propias, de_su_rol) if usuario.get("rol") else propias
+                                                ).order_by(models.Notificacion.fecha_envio.desc()).all()
 
 
 # ============ H6: avisos al celular (Web Push) y, de respaldo, por correo ============
@@ -131,13 +134,13 @@ def activar_avisos_en_este_navegador(datos: SuscripcionPushEntrada, db: Session 
         raise HTTPException(status_code=503, detail="Los avisos al celular todavía no están encendidos en ChakraShop.")
     if not avisos_externos.endpoint_valido(datos.endpoint):
         raise HTTPException(status_code=422, detail="Este navegador no da una dirección de avisos válida.")
-    usuario_id = usuario.get("sub")
+    usuario_id, rol = usuario.get("sub"), usuario.get("rol")
     existente = db.query(models.SuscripcionPush).filter(models.SuscripcionPush.endpoint == datos.endpoint).first()
     if existente:
         # El mismo navegador: puede ser otra cuenta que entró en él; desde ahora los avisos son de esta.
-        existente.usuario_id, existente.p256dh, existente.auth = usuario_id, datos.keys.p256dh, datos.keys.auth
+        existente.usuario_id, existente.rol, existente.p256dh, existente.auth = usuario_id, rol, datos.keys.p256dh, datos.keys.auth
     else:
-        db.add(models.SuscripcionPush(usuario_id=usuario_id, endpoint=datos.endpoint, p256dh=datos.keys.p256dh,
+        db.add(models.SuscripcionPush(usuario_id=usuario_id, rol=rol, endpoint=datos.endpoint, p256dh=datos.keys.p256dh,
                                       auth=datos.keys.auth))
     db.flush()
     propias = (db.query(models.SuscripcionPush).filter(models.SuscripcionPush.usuario_id == usuario_id)
@@ -174,9 +177,9 @@ def cambiar_aviso_por_correo(datos: PreferenciaCorreoEntrada, db: Session = Depe
     if not correo:
         raise HTTPException(status_code=503, detail="No pudimos leer el correo de tu cuenta. Intenta de nuevo en unos momentos.")
     if preferencia:
-        preferencia.correo = correo
+        preferencia.correo, preferencia.rol = correo, usuario.get("rol")
     else:
-        db.add(models.PreferenciaCorreo(usuario_id=usuario_id, correo=correo))
+        db.add(models.PreferenciaCorreo(usuario_id=usuario_id, correo=correo, rol=usuario.get("rol")))
     db.commit()
     return _estado_de_avisos(db, usuario_id)
 

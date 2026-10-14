@@ -199,3 +199,23 @@ def test_las_claves_generadas_firman_y_cifran_un_aviso_que_el_navegador_puede_le
     assert len(publica) == 87 and recibido["headers"]["authorization"].endswith(f"k={publica}")
     claro = http_ece.decrypt(recibido["data"], private_key=navegador, auth_secret=secreto, version="aes128gcm")
     assert json.loads(claro) == {"titulo": "ChakraShop · Tu reserva"}
+
+
+def test_un_recojo_sin_vehiculo_le_llega_a_todos_los_admins_y_a_nadie_mas(db, canales):
+    """H8: va a la lista de cada admin y a sus celulares; un comprador no lo ve."""
+    admin, otro_admin, comprador = (str(uuid.uuid4()) for _ in range(3))
+    endpoint_admin, endpoint_comprador = _endpoint(), _endpoint()
+    main.activar_avisos_en_este_navegador(main.SuscripcionPushEntrada(endpoint=endpoint_admin, keys={"p256dh": "B" * 87, "auth": "a" * 22}),
+                                          db, {"sub": admin, "rol": "admin"})
+    _activar(db, comprador, endpoint_comprador)
+    producto_id = str(uuid.uuid4())
+
+    _procesar({"evento": "recojo_sin_vehiculo", "producto_id": producto_id, "productor_nombre": "Agro Andina",
+               "peso_kg": 1600, "sacos": 32, "producto_nombre": "Papa", "distancia_km": 12})
+
+    para_admins = [n for n in main.listar_todas(db, {"sub": otro_admin, "rol": "admin"}) if str(n.producto_id) == producto_id]
+    assert len(para_admins) == 1 and para_admins[0].rol_destino == "admin" and para_admins[0].usuario_id is None
+    assert "ningún vehículo registrado" in para_admins[0].mensaje
+    assert [n for n in main.listar_todas(db, {"sub": comprador, "rol": "comprador"}) if str(n.producto_id) == producto_id] == []
+    llegaron = [a_donde for a_donde, datos in canales.push if datos["titulo"] == "ChakraShop · Recojo sin vehículo"]
+    assert endpoint_admin in llegaron and endpoint_comprador not in llegaron

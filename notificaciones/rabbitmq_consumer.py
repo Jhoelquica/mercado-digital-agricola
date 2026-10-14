@@ -7,7 +7,8 @@ import pika
 from database import SessionLocal
 import avisos_externos
 import models
-from mensajes import mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo
+from mensajes import (mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo,
+                      mensaje_recojo_anulado_contratado, mensaje_recojo_sin_vehiculo)
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
@@ -15,7 +16,7 @@ RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
 
 
 def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, producto_id: str = None, usuario_id: str = None,
-                          estado: str = None):
+                          estado: str = None, rol_destino: str = None):
     db = SessionLocal()
     try:
         # La inferencia por pedido_id (cuando el evento no trae usuario_id, ej.
@@ -30,6 +31,7 @@ def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, produc
 
         nueva = models.Notificacion(
             pedido_id=pedido_id, producto_id=producto_id, tipo=tipo, mensaje=mensaje, usuario_id=usuario_id, estado=estado,
+            rol_destino=rol_destino,
         )
         db.add(nueva)
         db.commit()
@@ -37,7 +39,7 @@ def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, produc
     finally:
         db.close()
     # H6: además, al celular (Web Push) o, de respaldo, por correo. En otro hilo y sin poder romper este consumo.
-    avisos_externos.despachar(usuario_id, tipo, mensaje)
+    avisos_externos.despachar(usuario_id, tipo, mensaje, rol=rol_destino)
 
 
 def _procesar_mensaje(ch, method, properties, body):
@@ -69,6 +71,13 @@ def _procesar_mensaje(ch, method, properties, body):
         # El recojo de una cosecha en la chacra: el aviso es para el agricultor (Transporte manda su usuario).
         _guardar_notificacion(producto_id=datos["producto_id"], usuario_id=datos["usuario_id"], tipo="recojo_actualizado",
                               mensaje=mensaje_recojo(datos), estado=datos.get("estado"))
+    elif evento == "recojo_sin_vehiculo" and datos.get("producto_id"):
+        # H8: para todos los admins (y sus celulares): hay que contratar un transporte.
+        _guardar_notificacion(producto_id=datos["producto_id"], rol_destino="admin", tipo=evento,
+                              mensaje=mensaje_recojo_sin_vehiculo(datos))
+    elif evento == "recojo_anulado_contratado" and datos.get("producto_id"):
+        _guardar_notificacion(producto_id=datos["producto_id"], rol_destino="admin", tipo=evento,
+                              mensaje=mensaje_recojo_anulado_contratado(datos))
     elif evento == "pago_a_beneficiario" and datos.get("usuario_id"):
         # El pago semanal a un agricultor o repartidor: Pagos manda a quién avisarle.
         _guardar_notificacion(usuario_id=datos["usuario_id"], tipo=evento, mensaje=mensaje_cobro(datos))

@@ -1353,6 +1353,24 @@ def test_el_recojo_se_liquida_al_repartidor_y_se_descuenta_de_las_ventas_del_pro
         db.close()
 
 
+def test_un_recojo_con_transporte_contratado_solo_se_descuenta_al_productor(monkeypatch):
+    """H8: el camión lo contrató el admin y se le paga por fuera: no hay liquidación de repartidor, pero el flete
+    acordado (S/ 350) sí se le descuenta al productor. Idempotente igual que el de un repartidor."""
+    monkeypatch.setattr(main, "TRANSPORTE_A_PAGOS_SECRETO", "secreto-recojo")
+    recojo_id, productor_id, producto_id = (str(uuid.uuid4()) for _ in range(3))
+    cuerpo = {"recojo_id": recojo_id, "repartidor_id": None, "productor_id": productor_id, "producto_id": producto_id,
+              "costo": 350.0}
+    for _ in range(2):
+        assert client.post("/pagos/interno/liquidar-recojo", json=cuerpo, headers={"X-Servicio-Secreto": "secreto-recojo"}).status_code == 200
+    assert _liquidaciones_de(recojo_id) == []
+    db = main.SessionLocal()
+    try:
+        [deuda] = db.query(main.models.DescuentoProductor).filter(main.models.DescuentoProductor.recojo_id == recojo_id).all()
+        assert (str(deuda.productor_id), float(deuda.monto)) == (productor_id, 350.0)
+    finally:
+        db.close()
+
+
 
 # ============ Devolver lo pagado de un pedido que se cancela ============
 

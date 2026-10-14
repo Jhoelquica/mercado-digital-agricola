@@ -97,11 +97,38 @@ def mensaje_cobro(datos):
             "El detalle está en Mis ganancias.")
 
 
+DIAS_SEMANA = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+
+
+def fecha_y_hora(iso):
+    """"jueves 16/10 a las 8:00" de "2026-10-16T08:00:00" (hora de Perú tal como la escribió el admin), o None."""
+    from datetime import datetime
+    try:
+        f = datetime.fromisoformat(str(iso))
+    except (TypeError, ValueError):
+        return None
+    return f"{DIAS_SEMANA[f.weekday()]} {f.day:02d}/{f.month:02d} a las {f.hour}:{f.minute:02d}"
+
+
 def mensaje_recojo(datos):
     """Cómo va el recojo de una cosecha en la chacra, contado al agricultor."""
     producto = datos.get("producto_nombre") or "cosecha"
     quien = datos.get("repartidor_nombre") or "El repartidor"
     estado = datos.get("estado") or ""
+    if estado == "asignado" and datos.get("contratado"):
+        # H8: el transporte que contrató el admin. Todo lo que el agricultor necesita, y que puede anularlo.
+        cuando = fecha_y_hora(datos.get("fecha_programada"))
+        placa = datos.get("transportista_placa")
+        telefono = datos.get("transportista_telefono")
+        flete = soles(datos.get("costo"))
+        partes = [f"{quien} pasa a recoger tu {producto}{f' el {cuando}' if cuando else ''}"
+                  f"{f' en el vehículo {placa}' if placa else ''}."]
+        if telefono:
+            partes.append(f"Su celular: {telefono}.")
+        if flete:
+            partes.append(f"El flete acordado es {flete}: se descuenta de lo que ganes cuando se venda. "
+                          "Si no estás de acuerdo, anula el recojo antes de que pase.")
+        return " ".join(partes)
     if estado == "asignado":
         return f"{quien} aceptó recoger tu {producto} en tu chacra. Te llamará antes de llegar."
     if estado == "recogido":
@@ -117,6 +144,34 @@ def mensaje_recojo(datos):
         return f"Tu {producto} llegó al almacén antes de que la recogieran: anulamos el recojo y no se te cobra nada."
     legible = ESTADOS_LEGIBLES.get(estado, estado.replace("_", " "))
     return f"Tu recojo cambió de estado: {legible}."
+
+
+def _kilos(valor):
+    try:
+        return f"{float(valor):,.1f}".rstrip("0").rstrip(".").replace(",", " ")
+    except (TypeError, ValueError):
+        return None
+
+
+def mensaje_recojo_sin_vehiculo(datos):
+    """H8, para los admins: un recojo que ningún vehículo registrado carga."""
+    quien = (datos.get("productor_nombre") or "Un agricultor").strip()
+    kilos = _kilos(datos.get("peso_kg"))
+    sacos = datos.get("sacos")
+    carga = f"{kilos} kg" + (f" ({sacos} sacos)" if sacos else "") if kilos else "su cosecha"
+    producto = datos.get("producto_nombre")
+    distancia = _kilos(datos.get("distancia_km"))
+    return (f"{quien} pidió recojo de {carga}{f' de {producto}' if producto else ''}"
+            f"{f', a {distancia} km del almacén' if distancia else ''}, y ningún vehículo registrado lo carga. "
+            "Contrata un transporte y asígnalo en Productos en tránsito.")
+
+
+def mensaje_recojo_anulado_contratado(datos):
+    """H8, para los admins: el agricultor anuló un recojo que ya tenía un transporte contratado en camino."""
+    producto = datos.get("producto_nombre") or "su cosecha"
+    nombre = datos.get("transportista_nombre") or "el conductor"
+    telefono = datos.get("transportista_telefono")
+    return f"El agricultor anuló el recojo de {producto}: avísale a {nombre}{f' ({telefono})' if telefono else ''} que ya no vaya."
 
 
 def mensaje_pago(datos):

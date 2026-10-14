@@ -119,9 +119,19 @@ def _cobrar_recojos_pendientes(db: Session, productor_id, disponible: Decimal) -
 def crear_liquidacion_recojo(db: Session, recojo_id, repartidor_id, productor_id, producto_id, costo) -> None:
     """El recojo de una cosecha ya pesada en el almacén: el repartidor cobra como en un envío (el costo menos la comisión
     de la plataforma) y el productor queda debiendo el costo, que se le descuenta de sus siguientes ventas. Idempotente
-    por recojo_id (UniqueConstraint de la liquidación y unique del descuento): un reintento no cobra dos veces."""
+    por recojo_id (UniqueConstraint de la liquidación y unique del descuento): un reintento no cobra dos veces.
+
+    Sin repartidor (H8: transporte contratado por el admin, al que se le paga por fuera) solo se anota lo que debe el
+    productor: el flete acordado."""
     monto_bruto, comision, monto_neto = calcular_comision_y_neto(Decimal(str(costo)))
     ahora = datetime.utcnow()
+    if repartidor_id is None:
+        db.add(models.DescuentoProductor(productor_id=productor_id, producto_id=producto_id, recojo_id=recojo_id, monto=monto_bruto))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+        return
     db.add(models.Liquidacion(
         pedido_id=recojo_id,
         beneficiario_tipo="repartidor",

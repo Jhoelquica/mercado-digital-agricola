@@ -4661,6 +4661,9 @@ const NOTIF_TIPOS = {
   pago_reembolsado: { grupo: 'pedido', icono: 'receipt-refund', titulo: 'Pedido cancelado: dinero devuelto' },
   pago_a_beneficiario: { grupo: 'pedido', icono: 'cash', titulo: 'Te pagamos' },
   recojo_actualizado: { grupo: 'envio', icono: 'plant-2', titulo: 'Recojo de tu cosecha' },
+  // H8, para los admins
+  recojo_sin_vehiculo: { grupo: 'envio', icono: 'truck-off', titulo: 'Recojo sin vehículo' },
+  recojo_anulado_contratado: { grupo: 'envio', icono: 'truck-return', titulo: 'Recojo anulado' },
 };
 const NOTIF_FILTROS = [
   { clave: 'todas', etiqueta: 'Todas' },
@@ -4814,6 +4817,8 @@ function renderNotifCard(n, i) {
   const acciones = [];
   if (n.tipo === 'recojo_actualizado') {
     acciones.push('<button type="button" class="notif-accion" data-accion="ver-cosechas">Ver mis cosechas <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
+  } else if (n.tipo === 'recojo_sin_vehiculo' || n.tipo === 'recojo_anulado_contratado') {
+    acciones.push('<button type="button" class="notif-accion" data-accion="ver-transito">Ver productos en tránsito <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
   } else if (n.pedido_id) {
     acciones.push(`<span class="notif-chip"><i class="ti ti-receipt" aria-hidden="true"></i> Pedido #${String(n.pedido_id).slice(0, 8)}</span>`);
     acciones.push('<button type="button" class="notif-accion" data-accion="ver-pedido">Ver mis pedidos <i class="ti ti-arrow-right" aria-hidden="true"></i></button>');
@@ -6795,8 +6800,8 @@ async function cargarMisProductos() {
 // etiquetas visibles y aviso de éxito.
 const ESTADOS_RECOJO_EN_CURSO = ['pendiente_asignacion', 'propuesto', 'asignado', 'recogido', 'en_almacen', 'en_camino'];
 const PASOS_RECOJO = [
-  { titulo: 'Buscando repartidor', estados: ['pendiente_asignacion', 'propuesto'] },
-  { titulo: 'Repartidor en camino a tu chacra', estados: ['asignado'] },
+  { titulo: 'Buscando vehículo', estados: ['pendiente_asignacion', 'propuesto'] },
+  { titulo: 'Vehículo en camino a tu chacra', estados: ['asignado'] },
   { titulo: 'Recogida', estados: ['recogido'] },
   { titulo: 'En el almacén, por pesar', estados: ['en_almacen'] },
   { titulo: 'Pesada y a la venta', estados: ['completado'] },
@@ -6880,7 +6885,9 @@ function renderAnularRecojo(r, texto) {
       <div class="alm-anular">
         <button type="button" class="btn btn-ghost btn-sm btn-anular-recojo"><i class="ti ti-x" aria-hidden="true"></i> ${texto}</button>
         <div class="alm-anular-confirmar hidden" role="group" aria-label="${texto}">
-          <span>${r.estado === 'asignado' ? 'El repartidor ya aceptó: avísale que no vaya. ¿Anular igual?' : '¿Seguro?'}</span>
+          <span>${r.estado !== 'asignado' ? '¿Seguro?' : r.transporte_contratado
+    ? 'Ya hay un camión contratado para ir: avisaremos al administrador para que no vaya. ¿Anular igual?'
+    : 'El repartidor ya aceptó: avísale que no vaya. ¿Anular igual?'}</span>
           <button type="button" class="btn btn-ghost btn-sm btn-anular-no">No</button>
           <button type="button" class="btn btn-danger btn-sm btn-anular-si" data-recojo-id="${escapeAttr(r.id)}">Sí, anular</button>
         </div>
@@ -6900,11 +6907,16 @@ function renderEstadoRecojo(r) {
   const actual = Math.max(0, PASOS_RECOJO.findIndex((p) => p.estados.includes(r.estado)));
   const peso = Number(r.peso_kg || 0).toLocaleString('es-PE', { maximumFractionDigits: 1 });
   const repartidor = r.repartidor ? `${escapeAttr(r.repartidor.nombre)} (${escapeAttr(r.repartidor.tipo_vehiculo || 'vehículo')})` : 'El repartidor';
+  const t = r.transporte_contratado; // H8: el camión que contrató el administrador
   const detalle = {
-    pendiente_asignacion: `Todavía no hay un repartidor libre con espacio para ${peso} kg. Seguimos buscando; aquí verás cuando uno acepte.`,
+    pendiente_asignacion: r.sin_vehiculo_registrado
+      ? `Ningún vehículo registrado carga ${peso} kg: avisamos al administrador para que consiga un camión. Te diremos quién va, cuándo y el flete.`
+      : `Todavía no hay un repartidor libre con espacio para ${peso} kg. Seguimos buscando; aquí verás cuando uno acepte.`,
     propuesto: 'Se lo ofrecimos a un repartidor: falta que acepte.',
-    asignado: `${repartidor} va a recogerla. Te llamará al ${escapeAttr(formatearTelefono(r.telefono || ''))}.`,
-    recogido: 'El repartidor ya la recogió y la lleva al almacén.',
+    asignado: t
+      ? `${escapeAttr(t.nombre)} pasa a recogerla el ${Reglas.fechaHoraLegible(t.fecha_programada)} en el vehículo ${escapeAttr(t.placa)}. Su celular: <a href="tel:${escapeAttr(t.telefono)}">${escapeAttr(formatearTelefono(t.telefono))}</a>.`
+      : `${repartidor} va a recogerla. Te llamará al ${escapeAttr(formatearTelefono(r.telefono || ''))}.`,
+    recogido: t ? `${escapeAttr(t.nombre)} ya la recogió y la lleva al almacén.` : 'El repartidor ya la recogió y la lleva al almacén.',
     en_almacen: 'Ya está en el almacén: falta que la pesen. Ahí sale a la venta.',
   }[r.estado] || '';
   const pasos = PASOS_RECOJO.map((p, i) => `
@@ -6915,7 +6927,7 @@ function renderEstadoRecojo(r) {
   return `
       <div class="alm-estado">
         <ol class="alm-pasos" aria-label="Cómo va el recojo">${pasos}</ol>
-        <p class="alm-costo"><i class="ti ti-receipt" aria-hidden="true"></i><span>Recojo: <b>${formatearMoneda(r.costo)}</b>, se descuenta de lo que ganes cuando se venda.</span></p>
+        <p class="alm-costo"><i class="ti ti-receipt" aria-hidden="true"></i><span>${t ? 'Flete acordado' : r.sin_vehiculo_registrado ? 'Costo estimado' : 'Recojo'}: <b>${formatearMoneda(r.costo)}</b>, se descuenta de lo que ganes cuando se venda.${t ? ' Si no estás de acuerdo, anúlalo antes de que pase.' : ''}</span></p>
         ${['pendiente_asignacion', 'propuesto', 'asignado'].includes(r.estado) ? renderAnularRecojo(r, 'Anular el recojo') : ''}
       </div>`;
 }
@@ -7008,7 +7020,8 @@ async function cotizarRecojo(form) {
         <div><dt>Peso</dt><dd>${peso} kg</dd></div>
         <div><dt>Tarifa</dt><dd>${formatearMoneda(c.tarifa_distancia)}${c.recargo_peso ? ` + ${formatearMoneda(c.recargo_peso)} por el peso` : ''}</dd></div>
       </dl>
-      <p class="alm-cotizacion-total">Costo del recojo: <b>${formatearMoneda(c.total)}</b></p>
+      <p class="alm-cotizacion-total">${c.hay_vehiculo === false ? 'Costo estimado' : 'Costo del recojo'}: <b>${formatearMoneda(c.total)}</b></p>
+      ${c.hay_vehiculo === false ? `<p class="alm-cotizacion-aviso" role="status"><i class="ti ti-truck-off" aria-hidden="true"></i><span>Ningún vehículo registrado carga ${peso} kg${c.sacos ? ` (${c.sacos} sacos)` : ''}. Si lo pides, avisamos al administrador para que consiga un camión: te dirá quién va, cuándo y el flete antes de ir.</span></p>` : ''}
       <p class="alm-cotizacion-nota"><i class="ti ti-info-circle" aria-hidden="true"></i> No pagas nada ahora: se descuenta de lo que ganes cuando se venda tu cosecha.</p>`;
     boton.disabled = false;
     boton.innerHTML = `<i class="ti ti-truck" aria-hidden="true"></i> Pedir recojo por ${formatearMoneda(c.total)}`;
@@ -7053,7 +7066,9 @@ async function enviarLlegadaAlmacen(form) {
     const recojo = await Api.recojos.pedir(datos);
     toast(modalidad === 'productor'
       ? 'Listo: el almacén te espera ese día.'
-      : recojo.estado === 'propuesto' ? 'Recojo pedido: ya se lo ofrecimos a un repartidor 🚚' : 'Recojo pedido: estamos buscando un repartidor con espacio.');
+      : recojo.estado === 'propuesto' ? 'Recojo pedido: ya se lo ofrecimos a un repartidor 🚚'
+        : recojo.sin_vehiculo_registrado ? 'Recojo pedido: avisamos al administrador para que consiga un camión 🚚'
+          : 'Recojo pedido: estamos buscando un repartidor con espacio.');
     delete puntoRecojo[productoId];
     await cargarLlegadasAlmacen();
   } catch (err) {
@@ -7620,7 +7635,8 @@ async function iniciarPanelAdmin() {
     return;
   }
   document.getElementById('admin-resumen').innerHTML = renderSkeletonResumen(3);
-  activarTabAdmin('inicio');
+  activarTabAdmin(Estado.tabAdminInicial || 'inicio'); // H8: desde el aviso de un recojo sin vehículo, "Productos en tránsito"
+  Estado.tabAdminInicial = null;
   await Promise.all([cargarProductosEnTransito(), cargarEnviosPendientesPorCapacidad(), cargarProductoresAdmin(), cargarTransferenciasAdmin(),
     cargarReclamosRucAdmin(), cargarTransportistasAdmin(), cargarViajesAdmin(), cargarDestinosAdmin(), cargarPedidosSinEntregar(), cargarPagosPorHacer(), cargarVentasAdmin()]);
 }
@@ -9778,16 +9794,114 @@ function renderLlegadaEsperada(r) {
   if (r.modalidad === 'productor') {
     return `<p class="alm-admin-llega"><i class="ti ti-walk" aria-hidden="true"></i> La trae el agricultor${r.fecha_estimada ? ` el ${formatearFechaCorta(r.fecha_estimada)}` : ''}.</p>`;
   }
+  const t = r.transporte_contratado;
+  if (t) {
+    // H8: el camión que contrató el admin (el conductor no tiene la app: el admin marca cuándo la recogió).
+    const cuando = Reglas.fechaHoraLegible(t.fecha_programada);
+    const texto = r.estado === 'asignado'
+      ? `${escapeAttr(t.nombre)} la recoge el ${cuando} (vehículo ${escapeAttr(t.placa)}, <a href="tel:${escapeAttr(t.telefono)}">${escapeAttr(formatearTelefono(t.telefono))}</a>).`
+      : `${escapeAttr(t.nombre)} (vehículo ${escapeAttr(t.placa)}) ya la recogió y la trae: pésala y confirma la llegada.`;
+    return `<p class="alm-admin-llega${r.estado === 'recogido' ? ' lista' : ''}"><i class="ti ti-truck" aria-hidden="true"></i> <span>${texto}</span>
+      <small>Transporte contratado. Flete de ${formatearMoneda(r.costo)}: se lo pagas tú al conductor y se le descuenta al agricultor al vender.</small></p>
+      ${r.estado === 'asignado' ? `<button type="button" class="btn btn-outline btn-sm btn-recogido-contratado" data-recojo-id="${escapeAttr(r.id)}"><i class="ti ti-package-import" aria-hidden="true"></i> Ya la recogió</button>` : ''}`;
+  }
   const quien = escapeAttr(r.repartidor?.nombre || 'El repartidor');
+  const kilos = Number(r.peso_kg || 0).toLocaleString('es-PE', { maximumFractionDigits: 1 });
+  const carga = `${kilos} kg${r.sacos ? ` (${r.sacos} sacos)` : ''}`;
   const texto = {
-    pendiente_asignacion: 'Recojo pedido: todavía sin repartidor con espacio.',
+    pendiente_asignacion: r.sin_vehiculo_registrado
+      ? `Ningún vehículo registrado carga ${carga}: contrata un transporte y asígnalo aquí.`
+      : 'Recojo pedido: todavía sin repartidor con espacio.',
     propuesto: 'Recojo ofrecido a un repartidor: falta que acepte.',
     asignado: `${quien} va a recogerla en la chacra.`,
     recogido: `${quien} ya la recogió y la trae.`,
     en_almacen: `${quien} la dejó en el almacén: pésala y confirma la llegada.`,
   }[r.estado] || r.estado;
-  return `<p class="alm-admin-llega${r.estado === 'en_almacen' ? ' lista' : ''}"><i class="ti ti-truck" aria-hidden="true"></i> ${texto}
-    <small>Recojo de ${formatearMoneda(r.costo)}: se le paga al repartidor y se le descuenta al agricultor al vender.</small></p>`;
+  const sinVehiculo = r.estado === 'pendiente_asignacion' && r.sin_vehiculo_registrado;
+  return `<p class="alm-admin-llega${r.estado === 'en_almacen' ? ' lista' : ''}${sinVehiculo ? ' sin-coordinar' : ''}"><i class="ti ti-${sinVehiculo ? 'truck-off' : 'truck'}" aria-hidden="true"></i> ${texto}
+    <small>${sinVehiculo
+    ? `Costo estimado con la tarifa de la app: ${formatearMoneda(r.costo)}. Si contratas un camión, el flete que acuerdes lo reemplaza.`
+    : `Recojo de ${formatearMoneda(r.costo)}: se le paga al repartidor y se le descuenta al agricultor al vender.`}</small></p>
+    ${['pendiente_asignacion', 'propuesto'].includes(r.estado) ? renderFormTransporteContratado(r) : ''}`;
+}
+
+// H8 (validación con usuarios del 2026-10-13: 1600 kg de papa y solo una moto registrada). 21st.dev "Appointment Booking
+// Split": los datos del vehículo, el teléfono y el día en un solo formulario; ui-ux-pro-max: cada error va junto a su
+// campo (aria-describedby) y el botón dice lo que pasa al tocarlo.
+const CAMPOS_TRANSPORTE = [
+  { campo: 'nombre', etiqueta: 'Conductor', tipo: 'text', extra: 'maxlength="80" autocomplete="off" placeholder="Nombre y apellido"' },
+  { campo: 'telefono', etiqueta: 'Celular del conductor', tipo: 'tel', extra: 'inputmode="tel" maxlength="11" placeholder="987 654 321"' },
+  { campo: 'placa', etiqueta: 'Placa', tipo: 'text', extra: 'maxlength="10" autocomplete="off" placeholder="ABC-123"' },
+  { campo: 'capacidadKg', etiqueta: 'Carga hasta (kg)', tipo: 'number', extra: 'inputmode="decimal" min="1" step="any"' },
+  { campo: 'capacidadSacos', etiqueta: 'Sacos que entran (opcional)', tipo: 'number', extra: 'inputmode="numeric" min="1" step="1"' },
+  { campo: 'fecha', etiqueta: 'Día y hora del recojo', tipo: 'datetime-local', extra: '' },
+  { campo: 'flete', etiqueta: 'Flete acordado (S/)', tipo: 'number', extra: 'inputmode="decimal" min="1" step="any"' },
+];
+
+function renderFormTransporteContratado(r) {
+  const id = escapeAttr(r.id);
+  const campos = CAMPOS_TRANSPORTE.map((c) => `
+          <label class="ft-campo ft-${c.campo}" for="ft-${c.campo}-${id}">${c.etiqueta}
+            <input id="ft-${c.campo}-${id}" name="${c.campo}" type="${c.tipo}" ${c.extra} aria-describedby="ft-${c.campo}-${id}-error">
+            <small class="ft-error hidden" id="ft-${c.campo}-${id}-error" role="alert"></small>
+          </label>`).join('');
+  return `
+    <button type="button" class="btn ${r.sin_vehiculo_registrado ? 'btn-primary' : 'btn-outline'} btn-sm btn-abrir-transporte" data-recojo-id="${id}" aria-expanded="false" aria-controls="ft-${id}">
+      <i class="ti ti-truck-delivery" aria-hidden="true"></i> Asignar transporte contratado</button>
+    <form class="form-transporte hidden" id="ft-${id}" data-recojo-id="${id}" data-peso="${Number(r.peso_kg) || ''}" data-sacos="${r.sacos || ''}" novalidate>
+      <p class="ft-titulo"><strong>Transporte contratado</strong>
+        <small>El conductor no necesita la app: tú marcas cuándo la recogió y le pagas el flete por fuera. Al agricultor le avisamos quién va, cuándo y cuánto cuesta (se le descuenta al vender).</small></p>
+      <div class="ft-campos">${campos}</div>
+      <div class="ft-acciones">
+        <button type="submit" class="btn btn-primary btn-sm"><i class="ti ti-send" aria-hidden="true"></i> Asignar y avisar al agricultor</button>
+        <button type="button" class="btn btn-ghost btn-sm btn-cerrar-transporte">Cancelar</button>
+      </div>
+    </form>`;
+}
+
+function mostrarErrorTransporte(form, campo, texto) {
+  form.querySelectorAll('.ft-error').forEach((e) => { e.classList.add('hidden'); e.textContent = ''; });
+  form.querySelectorAll('[aria-invalid]').forEach((e) => e.removeAttribute('aria-invalid'));
+  const input = form.elements[campo] || form.elements.nombre;
+  const caja = form.querySelector(`#${CSS.escape(input.id)}-error`);
+  caja.textContent = texto;
+  caja.classList.remove('hidden');
+  input.setAttribute('aria-invalid', 'true');
+  input.focus();
+}
+
+async function enviarTransporteContratado(form) {
+  const valores = Object.fromEntries(CAMPOS_TRANSPORTE.map((c) => [c.campo, form.elements[c.campo].value]));
+  const { datos, campo, error } = Reglas.datosTransporteContratado(valores, {
+    pesoKg: Number(form.dataset.peso) || null, sacos: Number(form.dataset.sacos) || null,
+  });
+  if (error) { mostrarErrorTransporte(form, campo, error); return; }
+  const boton = form.querySelector('button[type="submit"]');
+  boton.disabled = true;
+  try {
+    await Api.recojos.contratarTransporte(form.dataset.recojoId, datos);
+    toast('Transporte asignado: le avisamos al agricultor quién va, cuándo y el flete 🚚');
+    await cargarProductosEnTransito();
+  } catch (err) {
+    boton.disabled = false;
+    // El servidor dice qué no alcanza o qué falta (capacidad, sacos, fecha...): se muestra en el campo que corresponde.
+    const texto = err.message || 'No se pudo asignar el transporte.';
+    const campoDelError = /sacos/i.test(texto) ? 'capacidadSacos' : /kg/.test(texto) ? 'capacidadKg' : /celular/i.test(texto) ? 'telefono'
+      : /placa/i.test(texto) ? 'placa' : /día/i.test(texto) ? 'fecha' : 'nombre';
+    mostrarErrorTransporte(form, campoDelError, texto);
+  }
+}
+
+async function marcarRecogidoContratado(boton) {
+  boton.disabled = true;
+  try {
+    await Api.recojos.recogidoContratado(boton.dataset.recojoId);
+    toast('Listo: le avisamos al agricultor que ya recogieron su cosecha.');
+    await cargarProductosEnTransito();
+  } catch (err) {
+    boton.disabled = false;
+    manejarError(err, 'marcar el recojo');
+  }
 }
 
 function renderTarjetaProductoTransito(p, totalReservas, indice = 0, recojo = null) {
@@ -12819,6 +12933,10 @@ function inicializarEventos() {
       Estado.tabProductorInicial = 'productos'; // donde están "Cosechas por llevar al almacén"
       cambiarVista('panel-productor');
     }
+    if (boton.dataset.accion === 'ver-transito') {
+      Estado.tabAdminInicial = 'transito';
+      cambiarVista('panel-admin');
+    }
   });
   document.getElementById('notificaciones-empty').addEventListener('click', (e) => {
     const boton = e.target.closest('[data-notif-accion]');
@@ -13216,10 +13334,28 @@ function inicializarEventos() {
     if (form && e.target.name === 'cantidad') evaluarCantidadLlegada(form);
   });
   listaTransito.addEventListener('submit', (e) => {
+    const transporte = e.target.closest('.form-transporte');
+    if (transporte) { e.preventDefault(); enviarTransporteContratado(transporte); return; }
     const form = e.target.closest('.form-llegada');
     if (!form) return;
     e.preventDefault();
     confirmarLlegadaAlmacen(form);
+  });
+  // H8: abrir/cerrar el formulario del transporte contratado y marcar que ya recogió la cosecha.
+  listaTransito.addEventListener('click', (e) => {
+    const abrir = e.target.closest('.btn-abrir-transporte');
+    const cerrar = e.target.closest('.btn-cerrar-transporte');
+    const recogido = e.target.closest('.btn-recogido-contratado');
+    if (recogido) { marcarRecogidoContratado(recogido); return; }
+    if (!abrir && !cerrar) return;
+    const tarjeta = (abrir || cerrar).closest('.pedido-card');
+    const form = tarjeta.querySelector('.form-transporte');
+    const boton = tarjeta.querySelector('.btn-abrir-transporte');
+    form.classList.toggle('hidden', Boolean(cerrar));
+    boton.classList.toggle('hidden', !cerrar);
+    boton.setAttribute('aria-expanded', String(!cerrar));
+    if (abrir) form.elements.nombre.focus();
+    else boton.focus();
   });
   document.getElementById('envios-list').addEventListener('change', (e) => {
     if (e.target.matches('.foto-entrega-input')) alElegirFotoEntrega(e.target);
