@@ -964,6 +964,7 @@ async function iniciarSesionConToken(token) {
 
   guardarSesion();
   actualizarUIAuth();
+  if (!configAvisos) cargarConfigAvisos(); // sin sesión, el gateway no la entrega: se pide de nuevo al entrar
   sincronizarAvisosCelular();
 }
 

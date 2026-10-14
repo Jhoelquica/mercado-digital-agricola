@@ -445,7 +445,9 @@ const Api = {
     listarTodas: () => request('notificaciones', '/notificaciones', { auth: true }),
     // H6: avisos al celular (Web Push) y, de respaldo, por correo (notificaciones/avisos_externos.py).
     avisos: {
-      configuracion: () => request('notificaciones', '/notificaciones/avisos/configuracion'),
+      // Con el token si hay sesión: el gateway (k8s/traefik-routes.yaml) exige JWT a todo GET de /notificaciones, y la
+      // tarjeta de avisos solo se muestra con sesión.
+      configuracion: () => request('notificaciones', '/notificaciones/avisos/configuracion', { auth: 'opcional' }),
       mios: () => request('notificaciones', '/notificaciones/avisos/mios', { auth: true }),
       activar: (suscripcion) => request('notificaciones', '/notificaciones/avisos/push', { method: 'POST', body: suscripcion, auth: true }),
       // Sin sesión a propósito: se llama al cerrar sesión, con el token ya borrado.
