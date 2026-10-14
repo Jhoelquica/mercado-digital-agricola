@@ -559,15 +559,15 @@ def test_mis_reservas_y_ya_no_me_avises():
     _auth(vecino, rol="comprador")
     assert client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
     _auth(yo, rol="comprador")
-    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": []}
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["productos"] == []
     assert client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
-    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": [str(producto.id)]}
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["productos"] == [str(producto.id)]
 
     assert client.delete(f"/productos/{otro.id}/reservar", headers=HEADERS_AUTH).status_code == 404
     assert client.delete(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH).status_code == 200
-    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": []}
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["productos"] == []
     _auth(vecino, rol="comprador")  # la del vecino sigue en pie
-    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json() == {"productos": [str(producto.id)]}
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["productos"] == [str(producto.id)]
 
 
 def test_mis_reservas_es_solo_para_compradores():
@@ -1900,3 +1900,54 @@ def test_sin_alimento_ni_categoria_no_se_restringe(monkeypatch):
     producto = _crear_producto_directo(productor_id=productor_id, categoria=None)
     assert client.get(f"/productos/{producto.id}").json()["unidades_permitidas"] is None
     assert _agregar_unidad(monkeypatch, producto.id, productor_id, "litro").status_code == 200
+
+
+# ============ H7 (validación con usuarios del 2026-10-13): reservar diciendo cuánto ============
+
+def _papa_en_camino(stock=500):
+    producto = _crear_producto_directo(estado="en_transito", nombre="Papa amarilla", categoria="tuberculo", stock=stock,
+                                       unidades_permitidas="kg,saco,arroba")
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.UnidadAlternativa(producto_id=producto.id, unidad="saco", precio=90, factor_a_base=50))
+        db.commit()
+    finally:
+        db.close()
+    return producto
+
+
+def test_el_comprador_reserva_cuantos_sacos_le_interesan():
+    producto = _papa_en_camino()
+    _auth(str(uuid.uuid4()), rol="comprador")
+
+    resp = client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 2, "unidad": "saco"}, headers=HEADERS_AUTH)
+
+    assert resp.status_code == 200, resp.text
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["reservas"] == [
+        {"producto_id": str(producto.id), "cantidad": 2.0, "unidad": "saco"}]
+    _auth(str(uuid.uuid4()), rol="admin")
+    assert [(float(r["cantidad"]), r["unidad"]) for r in client.get(f"/productos/{producto.id}/reservas", headers=HEADERS_AUTH).json()] == [(2.0, "saco")]
+
+
+def test_la_cantidad_sin_unidad_es_en_la_unidad_base_y_sin_cantidad_sigue_siendo_solo_un_aviso():
+    producto = _papa_en_camino()
+    _auth(str(uuid.uuid4()), rol="comprador")
+    assert client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 30}, headers=HEADERS_AUTH).status_code == 200
+    assert client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["reservas"][0]["unidad"] == "kg"
+
+    otro = _papa_en_camino()
+    assert client.post(f"/productos/{otro.id}/reservar", headers=HEADERS_AUTH).status_code == 200  # como antes, sin cuerpo
+    sin_cantidad = [r for r in client.get("/productos/mis-reservas", headers=HEADERS_AUTH).json()["reservas"] if r["producto_id"] == str(otro.id)]
+    assert sin_cantidad == [{"producto_id": str(otro.id), "cantidad": None, "unidad": None}]
+
+
+def test_no_se_reserva_en_otra_unidad_ni_mas_de_lo_que_viene():
+    producto = _papa_en_camino(stock=500)
+    _auth(str(uuid.uuid4()), rol="comprador")
+
+    otra_unidad = client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 3, "unidad": "unidad"}, headers=HEADERS_AUTH)
+    assert otra_unidad.status_code == 422 and "no se vende por unidad" in otra_unidad.json()["detail"]
+    demasiado = client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 11, "unidad": "saco"}, headers=HEADERS_AUTH)  # 550 kg
+    assert demasiado.status_code == 422 and "Solo vienen 500 kg" in demasiado.json()["detail"]
+    assert client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 0}, headers=HEADERS_AUTH).status_code == 422
+    assert client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 10, "unidad": "saco"}, headers=HEADERS_AUTH).status_code == 200

@@ -101,6 +101,10 @@ class Reserva(Base):
     # completamente distinta — mismo caso que Producto.productor_id.
     comprador_id = Column(UUID(as_uuid=True), nullable=False)
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    # H7 (validación con usuarios del 2026-10-13): cuánto le interesa, opcional (p. ej. 2 sacos). Sigue sin ser una
+    # compra: no aparta stock, solo informa al agricultor y al Admin cuánto se pide.
+    cantidad = Column(Numeric(10, 2), nullable=True)
+    unidad = Column(String, nullable=True)
 
 class UnidadAlternativa(Base):
     """Una unidad adicional en la que se puede comprar un Producto, con su propio precio — no

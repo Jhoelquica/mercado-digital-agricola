@@ -1743,6 +1743,7 @@ function renderResumenCalificacion(p) {
 let productosRecibidosComprador = null;
 // Lo que el comprador reservó (solo se consulta al abrir algo que viene en camino).
 let productosReservadosComprador = null;
+let cantidadesReservadasComprador = null; // H7: producto_id → { cantidad, unidad } de lo que pidió al reservar
 let productoDetalleActual = null;
 
 // ---- Producto en camino al almacén: no se compra todavía, se reserva gratis y se avisa al llegar ----
@@ -1756,17 +1757,30 @@ function renderAccionReserva(p) {
     return '<p class="detalle-reserva-texto">Viene de la chacra al almacén: se podrá comprar cuando llegue.</p>';
   }
   if (productosReservadosComprador?.has(String(p.id))) {
+    const pedido = cantidadesReservadasComprador?.get(String(p.id));
+    const cuanto = pedido ? `Reservaste ${String(pedido.cantidad).replace('.', ',')} ${unidadPlural(pedido.unidad, pedido.cantidad)}. ` : '';
     return `
       <div class="detalle-reserva-hecha" role="status">
         <span class="detalle-reserva-icono" aria-hidden="true"><i class="ti ti-bell-check"></i></span>
         <div>
           <strong>Te avisaremos cuando llegue</strong>
-          <span>El aviso te llegará en Notificaciones. Reservar no te obliga a comprar.</span>
+          <span>${cuanto}El aviso te llegará en Notificaciones. Reservar no te obliga a comprar.</span>
         </div>
       </div>
       <button type="button" class="btn-link detalle-reserva-quitar" data-accion-reserva="quitar">Ya no me avises</button>`;
   }
-  return `${explicacion}
+  // H7 (validación con usuarios del 2026-10-13): puede decir cuánto le interesa, en las unidades en que se vende.
+  const unidades = [p.unidad_medida, ...(p.unidades_alternativas || []).map((a) => a.unidad)].filter(Boolean);
+  const cantidad = `
+      <div class="detalle-reserva-cantidad">
+        <label for="reserva-cantidad">¿Cuánto te interesa? <span class="auth-opcional">(opcional)</span></label>
+        <div class="detalle-reserva-campos">
+          <input id="reserva-cantidad" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej. 2">
+          <select id="reserva-unidad" aria-label="Unidad">${unidades.map((u) => `<option value="${escapeAttr(u)}">${escapeAttr(unidadEtiqueta(u))}</option>`).join('')}</select>
+        </div>
+        <small>Así el agricultor sabe cuánto se pide. No aparta el producto ni te obliga a comprar.</small>
+      </div>`;
+  return `${explicacion}${cantidad}
       <button type="button" class="btn btn-primary btn-lg btn-block" data-accion-reserva="reservar"><i class="ti ti-bell" aria-hidden="true"></i> Avisarme cuando llegue</button>`;
 }
 
@@ -1798,8 +1812,16 @@ async function alternarReservaDetalle(p, accion, boton) {
       productosReservadosComprador?.delete(String(p.id));
       toast('Listo: ya no te avisaremos de este producto.');
     } else {
-      await Api.productos.reservar(p.id);
+      const { datos, error } = Reglas.cantidadDeReserva(document.getElementById('reserva-cantidad')?.value,
+        document.getElementById('reserva-unidad')?.value);
+      if (error) {
+        toast(error, 'error');
+        boton.disabled = false;
+        return;
+      }
+      await Api.productos.reservar(p.id, datos);
       (productosReservadosComprador ||= new Set()).add(String(p.id));
+      if (datos) (cantidadesReservadasComprador ||= new Map()).set(String(p.id), datos);
       toast('Reservado: te avisaremos cuando llegue al almacén 🔔');
     }
   } catch (err) {
@@ -1948,6 +1970,8 @@ async function cargarDetalleProducto(id) {
   ]);
   productosRecibidosComprador = recibidos ? new Set(recibidos.productos.map(String)) : null;
   productosReservadosComprador = reservas ? new Set(reservas.productos.map(String)) : null;
+  cantidadesReservadasComprador = reservas?.reservas
+    ? new Map(reservas.reservas.filter((r) => r.cantidad != null).map((r) => [String(r.producto_id), r])) : null;
 
   renderPaginaDetalleProducto(p, resenas, productor);
 }

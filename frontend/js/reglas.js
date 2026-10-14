@@ -46,6 +46,15 @@
         : `Ahora ningún cultivo conviene mucho; el mejor es ${f.nombre}`;
       return `${inicio} (${f.puntaje} de 100, ${nivel}): ${ganancia}${riesgo ? ` y ${riesgo}` : ''}.`;
     },
+
+    // H7: lo que se manda al reservar. Vacío = solo el aviso (como antes); si escribe algo, tiene que ser mayor que 0.
+    cantidadDeReserva(texto, unidad) {
+      const limpio = String(texto ?? '').trim().replace(',', '.');
+      if (!limpio) return { datos: null, error: null };
+      const cantidad = Number(limpio);
+      if (!Number.isFinite(cantidad) || cantidad <= 0) return { datos: null, error: 'Escribe cuánto te interesa con un número mayor que 0, o déjalo vacío.' };
+      return { datos: { cantidad, unidad: unidad || null }, error: null };
+    },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Reglas;

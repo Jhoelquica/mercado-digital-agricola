@@ -291,7 +291,8 @@ const Api = {
     reservas: (id) => request('productos', `/productos/${id}/reservas`, { auth: true }),
     // Comprador: reservar lo que todavía viene en camino (sin pagar; se le avisa cuando llega), ver qué reservó y
     // quitar su reserva ("ya no me avises").
-    reservar: (id) => request('productos', `/productos/${id}/reservar`, { method: 'POST', auth: true }),
+    // datos (opcional, H7): { cantidad, unidad } — cuánto le interesa; sin datos es solo el aviso.
+    reservar: (id, datos) => request('productos', `/productos/${id}/reservar`, { method: 'POST', body: datos || undefined, auth: true }),
     misReservas: () => request('productos', '/productos/mis-reservas', { auth: true }),
     quitarReserva: (id) => request('productos', `/productos/${id}/reservar`, { method: 'DELETE', auth: true }),
     listarResenas: (id) => request('productos', `/productos/${id}/resenas`),

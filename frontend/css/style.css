@@ -4495,6 +4495,15 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .detalle-reserva-hecha span { font-size: 0.92rem; line-height: 1.45; }
 .detalle-reserva-icono { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 12px; background: #fff; font-size: 1.4rem; }
 .detalle-reserva-quitar { align-self: flex-start; min-height: 44px; font-size: 0.95rem; }
+/* H7: cuánto le interesa al reservar (opcional). */
+.detalle-reserva-cantidad { display: grid; gap: 6px; }
+.detalle-reserva-cantidad label { font-weight: 700; color: var(--texto); }
+.detalle-reserva-campos { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.detalle-reserva-campos input, .detalle-reserva-campos select { min-height: 48px; font-size: 1.05rem; }
+.detalle-reserva-cantidad small { color: var(--texto-suave); line-height: 1.4; }
+/* H7: el tipo de comprador no limita lo que se compra. */
+.auth-tipo-nota { display: flex; gap: 6px; align-items: flex-start; margin: 8px 0 0; font-size: 0.88rem; line-height: 1.4; color: var(--texto-suave); }
+.auth-tipo-nota i { margin-top: 2px; color: var(--color-primario); }
 .detalle-sticky-reservado { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: #14538a; }
 .detalle-stock.agotado::before { background: #888; }
 

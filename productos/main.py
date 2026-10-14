@@ -283,6 +283,12 @@ class DescontarLote(BaseModel):
 class OrdenImagen(BaseModel):
     orden: int
 
+
+class ReservaCrear(BaseModel):
+    """H7: cuánto le interesa al comprador (opcional). Sin unidad, es la unidad base del producto."""
+    cantidad: float | None = Field(default=None, gt=0, le=CANTIDAD_MAXIMA_LINEA)
+    unidad: str | None = Field(default=None, max_length=20)
+
 class BusquedaRegistrar(BaseModel):
     termino: str
 
@@ -678,8 +684,11 @@ def listar_productos(db: Session = Depends(get_db)):
 # vez). Va antes de /productos/{producto_id}, que se comería "mis-reservas" como id.
 @app.get("/productos/mis-reservas")
 def mis_reservas(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
-    filas = db.query(models.Reserva.producto_id).filter(models.Reserva.comprador_id == usuario.get("sub")).all()
-    return {"productos": sorted(str(producto_id) for (producto_id,) in filas)}
+    filas = db.query(models.Reserva).filter(models.Reserva.comprador_id == usuario.get("sub")).all()
+    return {"productos": sorted(str(r.producto_id) for r in filas),
+            # H7: cuánto pidió en cada una (para decirle "reservaste 2 sacos")
+            "reservas": [{"producto_id": str(r.producto_id), "cantidad": float(r.cantidad) if r.cantidad is not None else None,
+                          "unidad": r.unidad} for r in filas]}
 
 
 @app.get("/productos/mios")
@@ -1263,14 +1272,37 @@ def confirmar_llegada_almacen(
 
     return producto
 
+def _cantidad_de_la_reserva(producto, datos: ReservaCrear | None):
+    """H7: la cantidad y la unidad que pidió el comprador, validadas: la unidad tiene que ser una en que se vende el
+    producto (la base o una alternativa a la venta) y la cantidad no puede pasar de lo que viene en camino."""
+    if datos is None or datos.cantidad is None:
+        return None, None
+    unidad = datos.unidad or producto.unidad_medida
+    if unidad == producto.unidad_medida:
+        factor = 1.0
+    else:
+        alternativas = alternativas_a_la_venta(producto, [
+            {"unidad": u.unidad, "factor_a_base": u.factor_a_base} for u in producto.unidades_alternativas])
+        alternativa = next((a for a in alternativas if a["unidad"] == unidad), None)
+        if not alternativa:
+            raise HTTPException(status_code=422, detail=f"{producto.nombre} no se vende por {unidad}.")
+        factor = float(alternativa["factor_a_base"])
+    if producto.stock is not None and datos.cantidad * factor > float(producto.stock):
+        raise HTTPException(status_code=422,
+                            detail=f"Solo vienen {producto.stock} {producto.unidad_medida}: reserva una cantidad menor.")
+    return datos.cantidad, unidad
+
+
 @app.post("/productos/{producto_id}/reservar")
 def reservar_producto(
         producto_id: str,
+        datos: ReservaCrear | None = None,
         db: Session = Depends(get_db),
         usuario: dict = Depends(requiere_rol("comprador")),
 ):
     """Reserva de interés (sin monto, sin pago) sobre un producto todavía "en_transito" — no
-    tiene sentido reservar algo que ya está "disponible", ahí se compra directo."""
+    tiene sentido reservar algo que ya está "disponible", ahí se compra directo. Puede decir cuánto
+    le interesa (H7): no aparta stock, solo le avisa al agricultor y al Admin cuánto se pide."""
     producto = db.query(models.Producto).filter(models.Producto.id == producto_id).first()
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
@@ -1289,7 +1321,8 @@ def reservar_producto(
     if ya_reservado:
         raise HTTPException(status_code=400, detail="Ya reservaste este producto")
 
-    nueva_reserva = models.Reserva(producto_id=producto_id, comprador_id=comprador_id)
+    cantidad, unidad = _cantidad_de_la_reserva(producto, datos)
+    nueva_reserva = models.Reserva(producto_id=producto_id, comprador_id=comprador_id, cantidad=cantidad, unidad=unidad)
     db.add(nueva_reserva)
     try:
         db.commit()

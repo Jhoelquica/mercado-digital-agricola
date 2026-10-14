@@ -51,3 +51,11 @@ test('H5: "¿qué sembrar?" empieza con una frase con la respuesta', () => {
     'Ahora ningún cultivo conviene mucho; el mejor es Oca (20 de 100, conviene poco): pierdes S/ 0.50 por kg y hay algo de riesgo de que sobre.');
   assert.equal(Reglas.fraseResumenSiembra(undefined), null);
 });
+
+test('H7: al reservar, la cantidad es opcional y si se escribe tiene que ser mayor que 0', () => {
+  assert.deepEqual(Reglas.cantidadDeReserva('', 'saco'), { datos: null, error: null });
+  assert.deepEqual(Reglas.cantidadDeReserva('2', 'saco'), { datos: { cantidad: 2, unidad: 'saco' }, error: null });
+  assert.deepEqual(Reglas.cantidadDeReserva('2,5', 'kg'), { datos: { cantidad: 2.5, unidad: 'kg' }, error: null });
+  assert.ok(Reglas.cantidadDeReserva('0', 'kg').error);
+  assert.ok(Reglas.cantidadDeReserva('-3', 'kg').error);
+});
