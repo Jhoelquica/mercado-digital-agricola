@@ -11687,6 +11687,26 @@ let graficosEconomiaProductorListos = false;
 function marcarBotonActivo(boton, activo) {
   boton.classList.toggle('active', activo);
   if (activo) boton.setAttribute('aria-current', 'true'); else boton.removeAttribute('aria-current');
+  // En una fila que se desliza (pestañas del panel en el celular), la activa se trae al centro sin mover la página.
+  const fila = boton.parentElement;
+  if (activo && fila && fila.scrollWidth > fila.clientWidth) {
+    fila.scrollTo({ left: boton.offsetLeft - (fila.clientWidth - boton.offsetWidth) / 2, behavior: 'smooth' });
+  }
+}
+
+// Pestañas de los paneles en el celular: un degradado en el borde avisa que hay más pestañas a ese lado (en
+// computadora van en varias filas y no hace falta). Ver "Pestañas de los paneles" en style.css.
+function vigilarDesbordePestanas(fila) {
+  if (!fila) return;
+  const actualizar = () => {
+    const desborda = fila.scrollWidth > fila.clientWidth + 1;
+    fila.classList.toggle('hay-mas-izq', desborda && fila.scrollLeft > 4);
+    fila.classList.toggle('hay-mas-der', desborda && fila.scrollLeft + fila.clientWidth < fila.scrollWidth - 4);
+  };
+  fila.addEventListener('scroll', actualizar, { passive: true });
+  window.addEventListener('resize', actualizar);
+  new ResizeObserver(actualizar).observe(fila); // el panel se muestra después de cargar (antes mide 0)
+  actualizar();
 }
 
 function activarTabProductor(nombreTab) {
@@ -12962,6 +12982,7 @@ function inicializarEventos() {
   // Nav de secciones dedicadas del Panel Productor — delegado sobre .productor-tabs (markup
   // estático en index.html, nunca se reemplaza por innerHTML, así que un solo listener alcanza
   // para toda la vida de la página).
+  document.querySelectorAll('.productor-tabs, .admin-tabs').forEach(vigilarDesbordePestanas);
   document.querySelector('.productor-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.productor-tab-btn');
     if (btn) activarTabProductor(btn.dataset.tab);

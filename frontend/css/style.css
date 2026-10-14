@@ -1597,25 +1597,7 @@ input, select { font-family: inherit; }
 /* ---------- PANEL ADMIN — mismas secciones dedicadas + ancho completo que Productor/Repartidor ---------- */
 .admin-shell { display: flex; flex-direction: column; gap: 22px; }
 
-.admin-tabs {
-  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
-  border-bottom: 2px solid var(--color-borde);
-  scrollbar-width: none;
-}
-.admin-tabs::-webkit-scrollbar { display: none; }
-.admin-tab-btn {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  padding: 12px 18px; font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
-  color: var(--color-secundario); border-radius: 12px 12px 0 0;
-  position: relative; transition: color .15s ease, background .15s ease;
-}
-.admin-tab-btn i { font-size: 1.1rem; }
-.admin-tab-btn:hover { color: var(--color-primario); background: color-mix(in srgb, var(--color-borde) 12%, transparent); }
-.admin-tab-btn.active { color: var(--color-primario); }
-.admin-tab-btn.active::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
-  background: var(--color-primario); border-radius: 3px 3px 0 0;
-}
+/* Las pestañas del admin comparten el estilo de las del productor (ver "Pestañas de los paneles"). */
 
 .admin-tab-panel { display: none; }
 .admin-tab-panel.active { display: flex; flex-direction: column; gap: 24px; animation: productorFadeUp .35s ease both; }
@@ -1639,9 +1621,6 @@ input, select { font-family: inherit; }
 @media (min-width: 760px) { .grid-admin { display: grid; grid-template-columns: repeat(2, 1fr); align-items: start; } }
 @media (min-width: 1150px) { .grid-admin { grid-template-columns: repeat(3, 1fr); } }
 
-@media (max-width: 560px) {
-  .admin-tab-btn { padding: 10px 14px; font-size: 0.85rem; }
-}
 
 /* ---------- MAPAS (LEAFLET) ---------- */
 .mapa-mini {
@@ -3439,24 +3418,38 @@ input, select { font-family: inherit; }
 
 .productor-shell { display: flex; flex-direction: column; gap: 22px; }
 
-.productor-tabs {
-  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
-  border-bottom: 2px solid var(--color-borde);
-  scrollbar-width: none;
+/* Pestañas de los paneles (productor y admin). Antes, una sola fila con el desborde escondido: la última pestaña
+   ("Gestión Económica", y varias del admin) quedaba cortada sin ninguna señal (2026-10-14). ui-ux-pro-max: no recortar
+   contenido sin aviso; 21st.dev "Badge Tabs": la activa resaltada como una pastilla, las demás tenues, con su contador.
+   En computadora van en las filas que hagan falta, todas a la vista; en el celular, una fila que se desliza con un
+   degradado en el borde que avisa que hay más (vigilarDesbordePestanas en app.js). */
+.productor-tabs, .admin-tabs {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 5px;
+  background: var(--color-superficie); border: 1px solid var(--color-borde); border-radius: 16px;
 }
-.productor-tabs::-webkit-scrollbar { display: none; }
-.productor-tab-btn {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-  padding: 12px 18px; font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
-  color: var(--color-secundario); border-radius: 12px 12px 0 0;
-  position: relative; transition: color .15s ease, background .15s ease;
+.productor-tab-btn, .admin-tab-btn {
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0; min-height: 44px;
+  padding: 10px 14px; font-family: var(--font-titulo); font-weight: 700; font-size: 0.92rem;
+  color: var(--color-secundario); background: transparent; border: 0; border-radius: 12px; cursor: pointer;
+  transition: color .15s ease, background-color .15s ease, box-shadow .15s ease;
 }
-.productor-tab-btn i { font-size: 1.1rem; }
-.productor-tab-btn:hover { color: var(--color-primario); background: color-mix(in srgb, var(--color-borde) 12%, transparent); }
-.productor-tab-btn.active { color: var(--color-primario); }
-.productor-tab-btn.active::after {
-  content: ''; position: absolute; left: 10px; right: 10px; bottom: -2px; height: 3px;
-  background: var(--color-primario); border-radius: 3px 3px 0 0;
+.productor-tab-btn i, .admin-tab-btn i { font-size: 1.1rem; }
+.productor-tab-btn:hover, .admin-tab-btn:hover { color: var(--color-primario); background: rgba(255, 255, 255, 0.65); }
+.productor-tab-btn.active, .admin-tab-btn.active {
+  color: var(--color-primario); background: #fff;
+  box-shadow: 0 1px 3px rgba(45, 59, 42, 0.16), 0 0 0 1px rgba(45, 59, 42, 0.08);
+}
+.productor-tab-btn:focus-visible, .admin-tab-btn:focus-visible { outline: 3px solid rgba(45, 59, 42, 0.35); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .productor-tabs, .admin-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .productor-tabs::-webkit-scrollbar, .admin-tabs::-webkit-scrollbar { display: none; }
+  .productor-tab-btn, .admin-tab-btn { scroll-snap-align: start; padding: 10px 14px; font-size: 0.85rem; }
+  .productor-tabs.hay-mas-der, .admin-tabs.hay-mas-der { -webkit-mask-image: linear-gradient(to right, #000 82%, transparent); mask-image: linear-gradient(to right, #000 82%, transparent); }
+  .productor-tabs.hay-mas-izq, .admin-tabs.hay-mas-izq { -webkit-mask-image: linear-gradient(to left, #000 82%, transparent); mask-image: linear-gradient(to left, #000 82%, transparent); }
+  .productor-tabs.hay-mas-izq.hay-mas-der, .admin-tabs.hay-mas-izq.hay-mas-der {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 18%, #000 82%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 18%, #000 82%, transparent);
+  }
 }
 
 .productor-tab-panel { display: none; }
@@ -3588,9 +3581,6 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 .costos-leyenda .costos-total { grid-template-columns: minmax(0, 1fr) auto; margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--borde); }
 @media (max-width: 560px) { .costos-cuerpo { grid-template-columns: 1fr; } }
 
-@media (max-width: 560px) {
-  .productor-tab-btn { padding: 10px 14px; font-size: 0.85rem; }
-}
 
 /* ============================================================================
    AMPLIACIÓN — detalle de producto. Pedido explícito: "muy pequeño, hazlo un poco más grande".
