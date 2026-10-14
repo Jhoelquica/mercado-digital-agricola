@@ -33,6 +33,19 @@
       const total = Math.round(conGasto.reduce((s, e) => s + e.total, 0) * 100) / 100;
       return { total, etapas: conGasto, enElFinal: conGasto.filter((e) => e.final) };
     },
+
+    // H5: la respuesta de "¿qué me conviene sembrar?" en una sola frase, con la primera del ranking (su puntaje, cuánto
+    // se gana por kg y el riesgo de que sobre). El porqué va debajo, con sus frases.
+    fraseResumenSiembra(f, moneda = (n) => `S/ ${Number(n).toFixed(2)}`) {
+      if (!f || !f.nombre) return null;
+      const nivel = f.puntaje >= 70 ? 'conviene mucho' : f.puntaje >= 50 ? 'conviene' : f.puntaje >= 35 ? 'puede ser' : 'conviene poco';
+      const riesgo = { bajo: 'hay poco riesgo de que sobre', medio: 'hay algo de riesgo de que sobre', alto: 'hay mucho riesgo de que sobre' }[f.riesgo];
+      const ganancia = f.margen_kg == null ? 'todavía falta saber cuánto cuesta producirlo'
+        : `${f.margen_kg >= 0 ? 'ganas' : 'pierdes'} ${moneda(Math.abs(f.margen_kg))} por kg`;
+      const inicio = f.puntaje >= 35 ? `Lo que más te conviene sembrar ahora es ${f.nombre}`
+        : `Ahora ningún cultivo conviene mucho; el mejor es ${f.nombre}`;
+      return `${inicio} (${f.puntaje} de 100, ${nivel}): ${ganancia}${riesgo ? ` y ${riesgo}` : ''}.`;
+    },
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = Reglas;

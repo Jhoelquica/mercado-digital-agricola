@@ -5020,7 +5020,7 @@ function inicializarMapaUbicacionProductor() {
   ubicacionProductorSeleccionada = null;
   const ayuda = document.getElementById('mapa-productor-ayuda');
   if (ayuda) {
-    ayuda.textContent = 'Toca el mapa para marcar dónde está tu parcela: será tu primera chacra.';
+    ayuda.textContent = 'Si estás en tu parcela, toca «Usar mi ubicación». Si no, toca en el mapa dónde está: será tu primera chacra.';
     ayuda.classList.remove('confirmado');
   }
 
@@ -5037,9 +5037,14 @@ function inicializarMapaUbicacionProductor() {
 function actualizarAyudaUbicacionProductor() {
   const ayuda = document.getElementById('mapa-productor-ayuda');
   if (!ayuda || !ubicacionProductorSeleccionada) return;
-  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionProductorSeleccionada.lat.toFixed(5)}, ${ubicacionProductorSeleccionada.lng.toFixed(5)})`;
+  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionProductorSeleccionada.lat.toFixed(5)}, ${ubicacionProductorSeleccionada.lng.toFixed(5)}). ${TEXTO_UN_SOLO_PIN}`;
   ayuda.classList.add('confirmado');
 }
+
+// H5 (validación con usuarios del 2026-10-13): el mapa tiene un solo alfiler (tocar otro punto lo mueve) y el botón
+// "Usar mi ubicación" va grande, arriba del mapa.
+const TEXTO_UN_SOLO_PIN = 'Si no es ahí, toca otro punto: el alfiler se mueve.';
+const BOTON_MI_UBICACION = '<i class="ti ti-current-location" aria-hidden="true"></i> Usar mi ubicación';
 
 async function usarMiUbicacionProductor() {
   const btn = document.getElementById('btn-ubicacion-productor');
@@ -5054,7 +5059,7 @@ async function usarMiUbicacionProductor() {
     toast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Usar mi ubicación';
+    btn.innerHTML = BOTON_MI_UBICACION;
   }
 }
 
@@ -6873,7 +6878,7 @@ function inicializarMapaUbicacionChacra() {
   ubicacionChacraSeleccionada = null;
   const ayuda = document.getElementById('mapa-chacra-ayuda');
   if (ayuda) {
-    ayuda.textContent = 'Toca el mapa para marcar dónde está la chacra.';
+    ayuda.textContent = 'Si estás en la chacra, toca «Usar mi ubicación». Si no, toca en el mapa dónde está.';
     ayuda.classList.remove('confirmado');
   }
 
@@ -6890,7 +6895,7 @@ function inicializarMapaUbicacionChacra() {
 function actualizarAyudaUbicacionChacra() {
   const ayuda = document.getElementById('mapa-chacra-ayuda');
   if (!ayuda || !ubicacionChacraSeleccionada) return;
-  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionChacraSeleccionada.lat.toFixed(5)}, ${ubicacionChacraSeleccionada.lng.toFixed(5)})`;
+  ayuda.innerHTML = `<i class="ti ti-map-pin"></i> Ubicación marcada (${ubicacionChacraSeleccionada.lat.toFixed(5)}, ${ubicacionChacraSeleccionada.lng.toFixed(5)}). ${TEXTO_UN_SOLO_PIN}`;
   ayuda.classList.add('confirmado');
 }
 
@@ -6907,7 +6912,7 @@ async function usarMiUbicacionChacra() {
     toast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Usar mi ubicación';
+    btn.innerHTML = BOTON_MI_UBICACION;
   }
 }
 
@@ -8898,12 +8903,31 @@ function renderTarjetaSiembraSugerida(f, i) {
     </article>`;
 }
 
+// H5 (validación con usuarios del 2026-10-13): primero una frase con la respuesta y, debajo, el porqué. Solo cambia
+// cómo se muestra; el cálculo (productores/recomendacion_siembra.py) es el mismo.
+function renderResumenQueSembrar(d) {
+  const primera = d.recomendaciones[0];
+  const frase = Reglas.fraseResumenSiembra(primera, formatearMoneda);
+  if (!frase) return '';
+  const motivos = primera.frases?.length
+    ? `<div class="qs-resumen-motivo"><strong>¿Por qué?</strong><ul>${primera.frases.map((t) => `<li>${escapeAttr(t)}</li>`).join('')}</ul></div>` : '';
+  const ia = d.consejo ? `
+      <div class="qs-resumen-ia"><strong><i class="ti ti-sparkles" aria-hidden="true"></i> En pocas palabras</strong><p>${escapeAttr(d.consejo)}</p><small>Resumen hecho con IA a partir de los datos de abajo: revísalo con tu experiencia.</small></div>` : '';
+  return `
+    <section class="qs-consejo qs-resumen" aria-label="Resumen">
+      <span class="qs-consejo-icono"><i class="ti ti-bulb" aria-hidden="true"></i></span>
+      <div>
+        <p class="qs-resumen-frase">${escapeAttr(frase)}</p>${motivos}${ia}
+      </div>
+    </section>`;
+}
+
 function renderQueSembrar(d) {
-  const consejo = d.consejo ? `
+  const consejo = d.recomendaciones.length ? renderResumenQueSembrar(d) : (d.consejo ? `
     <section class="qs-consejo" aria-label="Consejo">
       <span class="qs-consejo-icono"><i class="ti ti-sparkles" aria-hidden="true"></i></span>
       <div><strong>En pocas palabras</strong><p>${escapeAttr(d.consejo)}</p><small>Resumen hecho con IA a partir de los datos de abajo: revísalo con tu experiencia.</small></div>
-    </section>` : '';
+    </section>` : '');
   const aviso = d.ventas_disponibles ? '' : `
     <p class="ganancias-nota alerta"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Ahora no pudimos traer las ventas: el ranking usa solo el catálogo y las siembras.</p>`;
   const tarjetas = d.recomendaciones.length

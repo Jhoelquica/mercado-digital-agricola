@@ -13,7 +13,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=2ec2baad">
+<link rel="stylesheet" href="css/style.css?v=5cd40cc1">
 </head>
 <body>
 
@@ -445,10 +445,10 @@
         <div class="mapa-selector-bloque">
           <div class="mapa-selector-label">
             <span><i class="ti ti-map-pin"></i> Ubicación de tu chakra (opcional)</span>
-            <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-productor">Usar mi ubicación</button>
           </div>
+          <button type="button" class="btn btn-outline btn-mi-ubicacion" id="btn-ubicacion-productor"><i class="ti ti-current-location" aria-hidden="true"></i> Usar mi ubicación</button>
           <div id="mapa-ubicacion-productor" class="mapa-seleccionable"></div>
-          <p class="mapa-ayuda" id="mapa-productor-ayuda">Toca el mapa para marcar dónde está tu parcela: será tu primera chacra.</p>
+          <p class="mapa-ayuda" id="mapa-productor-ayuda">Si estás en tu parcela, toca «Usar mi ubicación». Si no, toca en el mapa dónde está: será tu primera chacra.</p>
         </div>
         <button type="submit" class="btn btn-primary">Crear perfil de productor</button>
       </form>
@@ -524,10 +524,10 @@
               <div class="mapa-selector-bloque">
                 <div class="mapa-selector-label">
                   <span><i class="ti ti-map-pin"></i> Ubicación de la chacra</span>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btn-ubicacion-chacra">Usar mi ubicación</button>
                 </div>
+                <button type="button" class="btn btn-outline btn-mi-ubicacion" id="btn-ubicacion-chacra"><i class="ti ti-current-location" aria-hidden="true"></i> Usar mi ubicación</button>
                 <div id="mapa-ubicacion-chacra" class="mapa-seleccionable"></div>
-                <p class="mapa-ayuda" id="mapa-chacra-ayuda">Toca el mapa para marcar dónde está la chacra.</p>
+                <p class="mapa-ayuda" id="mapa-chacra-ayuda">Si estás en la chacra, toca «Usar mi ubicación». Si no, toca en el mapa dónde está.</p>
               </div>
               <div class="form-chacra-acciones">
                 <button type="submit" class="btn btn-primary" id="btn-guardar-chacra">Registrar chacra</button>
@@ -1318,7 +1318,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=c5992f17"></script>
 <script src="js/asistente.js?v=c0323f7b"></script>
-<script src="js/reglas.js?v=860fabe2"></script>
-<script src="js/app.js?v=ec151814"></script>
+<script src="js/reglas.js?v=c0aa20a7"></script>
+<script src="js/app.js?v=142eafc8"></script>
 </body>
 </html>

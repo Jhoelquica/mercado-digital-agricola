@@ -40,3 +40,14 @@ test('H3: al cosechar se muestra lo ya gastado y lo que ya se anotó en la cosec
   assert.deepEqual(ya.enElFinal.map((e) => [e.clave, e.total]), [['cosecha', 50]]);
   assert.deepEqual(Reglas.gastosYaRegistrados(null), { total: 0, etapas: [], enElFinal: [] });
 });
+
+test('H5: "¿qué sembrar?" empieza con una frase con la respuesta', () => {
+  const papa = { nombre: 'Papa', puntaje: 78, riesgo: 'bajo', margen_kg: 0.8 };
+  assert.equal(Reglas.fraseResumenSiembra(papa),
+    'Lo que más te conviene sembrar ahora es Papa (78 de 100, conviene mucho): ganas S/ 0.80 por kg y hay poco riesgo de que sobre.');
+  assert.equal(Reglas.fraseResumenSiembra({ nombre: 'Haba', puntaje: 40, riesgo: 'alto', margen_kg: null }),
+    'Lo que más te conviene sembrar ahora es Haba (40 de 100, puede ser): todavía falta saber cuánto cuesta producirlo y hay mucho riesgo de que sobre.');
+  assert.equal(Reglas.fraseResumenSiembra({ nombre: 'Oca', puntaje: 20, riesgo: 'medio', margen_kg: -0.5 }),
+    'Ahora ningún cultivo conviene mucho; el mejor es Oca (20 de 100, conviene poco): pierdes S/ 0.50 por kg y hay algo de riesgo de que sobre.');
+  assert.equal(Reglas.fraseResumenSiembra(undefined), null);
+});
