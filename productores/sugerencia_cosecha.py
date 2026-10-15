@@ -46,31 +46,60 @@ MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto
          "noviembre", "diciembre")
 
 # Días de la siembra a la cosecha en la sierra (unos 2500 a 3800 m), para lo que normalmente se vende. Valores de
-# referencia, redondeados: la variedad, la altura y las lluvias los mueven.
+# referencia, redondeados: la variedad, la altura y las lluvias los mueven. Cada cultivo lleva por qué varía la fecha
+# (nota) y cómo darse cuenta de que ya está para cosechar (señal): la validación con usuarios del 2026-10-14 (A05) mostró
+# que un plazo solo ("cosechar en 3 o 4 meses" la kiwicha) no le sirve al agricultor.
+# Kiwicha: la variedad INIA 413 "Morocho Ayacuchano" madura a los 155-160 días (ficha técnica del INIA); antes la tabla
+# decía 120-180, y los 4 meses del inicio del rango eran un plazo engañoso.
+SECO_EN_LA_CHACRA = "Cuando las hojas y los tallos se ponen amarillos y se secan."
+GRANO_DURO = "Cuando la espiga y la paja están amarillas y el grano está duro: ya no se marca al apretarlo con la uña."
 CICLOS_TIPICOS = {
     "papa": ("Papa", 120, 150, 180, ("papa", "patata"),
-             "Las papas mejoradas se cosechan antes; las nativas tardan más."),
+             "Las papas mejoradas se cosechan antes; las nativas tardan más.",
+             "Cuando las hojas y los tallos se ponen amarillos y se secan, y la cáscara ya no se pela al frotarla con "
+             "el dedo."),
     "maiz": ("Maíz", 150, 180, 240, ("maiz", "choclo"),
-             "Para choclo se cosecha antes; para grano seco, después."),
+             "Para choclo se cosecha antes; para grano seco, después.",
+             "Para choclo, cuando los pelos de la mazorca se ponen marrones y el grano suelta leche al apretarlo. Para "
+             "grano seco, cuando la panca está seca y el grano está duro."),
     "quinua": ("Quinua", 140, 165, 200, ("quinua", "quinoa"),
-               "Las variedades precoces se cosechan antes."),
+               "Las variedades precoces se cosechan antes.",
+               "Cuando las hojas se ponen amarillas y se caen, y el grano está duro: ya no se marca al apretarlo con la "
+               "uña."),
     "habas": ("Habas", 120, 150, 200, ("haba", "habas"),
-              "En verde se cosechan antes; en grano seco, después."),
+              "En verde se cosechan antes; en grano seco, después.",
+              "En verde, cuando las vainas están llenas y todavía verdes. En grano seco, cuando las vainas se ponen "
+              "negras y secas."),
     "arveja": ("Arveja", 90, 120, 150, ("arveja", "alverja"),
-               "En verde se cosecha antes; en grano seco, después."),
-    "trigo": ("Trigo", 140, 165, 190, ("trigo",), "Depende de la variedad y de las lluvias."),
-    "cebada": ("Cebada", 120, 140, 165, ("cebada",), "Depende de la variedad y de las lluvias."),
-    "oca": ("Oca", 180, 210, 240, ("oca",), "Es de ciclo largo: depende de la altura."),
-    "olluco": ("Olluco", 150, 180, 210, ("olluco", "ulluco", "lisa"), "Depende de la altura y de las lluvias."),
-    "mashua": ("Mashua", 180, 210, 240, ("mashua", "isano"), "Es de ciclo largo: depende de la altura."),
-    "kiwicha": ("Kiwicha", 120, 150, 180, ("kiwicha", "amaranto"), "Depende de la variedad y de las lluvias."),
-    "tarwi": ("Tarwi", 180, 210, 270, ("tarwi", "chocho", "lupino"), "Es de ciclo largo: depende de la altura."),
+               "En verde se cosecha antes; en grano seco, después.",
+               "En verde, cuando las vainas están llenas y todavía verdes. En grano seco, cuando las vainas están "
+               "amarillas y secas."),
+    "trigo": ("Trigo", 140, 165, 190, ("trigo",), "Depende de la variedad y de las lluvias.", GRANO_DURO),
+    "cebada": ("Cebada", 120, 140, 165, ("cebada",), "Depende de la variedad y de las lluvias.", GRANO_DURO),
+    "oca": ("Oca", 180, 210, 240, ("oca",), "Es de ciclo largo: depende de la altura.", SECO_EN_LA_CHACRA),
+    "olluco": ("Olluco", 150, 180, 210, ("olluco", "ulluco", "lisa"), "Depende de la altura y de las lluvias.",
+               SECO_EN_LA_CHACRA),
+    "mashua": ("Mashua", 180, 210, 240, ("mashua", "isano"), "Es de ciclo largo: depende de la altura.",
+               SECO_EN_LA_CHACRA),
+    "kiwicha": ("Kiwicha", 140, 160, 180, ("kiwicha", "amaranto"),
+                "Es de ciclo largo: la variedad Morocho Ayacuchano madura a los 155 a 160 días; en las zonas más altas "
+                "o si faltan lluvias tarda más.",
+                "Cuando las hojas se ponen amarillas y se caen, y el grano se suelta al frotar la panoja con la mano. "
+                "Si esperas mucho, el grano se cae solo."),
+    "tarwi": ("Tarwi", 180, 210, 270, ("tarwi", "chocho", "lupino"), "Es de ciclo largo: depende de la altura.",
+              "Cuando las vainas están secas y amarillas, antes de que se abran solas."),
     "frijol": ("Frijol", 90, 120, 150, ("frijol", "frejol", "poroto"),
-               "En verde se cosecha antes; en grano seco, después."),
-    "cebolla": ("Cebolla", 120, 140, 170, ("cebolla",), "Contando desde que se siembra o trasplanta."),
-    "ajo": ("Ajo", 150, 180, 210, ("ajo",), "Depende de la variedad y de la altura."),
-    "zanahoria": ("Zanahoria", 90, 110, 130, ("zanahoria",), "Depende de la variedad y del clima."),
-    "zapallo": ("Zapallo", 120, 150, 180, ("zapallo", "calabaza"), "Depende de la variedad y del clima."),
+               "En verde se cosecha antes; en grano seco, después.",
+               "En verde, cuando las vainas están llenas. En grano seco, cuando las vainas están secas y el grano suena "
+               "al moverlas."),
+    "cebolla": ("Cebolla", 120, 140, 170, ("cebolla",), "Contando desde que se siembra o trasplanta.",
+                "Cuando la mayoría de las hojas se doblan y empiezan a secarse."),
+    "ajo": ("Ajo", 150, 180, 210, ("ajo",), "Depende de la variedad y de la altura.",
+            "Cuando la mayoría de las hojas se ponen amarillas y secas."),
+    "zanahoria": ("Zanahoria", 90, 110, 130, ("zanahoria",), "Depende de la variedad y del clima.",
+                  "Cuando la raíz tiene el grosor que vendes: saca una o dos para ver antes de cosechar todo."),
+    "zapallo": ("Zapallo", 120, 150, 180, ("zapallo", "calabaza"), "Depende de la variedad y del clima.",
+                "Cuando el tallo que lo une a la planta se seca y la cáscara está dura: ya no se marca con la uña."),
 }
 
 SISTEMA = (
@@ -79,8 +108,9 @@ SISTEMA = (
     "pasan desde la siembra hasta la cosecha que normalmente se vende, en esa zona: ten en cuenta la altura, el clima "
     "y la temporada de lluvias de ese lugar y de esa fecha.\n"
     "- dias_min, dias_probable y dias_max: el rango razonable y el valor más probable, en días.\n"
-    "- explicacion: una o dos frases cortas en español sencillo, para una persona mayor del campo: de qué depende "
-    "(la variedad, las lluvias, la altura). Sin palabras técnicas, sin coordenadas y sin repetir los días.\n"
+    "- explicacion: una o dos frases cortas en español sencillo, para una persona mayor del campo: por qué la fecha "
+    "puede variar (la variedad, las lluvias, la altura) y cómo darse cuenta de que ya está para cosechar. Sin palabras "
+    "técnicas, sin coordenadas y sin repetir los días.\n"
     "- es_cultivo: false si el texto no es algo que se siembra y se cosecha (en ese caso los días van en 0)."
 )
 
@@ -108,12 +138,12 @@ def _normalizar(texto: str) -> str:
 
 
 def ciclo_de_la_tabla(cultivo: str):
-    """(nombre, mín, probable, máx, nota) del primer cultivo conocido que aparezca en el texto ("Papa amarilla",
+    """(nombre, mín, probable, máx, nota, señal) del primer cultivo conocido que aparezca en el texto ("Papa amarilla",
     "maíz morado", "HABAS"...), o None."""
     for palabra in _normalizar(cultivo).replace(",", " ").split():
-        for nombre, dias_min, probable, dias_max, alias, nota in CICLOS_TIPICOS.values():
+        for nombre, dias_min, probable, dias_max, alias, nota, senal in CICLOS_TIPICOS.values():
             if palabra in alias or (palabra.endswith("s") and palabra[:-1] in alias):
-                return nombre, dias_min, probable, dias_max, nota
+                return nombre, dias_min, probable, dias_max, nota, senal
     return None
 
 
@@ -209,7 +239,8 @@ def _preguntar_a_la_ia(cliente, cultivo: str, fecha_siembra: datetime, latitud: 
     return dias_min, probable, dias_max, explicacion
 
 
-def _resultado(fecha_siembra: datetime, dias_min, probable, dias_max, explicacion, fuente, cultivo_tabla=None):
+def _resultado(fecha_siembra: datetime, dias_min, probable, dias_max, explicacion, fuente, cultivo_tabla=None,
+               senal=None):
     def fecha(dias):
         return (fecha_siembra + timedelta(days=dias)).date().isoformat()
 
@@ -223,6 +254,8 @@ def _resultado(fecha_siembra: datetime, dias_min, probable, dias_max, explicacio
         "explicacion": explicacion,
         "fuente": fuente,
         "cultivo_tabla": cultivo_tabla,
+        # Cómo darse cuenta de que ya está (solo de los cultivos de la tabla): la fecha es una ayuda, la planta manda.
+        "senal_cosecha": senal,
     }
 
 
@@ -238,11 +271,12 @@ def sugerir(cultivo: str, fecha_siembra: datetime, latitud: float, longitud: flo
             ia = _preguntar_a_la_ia(cliente, cultivo, fecha_siembra, *zona)
             if ia is not None:
                 _guardar_en_cache(clave, ia)
-    if ia is not None and ia[0] != "no_es_cultivo":
-        return _resultado(fecha_siembra, *ia, fuente="ia")
-
     tabla = ciclo_de_la_tabla(cultivo)
+    if ia is not None and ia[0] != "no_es_cultivo":
+        return _resultado(fecha_siembra, *ia, fuente="ia", senal=tabla[5] if tabla else None)
+
     if tabla is None:
         return None
-    nombre, dias_min, probable, dias_max, nota = tabla
-    return _resultado(fecha_siembra, dias_min, probable, dias_max, nota, fuente="tabla", cultivo_tabla=nombre)
+    nombre, dias_min, probable, dias_max, nota, senal = tabla
+    return _resultado(fecha_siembra, dias_min, probable, dias_max, nota, fuente="tabla", cultivo_tabla=nombre,
+                      senal=senal)

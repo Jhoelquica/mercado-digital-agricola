@@ -292,3 +292,32 @@ def test_solo_el_productor_pide_la_sugerencia_y_con_una_fecha_razonable():
 
     _auth(sub, "comprador")
     assert _sugerir(chacra_id).status_code == 403
+
+
+# ============ Cuándo cosechar y por qué (validación con usuarios del 2026-10-14, A05: la kiwicha) ============
+
+def test_la_kiwicha_dice_su_rango_por_que_y_como_saber_que_ya_esta():
+    _, chacra_id = _productor_con_chacra()
+    cuerpo = _sugerir(chacra_id, "Kiwicha").json()
+
+    # INIA 413 "Morocho Ayacuchano": 155-160 días a la madurez. Ya no empieza en 4 meses (120 días).
+    assert (cuerpo["dias_min"], cuerpo["dias_probable"], cuerpo["dias_max"]) == (140, 160, 180)
+    assert "155 a 160 días" in cuerpo["explicacion"]
+    assert "panoja" in cuerpo["senal_cosecha"]
+
+
+def test_cada_cultivo_de_la_tabla_dice_como_saber_que_ya_esta():
+    for nombre, dias_min, probable, dias_max, alias, nota, senal in sugerencia_cosecha.CICLOS_TIPICOS.values():
+        assert dias_min <= probable <= dias_max, nombre
+        assert nota and senal and senal.startswith(("Cuando", "En verde", "Para choclo")), nombre
+
+
+def test_con_ia_la_senal_sale_de_la_tabla_si_el_cultivo_es_conocido(monkeypatch):
+    _con_ia(monkeypatch, _GeminiFalso(_respuesta(_ia(100, 115, 130))))
+    _, chacra_id = _productor_con_chacra()
+
+    conocido = _sugerir(chacra_id, "Papa amarilla").json()
+    assert conocido["fuente"] == "ia" and "cáscara" in conocido["senal_cosecha"]
+    desconocido = _sugerir(chacra_id, "Achira").json()
+    assert desconocido["fuente"] == "ia" and desconocido["senal_cosecha"] is None
+

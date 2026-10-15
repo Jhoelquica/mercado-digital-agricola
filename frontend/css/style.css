@@ -5008,6 +5008,8 @@ body.asistente-abierto { overflow: hidden; }
 .sugerencia-cosecha-fecha::first-letter { text-transform: uppercase; }
 .sugerencia-cosecha-detalle { margin: 0; font-size: 1.08rem; font-weight: 700; color: var(--texto); }
 .sugerencia-cosecha-explicacion { margin: 0; font-size: 1.05rem; line-height: 1.5; color: var(--texto); }
+.sugerencia-cosecha-senal { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 12px 14px; border-radius: 12px; background: rgba(45, 59, 42, 0.07); font-size: 1.05rem; line-height: 1.5; color: var(--texto); }
+.sugerencia-cosecha-senal > i { flex: none; margin-top: 3px; font-size: 1.25rem; color: var(--color-primario); }
 .sugerencia-cosecha-origen { margin: 0; font-size: 0.95rem; line-height: 1.45; color: var(--texto-suave); }
 .btn-usar-sugerencia {
   align-self: flex-start; min-height: 56px; margin: 4px 0 0; padding: 10px 22px; border-radius: 14px; font-size: 1.12rem;

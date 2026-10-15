@@ -17,7 +17,9 @@ def test_gana_lo_que_se_vende_deja_margen_y_nadie_mas_cosecha():
     assert (quinua["clave"], quinua["competencia"], quinua["riesgo"]) == ("quinua", 3, "alto")
     assert quinua["fuente_costo"] == "referencia" and quinua["costo_kg"] == round(2800 / 1250, 2)
     assert any("3 siembras de otros agricultores" in f for f in quinua["frases"])
-    assert any("cosecharías en" in f for f in papa["frases"])
+    # El rango de la tabla (120 a 180 días desde el 7/10/2026) y de qué depende, no un plazo solo.
+    assert any(f.startswith("Tarda de 4 a 6 meses: si siembras hoy, cosecharías entre febrero y abril de 2027. Las papas")
+               for f in papa["frases"])
 
 
 def test_sin_costo_queda_detras_y_lo_que_no_tiene_datos_no_entra():
@@ -51,3 +53,18 @@ def test_sin_clave_de_ia_no_hay_consejo_y_el_ranking_igual_sirve(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(r.sugerencia_cosecha, "_cliente", None, raising=False)
     assert r.consejo([{"nombre": "Papa"}], "p-1") is None
+
+
+def test_la_kiwicha_dice_su_rango_y_de_que_depende():
+    """Validación con usuarios del 2026-10-14 (A05): "no es útil que me sugiera cosechar en 3 o 4 meses la Kiwicha"."""
+    datos = r.recomendar({"kiwicha": {"kg": 50, "soles": 50 * 12, "kg_por_mes": [5, 5, 10, 10, 10, 10]}}, {}, {}, {}, {}, HOY)
+    kiwicha = next(f for f in datos["recomendaciones"] if f["clave"] == "kiwicha")
+    [cuando] = [f for f in kiwicha["frases"] if f.startswith("Tarda")]
+    assert cuando.startswith("Tarda de 5 a 6 meses: si siembras hoy, cosecharías entre febrero y abril de 2027.")
+    assert "155 a 160 días" in cuando
+
+
+def test_cuando_cosecharia_en_un_mes_o_entre_dos_anios():
+    assert r._cuando_cosecharia(datetime(2027, 4, 2), datetime(2027, 4, 28)) == "en abril de 2027"
+    assert r._cuando_cosecharia(datetime(2026, 12, 20), datetime(2027, 1, 30)) == "entre diciembre de 2026 y enero de 2027"
+    assert r._cuanto_tarda(150, 160) == "unos 5 meses"

@@ -61,10 +61,27 @@ def _miles(n) -> str:
     return f"{round(n):,}".replace(",", " ")
 
 
+MESES = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "setiembre", "octubre", "noviembre",
+         "diciembre")
+
+
 def _mes_legible(fecha: datetime) -> str:
-    meses = ("enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "setiembre", "octubre", "noviembre",
-             "diciembre")
-    return f"{meses[fecha.month - 1]} de {fecha.year}"
+    return f"{MESES[fecha.month - 1]} de {fecha.year}"
+
+
+def _cuanto_tarda(dias_min: int, dias_max: int) -> str:
+    """"de 5 a 6 meses" (o "unos 5 meses" si el rango cabe en un mes): el rango de la tabla, no un plazo solo."""
+    desde, hasta = round(dias_min / 30), round(dias_max / 30)
+    return f"unos {desde} meses" if desde == hasta else f"de {desde} a {hasta} meses"
+
+
+def _cuando_cosecharia(desde: datetime, hasta: datetime) -> str:
+    """"en abril de 2027", "entre marzo y abril de 2027" o "entre diciembre de 2026 y enero de 2027"."""
+    if (desde.year, desde.month) == (hasta.year, hasta.month):
+        return f"en {_mes_legible(desde)}"
+    if desde.year == hasta.year:
+        return f"entre {MESES[desde.month - 1]} y {_mes_legible(hasta)}"
+    return f"entre {_mes_legible(desde)} y {_mes_legible(hasta)}"
 
 
 def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios: dict, costos_plataforma: dict,
@@ -144,7 +161,10 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         elif precio is not None:
             frases.append("Falta saber cuánto cuesta producirlo: anota tus gastos por etapa al sembrar y lo calcularemos.")
         if cosecha:
-            frases.append(f"Tarda unos {round(dias / 30)} meses: si siembras hoy, cosecharías en {_mes_legible(cosecha)}.")
+            # Validación con usuarios del 2026-10-14 (A05): el rango y de qué depende, no un plazo solo.
+            frases.append(f"Tarda {_cuanto_tarda(ciclo[1], ciclo[3])}: si siembras hoy, cosecharías "
+                          f"{_cuando_cosecharia(hoy + timedelta(days=ciclo[1]), hoy + timedelta(days=ciclo[3]))}. "
+                          f"{ciclo[4]}")
         if compiten:
             frases.append(f"Ojo: {len(compiten)} siembra{'s' if len(compiten) > 1 else ''} de otros agricultores se "
                           f"cosecha{'n' if len(compiten) > 1 else ''} cerca de esa fecha: puede sobrar y bajar el precio.")

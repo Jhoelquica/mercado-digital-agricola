@@ -232,15 +232,22 @@ function fechaLegible(iso) {
   return new Date(a, m - 1, d).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-// Fecha con atajos ("Hoy", "Ayer"…) y, para cualquier otra, el calendario del teléfono.
-function campoFechaAsistente({ id, valor = '', atajos, minimo = '', maximo = '' }) {
+// Los atajos de una fecha ("Hoy", "Ayer"…). Aparte para poder cambiarlos sin repintar el campo (p. ej. cuando llega la
+// sugerencia de la cosecha).
+function atajosFechaAsistente({ id, valor = '', atajos }) {
   return `
     <div class="asistente-atajos" role="group" aria-label="Elige una fecha">
       ${atajos.map((a) => `
         <button type="button" class="asistente-atajo ${a.fecha === valor ? 'activo' : ''}" data-fecha="${id}" data-valor="${a.fecha}" aria-pressed="${a.fecha === valor}">
           <strong>${escaparAsistente(a.etiqueta)}</strong><small>${escaparAsistente(fechaLegible(a.fecha))}</small>
         </button>`).join('')}
-    </div>
+    </div>`;
+}
+
+// Fecha con atajos y, para cualquier otra, el calendario del teléfono.
+function campoFechaAsistente({ id, valor = '', atajos, minimo = '', maximo = '' }) {
+  return `
+    ${atajosFechaAsistente({ id, valor, atajos })}
     <label class="asistente-etiqueta" for="${id}">O elige otro día en el calendario</label>
     <input class="asistente-input asistente-fecha" type="date" id="${id}" value="${escaparAsistente(valor)}"
       ${minimo ? `min="${minimo}"` : ''} ${maximo ? `max="${maximo}"` : ''}>

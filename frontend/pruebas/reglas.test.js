@@ -125,3 +125,11 @@ test('Los días de la mano de obra aceptan medio día (validación 2026-10-14, A
   assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1.5', pago: '50' }).total, 150);
   assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1,256', pago: '10' }).datos.dias, 1.26); // como el servidor
 });
+
+test('Los atajos de la cosecha salen del rango del cultivo, no de meses fijos (validación 2026-10-14, A05)', () => {
+  const kiwicha = { fecha_desde: '2027-03-03', fecha_sugerida: '2027-03-23', fecha_hasta: '2027-04-12' };
+  assert.deepEqual(Reglas.atajosDeCosecha(kiwicha).map((a) => [a.etiqueta, a.fecha]), [
+    ['Lo más pronto', '2027-03-03'], ['Lo más probable', '2027-03-23'], ['Lo más tarde', '2027-04-12']]);
+  assert.equal(Reglas.atajosDeCosecha({ ...kiwicha, fecha_desde: '2027-03-23' }).length, 2); // sin repetir la fecha
+  assert.deepEqual(Reglas.atajosDeCosecha(null), []);
+});

@@ -128,6 +128,19 @@
       return { datos: { peones: p, dias: d, precio_unitario: s, unidad: 'jornal' }, total, error: null, campo: null };
     },
 
+    // Validación con usuarios del 2026-10-14 (A05: "no es útil que me sugiera cosechar en 3 o 4 meses la Kiwicha"): los
+    // atajos de la fecha de cosecha salen del rango de ESE cultivo (lo más pronto, lo más probable, lo más tarde), no de
+    // unos meses fijos. Sin sugerencia (cultivo que no conocemos), [] y la pantalla deja los atajos por meses.
+    atajosDeCosecha(s) {
+      if (!s || !s.fecha_sugerida) return [];
+      const atajos = [
+        { etiqueta: 'Lo más pronto', fecha: s.fecha_desde },
+        { etiqueta: 'Lo más probable', fecha: s.fecha_sugerida },
+        { etiqueta: 'Lo más tarde', fecha: s.fecha_hasta },
+      ].filter((a) => a.fecha);
+      return atajos.filter((a, i) => atajos.findIndex((b) => b.fecha === a.fecha) === i);
+    },
+
     // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
     fechaHoraLegible(iso) {
       const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
