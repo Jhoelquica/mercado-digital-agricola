@@ -151,3 +151,12 @@ test('H6: la descripción sugerida usa los datos de la siembra y la cosecha, y s
   assert.equal(Reglas.descripcionSugerida({ cultivo: 'Miel', cantidad: 12.5, unidad: 'litro' }), 'Miel. De esta cosecha salieron 12,5 litros.');
   assert.equal(Reglas.descripcionSugerida({}), null);
 });
+
+test('H11: el envío propone el estado que sigue (Asignado → En camino → Entregado)', () => {
+  const local = ['asignado', 'en_camino', 'entregado'];
+  assert.equal(Reglas.siguienteEstadoEnvio('asignado', local), 'en_camino');
+  assert.equal(Reglas.siguienteEstadoEnvio('en_camino', local), 'entregado');
+  assert.equal(Reglas.siguienteEstadoEnvio('entregado', local), null);
+  assert.equal(Reglas.siguienteEstadoEnvio('en_camino', ['asignado', 'en_camino', 'en_agencia']), 'en_agencia');
+  assert.equal(Reglas.siguienteEstadoEnvio('en_destino', local), null); // fuera del orden: sin botón
+});

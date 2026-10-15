@@ -174,6 +174,13 @@
       return partes.join(' ');
     },
 
+    // H11 (validación con usuarios del 2026-10-13, R03: el repartidor elegía cada estado a mano en un selector que dejaba
+    // marcado el actual): el estado que sigue en el orden de ese envío, o null si ya está en el último o fuera del orden.
+    siguienteEstadoEnvio(estado, estados) {
+      const i = (estados || []).indexOf(estado);
+      return i >= 0 && i < estados.length - 1 ? estados[i + 1] : null;
+    },
+
     // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
     fechaHoraLegible(iso) {
       const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));

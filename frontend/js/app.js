@@ -10405,16 +10405,41 @@ function renderSelectorFoto(id, titulo, detalle, textoAlternativo) {
           </div>`;
 }
 
-const ETIQUETAS_CAMBIO_ESTADO = { asignado: 'Asignado', en_camino: 'En camino', entregado: 'Entregado' };
+const ETIQUETAS_CAMBIO_ESTADO = { asignado: 'Asignado', en_camino: 'En camino', entregado: 'Entregado', en_agencia: 'En la agencia' };
 
-function renderCambioEstadoEnvio(envio, estados, { claseBoton = 'btn-primary', extra = '' } = {}) {
+// H11 (validación con usuarios del 2026-10-13, R03: necesitó una pista en las 4 tareas y marcaba cada estado a mano en
+// un selector que dejaba marcado el estado actual): los pasos a la vista, qué hacer ahora y UN botón con el estado que
+// sigue. "Entregado" abre el formulario del código + foto (no es un cambio de estado suelto); "En la agencia" es el
+// despacho con la guía (`extra`).
+const GUIA_SIGUIENTE_ESTADO = {
+  en_camino: { boton: 'Ya salí: marcar «En camino»', icono: 'truck-delivery',
+    guia: 'Cuando salgas del almacén con el pedido, toca «Ya salí»: el comprador verá que va en camino.' },
+  entregado: { boton: 'Ya llegué: entregar con código y foto', icono: 'package',
+    guia: 'Al llegar, toca «Ya llegué», pídele al comprador su código de 4 dígitos y toma una foto de la entrega.' },
+  en_agencia: { guia: 'Cuando lo dejes en la agencia, toca «Dejé el pedido en la agencia» y registra la guía.' },
+};
+
+function renderCambioEstadoEnvio(envio, estados, { extra = '' } = {}) {
+  const actual = estados.indexOf(envio.estado);
+  const siguiente = Reglas.siguienteEstadoEnvio(envio.estado, estados);
+  const paso = GUIA_SIGUIENTE_ESTADO[siguiente];
+  const pasos = estados.map((e, i) => {
+    const clase = i < actual ? 'hecho' : i === actual ? 'actual' : '';
+    return `<li class="${clase}" ${i === actual ? 'aria-current="step"' : ''}>${i < actual ? '<i class="ti ti-check" aria-hidden="true"></i>' : `<span aria-hidden="true">${i + 1}</span>`}${ETIQUETAS_CAMBIO_ESTADO[e]}</li>`;
+  }).join('');
+  let accion = '';
+  if (siguiente === 'entregado') {
+    accion = `<button type="button" class="btn btn-primary btn-abrir-entrega" data-envio-id="${envio.id}" aria-expanded="false"><i class="ti ti-${paso.icono}" aria-hidden="true"></i> ${paso.boton}</button>`;
+  } else if (siguiente === 'en_agencia') {
+    accion = extra;
+  } else if (paso) {
+    accion = `<button type="button" class="btn btn-primary btn-actualizar-envio" data-envio-id="${envio.id}" data-estado="${siguiente}"><i class="ti ti-${paso.icono}" aria-hidden="true"></i> ${paso.boton}</button>`;
+  }
   return `
-      <div class="envio-actualizar">
-        <select class="select-estado-envio" data-envio-id="${envio.id}" aria-label="Estado del envío">
-          ${estados.map((e) => `<option value="${e}" ${envio.estado === e ? 'selected' : ''}>${ETIQUETAS_CAMBIO_ESTADO[e]}</option>`).join('')}
-        </select>
-        <button class="btn ${claseBoton} btn-actualizar-envio" data-envio-id="${envio.id}">Actualizar estado</button>
-        ${extra}
+      <div class="envio-estado">
+        <ol class="envio-estado-pasos" aria-label="Pasos del envío">${pasos}</ol>
+        ${paso ? `<p class="envio-guia"><i class="ti ti-info-circle" aria-hidden="true"></i><span><strong>Ahora:</strong> ${paso.guia}</span></p>` : ''}
+        ${accion ? `<div class="envio-actualizar">${accion}</div>` : ''}
       </div>`;
 }
 
@@ -10527,7 +10552,7 @@ function renderEnvioPorAgencia(envio, pedido, activo) {
         <li><strong>Mándalo a nombre de ${receptor}</strong> con destino ${ciudad} y el flete <b>pagado en destino</b>: lo paga el comprador al recoger.</li>
         <li><strong>Registra aquí la guía</strong>: la agencia, el número y una foto del comprobante, para que el comprador lo siga.</li>
       </ol>
-      ${renderCambioEstadoEnvio(envio, ['asignado', 'en_camino'], { claseBoton: 'btn-outline', extra: botonDespacho })}
+      ${renderCambioEstadoEnvio(envio, ['asignado', 'en_camino', 'en_agencia'], { extra: botonDespacho })}
       ${renderFormDespachoAgencia(envio)}`;
 }
 
@@ -10667,7 +10692,7 @@ async function cargarListaEnvios(miRepartidorId) {
 async function actualizarEstadoEnvio(envioId, nuevoEstado) {
   try {
     await Api.transporte.actualizarEstado(envioId, nuevoEstado);
-    toast(`Estado del envío actualizado a "${nuevoEstado}" ✅`);
+    toast(`Listo: el envío está «${ETIQUETAS_CAMBIO_ESTADO[nuevoEstado] || nuevoEstado}» ✅`);
     refrescarPanelRepartidor();
   } catch (err) {
     manejarError(err, 'actualizar el estado del envío');
@@ -13659,17 +13684,11 @@ function inicializarEventos() {
     if (btnAbrir) { abrirFormularioDeEnvio(btnAbrir); return; }
     if (e.target.closest('.btn-consultar-saldo')) { refrescarPanelRepartidor(); return; }
 
+    // H11: el botón ya trae el estado que sigue ("Entregado" va por .btn-abrir-entrega: el formulario de PIN + foto).
     const btn = e.target.closest('.btn-actualizar-envio');
     if (!btn) return;
-    const envioId = btn.dataset.envioId;
-    const select = document.querySelector(`.select-estado-envio[data-envio-id="${envioId}"]`);
-    if (select.value === 'entregado') {
-      // "Entregado" ya no es un simple cambio de estado — muestra el formulario de PIN + foto
-      // en vez de llamar a actualizarEstadoEnvio (ver confirmarEntregaConPin).
-      document.querySelector(`.form-confirmar-entrega[data-envio-id="${envioId}"]`)?.classList.remove('hidden');
-      return;
-    }
-    actualizarEstadoEnvio(envioId, select.value);
+    btn.disabled = true;
+    actualizarEstadoEnvio(btn.dataset.envioId, btn.dataset.estado).finally(() => { if (btn.isConnected) btn.disabled = false; });
   });
   document.getElementById('envios-list').addEventListener('submit', (e) => {
     const despacho = e.target.closest('.form-despacho-agencia');
