@@ -3097,6 +3097,7 @@ function inicializarMapaDestino() {
       destinoSeleccionado = { lat, lng };
       actualizarAyudaDestino();
       quitarResaltadoMapaDestino();
+      marcarCiudadDelPunto(lat, lng);
     },
   });
   // Un checkout nuevo: a qué ciudades se llega y cómo funciona (sin restos de un pedido lejano anterior).
@@ -3124,11 +3125,64 @@ let cotizacionActual = null;
 let modalidadElegida = null;       // 'agencia' | 'camion'
 let receptorVerificado = null;     // { dni, nombre } cuando el comprador confirmó el nombre que dio RENIEC
 
+let destinosLejanosConocidos = []; // la última lista que llegó, para lo que se pinta sin esperar (el seguimiento)
+
 function obtenerDestinosLejanos() {
   if (!destinosLejanosPromesa) {
-    destinosLejanosPromesa = Api.pedidos.destinosLejanos().catch(() => { destinosLejanosPromesa = null; return []; });
+    destinosLejanosPromesa = Api.pedidos.destinosLejanos()
+      .then((lista) => { destinosLejanosConocidos = lista; return lista; })
+      .catch(() => { destinosLejanosPromesa = null; return []; });
   }
   return destinosLejanosPromesa;
+}
+
+// H9 (validación con usuarios del 2026-10-14, C06/C07: "botones claros para marcar ciudad", "fijar puntos de entrega o
+// un rango límite de entrega"): botones con las ciudades a las que se llega y su límite (el radio que pone el admin).
+// Una ciudad lejana marca su centro como punto de entrega (por agencia se recoge en la oficina; en camión el chofer
+// coordina); en Ayacucho hay que tocar la dirección exacta, porque el repartidor llega a la puerta.
+const HUAMANGA_CENTRO = { latitud: -13.1588, longitud: -74.2232 };
+
+function renderSelectorCiudades(destinos) {
+  const chip = ({ ciudad, latitud, longitud, detalle, local }) => `
+    <button type="button" class="ciudad-chip" data-ciudad="${escapeAttr(ciudad)}" data-lat="${latitud}" data-lng="${longitud}"
+      ${local ? 'data-local="1"' : ''} aria-pressed="false">
+      <strong>${escapeAttr(ciudad)}</strong><small>${detalle}</small>
+    </button>`;
+  return `
+    <p class="ciudad-selector-titulo" id="ciudad-selector-titulo"><i class="ti ti-building-community" aria-hidden="true"></i> ¿A qué ciudad va tu pedido?</p>
+    <div class="ciudad-selector" role="group" aria-labelledby="ciudad-selector-titulo">
+      ${chip({ ...HUAMANGA_CENTRO, ciudad: 'Ayacucho', detalle: 'A tu puerta, en la región', local: true })}
+      ${destinos.map((d) => chip({ ...d, detalle: `Hasta ${Math.round(d.radio_km)} km del centro` })).join('')}
+    </div>`;
+}
+
+// Marca el botón de la ciudad donde quedó el punto (también si lo tocaron en el mapa).
+function marcarCiudadDelPunto(lat, lng) {
+  const destinos = destinosLejanosConocidos || [];
+  const ciudad = estaEnAyacucho(lat, lng) ? 'Ayacucho'
+    : destinos.find((d) => distanciaKmAprox(d.latitud, d.longitud, lat, lng) <= d.radio_km)?.ciudad;
+  document.querySelectorAll('#checkout-ciudades .ciudad-chip').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.ciudad === ciudad));
+  });
+}
+
+function elegirCiudadDestino(boton) {
+  if (!mapaDestinoPedido) return;
+  const lat = Number(boton.dataset.lat);
+  const lng = Number(boton.dataset.lng);
+  if (boton.dataset.local) {
+    mapaDestinoPedido.mapa.setView([lat, lng], 13);
+    document.querySelectorAll('#checkout-ciudades .ciudad-chip').forEach((b) => b.setAttribute('aria-pressed', String(b === boton)));
+    const ayuda = document.getElementById('mapa-destino-ayuda');
+    if (ayuda && !destinoSeleccionado) ayuda.textContent = 'Ahora toca el mapa en tu dirección exacta: el repartidor llega a tu puerta.';
+    return;
+  }
+  mapaDestinoPedido.moverMarcador(lat, lng);
+  mapaDestinoPedido.mapa.setZoom(11);
+  destinoSeleccionado = { lat, lng };
+  actualizarAyudaDestino();
+  quitarResaltadoMapaDestino();
+  marcarCiudadDelPunto(lat, lng);
 }
 
 function estaEnAyacucho(lat, lng) {
@@ -3149,11 +3203,14 @@ async function avisarSiElDestinoEsLejano() {
   if (estaEnAyacucho(lat, lng)) return;
   const destinos = await obtenerDestinosLejanos();
   const cerca = destinos.find((d) => distanciaKmAprox(d.latitud, d.longitud, lat, lng) <= d.radio_km);
+  // H9: si quedó fuera, a cuánto está de la ciudad más cercana y hasta dónde se llega ahí (el mismo límite que Pedidos).
+  const masCerca = destinos.map((d) => ({ d, km: distanciaKmAprox(d.latitud, d.longitud, lat, lng) })).sort((a, b) => a.km - b.km)[0];
+  const limite = masCerca ? ` Tu punto está a ${Math.round(masCerca.km)} km de ${escapeAttr(masCerca.d.ciudad)}, y ahí entregamos hasta ${Math.round(masCerca.d.radio_km)} km del centro.` : '';
   ayuda.classList.toggle('confirmado', Boolean(cerca));
   ayuda.classList.toggle('fuera', !cerca);
   ayuda.innerHTML = cerca
     ? `<i class="ti ti-truck-delivery" aria-hidden="true"></i> Tu punto está en <strong>${escapeAttr(cerca.ciudad)}</strong>: en el siguiente paso eliges si llega por agencia o en camión.`
-    : `<i class="ti ti-map-pin-off" aria-hidden="true"></i> Todavía no llegamos a ese punto. Entregamos en la región de Ayacucho${destinos.length ? ` y en ${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}` : ''}.`;
+    : `<i class="ti ti-map-pin-off" aria-hidden="true"></i> Todavía no llegamos a ese punto. Entregamos en la región de Ayacucho${destinos.length ? ` y en ${escapeAttr(destinos.map((d) => d.ciudad).join(', '))}` : ''}.${limite}`;
 }
 
 function formatearKgCorto(kg) {
@@ -3162,14 +3219,17 @@ function formatearKgCorto(kg) {
 
 async function pintarInfoLejanos() {
   const caja = document.getElementById('checkout-lejanos-info');
+  const selector = document.getElementById('checkout-ciudades');
   if (!caja) return;
   const destinos = await obtenerDestinosLejanos();
+  if (selector) selector.innerHTML = destinos.length ? renderSelectorCiudades(destinos) : '';
   if (!destinos.length) { caja.innerHTML = ''; return; }
   const filas = destinos.map((d) => `
     <tr>
       <th scope="row">${escapeAttr(d.ciudad)}
-        <button type="button" class="btn-link lejanos-ver-ciudad" data-lat="${d.latitud}" data-lng="${d.longitud}">ver en el mapa</button></th>
-      <td>${d.agencia ? `${escapeAttr(d.agencia.nombre || 'Agencia')}${d.agencia.flete_kg != null ? ` · flete aprox. ${formatearMoneda(d.agencia.flete_kg)}/kg` : ''}${d.agencia.dias ? ` · ~${d.agencia.dias} días` : ''}` : '—'}</td>
+        <button type="button" class="btn-link lejanos-ver-ciudad" data-lat="${d.latitud}" data-lng="${d.longitud}">ver en el mapa</button>
+        <small>Hasta ${Math.round(d.radio_km)} km del centro</small></th>
+      <td>${d.agencia ? `${escapeAttr(d.agencia.nombre || 'Agencia')}${d.agencia.flete_kg != null ? ` · flete aprox. ${formatearMoneda(d.agencia.flete_kg)}/kg` : ''}${d.agencia.dias ? ` · ~${d.agencia.dias} días` : ''}${d.agencia.direccion ? `<br><small>Recoges en: ${escapeAttr(d.agencia.direccion)}</small>` : ''}` : '—'}</td>
       <td>${d.camion ? `${formatearMoneda(d.camion.precio_saco)} por saco · desde ${d.camion.minimo_sacos} sacos · sale con ${d.camion.sacos_para_salir} de ${d.camion.capacidad_sacos}` : '—'}</td>
     </tr>`).join('');
   caja.innerHTML = `
@@ -3230,7 +3290,8 @@ function pintarCheckoutLejano(c) {
     valor: 'agencia', titulo: `Por agencia de carga${agencia?.agencia ? ` (${escapeAttr(agencia.agencia)})` : ''}`, icono: 'building-warehouse',
     disponible: agenciaOk, motivo: agencia ? agencia.motivo_no_disponible : `A ${ciudad} no enviamos por agencia.`,
     precio: agencia ? formatearMoneda(agencia.costo_envio) : '',
-    detalle: agencia ? `Lo dejamos en la agencia en Huamanga y lo recoges en su oficina de ${ciudad}${agencia.dias ? ` en unos ${agencia.dias} días` : ''}.
+    detalle: agencia ? `Lo dejamos en la agencia en Huamanga y lo recoges en su oficina de ${ciudad}${agencia.dias ? ` en unos ${agencia.dias} días` : ''}:
+      ${agencia.direccion ? `<b>${escapeAttr(agencia.direccion)}</b>` : 'la agencia te confirma la oficina con la guía'}.
       Ahora pagas el traslado a la agencia. <b>El flete de la agencia lo pagas al recoger</b>${agencia.flete_destino_estimado != null ? `: aprox. <b>${formatearMoneda(agencia.flete_destino_estimado)}</b> (${formatearMoneda(agencia.flete_kg)} por kg × ${formatearKgCorto(c.peso_total_kg)}; lo confirma la agencia)` : ''}.` : '',
   });
   const opcionCamion = renderOpcionLejana({
@@ -4093,6 +4154,8 @@ async function cargarMisPedidos() {
 
   const datos = await Promise.all(ids.map((id, i) => cargarDatosPedido(id, pedidosDeLaCuenta?.[i])));
   pedidosCargados = datos.filter(Boolean);
+  // H9: un pedido por agencia muestra la oficina de recojo de su ciudad (la lista de ciudades se pide una sola vez).
+  if (pedidosCargados.some((d) => d.envio?.modalidad_envio === 'agencia')) await obtenerDestinosLejanos();
   cont.removeAttribute('aria-busy');
 
   if (!pedidosCargados.length) {
@@ -4371,9 +4434,16 @@ function renderBloqueLejano(d) {
   const ciudad = escapeAttr(envio.destino_ciudad || pedido.destino_ciudad || 'tu ciudad');
   if (envio.modalidad_envio === 'agencia') {
     const flete = pedido.flete_destino_estimado != null ? ` Al recoger pagas el flete de la agencia: aprox. <b>${formatearMoneda(pedido.flete_destino_estimado)}</b>.` : '';
+    // H9 (C06: "cómo se valida que el comprador recogió en la agencia"): la agencia entrega solo con el DNI de quien
+    // recibe (verificado en RENIEC al pedir) y la guía; el comprador lo confirma con "Ya lo recogí".
+    const oficina = destinosLejanosConocidos.find((x) => x.ciudad === (envio.destino_ciudad || pedido.destino_ciudad))?.agencia?.direccion;
     const cuerpo = envio.estado === 'en_agencia'
-      ? `<p>Tu pedido está en <b>${escapeAttr(envio.agencia_nombre || 'la agencia')}</b>. Guía N.º <b>${escapeAttr(envio.numero_guia || '—')}</b>.
-           Recógelo en su oficina de ${ciudad} con el DNI de <b>${escapeAttr(pedido.receptor_nombre || 'quien recibe')}</b>.${flete}</p>
+      ? `<p>Tu pedido está en <b>${escapeAttr(envio.agencia_nombre || 'la agencia')}</b>. Guía N.º <b>${escapeAttr(envio.numero_guia || '—')}</b>.${flete}</p>
+         <ol class="mp-recojo-pasos">
+           <li>Ve a su oficina de ${ciudad}${oficina ? `: <b>${escapeAttr(oficina)}</b>` : ''}.</li>
+           <li>Lleva el DNI de <b>${escapeAttr(pedido.receptor_nombre || 'quien recibe')}</b> y el número de guía: la agencia lo entrega solo a esa persona.</li>
+           <li>Cuando lo tengas, toca <b>Ya lo recogí</b> para cerrar tu pedido.</li>
+         </ol>
          <button type="button" class="btn btn-primary btn-ya-lo-recogi" data-envio-id="${escapeAttr(envio.id)}"><i class="ti ti-package" aria-hidden="true"></i> Ya lo recogí</button>`
       : envio.estado === 'entregado'
         ? `<p>Lo recogiste en la agencia de ${ciudad}.</p>`
@@ -8507,6 +8577,7 @@ function renderTarjetaDestinoAdmin(d, indice = 0) {
   const agencia = d.agencia_disponible
     ? `<dl>
         ${dato('Agencia', escapeAttr(d.agencia_nombre || 'Sin nombre'))}
+        ${dato('Oficina de recojo', d.agencia_direccion ? escapeAttr(d.agencia_direccion) : 'Sin dirección: se confirma con la guía')}
         ${dato('Flete aprox.', d.agencia_flete_kg != null ? `${formatearMoneda(d.agencia_flete_kg)} / kg` : '—')}
         ${dato('Tarda', d.agencia_dias != null ? `${d.agencia_dias} días` : '—')}
        </dl>`
@@ -8580,6 +8651,7 @@ function renderFormDestino(d = null) {
             ${interruptor('agencia_disponible', 'Ofrecer envío por agencia', 'El repartidor lo deja en una agencia de Huamanga; el comprador paga el flete al recoger.')}
             <div class="form-destino-grid form-destino-grupo-campos">
               ${campo('Agencia', 'agencia_nombre', `type="text" maxlength="80" list="agencias-sugeridas" value="${v('agencia_nombre')}" placeholder="Ej. Shalom"`)}
+              ${campo('Oficina de recojo en esa ciudad', 'agencia_direccion', `type="text" maxlength="160" value="${v('agencia_direccion')}" placeholder="Dirección donde el comprador recoge"`)}
               ${campo('Flete aprox. (S/ por kg)', 'agencia_flete_kg', `type="number" step="0.01" min="0" max="100" value="${v('agencia_flete_kg')}"`)}
               ${campo('Días de viaje', 'agencia_dias', `type="number" step="1" min="0" max="60" value="${v('agencia_dias')}"`)}
             </div>
@@ -8696,6 +8768,7 @@ async function guardarDestino(form) {
     activo: form.activo.checked,
     agencia_disponible: form.agencia_disponible.checked,
     agencia_nombre: texto('agencia_nombre'),
+    agencia_direccion: texto('agencia_direccion'),
     agencia_flete_kg: numero('agencia_flete_kg'),
     agencia_dias: numero('agencia_dias'),
     camion_disponible: form.camion_disponible.checked,
@@ -13062,6 +13135,10 @@ function inicializarEventos() {
       receptorVerificado = { dni: confirmar.dataset.dni, nombre: confirmar.dataset.nombre };
       document.getElementById('receptor-resultado').innerHTML = renderReceptorConfirmado(receptorVerificado);
     }
+  });
+  document.getElementById('checkout-ciudades')?.addEventListener('click', (e) => {
+    const ciudad = e.target.closest('.ciudad-chip');
+    if (ciudad) elegirCiudadDestino(ciudad);
   });
   document.getElementById('checkout-lejanos-info').addEventListener('click', (e) => {
     const ver = e.target.closest('.lejanos-ver-ciudad');

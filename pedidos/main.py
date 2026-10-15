@@ -287,14 +287,19 @@ def destino_lejano_para(db: Session, latitud: float, longitud: float):
     if dentro_de_ayacucho(latitud, longitud):
         return None
     activos = db.query(models.DestinoLejano).filter(models.DestinoLejano.activo.is_(True)).all()
-    cerca = [(calcular_distancia_km(d.latitud, d.longitud, latitud, longitud), d) for d in activos]
-    cerca = [(km, d) for km, d in cerca if km <= d.radio_km]
+    todas = [(calcular_distancia_km(d.latitud, d.longitud, latitud, longitud), d) for d in activos]
+    cerca = [(km, d) for km, d in todas if km <= d.radio_km]
     if not cerca:
         ciudades = ", ".join(sorted(d.ciudad for d in activos))
+        # El límite de cada ciudad es su radio (validación con usuarios del 2026-10-14, C06: "un rango límite de
+        # entrega"): se dice a cuánto quedó el punto de la más cercana y hasta dónde se llega.
+        limite = " Tu punto de entrega no está cerca de ninguna de esas ciudades."
+        if todas:
+            km, d = min(todas, key=lambda par: par[0])
+            limite = f" Tu punto está a {round(km)} km de {d.ciudad}, y ahí entregamos hasta {round(d.radio_km)} km del centro."
         raise HTTPException(
             status_code=400,
-            detail=f"Por ahora entregamos en la región de Ayacucho{' y en ' + ciudades if ciudades else ''}. "
-                   "Tu punto de entrega no está cerca de ninguna de esas ciudades.",
+            detail=f"Por ahora entregamos en la región de Ayacucho{' y en ' + ciudades if ciudades else ''}.{limite}",
         )
     return min(cerca, key=lambda par: par[0])[1]
 
@@ -316,6 +321,7 @@ def opcion_agencia(db: Session, destino, peso_total_kg, umbral_kg) -> dict | Non
     flete_kg = float(destino.agencia_flete_kg) if destino.agencia_flete_kg is not None else None
     return {
         "agencia": destino.agencia_nombre,
+        "direccion": destino.agencia_direccion,
         "dias": destino.agencia_dias,
         "costo_envio": round(calcular_costo_envio(tramo_km) + recargo, 2),
         "recargo_envio_peso": recargo,
@@ -362,7 +368,8 @@ def destino_publico(destino) -> dict:
     return {
         "id": destino.id, "ciudad": destino.ciudad, "departamento": destino.departamento,
         "latitud": destino.latitud, "longitud": destino.longitud, "radio_km": destino.radio_km, "nota": destino.nota,
-        "agencia": {"nombre": destino.agencia_nombre, "flete_kg": float(destino.agencia_flete_kg) if destino.agencia_flete_kg is not None else None,
+        "agencia": {"nombre": destino.agencia_nombre, "direccion": destino.agencia_direccion,
+                    "flete_kg": float(destino.agencia_flete_kg) if destino.agencia_flete_kg is not None else None,
                     "dias": destino.agencia_dias} if destino.agencia_disponible else None,
         "camion": {"precio_saco": float(destino.camion_precio_saco), "minimo_sacos": destino.camion_minimo_sacos,
                    "capacidad_sacos": destino.camion_capacidad_sacos, "porcentaje_salida": destino.camion_porcentaje_salida,
@@ -468,6 +475,7 @@ class DestinoLejanoDatos(BaseModel):
     activo: bool = True
     agencia_disponible: bool = True
     agencia_nombre: str | None = Field(default=None, max_length=80)
+    agencia_direccion: str | None = Field(default=None, max_length=160)
     agencia_flete_kg: float | None = Field(default=None, ge=0, le=100)
     agencia_dias: int | None = Field(default=None, ge=0, le=60)
     camion_disponible: bool = True
@@ -478,7 +486,7 @@ class DestinoLejanoDatos(BaseModel):
     camion_dias: int | None = Field(default=None, ge=0, le=60)
     nota: str | None = Field(default=None, max_length=300)
 
-    @field_validator("ciudad", "departamento", "agencia_nombre", "nota")
+    @field_validator("ciudad", "departamento", "agencia_nombre", "agencia_direccion", "nota")
     @classmethod
     def _texto(cls, valor):
         if valor is None:

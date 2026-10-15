@@ -139,6 +139,10 @@ class DestinoLejano(Base):
     activo = Column(Boolean, nullable=False, default=True)
     agencia_disponible = Column(Boolean, nullable=False, default=True)
     agencia_nombre = Column(String, nullable=True)
+    # Dónde recoge el comprador en esa ciudad: la oficina de la agencia (validación con usuarios del 2026-10-14, C06: "en
+    # qué momento yo marco la agencia cercana ... para recogerlo en Lima"). La escribe el admin; vacía = se confirma con
+    # la guía.
+    agencia_direccion = Column(String, nullable=True)
     agencia_flete_kg = Column(Numeric(10, 2), nullable=True)
     agencia_dias = Column(Integer, nullable=True)
     camion_disponible = Column(Boolean, nullable=False, default=True)

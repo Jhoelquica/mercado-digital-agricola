@@ -149,6 +149,8 @@ def test_pedido_fuera_de_ayacucho_falla_con_400():
 
     assert resp.status_code == 400
     assert resp.json()["detail"].startswith("Por ahora entregamos en la región de Ayacucho y en ")
+    # El límite de entrega (H9): a cuánto quedó el punto de la ciudad más cercana y hasta dónde se llega ahí.
+    assert " km de " in resp.json()["detail"] and "entregamos hasta" in resp.json()["detail"]
     # La validación geográfica va antes que cualquier llamada a Productos o publicación de eventos.
     mock_ctor.assert_not_called()
     mock_publicar.assert_not_called()
@@ -1167,7 +1169,7 @@ def test_lima_esta_sembrada_y_se_lista_con_lo_que_el_comprador_necesita_saber():
         [lima] = [d for d in client.get("/destinos-lejanos").json() if d["ciudad"] == "Lima"]
     finally:
         main.app.dependency_overrides[verificar_token] = sesion
-    assert lima["agencia"] == {"nombre": "Shalom", "flete_kg": 0.5, "dias": 2}
+    assert lima["agencia"] == {"nombre": "Shalom", "direccion": None, "flete_kg": 0.5, "dias": 2}
     assert lima["camion"]["precio_saco"] == 38.0 and lima["camion"]["minimo_sacos"] == 50
     assert lima["camion"]["sacos_para_salir"] == 80 and lima["camion"]["porcentaje_salida"] == 80
     assert lima["nota"].startswith("Valores de ejemplo")
@@ -1658,3 +1660,21 @@ def test_las_ventas_del_mercado_van_por_producto_sin_decir_quien_vende():
     oca = next(p for p in datos["productos"] if p["nombre"] == nombre)
     assert (oca["kg"], oca["soles"], oca["pedidos"], oca["kg_por_mes"][-1]) == (25.0, 75.0, 2, 25.0)
     assert "productor_id" not in oca and len(datos["meses"]) == 6
+
+
+def test_la_oficina_de_recojo_de_la_agencia_la_pone_el_admin_y_la_ve_el_comprador():
+    """Validación con usuarios del 2026-10-14 (C06): "en qué momento yo marco la agencia cercana ... para recogerlo en
+    Lima". La dirección es de prueba: la real la escribe el admin."""
+    _lima(agencia_direccion="  Av. de Prueba   123, oficina de ejemplo ")
+    try:
+        sesion = main.app.dependency_overrides.pop(verificar_token, None)  # la lista es pública
+        try:
+            [lima] = [d for d in client.get("/destinos-lejanos").json() if d["ciudad"] == "Lima"]
+        finally:
+            main.app.dependency_overrides[verificar_token] = sesion
+        assert lima["agencia"]["direccion"] == "Av. de Prueba 123, oficina de ejemplo"
+        resp, _, _ = _cotizar_carrito(_payload(DESTINO_LIMA, precio_item=2.0, cantidad=100), precio=2.0, stock=100000)
+        assert resp.json()["opciones"]["agencia"]["direccion"] == "Av. de Prueba 123, oficina de ejemplo"
+    finally:
+        _lima()
+
