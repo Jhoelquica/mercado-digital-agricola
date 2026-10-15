@@ -17,7 +17,7 @@
      versión 2.47.0 (vieja) del paquete en vez de la actual. Pineada a una versión exacta (no
      @latest) para que un release futuro no le cambie de golpe los nombres de clase a todo el sitio. -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.46.0/dist/tabler-icons.min.css">
-<link rel="stylesheet" href="css/style.css?v=923b1b10">
+<link rel="stylesheet" href="css/style.css?v=9f949a11">
 </head>
 <body>
 
@@ -432,8 +432,15 @@
   <!-- PANEL PRODUCTOR -->
   <section id="view-panel-productor" class="view">
     <div class="section-header panel-header-hero">
-      <h2><i class="ti ti-tractor"></i> Panel del Productor</h2>
+      <h2><i class="ti ti-tractor"></i> <span data-i18n="panel.titulo">Panel del Productor</span></h2>
+      <!-- Idioma de las pantallas del agricultor (js/idioma.js): castellano o quechua chanka. -->
+      <div class="idioma-selector" role="group" aria-label="Idioma · Simi">
+        <i class="ti ti-language" aria-hidden="true"></i>
+        <button type="button" class="idioma-btn" data-idioma="es" aria-pressed="true" lang="es">Castellano</button>
+        <button type="button" class="idioma-btn" data-idioma="qu" aria-pressed="false" lang="qu">Runasimi</button>
+      </div>
     </div>
+    <p class="idioma-nota" data-solo-idioma="qu" hidden><i class="ti ti-info-circle" aria-hidden="true"></i> <span data-i18n="idioma.nota">Estamos empezando en quechua: algunos textos siguen en castellano.</span></p>
 
     <div id="productor-setup" class="card-panel hidden">
       <h3>Completa tu perfil de productor</h3>
@@ -466,14 +473,14 @@
            en app.js). Cada botón/panel usa data-tab / data-tab-panel a juego, nunca ids nuevos,
            para no interferir con los ids que ya consulta el resto de la lógica de abajo. -->
       <nav class="productor-tabs" aria-label="Secciones del panel">
-        <button type="button" class="productor-tab-btn active" data-tab="inicio" aria-current="true"><i class="ti ti-home"></i> Inicio</button>
-        <button type="button" class="productor-tab-btn" data-tab="que-sembrar"><i class="ti ti-bulb"></i> ¿Qué sembrar?</button>
-        <button type="button" class="productor-tab-btn" data-tab="siembras"><i class="ti ti-plant-2"></i> Mis siembras <span id="productor-siembras-total" class="badge-contador hidden" title="Siembras y producciones en curso">0</span></button>
-        <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> Mis Chacras</button>
-        <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> Borradores</button>
-        <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> Mis Productos <span id="productor-llegadas-total" class="badge-contador hidden" title="Cosechas por coordinar">0</span></button>
-        <button type="button" class="productor-tab-btn" data-tab="ganancias"><i class="ti ti-wallet"></i> Mis ganancias</button>
-        <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> Gestión Económica</button>
+        <button type="button" class="productor-tab-btn active" data-tab="inicio" aria-current="true"><i class="ti ti-home"></i> <span data-i18n="tab.inicio">Inicio</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="que-sembrar"><i class="ti ti-bulb"></i> <span data-i18n="tab.que_sembrar">¿Qué sembrar?</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="siembras"><i class="ti ti-plant-2"></i> <span data-i18n="tab.siembras">Mis siembras</span> <span id="productor-siembras-total" class="badge-contador hidden" title="Siembras y producciones en curso">0</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="chacras"><i class="ti ti-map-pin"></i> <span data-i18n="tab.chacras">Mis Chacras</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="borradores"><i class="ti ti-pencil"></i> <span data-i18n="tab.borradores">Borradores</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="productos"><i class="ti ti-shopping-bag"></i> <span data-i18n="tab.productos">Mis Productos</span> <span id="productor-llegadas-total" class="badge-contador hidden" title="Cosechas por coordinar">0</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="ganancias"><i class="ti ti-wallet"></i> <span data-i18n="tab.ganancias">Mis ganancias</span></button>
+        <button type="button" class="productor-tab-btn" data-tab="economia"><i class="ti ti-chart-bar"></i> <span data-i18n="tab.economia">Gestión Económica</span></button>
       </nav>
 
       <div class="productor-tab-panel active" data-tab-panel="inicio">
@@ -507,14 +514,14 @@
 
       <div class="productor-tab-panel" data-tab-panel="siembras">
         <div class="section-header inner">
-          <h3><i class="ti ti-plant-2"></i> Mis siembras y producciones</h3>
+          <h3><i class="ti ti-plant-2"></i> <span data-i18n="seccion.siembras">Mis siembras y producciones</span></h3>
         </div>
         <div id="productor-siembras"></div>
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="chacras">
         <div class="section-header inner">
-          <h3><i class="ti ti-map-pin"></i> Mis chacras</h3>
+          <h3><i class="ti ti-map-pin"></i> <span data-i18n="seccion.chacras">Mis chacras</span></h3>
         </div>
         <div class="chacras-layout">
           <div class="card-panel">
@@ -554,7 +561,7 @@
 
       <div class="productor-tab-panel" data-tab-panel="borradores">
         <div class="section-header inner">
-          <h3><i class="ti ti-pencil"></i> Borradores pendientes de completar</h3>
+          <h3><i class="ti ti-pencil"></i> <span data-i18n="seccion.borradores">Borradores pendientes de completar</span></h3>
         </div>
         <div id="productor-borradores-lista" class="borradores-lista"></div>
         <div id="productor-borradores-empty" class="empty-state hidden">
@@ -568,14 +575,14 @@
         <!-- Cómo llega cada cosecha publicada al almacén: la lleva el agricultor o la recoge un repartidor. -->
         <section id="productor-llegadas" class="alm-seccion hidden" aria-labelledby="productor-llegadas-titulo">
           <div class="section-header inner">
-            <h3 id="productor-llegadas-titulo"><i class="ti ti-building-warehouse"></i> Cosechas por llevar al almacén</h3>
+            <h3 id="productor-llegadas-titulo"><i class="ti ti-building-warehouse"></i> <span data-i18n="seccion.almacen">Cosechas por llevar al almacén</span></h3>
           </div>
           <p class="muted alm-intro">Tu cosecha sale a la venta cuando el almacén la recibe y la pesa. Elige cómo llega: la llevas tú o un repartidor la recoge en tu chacra.</p>
           <div id="productor-llegadas-lista" class="alm-lista"></div>
         </section>
 
         <div class="section-header inner">
-          <h3>Mis productos publicados</h3>
+          <h3><span data-i18n="seccion.publicados">Mis productos publicados</span></h3>
           <button class="btn btn-outline" id="btn-refrescar-mis-productos">↻ Refrescar</button>
         </div>
         <div id="mis-productos-grid" class="grid"></div>
@@ -588,14 +595,14 @@
 
       <div class="productor-tab-panel" data-tab-panel="ganancias">
         <div class="section-header inner">
-          <h3><i class="ti ti-wallet"></i> Mis ganancias</h3>
+          <h3><i class="ti ti-wallet"></i> <span data-i18n="seccion.ganancias">Mis ganancias</span></h3>
         </div>
         <div id="productor-ganancias" class="ganancias"></div>
       </div>
 
       <div class="productor-tab-panel" data-tab-panel="que-sembrar">
         <div class="section-header inner">
-          <h3><i class="ti ti-bulb"></i> ¿Qué me conviene sembrar?</h3>
+          <h3><i class="ti ti-bulb"></i> <span data-i18n="seccion.que_sembrar">¿Qué me conviene sembrar?</span></h3>
           <button class="btn btn-outline" id="btn-refrescar-que-sembrar">↻ Actualizar</button>
         </div>
         <p class="muted ventas-intro">Los cultivos ordenados por lo que más te conviene sembrar hoy: lo que se vende en ChakraShop y a cuánto, lo que cuesta producirlo, cuánto tarda y cuántos otros agricultores van a cosechar lo mismo en la misma fecha.</p>
@@ -604,7 +611,7 @@
 
       <div class="productor-tab-panel" data-tab-panel="economia">
         <div class="section-header inner ventas-encabezado">
-          <h3><i class="ti ti-chart-bar"></i> Mis ventas</h3>
+          <h3><i class="ti ti-chart-bar"></i> <span data-i18n="seccion.ventas">Mis ventas</span></h3>
           <div class="ventas-periodo" role="group" aria-label="Periodo de las ventas" data-ventas="productor">
             <button type="button" class="ventas-periodo-btn" data-meses="6" aria-pressed="false">6 meses</button>
             <button type="button" class="ventas-periodo-btn" data-meses="12" aria-pressed="true">12 meses</button>
@@ -614,7 +621,7 @@
         <div id="productor-ventas" class="ventas"></div>
 
         <div class="section-header inner economia-estimada-titulo">
-          <h3><i class="ti ti-calculator"></i> Costos y ganancia de tus cosechas</h3>
+          <h3><i class="ti ti-calculator"></i> <span data-i18n="seccion.costos">Costos y ganancia de tus cosechas</span></h3>
         </div>
         <p class="muted ventas-intro">Calculado con lo que anotaste al sembrar y cosechar (inversión, kilos y precio estimado).</p>
         <div id="productor-economia-stats"></div>
@@ -1308,8 +1315,8 @@
       <div class="asistente-cuerpo">
         <h2 id="asistente-pregunta" class="asistente-pregunta" tabindex="-1"></h2>
         <div class="asistente-voz">
-          <button type="button" class="btn-asistente-escuchar"><i class="ti ti-volume" aria-hidden="true"></i> Escuchar</button>
-          <button type="button" class="btn-asistente-ayuda" aria-expanded="false" aria-controls="asistente-ayuda"><i class="ti ti-help-circle" aria-hidden="true"></i> ¿Necesitas ayuda?</button>
+          <button type="button" class="btn-asistente-escuchar"><i class="ti ti-volume" aria-hidden="true"></i> <span data-i18n="asistente.escuchar">Escuchar</span></button>
+          <button type="button" class="btn-asistente-ayuda" aria-expanded="false" aria-controls="asistente-ayuda"><i class="ti ti-help-circle" aria-hidden="true"></i> <span data-i18n="asistente.ayuda">¿Necesitas ayuda?</span></button>
         </div>
         <div class="asistente-ayuda hidden" id="asistente-ayuda"><i class="ti ti-bulb" aria-hidden="true"></i><p class="asistente-ayuda-texto"></p></div>
         <div class="asistente-contenido"></div>
@@ -1317,9 +1324,9 @@
         <p class="asistente-estado sr-only" role="status" aria-live="polite"></p>
       </div>
       <footer class="asistente-pie">
-        <label class="asistente-voz-lectura"><input type="checkbox" id="asistente-leer-solo"> <span>Leer las preguntas en voz alta</span></label>
+        <label class="asistente-voz-lectura"><input type="checkbox" id="asistente-leer-solo"> <span data-i18n="asistente.leer">Leer las preguntas en voz alta</span></label>
         <div class="asistente-botones">
-          <button type="button" class="btn btn-outline btn-asistente-atras"><i class="ti ti-arrow-left" aria-hidden="true"></i> Atrás</button>
+          <button type="button" class="btn btn-outline btn-asistente-atras"><i class="ti ti-arrow-left" aria-hidden="true"></i> <span data-i18n="asistente.atras">Atrás</span></button>
           <button type="submit" class="btn btn-primary btn-asistente-siguiente">Siguiente</button>
         </div>
       </footer>
@@ -1332,8 +1339,9 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <script src="js/api.js?v=3b76b4d6"></script>
-<script src="js/asistente.js?v=3a933a4d"></script>
+<script src="js/idioma.js?v=b7a32b1f"></script>
+<script src="js/asistente.js?v=5d6d9238"></script>
 <script src="js/reglas.js?v=20cee794"></script>
-<script src="js/app.js?v=182b89e4"></script>
+<script src="js/app.js?v=9e8e262a"></script>
 </body>
 </html>

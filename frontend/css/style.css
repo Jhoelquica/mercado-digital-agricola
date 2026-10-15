@@ -985,6 +985,14 @@ input, select { font-family: inherit; }
   color: white;
 }
 .panel-header-hero h2 { color: white; }
+/* Idioma del agricultor (js/idioma.js): dos botones sobre el encabezado del panel, con su estado en aria-pressed. */
+.idioma-selector { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.92); }
+.idioma-selector > i { margin: 0 4px 0 8px; font-size: 1.15rem; color: var(--color-primario); }
+.idioma-btn { min-height: 40px; padding: 6px 14px; border: none; border-radius: 999px; background: transparent; color: var(--color-primario); font: inherit; font-weight: 700; cursor: pointer; }
+.idioma-btn[aria-pressed="true"] { background: var(--color-primario); color: #fff; }
+.idioma-btn:focus-visible { outline: 3px solid rgba(161, 98, 7, 0.6); outline-offset: 2px; }
+.idioma-nota { display: flex; gap: 8px; align-items: center; margin: -10px 0 18px; padding: 10px 14px; border-radius: 12px; background: rgba(161, 98, 7, 0.08); font-size: 0.9rem; color: var(--texto); }
+.idioma-nota[hidden] { display: none; }
 .panel-header-hero .btn-outline { background: rgba(255,255,255,0.92); }
 
 @media (max-width: 560px) {

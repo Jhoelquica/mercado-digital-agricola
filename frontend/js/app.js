@@ -12352,20 +12352,21 @@ async function borrarGasto(boton) {
 function renderCtaSiembraInicio(registros) {
   const chacras = Estado.chacras || [];
   const enCurso = registros.filter((r) => ESTADOS_POR_COMPLETAR.includes(r.estado)).length;
+  // Los textos con data-i18n se pasan al quechua si el agricultor lo eligió (js/idioma.js).
   const accion = chacras.length
-    ? '<button type="button" class="btn btn-primary btn-cta-siembra btn-abrir-asistente-siembra"><i class="ti ti-seedling" aria-hidden="true"></i> Registrar siembra o producción</button>'
-    : '<button type="button" class="btn btn-primary btn-cta-siembra" data-ir-tab="chacras"><i class="ti ti-map-pin" aria-hidden="true"></i> Primero registra tu chacra</button>';
+    ? '<button type="button" class="btn btn-primary btn-cta-siembra btn-abrir-asistente-siembra"><i class="ti ti-seedling" aria-hidden="true"></i> <span data-i18n="cta.registrar">Registrar siembra o producción</span></button>'
+    : '<button type="button" class="btn btn-primary btn-cta-siembra" data-ir-tab="chacras"><i class="ti ti-map-pin" aria-hidden="true"></i> <span data-i18n="cta.chacra_primero">Primero registra tu chacra</span></button>';
   return `
     <section class="cta-siembra" aria-labelledby="cta-siembra-titulo">
       <span class="cta-siembra-icono" aria-hidden="true"><i class="ti ti-plant-2"></i></span>
       <div class="cta-siembra-texto">
-        <h3 id="cta-siembra-titulo">¿Sembraste o empezaste a producir algo?</h3>
+        <h3 id="cta-siembra-titulo" data-i18n="cta.titulo">¿Sembraste o empezaste a producir algo?</h3>
         <p>Regístralo en unos pasos: dónde, qué, cuándo y cuánto gastaste. Así sabrás cuánto te cuesta y, al cosechar, tu producto llega al catálogo.</p>
         ${Voz.puedeHablar ? '<span class="cta-siembra-voz"><i class="ti ti-volume" aria-hidden="true"></i> Puedes escuchar las preguntas y responder hablando.</span>' : ''}
       </div>
       <div class="cta-siembra-acciones">
         ${accion}
-        <button type="button" class="btn btn-outline cta-siembra-ver" data-ir-tab="que-sembrar"><i class="ti ti-bulb" aria-hidden="true"></i> ¿Qué me conviene sembrar?</button>
+        <button type="button" class="btn btn-outline cta-siembra-ver" data-ir-tab="que-sembrar"><i class="ti ti-bulb" aria-hidden="true"></i> <span data-i18n="cta.que_sembrar">¿Qué me conviene sembrar?</span></button>
         ${enCurso ? `<button type="button" class="btn btn-ghost cta-siembra-ver" data-ir-tab="siembras"><i class="ti ti-list-check" aria-hidden="true"></i> ${enCurso === 1 ? 'Ver la que está en curso' : `Ver las ${enCurso} en curso`}</button>` : ''}
       </div>
     </section>`;
@@ -12375,7 +12376,10 @@ function pintarSiembrasProductor() {
   const registros = Estado.registrosProduccion || [];
   const cta = document.getElementById('productor-cta-siembra');
   const lista = document.getElementById('productor-siembras');
-  if (cta) cta.innerHTML = renderCtaSiembraInicio(registros);
+  if (cta) {
+    cta.innerHTML = renderCtaSiembraInicio(registros);
+    Idioma.traducir(cta);
+  }
   if (lista) lista.innerHTML = renderProduccionSeccion(registros);
   const badge = document.getElementById('productor-siembras-total');
   const enCurso = registros.filter((r) => ESTADOS_POR_COMPLETAR.includes(r.estado)).length;
@@ -13830,6 +13834,7 @@ function cambiarTabAuth(tab) {
 // ============ INICIO ============
 function iniciar() {
   alExpirarSesion = manejarSesionExpirada;
+  Idioma.iniciar(); // castellano o quechua en las pantallas del agricultor (js/idioma.js)
   cargarSesionGuardada();
   actualizarUIAuth();
   renderNavCategorias();

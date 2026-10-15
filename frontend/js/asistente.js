@@ -310,7 +310,7 @@ const Asistente = (() => {
             <li class="${r.advertencia ? 'es-advertencia' : ''}">
               <span class="asistente-resumen-icono"><i class="ti ti-${r.icono || 'point'}" aria-hidden="true"></i></span>
               <span class="asistente-resumen-texto"><small>${escaparAsistente(r.etiqueta)}</small><strong>${escaparAsistente(r.valor)}</strong></span>
-              <button type="button" class="asistente-cambiar" data-ir-paso="${i}" aria-label="Cambiar ${escaparAsistente(r.etiqueta)}">Cambiar</button>
+              <button type="button" class="asistente-cambiar" data-ir-paso="${i}" aria-label="Cambiar ${escaparAsistente(r.etiqueta)}">${escaparAsistente(window.Idioma ? window.Idioma.t('asistente.cambiar', 'Cambiar') : 'Cambiar')}</button>
             </li>`;
         }).join('')}
       </ul>`;
@@ -344,11 +344,13 @@ const Asistente = (() => {
     const esUltimo = indice === total - 1;
     $('.btn-asistente-atras').classList.toggle('invisible', indice === 0);
     const siguiente = $('.btn-asistente-siguiente');
+    // "Siguiente" y "Volver al resumen" en el idioma que eligió el agricultor (js/idioma.js); sin él, en castellano.
+    const t = (clave, castellano) => (window.Idioma ? window.Idioma.t(clave, castellano) : castellano);
     siguiente.innerHTML = esUltimo
       ? `<i class="ti ti-check" aria-hidden="true"></i> ${escaparAsistente(config.textoFinal)}`
       : volverAlResumen
-        ? 'Volver al resumen <i class="ti ti-arrow-back-up" aria-hidden="true"></i>'
-        : 'Siguiente <i class="ti ti-arrow-right" aria-hidden="true"></i>';
+        ? `${escaparAsistente(t('asistente.volver_resumen', 'Volver al resumen'))} <i class="ti ti-arrow-back-up" aria-hidden="true"></i>`
+        : `${escaparAsistente(t('asistente.siguiente', 'Siguiente'))} <i class="ti ti-arrow-right" aria-hidden="true"></i>`;
     siguiente.classList.toggle('es-final', esUltimo);
     paso.alMostrar?.($('.asistente-contenido'), estado);
     // El foco va a la pregunta: un lector de pantalla la anuncia y Tab sigue desde ahí.

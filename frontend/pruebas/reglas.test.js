@@ -160,3 +160,24 @@ test('H11: el envío propone el estado que sigue (Asignado → En camino → Ent
   assert.equal(Reglas.siguienteEstadoEnvio('en_camino', ['asignado', 'en_camino', 'en_agencia']), 'en_agencia');
   assert.equal(Reglas.siguienteEstadoEnvio('en_destino', local), null); // fuera del orden: sin botón
 });
+
+test('Quechua: el diccionario cubre cada texto marcado en las pantallas y vuelve al castellano', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const Idioma = require('../js/idioma.js');
+  const marcadas = new Set();
+  for (const archivo of ['../index.html', '../js/app.js']) {
+    const texto = fs.readFileSync(path.join(__dirname, archivo), 'utf8');
+    for (const m of texto.matchAll(/data-i18n="([^"$]+)"/g)) marcadas.add(m[1]);
+  }
+  assert.ok(marcadas.size >= 20);
+  const faltan = [...marcadas].filter((clave) => !Idioma.textos.qu[clave]);
+  assert.deepEqual(faltan, []);
+  Idioma.actual = 'qu';
+  assert.equal(Idioma.t('tab.chacras', 'Mis Chacras'), 'Chakraykuna');
+  assert.equal(Idioma.t('clave.que.no.existe', 'Castellano'), 'Castellano');
+  Idioma.actual = 'es';
+  assert.equal(Idioma.t('tab.chacras', 'Mis Chacras'), 'Mis Chacras');
+  assert.equal(Idioma.normalizar('fr'), 'es');
+  assert.equal(Idioma.normalizar('qu'), 'qu');
+});
