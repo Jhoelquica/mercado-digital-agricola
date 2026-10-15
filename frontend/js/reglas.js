@@ -109,6 +109,24 @@
       };
     },
 
+    // Mano de obra como se cuenta en el campo (validación con usuarios del 2026-10-14, A04: "no pregunta cuántos peones
+    // trabajaron" y los jornales aceptaban medios): peones y días enteros y el pago de cada peón por día. Los tres vacíos
+    // = sin gasto; a medias = error que dice qué falta. Mismas reglas que el servidor (productores/main.py, _gasto_validado).
+    manoDeObra({ peones, dias, pago }) {
+      const texto = (v) => String(v ?? '').trim();
+      const vacios = [peones, dias, pago].map(texto).filter((v) => v === '').length;
+      if (vacios === 3) return { datos: null, total: 0, error: null, campo: null };
+      const p = Number(texto(peones));
+      const d = Number(texto(dias));
+      const s = Number(texto(pago).replace(',', '.'));
+      if (!(Number.isInteger(p) && p >= 1 && p <= 500)) return { datos: null, total: 0, campo: 'peones', error: 'Escribe cuántos peones trabajaron (un número entero, como 3).' };
+      if (!(Number.isInteger(d) && d >= 1 && d <= 366)) return { datos: null, total: 0, campo: 'dias', error: 'Escribe cuántos días trabajaron (un número entero, como 2).' };
+      if (!(s > 0)) return { datos: null, total: 0, campo: 'pago', error: 'Escribe cuánto le pagaste a cada peón por día.' };
+      const total = Math.round(p * d * s * 100) / 100;
+      if (total > 9999999.99) return { datos: null, total: 0, campo: 'pago', error: 'Ese gasto de mano de obra es demasiado grande: revisa los peones, los días y el pago.' };
+      return { datos: { peones: p, dias: d, precio_unitario: s, unidad: 'jornal' }, total, error: null, campo: null };
+    },
+
     // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
     fechaHoraLegible(iso) {
       const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));

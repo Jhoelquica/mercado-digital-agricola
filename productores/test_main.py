@@ -1293,3 +1293,29 @@ def test_editar_una_chacra_sin_cosechas_cambia_nombre_codigo_y_lugar():
 
     assert resp.status_code == 200, resp.text
     assert (resp.json()["codigo"], resp.json()["nombre"], resp.json()["ubicacion_latitud"]) == ("CH-02", "Parcela norte", -13.2)
+
+
+# ============ Mano de obra en peones y días (validación con usuarios del 2026-10-14, A04) ============
+
+def test_la_mano_de_obra_se_anota_en_peones_y_dias_y_salen_los_jornales():
+    registro = _crear_con_etapas(gastos=[
+        {"etapa": "siembra", "rubro": "mano_obra", "peones": 3, "dias": 2, "precio_unitario": 50}])
+    url = f"/productores/produccion/{registro['id']}/gastos"
+    [siembra] = client.get(url).json()["gastos"]
+    assert (siembra["peones"], siembra["dias"], siembra["cantidad"], siembra["unidad"], siembra["monto"]) == (3, 2, 6.0, "jornal", 300.0)
+
+    aporque = client.post(url, json={"etapa": "aporque", "rubro": "mano_obra", "peones": 4, "dias": 1, "precio_unitario": 45})
+    assert aporque.status_code == 200, aporque.text
+    assert aporque.json()["total"] == 480 and aporque.json()["costo_mano_obra"] == 480
+
+
+def test_peones_y_dias_enteros_completos_y_solo_en_la_mano_de_obra():
+    registro = _crear_con_etapas()
+    url = f"/productores/produccion/{registro['id']}/gastos"
+    mano = {"etapa": "aporque", "rubro": "mano_obra", "precio_unitario": 50}
+    assert client.post(url, json={**mano, "peones": 2, "dias": 1.5}).status_code == 422  # sin medios días
+    assert "cuántos días" in client.post(url, json={**mano, "peones": 2}).json()["detail"]
+    assert "a cada peón por día" in client.post(url, json={"etapa": "aporque", "rubro": "mano_obra", "peones": 2, "dias": 3}).json()["detail"]
+    assert "solo en la mano de obra" in client.post(url, json={"etapa": "aporque", "rubro": "abono", "peones": 2, "dias": 1, "monto": 10}).json()["detail"]
+    assert client.post(url, json={**mano, "cantidad": 4, "unidad": "jornal"}).status_code == 200  # en jornales, como antes
+

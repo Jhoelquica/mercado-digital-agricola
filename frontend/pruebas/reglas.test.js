@@ -104,3 +104,15 @@ test('H8: el día y la hora del recojo se leen sin cambiar de zona horaria', () 
   assert.equal(Reglas.fechaHoraLegible('2026-10-18T17:05'), 'domingo 18/10 a las 17:05');
   assert.equal(Reglas.fechaHoraLegible(null), '');
 });
+
+test('Mano de obra en peones × días × pago por día (validación 2026-10-14, A04)', () => {
+  const r = Reglas.manoDeObra({ peones: '3', dias: '2', pago: '50' });
+  assert.deepEqual(r.datos, { peones: 3, dias: 2, precio_unitario: 50, unidad: 'jornal' });
+  assert.equal(r.total, 300);
+  assert.deepEqual(Reglas.manoDeObra({ peones: '', dias: '', pago: '' }), { datos: null, total: 0, error: null, campo: null });
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1.5', pago: '50' }).campo, 'dias'); // sin medios días
+  assert.equal(Reglas.manoDeObra({ peones: '2.5', dias: '1', pago: '50' }).campo, 'peones');
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '', pago: '' }).campo, 'dias');
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '3', pago: '' }).campo, 'pago');
+  assert.equal(Reglas.manoDeObra({ peones: '4', dias: '1', pago: '45,5' }).total, 182);
+});

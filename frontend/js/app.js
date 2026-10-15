@@ -5984,7 +5984,7 @@ async function pintarPlantillaReconocida(nombre, destino) {
     : `<i class="ti ti-info-circle" aria-hidden="true"></i><span>No lo tenemos en la lista: usaremos las etapas de un cultivo común (${etapas}).</span>`;
 }
 
-// Un campo de gasto por rubro de cada etapa; la mano de obra va en jornales × precio del jornal.
+// Un campo de gasto por rubro de cada etapa; la mano de obra va en peones × días × pago de cada peón por día.
 function renderCamposGastos(etapas, valores = {}) {
   const campo = (id, etiqueta, valor, extra = '') => `
     <label class="ag-campo" for="${id}"><span>${etiqueta}</span>
@@ -5998,12 +5998,17 @@ function renderCamposGastos(etapas, valores = {}) {
         ${e.rubros.map((r) => {
           const base = `ag-${e.clave}-${r}`;
           if (r !== 'mano_obra') return campo(base, escapeAttr(nombreRubro(r)), valores[base], `data-etapa="${e.clave}" data-rubro="${r}" data-campo="monto"`);
+          // Validación con usuarios del 2026-10-14 (A04): peones y días enteros, y el pago de cada peón por día.
+          const entero = (sufijo, etiqueta, unidad) => `
+              <label class="ag-campo" for="${base}-${sufijo}"><span>${etiqueta}</span>
+                <span class="ag-entrada"><input id="${base}-${sufijo}" type="number" inputmode="numeric" min="1" step="1" placeholder="0" value="${escapeAttr(valores[`${base}-${sufijo}`] ?? '')}" data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="${sufijo}"><span aria-hidden="true">${unidad}</span></span>
+              </label>`;
           return `
             <div class="ag-jornales" data-etapa="${e.clave}">
-              <label class="ag-campo" for="${base}-cantidad"><span>Jornales</span>
-                <span class="ag-entrada"><input id="${base}-cantidad" type="number" inputmode="decimal" min="0" step="0.5" value="${escapeAttr(valores[`${base}-cantidad`] ?? '')}" data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="cantidad"><span aria-hidden="true">días</span></span>
-              </label>
-              ${campo(`${base}-precio`, 'Pago por jornal', valores[`${base}-precio`], `data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="precio"`)}
+              ${entero('peones', 'Peones', 'personas')}
+              ${entero('dias', 'Días', 'días')}
+              ${campo(`${base}-precio`, 'Pago por peón al día', valores[`${base}-precio`], `data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="precio"`)}
+              <p class="ag-jornales-total" aria-live="polite">${textoTotalJornales(valores[`${base}-peones`], valores[`${base}-dias`], valores[`${base}-precio`])}</p>
             </div>`;
         }).join('')}
       </div>
@@ -6026,7 +6031,22 @@ async function pintarGastosInicioAsistente(cont, estado) {
     : '<p class="muted">Ahora no pudimos traer las etapas. Puedes seguir: anota tus gastos después en tu siembra.</p>';
 }
 
-// Lee los campos de gastos: [{etapa, rubro, monto}] o la mano de obra como {cantidad, precio_unitario, unidad: 'jornal'}.
+// "3 peones × 2 días × S/ 50 = S/ 300" debajo de los campos de mano de obra; la ayuda si todavía no se escribió nada.
+function textoTotalJornales(peones, dias, pago) {
+  const r = Reglas.manoDeObra({ peones, dias, pago });
+  if (r.datos) {
+    return `${r.datos.peones} ${r.datos.peones === 1 ? 'peón' : 'peones'} × ${r.datos.dias} ${r.datos.dias === 1 ? 'día' : 'días'} × ${formatearMoneda(r.datos.precio_unitario)} = <strong>${formatearMoneda(r.total)}</strong>`;
+  }
+  return 'Lo que le pagaste a cada peón por un día de trabajo. El tractor no va aquí: va en Maquinaria.';
+}
+
+function pintarTotalJornales(caja) {
+  const valor = (campo) => caja.querySelector(`[data-campo="${campo}"]`)?.value;
+  const total = caja.querySelector('.ag-jornales-total, .fg-total');
+  if (total) total.innerHTML = textoTotalJornales(valor('peones'), valor('dias'), valor('precio'));
+}
+
+// Lee los campos de gastos: [{etapa, rubro, monto}] o la mano de obra como {peones, dias, precio_unitario, unidad: 'jornal'}.
 function recogerGastosAsistente(cont, estado, claveValores) {
   const valores = {};
   const gastos = [];
@@ -6038,9 +6058,11 @@ function recogerGastosAsistente(cont, estado, claveValores) {
     if (monto) gastos.push({ etapa: i.dataset.etapa, rubro: i.dataset.rubro, monto });
   });
   cont.querySelectorAll('.ag-jornales').forEach((caja) => {
-    const cantidad = numero(caja.querySelector('[data-campo="cantidad"]'));
-    const precio = numero(caja.querySelector('[data-campo="precio"]'));
-    if (cantidad || precio) gastos.push({ etapa: caja.dataset.etapa, rubro: 'mano_obra', cantidad, precio_unitario: precio, unidad: 'jornal' });
+    const valor = (campo) => caja.querySelector(`[data-campo="${campo}"]`)?.value ?? '';
+    const r = Reglas.manoDeObra({ peones: valor('peones'), dias: valor('dias'), pago: valor('precio') });
+    // Con los tres vacíos no hay gasto; a medias, se guarda el error para que validar lo muestre.
+    if (r.datos) gastos.push({ etapa: caja.dataset.etapa, rubro: 'mano_obra', ...r.datos });
+    else if (r.error) gastos.push({ etapa: caja.dataset.etapa, rubro: 'mano_obra', unidad: 'jornal', errorManoObra: r.error });
   });
   return gastos;
 }
@@ -6048,8 +6070,7 @@ function recogerGastosAsistente(cont, estado, claveValores) {
 function validarGastosAsistente(gastos = []) {
   for (const g of gastos) {
     if (g.rubro === 'mano_obra' && g.unidad === 'jornal') {
-      if (!(g.cantidad > 0) || !(g.precio_unitario > 0)) return 'En la mano de obra escribe cuántos jornales y cuánto pagaste por cada uno (o deja los dos vacíos).';
-      if (g.cantidad * g.precio_unitario > 9999999.99) return 'Ese gasto de mano de obra es demasiado grande: revisa los jornales y el pago.';
+      if (g.errorManoObra) return `En la mano de obra: ${g.errorManoObra} (O deja los tres vacíos.)`;
     } else if (!(g.monto > 0) || g.monto > 9999999.99) {
       return 'Los gastos deben ser montos mayores a cero, sin signos.';
     }
@@ -6058,7 +6079,8 @@ function validarGastosAsistente(gastos = []) {
 }
 
 function totalGastos(gastos = []) {
-  return gastos.reduce((s, g) => s + (g.monto ?? (g.cantidad || 0) * (g.precio_unitario || 0)), 0);
+  const jornales = (g) => (g.peones && g.dias ? g.peones * g.dias : g.cantidad || 0);
+  return gastos.reduce((s, g) => s + (g.monto ?? jornales(g) * (g.precio_unitario || 0)), 0);
 }
 
 function resumenGastosAsistente(gastos = []) {
@@ -12049,8 +12071,9 @@ function renderFormGasto(seccion, etapaClave) {
           </select>
         </label>
         <label class="perfil-campo fg-monto">Monto (S/)<input name="monto" type="number" inputmode="decimal" min="0" step="0.01"></label>
-        <label class="perfil-campo fg-jornal hidden">Jornales<input name="cantidad" type="number" inputmode="decimal" min="0" step="0.5"></label>
-        <label class="perfil-campo fg-jornal hidden">Pago por jornal (S/)<input name="precio" type="number" inputmode="decimal" min="0" step="0.5"></label>
+        <label class="perfil-campo fg-jornal hidden">Peones<input name="peones" type="number" inputmode="numeric" min="1" step="1" placeholder="Ej.: 3" data-campo="peones"></label>
+        <label class="perfil-campo fg-jornal hidden">Días<input name="dias" type="number" inputmode="numeric" min="1" step="1" placeholder="Ej.: 2" data-campo="dias"></label>
+        <label class="perfil-campo fg-jornal hidden">Pago por peón al día (S/)<input name="precio" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej.: 50" data-campo="precio"></label>
         <label class="perfil-campo">Detalle <small>(opcional)</small><input name="descripcion" type="text" maxlength="120" placeholder="Ej.: 2 sacos de urea"></label>
         <label class="perfil-campo">Fecha<input name="fecha" type="date" value="${hoy}" max="${hoy}"></label>
       </div>
@@ -12067,8 +12090,8 @@ function ajustarFormGasto(form) {
   const jornales = form.rubro.value === 'mano_obra';
   form.querySelectorAll('.fg-jornal').forEach((el) => el.classList.toggle('hidden', !jornales));
   form.querySelector('.fg-monto').classList.toggle('hidden', jornales);
-  const total = Number(form.cantidad.value) * Number(form.precio.value);
-  form.querySelector('.fg-total').textContent = jornales && total > 0 ? `Total: ${formatearMoneda(total)}` : '';
+  if (jornales) pintarTotalJornales(form);
+  else form.querySelector('.fg-total').textContent = '';
 }
 
 function abrirFormGasto(boton) {
@@ -12083,17 +12106,17 @@ function abrirFormGasto(boton) {
 async function guardarGasto(form) {
   const seccion = form.closest('.etapas-gastos');
   const jornales = form.rubro.value === 'mano_obra';
+  const mano = jornales ? Reglas.manoDeObra({ peones: form.peones.value, dias: form.dias.value, pago: form.precio.value }) : null;
   const datos = {
     etapa: form.dataset.etapa,
     rubro: form.rubro.value,
     descripcion: form.descripcion.value.trim() || null,
     fecha: form.fecha.value ? `${form.fecha.value}T12:00:00` : null,
-    ...(jornales
-      ? { cantidad: Number(form.cantidad.value) || null, precio_unitario: Number(form.precio.value) || null, unidad: 'jornal' }
-      : { monto: Number(form.monto.value) || null }),
+    ...(jornales ? (mano.datos || {}) : { monto: Number(form.monto.value) || null }),
   };
+  const campoDe = { peones: 'peones', dias: 'dias', pago: 'precio' };
   const problema = jornales
-    ? (!(datos.cantidad > 0) ? ['Escribe cuántos jornales fueron.', 'cantidad'] : !(datos.precio_unitario > 0) ? ['Escribe cuánto pagaste por cada jornal.', 'precio'] : null)
+    ? (mano.error ? [mano.error, campoDe[mano.campo]] : !mano.datos ? ['Escribe cuántos peones trabajaron, cuántos días y cuánto le pagaste a cada uno por día.', 'peones'] : null)
     : (!(datos.monto > 0) ? ['Escribe cuánto gastaste.', 'monto'] : null);
   if (problema) {
     mostrarMensajeEntrega(form, problema[0], 'error');
@@ -12129,7 +12152,9 @@ async function cargarDetalleGastos(seccion) {
   lista.innerHTML = d.gastos.length ? `<ul>${d.gastos.map((g) => `
     <li>
       <div><strong>${escapeAttr(nombreRubro(g.rubro))}</strong> <span class="muted">· ${escapeAttr(nombreEtapa[g.etapa] || 'Otra etapa')} · ${formatearFechaCorta(String(g.fecha).slice(0, 10))}</span>
-        ${g.descripcion || g.cantidad ? `<small>${[g.descripcion ? escapeAttr(g.descripcion) : '', g.cantidad ? `${String(g.cantidad).replace('.', ',')} ${escapeAttr(unidadDeGasto(g.unidad, g.cantidad))} × ${formatearMoneda(g.precio_unitario)}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>
+        ${g.descripcion || g.cantidad ? `<small>${[g.descripcion ? escapeAttr(g.descripcion) : '', g.peones && g.dias
+    ? `${g.peones} ${g.peones === 1 ? 'peón' : 'peones'} × ${g.dias} ${g.dias === 1 ? 'día' : 'días'} × ${formatearMoneda(g.precio_unitario)}`
+    : g.cantidad ? `${String(g.cantidad).replace('.', ',')} ${escapeAttr(unidadDeGasto(g.unidad, g.cantidad))} × ${formatearMoneda(g.precio_unitario)}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>
       <span class="eg-lista-monto">${formatearMoneda(g.monto)}</span>
       ${editable ? `<button type="button" class="btn btn-ghost btn-sm btn-borrar-gasto" data-gasto="${g.id}" aria-label="Borrar este gasto"><i class="ti ti-trash" aria-hidden="true"></i></button>` : ''}
     </li>`).join('')}</ul>` : '<p class="muted">Todavía no anotaste gastos.</p>';
@@ -13067,6 +13092,10 @@ function inicializarEventos() {
   // estático en index.html, nunca se reemplaza por innerHTML, así que un solo listener alcanza
   // para toda la vida de la página).
   document.querySelectorAll('.productor-tabs, .admin-tabs').forEach(vigilarDesbordePestanas);
+  document.addEventListener('input', (e) => {
+    const caja = e.target.closest('.ag-jornales');
+    if (caja) pintarTotalJornales(caja);
+  });
   document.querySelector('.productor-tabs')?.addEventListener('click', (e) => {
     const btn = e.target.closest('.productor-tab-btn');
     if (btn) activarTabProductor(btn.dataset.tab);

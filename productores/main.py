@@ -184,6 +184,9 @@ class GastoDatos(BaseModel):
     precio_unitario: float | None = Field(default=None, ge=0, le=1_000_000)
     monto: float | None = Field(default=None, ge=0, le=9_999_999.99)
     fecha: datetime | None = None
+    # Mano de obra en peones y días enteros (validación con usuarios del 2026-10-14, A04): los jornales salen de ahí.
+    peones: int | None = Field(default=None, ge=1, le=500)
+    dias: int | None = Field(default=None, ge=1, le=366)
 
 
 class RegistroProduccionCrear(_ConUbicacionGps):
@@ -1085,8 +1088,17 @@ def _gasto_validado(plantilla: dict, gasto: GastoDatos, fecha_por_defecto: datet
         raise HTTPException(status_code=422, detail=f"La etapa \"{gasto.etapa}\" no es de {plantilla['nombre'] or 'este cultivo'}.")
     if gasto.rubro not in plantillas.RUBROS:
         raise HTTPException(status_code=422, detail=f"No conocemos el gasto \"{gasto.rubro}\".")
-    if gasto.cantidad is not None and gasto.precio_unitario is not None:
-        monto = round(gasto.cantidad * gasto.precio_unitario, 2)
+    cantidad, unidad = gasto.cantidad, (gasto.unidad or "").strip() or None
+    if gasto.peones is not None or gasto.dias is not None:
+        if gasto.rubro != "mano_obra":
+            raise HTTPException(status_code=422, detail="Los peones y los días van solo en la mano de obra.")
+        if not gasto.peones or not gasto.dias:
+            raise HTTPException(status_code=422, detail="En la mano de obra escribe cuántos peones trabajaron y cuántos días.")
+        if gasto.precio_unitario is None:
+            raise HTTPException(status_code=422, detail="Escribe cuánto le pagaste a cada peón por día.")
+        cantidad, unidad = gasto.peones * gasto.dias, "jornal"
+    if cantidad is not None and gasto.precio_unitario is not None:
+        monto = round(cantidad * gasto.precio_unitario, 2)
     elif gasto.monto is not None:
         monto = round(gasto.monto, 2)
     else:
@@ -1096,9 +1108,9 @@ def _gasto_validado(plantilla: dict, gasto: GastoDatos, fecha_por_defecto: datet
     if monto > 9_999_999.99:
         raise HTTPException(status_code=422, detail="Ese gasto es demasiado grande: revisa la cantidad y el precio.")
     descripcion = " ".join((gasto.descripcion or "").split()) or None
-    return {"etapa": gasto.etapa, "rubro": gasto.rubro, "descripcion": descripcion, "cantidad": gasto.cantidad,
-            "unidad": (gasto.unidad or "").strip() or None, "precio_unitario": gasto.precio_unitario, "monto": monto,
-            "fecha": gasto.fecha or fecha_por_defecto}
+    return {"etapa": gasto.etapa, "rubro": gasto.rubro, "descripcion": descripcion, "cantidad": cantidad,
+            "unidad": unidad, "precio_unitario": gasto.precio_unitario, "monto": monto,
+            "peones": gasto.peones, "dias": gasto.dias, "fecha": gasto.fecha or fecha_por_defecto}
 
 
 def _gastos_de_antes(plantilla: dict, fecha: datetime, semilla=0, insumos=0, mano_obra=None) -> list[dict]:
@@ -1134,7 +1146,7 @@ def _gasto_salida(g) -> dict:
     return {"id": str(g.id), "etapa": g.etapa, "rubro": g.rubro, "descripcion": g.descripcion,
             "cantidad": float(g.cantidad) if g.cantidad is not None else None, "unidad": g.unidad,
             "precio_unitario": float(g.precio_unitario) if g.precio_unitario is not None else None,
-            "monto": float(g.monto), "fecha": g.fecha}
+            "monto": float(g.monto), "peones": g.peones, "dias": g.dias, "fecha": g.fecha}
 
 
 def _resumen_plantilla(registro, db: Session) -> dict:

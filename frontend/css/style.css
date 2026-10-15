@@ -5840,6 +5840,9 @@ body.asistente-abierto { overflow: hidden; }
 .ag-etapa > p { margin: 0 0 10px; font-size: 0.9rem; color: var(--texto-suave); line-height: 1.4; }
 .ag-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 10px; }
 .ag-jornales { display: contents; }
+/* Mano de obra en peones × días (validación con usuarios del 2026-10-14): el total a la vista, en su propia fila. */
+.ag-jornales-total { grid-column: 1 / -1; margin: 0; font-size: 0.92rem; line-height: 1.45; color: var(--texto-suave); }
+.ag-jornales-total strong { color: var(--color-primario); }
 .ag-campo { display: grid; gap: 4px; font-weight: 700; font-size: 0.92rem; }
 .ag-entrada { display: flex; align-items: center; gap: 6px; min-height: 52px; padding: 0 12px; border: 2px solid var(--borde); border-radius: 12px; background: #fff; }
 .ag-entrada:focus-within { border-color: var(--color-primario); box-shadow: 0 0 0 3px rgba(45, 59, 42, 0.15); }
