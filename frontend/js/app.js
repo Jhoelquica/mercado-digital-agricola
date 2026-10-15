@@ -1961,6 +1961,7 @@ async function cargarDetalleProducto(id) {
     p = await Api.productos.obtener(id);
   } catch (err) {
     manejarError(err, 'cargar el producto');
+    seccionDetalleAlAbrir = null;
     cambiarVista(vistaAntesDeDetalle);
     return;
   }
@@ -1979,6 +1980,36 @@ async function cargarDetalleProducto(id) {
     ? new Map(reservas.reservas.filter((r) => r.cantidad != null).map((r) => [String(r.producto_id), r])) : null;
 
   renderPaginaDetalleProducto(p, resenas, productor);
+  if (seccionDetalleAlAbrir) {
+    irASeccionDetalle(seccionDetalleAlAbrir);
+    seccionDetalleAlAbrir = null;
+  }
+}
+
+// Sección del detalle a la que se va al abrirlo (validación con usuarios del 2026-10-14, C07: "Califica" en Mis pedidos
+// abría el producto arriba y había que buscar las reseñas). Se usa una vez y se borra.
+let seccionDetalleAlAbrir = null;
+
+function irASeccionDetalle(seccionId) {
+  const ir = (suave) => {
+    const tab = document.querySelector(`#detalle-tabs .detalle-tab[data-target="${seccionId}"]`);
+    if (tab && suave) tab.click(); // marca la pestaña y baja con scroll suave (inicializarPestanasDetalle)
+    else document.getElementById(seccionId)?.scrollIntoView({ block: 'start' });
+  };
+  // Después de pintar: un par de cuadros para que la barra de pestañas ya tenga su alto.
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    ir(true);
+    // Si puede calificar, el foco queda en la primera estrella (sin volver a mover la página).
+    document.querySelector(`#${seccionId} .estrellas-selector button`)?.focus({ preventScroll: true });
+    // Las fotos de arriba terminan de cargar después y empujan la sección: si se corrió, se vuelve a ella.
+    setTimeout(() => {
+      const seccion = document.getElementById(seccionId);
+      const barra = document.getElementById('detalle-barra');
+      if (!seccion || !document.getElementById('view-detalle-producto')?.classList.contains('active')) return;
+      const esperado = (barra?.offsetHeight || 0) + 16;
+      if (Math.abs(seccion.getBoundingClientRect().top - esperado) > 40) ir(false);
+    }, 900);
+  }));
 }
 
 // Productos con video en su galería de detalle. Convención de archivos (no de código): un
@@ -12952,7 +12983,11 @@ function inicializarEventos() {
   });
   document.getElementById('pedidos-list').addEventListener('click', (e) => {
     const calificar = e.target.closest('.btn-calificar-producto');
-    if (calificar) { cambiarVista('detalle-producto', calificar.dataset.productoId); return; }
+    if (calificar) {
+      seccionDetalleAlAbrir = 'detalle-seccion-resenas'; // directo a las reseñas, no al inicio del producto
+      cambiarVista('detalle-producto', calificar.dataset.productoId);
+      return;
+    }
     const reintentar = e.target.closest('.btn-reintentar-pago');
     if (reintentar) { reintentarPago(reintentar.dataset.pedidoId, Number(reintentar.dataset.monto), Number(reintentar.dataset.envio), reintentar.dataset.parte || null); return; }
     const recogido = e.target.closest('.btn-ya-lo-recogi');
