@@ -1309,13 +1309,51 @@ def test_la_mano_de_obra_se_anota_en_peones_y_dias_y_salen_los_jornales():
     assert aporque.json()["total"] == 480 and aporque.json()["costo_mano_obra"] == 480
 
 
-def test_peones_y_dias_enteros_completos_y_solo_en_la_mano_de_obra():
+def test_peones_enteros_dias_completos_y_solo_en_la_mano_de_obra():
     registro = _crear_con_etapas()
     url = f"/productores/produccion/{registro['id']}/gastos"
     mano = {"etapa": "aporque", "rubro": "mano_obra", "precio_unitario": 50}
-    assert client.post(url, json={**mano, "peones": 2, "dias": 1.5}).status_code == 422  # sin medios días
+    assert client.post(url, json={**mano, "peones": 2.5, "dias": 1}).status_code == 422  # sin medio peón
+    assert client.post(url, json={**mano, "peones": 2, "dias": 0}).status_code == 422
+    assert "cuántos días" in client.post(url, json={**mano, "peones": 2, "dias": 0.001}).json()["detail"]  # queda en 0
     assert "cuántos días" in client.post(url, json={**mano, "peones": 2}).json()["detail"]
     assert "a cada peón por día" in client.post(url, json={"etapa": "aporque", "rubro": "mano_obra", "peones": 2, "dias": 3}).json()["detail"]
     assert "solo en la mano de obra" in client.post(url, json={"etapa": "aporque", "rubro": "abono", "peones": 2, "dias": 1, "monto": 10}).json()["detail"]
     assert client.post(url, json={**mano, "cantidad": 4, "unidad": "jornal"}).status_code == 200  # en jornales, como antes
 
+
+
+def test_los_dias_de_la_mano_de_obra_aceptan_medio_dia():
+    """Validación con usuarios del 2026-10-14 (A04): "los días ... acepta en decimales"."""
+    registro = _crear_con_etapas(gastos=[
+        {"etapa": "siembra", "rubro": "mano_obra", "peones": 3, "dias": 0.5, "precio_unitario": 60}])
+    url = f"/productores/produccion/{registro['id']}/gastos"
+    [siembra] = client.get(url).json()["gastos"]
+    assert (siembra["peones"], siembra["dias"], siembra["cantidad"], siembra["monto"]) == (3, 0.5, 1.5, 90.0)
+
+    aporque = client.post(url, json={"etapa": "aporque", "rubro": "mano_obra", "peones": 2, "dias": 1.5, "precio_unitario": 50})
+    assert aporque.status_code == 200, aporque.text
+    assert aporque.json()["total"] == 240 and aporque.json()["costo_mano_obra"] == 240
+
+
+def test_la_migracion_pasa_los_dias_enteros_a_decimal_y_conserva_los_valores():
+    from sqlalchemy import inspect, text
+    from migraciones import pasar_entero_a_decimal
+
+    tabla = f"prueba_dias_{uuid.uuid4().hex[:8]}"
+    with main.engine.begin() as conexion:
+        conexion.execute(text(f'CREATE TABLE "{tabla}" (dias INTEGER)'))
+        conexion.execute(text(f'INSERT INTO "{tabla}" (dias) VALUES (2), (NULL)'))
+    try:
+        assert pasar_entero_a_decimal(main.engine, tabla, "dias", "NUMERIC(6, 2)") is True
+        [columna] = inspect(main.engine).get_columns(tabla)
+        assert columna["type"].python_type is not int
+        with main.engine.begin() as conexion:
+            conexion.execute(text(f'INSERT INTO "{tabla}" (dias) VALUES (0.5)'))
+            valores = sorted(float(v) for (v,) in conexion.execute(text(f'SELECT dias FROM "{tabla}" WHERE dias IS NOT NULL')))
+        assert valores == [0.5, 2.0]
+        assert pasar_entero_a_decimal(main.engine, tabla, "dias", "NUMERIC(6, 2)") is False  # ya es decimal
+        assert pasar_entero_a_decimal(main.engine, "tabla_que_no_existe", "dias", "NUMERIC(6, 2)") is False
+    finally:
+        with main.engine.begin() as conexion:
+            conexion.execute(text(f'DROP TABLE "{tabla}"'))

@@ -5998,15 +5998,16 @@ function renderCamposGastos(etapas, valores = {}) {
         ${e.rubros.map((r) => {
           const base = `ag-${e.clave}-${r}`;
           if (r !== 'mano_obra') return campo(base, escapeAttr(nombreRubro(r)), valores[base], `data-etapa="${e.clave}" data-rubro="${r}" data-campo="monto"`);
-          // Validación con usuarios del 2026-10-14 (A04): peones y días enteros, y el pago de cada peón por día.
-          const entero = (sufijo, etiqueta, unidad) => `
+          // Validación con usuarios del 2026-10-14 (A04): cuántos peones (enteros), cuántos días (medio día = 0,5) y el
+          // pago de cada peón por día. Los días van como texto para aceptar la coma en cualquier teclado.
+          const cantidad = (sufijo, etiqueta, unidad, entrada) => `
               <label class="ag-campo" for="${base}-${sufijo}"><span>${etiqueta}</span>
-                <span class="ag-entrada"><input id="${base}-${sufijo}" type="number" inputmode="numeric" min="1" step="1" placeholder="0" value="${escapeAttr(valores[`${base}-${sufijo}`] ?? '')}" data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="${sufijo}"><span aria-hidden="true">${unidad}</span></span>
+                <span class="ag-entrada"><input id="${base}-${sufijo}" ${entrada} value="${escapeAttr(valores[`${base}-${sufijo}`] ?? '')}" data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="${sufijo}"><span aria-hidden="true">${unidad}</span></span>
               </label>`;
           return `
             <div class="ag-jornales" data-etapa="${e.clave}">
-              ${entero('peones', 'Peones', 'personas')}
-              ${entero('dias', 'Días', 'días')}
+              ${cantidad('peones', '¿Cuántos peones?', 'personas', 'type="number" inputmode="numeric" min="1" step="1" placeholder="0"')}
+              ${cantidad('dias', '¿Cuántos días?', 'días', 'type="text" inputmode="decimal" autocomplete="off" placeholder="Ej.: 2 o 0,5"')}
               ${campo(`${base}-precio`, 'Pago por peón al día', valores[`${base}-precio`], `data-etapa="${e.clave}" data-rubro="mano_obra" data-campo="precio"`)}
               <p class="ag-jornales-total" aria-live="polite">${textoTotalJornales(valores[`${base}-peones`], valores[`${base}-dias`], valores[`${base}-precio`])}</p>
             </div>`;
@@ -6031,13 +6032,19 @@ async function pintarGastosInicioAsistente(cont, estado) {
     : '<p class="muted">Ahora no pudimos traer las etapas. Puedes seguir: anota tus gastos después en tu siembra.</p>';
 }
 
+// "3 peones × 0,5 días" (los días pueden ser medio día).
+function textoPeonesDias(peones, dias) {
+  const d = Number(dias);
+  return `${peones} ${Number(peones) === 1 ? 'peón' : 'peones'} × ${String(d).replace('.', ',')} ${d === 1 ? 'día' : 'días'}`;
+}
+
 // "3 peones × 2 días × S/ 50 = S/ 300" debajo de los campos de mano de obra; la ayuda si todavía no se escribió nada.
 function textoTotalJornales(peones, dias, pago) {
   const r = Reglas.manoDeObra({ peones, dias, pago });
   if (r.datos) {
-    return `${r.datos.peones} ${r.datos.peones === 1 ? 'peón' : 'peones'} × ${r.datos.dias} ${r.datos.dias === 1 ? 'día' : 'días'} × ${formatearMoneda(r.datos.precio_unitario)} = <strong>${formatearMoneda(r.total)}</strong>`;
+    return `${textoPeonesDias(r.datos.peones, r.datos.dias)} × ${formatearMoneda(r.datos.precio_unitario)} = <strong>${formatearMoneda(r.total)}</strong>`;
   }
-  return 'Lo que le pagaste a cada peón por un día de trabajo. El tractor no va aquí: va en Maquinaria.';
+  return 'Cuántos peones trabajaron, cuántos días (medio día = 0,5) y lo que le pagaste a cada uno por día. El tractor no va aquí: va en Maquinaria.';
 }
 
 function pintarTotalJornales(caja) {
@@ -6310,8 +6317,8 @@ function pasoGastosFinalesCosecha(registro) {
     id: 'gastos-finales',
     pregunta: `¿Cuánto gastaste al ${verbo}?`,
     ayuda: ya.total > 0
-      ? `Solo lo nuevo, en soles: lo de antes ya está guardado (${formatearMoneda(ya.total)}). La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste más, déjalo vacío.`
-      : 'En soles. La mano de obra va en jornales y lo que pagaste por cada uno. Si no gastaste en algo, déjalo vacío.',
+      ? `Solo lo nuevo, en soles: lo de antes ya está guardado (${formatearMoneda(ya.total)}). En la mano de obra escribe cuántos peones trabajaron, cuántos días y cuánto le pagaste a cada uno por día. Si no gastaste más, déjalo vacío.`
+      : 'En soles. En la mano de obra escribe cuántos peones trabajaron, cuántos días y cuánto le pagaste a cada uno por día. Si no gastaste en algo, déjalo vacío.',
     render: (estado) => `<div class="asistente-gastos">${ya.total > 0 ? renderGastosYaRegistrados(ya.etapas, ya.total, nota) : ''}${etapas.length ? renderCamposGastos(etapas, estado.gastosFinalValores)
       : '<p class="muted">No pudimos traer las etapas: anota tus gastos en tu siembra.</p>'}</div>`,
     recoger: (cont, estado) => { estado.gastosFinal = recogerGastosAsistente(cont, estado, 'gastosFinalValores'); },
@@ -12071,8 +12078,8 @@ function renderFormGasto(seccion, etapaClave) {
           </select>
         </label>
         <label class="perfil-campo fg-monto">Monto (S/)<input name="monto" type="number" inputmode="decimal" min="0" step="0.01"></label>
-        <label class="perfil-campo fg-jornal hidden">Peones<input name="peones" type="number" inputmode="numeric" min="1" step="1" placeholder="Ej.: 3" data-campo="peones"></label>
-        <label class="perfil-campo fg-jornal hidden">Días<input name="dias" type="number" inputmode="numeric" min="1" step="1" placeholder="Ej.: 2" data-campo="dias"></label>
+        <label class="perfil-campo fg-jornal hidden">¿Cuántos peones?<input name="peones" type="number" inputmode="numeric" min="1" step="1" placeholder="Ej.: 3" data-campo="peones"></label>
+        <label class="perfil-campo fg-jornal hidden">¿Cuántos días?<input name="dias" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej.: 2 o 0,5" data-campo="dias"></label>
         <label class="perfil-campo fg-jornal hidden">Pago por peón al día (S/)<input name="precio" type="number" inputmode="decimal" min="0" step="any" placeholder="Ej.: 50" data-campo="precio"></label>
         <label class="perfil-campo">Detalle <small>(opcional)</small><input name="descripcion" type="text" maxlength="120" placeholder="Ej.: 2 sacos de urea"></label>
         <label class="perfil-campo">Fecha<input name="fecha" type="date" value="${hoy}" max="${hoy}"></label>
@@ -12153,7 +12160,7 @@ async function cargarDetalleGastos(seccion) {
     <li>
       <div><strong>${escapeAttr(nombreRubro(g.rubro))}</strong> <span class="muted">· ${escapeAttr(nombreEtapa[g.etapa] || 'Otra etapa')} · ${formatearFechaCorta(String(g.fecha).slice(0, 10))}</span>
         ${g.descripcion || g.cantidad ? `<small>${[g.descripcion ? escapeAttr(g.descripcion) : '', g.peones && g.dias
-    ? `${g.peones} ${g.peones === 1 ? 'peón' : 'peones'} × ${g.dias} ${g.dias === 1 ? 'día' : 'días'} × ${formatearMoneda(g.precio_unitario)}`
+    ? `${textoPeonesDias(g.peones, g.dias)} × ${formatearMoneda(g.precio_unitario)}`
     : g.cantidad ? `${String(g.cantidad).replace('.', ',')} ${escapeAttr(unidadDeGasto(g.unidad, g.cantidad))} × ${formatearMoneda(g.precio_unitario)}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>
       <span class="eg-lista-monto">${formatearMoneda(g.monto)}</span>
       ${editable ? `<button type="button" class="btn btn-ghost btn-sm btn-borrar-gasto" data-gasto="${g.id}" aria-label="Borrar este gasto"><i class="ti ti-trash" aria-hidden="true"></i></button>` : ''}

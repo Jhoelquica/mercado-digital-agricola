@@ -110,17 +110,18 @@
     },
 
     // Mano de obra como se cuenta en el campo (validación con usuarios del 2026-10-14, A04: "no pregunta cuántos peones
-    // trabajaron" y los jornales aceptaban medios): peones y días enteros y el pago de cada peón por día. Los tres vacíos
-    // = sin gasto; a medias = error que dice qué falta. Mismas reglas que el servidor (productores/main.py, _gasto_validado).
+    // trabajaron; además ... acepta en decimales"): peones enteros, días con decimales (medio día = 0,5) y el pago de
+    // cada peón por día. Los tres vacíos = sin gasto; a medias = error que dice qué falta. Mismas reglas que el servidor
+    // (productores/main.py, _gasto_validado: los días se guardan con 2 decimales).
     manoDeObra({ peones, dias, pago }) {
       const texto = (v) => String(v ?? '').trim();
       const vacios = [peones, dias, pago].map(texto).filter((v) => v === '').length;
       if (vacios === 3) return { datos: null, total: 0, error: null, campo: null };
       const p = Number(texto(peones));
-      const d = Number(texto(dias));
+      const d = Math.round(Number(texto(dias).replace(',', '.')) * 100) / 100;
       const s = Number(texto(pago).replace(',', '.'));
       if (!(Number.isInteger(p) && p >= 1 && p <= 500)) return { datos: null, total: 0, campo: 'peones', error: 'Escribe cuántos peones trabajaron (un número entero, como 3).' };
-      if (!(Number.isInteger(d) && d >= 1 && d <= 366)) return { datos: null, total: 0, campo: 'dias', error: 'Escribe cuántos días trabajaron (un número entero, como 2).' };
+      if (!(d > 0 && d <= 366)) return { datos: null, total: 0, campo: 'dias', error: 'Escribe cuántos días trabajaron (por ejemplo 2, o 0,5 si fue medio día).' };
       if (!(s > 0)) return { datos: null, total: 0, campo: 'pago', error: 'Escribe cuánto le pagaste a cada peón por día.' };
       const total = Math.round(p * d * s * 100) / 100;
       if (total > 9999999.99) return { datos: null, total: 0, campo: 'pago', error: 'Ese gasto de mano de obra es demasiado grande: revisa los peones, los días y el pago.' };

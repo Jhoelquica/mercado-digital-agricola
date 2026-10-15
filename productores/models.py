@@ -140,9 +140,9 @@ class GastoProduccion(Base):
     unidad = Column(String, nullable=True)
     precio_unitario = Column(Numeric(12, 2), nullable=True)
     # Mano de obra como se cuenta en el campo (validación con usuarios del 2026-10-14, A04): cuántos peones y cuántos
-    # días; los jornales (cantidad) son peones × días. Nulos en los gastos de antes, anotados en jornales.
+    # días (medio día = 0.5); los jornales (cantidad) son peones × días. Nulos en los gastos de antes, anotados en jornales.
     peones = Column(Integer, nullable=True)
-    dias = Column(Integer, nullable=True)
+    dias = Column(Numeric(6, 2), nullable=True)
     monto = Column(Numeric(12, 2), nullable=False)
     fecha = Column(DateTime, nullable=False, default=datetime.utcnow)
     fecha_registro = Column(DateTime, nullable=False, default=datetime.utcnow)

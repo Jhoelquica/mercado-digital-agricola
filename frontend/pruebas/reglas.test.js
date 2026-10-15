@@ -110,9 +110,18 @@ test('Mano de obra en peones × días × pago por día (validación 2026-10-14, 
   assert.deepEqual(r.datos, { peones: 3, dias: 2, precio_unitario: 50, unidad: 'jornal' });
   assert.equal(r.total, 300);
   assert.deepEqual(Reglas.manoDeObra({ peones: '', dias: '', pago: '' }), { datos: null, total: 0, error: null, campo: null });
-  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1.5', pago: '50' }).campo, 'dias'); // sin medios días
   assert.equal(Reglas.manoDeObra({ peones: '2.5', dias: '1', pago: '50' }).campo, 'peones');
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '0', pago: '50' }).campo, 'dias');
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '0,001', pago: '50' }).campo, 'dias'); // con 2 decimales es 0
   assert.equal(Reglas.manoDeObra({ peones: '2', dias: '', pago: '' }).campo, 'dias');
   assert.equal(Reglas.manoDeObra({ peones: '2', dias: '3', pago: '' }).campo, 'pago');
   assert.equal(Reglas.manoDeObra({ peones: '4', dias: '1', pago: '45,5' }).total, 182);
+});
+
+test('Los días de la mano de obra aceptan medio día (validación 2026-10-14, A04)', () => {
+  const medio = Reglas.manoDeObra({ peones: '3', dias: '0,5', pago: '60' });
+  assert.deepEqual(medio.datos, { peones: 3, dias: 0.5, precio_unitario: 60, unidad: 'jornal' });
+  assert.equal(medio.total, 90);
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1.5', pago: '50' }).total, 150);
+  assert.equal(Reglas.manoDeObra({ peones: '2', dias: '1,256', pago: '10' }).datos.dias, 1.26); // como el servidor
 });
