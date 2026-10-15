@@ -101,6 +101,15 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: TRANSPORTE_A_PEDIDOS_SECRETO
+            # DNI de quien recibe un pedido en otra ciudad, consultado en RENIEC (ver pedidos/reniec.py). apis.net.pe
+            # respondía sin clave el 2026-10-03; desde el 2026-10-14 la exige (401 "Apikey Required"). La misma clave
+            # sirve para SUNAT (usuarios.yaml): se guardan las dos con scripts/poner_clave_apis_net_pe.py.
+            - name: RENIEC_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RENIEC_TOKEN
+                  optional: true
 ---
 apiVersion: v1
 kind: Service

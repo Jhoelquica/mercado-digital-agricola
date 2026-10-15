@@ -95,7 +95,8 @@ spec:
             - name: GOOGLE_CLIENT_ID
               value: "546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com"
             # Verificación del RUC de un comprador negocio en el padrón público de SUNAT (ver usuarios/sunat.py). El
-            # servicio respondía sin clave el 2026-10-03; si un día pide una, va en el Secret como SUNAT_RUC_TOKEN.
+            # servicio respondía sin clave el 2026-10-03; desde el 2026-10-14 la exige: va en el Secret como SUNAT_RUC_TOKEN
+            # (la misma de RENIEC en pedidos.yaml; se guardan las dos con scripts/poner_clave_apis_net_pe.py).
             - name: SUNAT_RUC_URL
               value: https://api.apis.net.pe/v2/sunat/ruc
             - name: SUNAT_RUC_TOKEN
