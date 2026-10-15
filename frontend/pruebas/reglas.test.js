@@ -133,3 +133,21 @@ test('Los atajos de la cosecha salen del rango del cultivo, no de meses fijos (v
   assert.equal(Reglas.atajosDeCosecha({ ...kiwicha, fecha_desde: '2027-03-23' }).length, 2); // sin repetir la fecha
   assert.deepEqual(Reglas.atajosDeCosecha(null), []);
 });
+
+test('H6: el precio sugerido sale del precio de referencia por kg, en la unidad del producto', () => {
+  assert.equal(Reglas.precioSugerido({ precioReferenciaKg: 3.456, unidad: 'kg' }), 3.46);
+  assert.equal(Reglas.precioSugerido({ precioReferenciaKg: 4, unidad: 'unidad', equivalenciaKg: 0.25 }), 1);
+  assert.equal(Reglas.precioSugerido({ precioReferenciaKg: 4, unidad: 'litro' }), null); // sin equivalencia, nada
+  assert.equal(Reglas.precioSugerido({ precioReferenciaKg: null, unidad: 'kg' }), null);
+  assert.equal(Reglas.precioSugerido({ precioReferenciaKg: 0, unidad: 'kg' }), null);
+});
+
+test('H6: la descripción sugerida usa los datos de la siembra y la cosecha, y solo los que hay', () => {
+  assert.equal(Reglas.descripcionSugerida({ cultivo: 'Kiwicha', chacra: 'Chacra del cerro', fechaSiembra: '2026-05-07T00:00:00',
+    fechaCosecha: '2026-10-14T00:00:00', cantidad: '1000.00', unidad: 'kg' }),
+  'Kiwicha de la chacra «Chacra del cerro». Se sembró el 7 de mayo de 2026 y se cosechó el 14 de octubre de 2026. De esta cosecha salieron 1000 kg.');
+  assert.equal(Reglas.descripcionSugerida({ cultivo: 'Choclo', fechaCosecha: '2026-09-01', cantidad: 1, unidad: 'unidad' }),
+    'Choclo. Se cosechó el 1 de setiembre de 2026. De esta cosecha salieron 1 unidad.');
+  assert.equal(Reglas.descripcionSugerida({ cultivo: 'Miel', cantidad: 12.5, unidad: 'litro' }), 'Miel. De esta cosecha salieron 12,5 litros.');
+  assert.equal(Reglas.descripcionSugerida({}), null);
+});

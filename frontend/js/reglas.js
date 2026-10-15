@@ -141,6 +141,39 @@
       return atajos.filter((a, i) => atajos.findIndex((b) => b.fecha === a.fecha) === i);
     },
 
+    // H6 (validación con usuarios del 2026-10-14, A04/A05: "que me sugieran precio"): el precio sugerido al publicar es
+    // el precio de referencia por kg de la tienda (el mismo de "Mis siembras"), llevado a la unidad del producto con su
+    // equivalencia (1 unidad = X kg). Sin referencia, o sin equivalencia para otra unidad, no se sugiere nada.
+    precioSugerido({ precioReferenciaKg, unidad, equivalenciaKg }) {
+      const porKg = Number(precioReferenciaKg);
+      if (precioReferenciaKg == null || !(porKg > 0)) return null;
+      const factor = unidad === 'kg' || !unidad ? 1 : Number(equivalenciaKg);
+      if (!(factor > 0)) return null;
+      return Math.round(porKg * factor * 100) / 100;
+    },
+
+    // H6 (A04: "en descripción quiere una sugerencia con datos de la cosecha o siembra"): una descripción hecha con lo que
+    // ya se sabe de la cosecha (cultivo, chacra, fechas y cantidad). Solo dice lo que hay: sin un dato, esa parte no va.
+    descripcionSugerida({ cultivo, chacra, fechaSiembra, fechaCosecha, cantidad, unidad }) {
+      if (!cultivo) return null;
+      const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'];
+      const fecha = (iso) => {
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+        return m ? `${Number(m[3])} de ${meses[Number(m[2]) - 1]} de ${m[1]}` : null;
+      };
+      const siembra = fecha(fechaSiembra);
+      const cosecha = fecha(fechaCosecha);
+      const partes = [`${cultivo.trim()}${chacra ? ` de la chacra «${String(chacra).trim()}»` : ''}.`];
+      if (siembra && cosecha) partes.push(`Se sembró el ${siembra} y se cosechó el ${cosecha}.`);
+      else if (cosecha) partes.push(`Se cosechó el ${cosecha}.`);
+      const n = Number(cantidad);
+      if (n > 0) {
+        const nombres = { kg: 'kg', unidad: n === 1 ? 'unidad' : 'unidades', litro: n === 1 ? 'litro' : 'litros' };
+        partes.push(`De esta cosecha salieron ${String(Math.round(n * 100) / 100).replace('.', ',')} ${nombres[unidad] || unidad || 'kg'}.`);
+      }
+      return partes.join(' ');
+    },
+
     // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
     fechaHoraLegible(iso) {
       const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));

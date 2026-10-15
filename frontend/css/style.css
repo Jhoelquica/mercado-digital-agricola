@@ -1193,6 +1193,9 @@ input, select { font-family: inherit; }
 .borrador-descripcion-pie { display: flex; justify-content: space-between; gap: 12px; font-size: 0.8rem; font-weight: 400; color: var(--texto-suave); }
 .borrador-descripcion-contador { flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .borrador-descripcion-contador.cerca { color: var(--acento-cosecha-texto); font-weight: 700; }
+/* H6: el precio sugerido (o por qué no hay) debajo del campo de precio del borrador. */
+.borrador-sugerencia { display: flex; gap: 8px; align-items: flex-start; margin-top: 2px; padding: 10px 12px; border-radius: 10px; background: rgba(161, 98, 7, 0.08); font-size: 0.9rem; font-weight: 400; line-height: 1.45; color: var(--texto); }
+.borrador-sugerencia > i { flex: none; margin-top: 2px; font-size: 1.1rem; color: var(--acento-cosecha-texto, #a16207); }
 .detalle-precio-row {
   display: flex;
   align-items: baseline;

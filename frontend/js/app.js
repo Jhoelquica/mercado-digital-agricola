@@ -6696,12 +6696,44 @@ function actualizarContadorDescripcion(textarea) {
   contador.classList.toggle('cerca', largo >= DESCRIPCION_MAXIMA * 0.9);
 }
 
-function renderTarjetaBorrador(p, indice, imagenes) {
+// H6 (validación con usuarios del 2026-10-14, A04/A05: "que me sugieran precio", "en descripción quiere una sugerencia
+// con datos de la cosecha o siembra"): el precio y la descripción sugeridos salen de la siembra de la que nació el
+// borrador (su precio de referencia y sus datos). Vienen escritos en los campos si el agricultor todavía no puso nada, y
+// los puede cambiar antes de publicar.
+function sugerenciasDeBorrador(p) {
+  const registro = (Estado.registrosProduccion || []).find((r) => String(r.id) === String(p.registro_produccion_id));
+  if (!registro) return { precio: null, referenciaKg: null, descripcion: null };
+  const chacra = (Estado.chacras || []).find((c) => String(c.id) === String(registro.chacra_id));
+  return {
+    referenciaKg: registro.precio_referencia_kg,
+    precio: Reglas.precioSugerido({
+      precioReferenciaKg: registro.precio_referencia_kg, unidad: p.unidad_medida, equivalenciaKg: registro.equivalencia_kg,
+    }),
+    descripcion: Reglas.descripcionSugerida({
+      cultivo: registro.cultivo, chacra: chacra?.nombre || chacra?.codigo, fechaSiembra: registro.fecha_siembra,
+      fechaCosecha: registro.fecha_cosecha_real, cantidad: registro.cantidad_cosechada, unidad: registro.unidad_medida,
+    }),
+  };
+}
+
+function textoPrecioSugerido(p, sug) {
+  if (sug.precio == null) {
+    return `<i class="ti ti-info-circle" aria-hidden="true"></i><span>Todavía no hay «${escapeAttr(p.nombre)}» con precio en la tienda para comparar: pon el precio que te parezca justo.</span>`;
+  }
+  const porKg = p.unidad_medida !== 'kg' ? ` (${formatearMoneda(sug.referenciaKg)} el kg)` : '';
+  return `<i class="ti ti-bulb" aria-hidden="true"></i><span><strong>Sugerido: ${formatearMoneda(sug.precio)} por ${escapeAttr(p.unidad_medida)}</strong>, el precio de referencia de «${escapeAttr(p.nombre)}» en la tienda${porKg}. Puedes cambiarlo.</span>`;
+}
+
+function renderTarjetaBorrador(p, indice, imagenes, sug = { precio: null, referenciaKg: null, descripcion: null }) {
   const retraso = Math.min(indice, 12) * 35;
-  const puedePublicar = p.precio != null && Number(p.precio) > 0 && imagenes.length > 0;
+  const precioInicial = p.precio != null ? p.precio : (sug.precio ?? '');
+  const descripcionSugerida = !p.descripcion && sug.descripcion;
+  const descripcionInicial = p.descripcion || sug.descripcion || '';
+  const conPrecio = precioInicial !== '' && Number(precioInicial) > 0;
+  const puedePublicar = conPrecio && imagenes.length > 0;
   // Progreso puramente visual (categoría / precio / al menos 1 foto = 3 pasos) — no es un campo
   // del backend, solo ayuda a priorizar qué borrador completar primero en la vista dedicada.
-  const pasosCompletos = (p.categoria ? 1 : 0) + (p.precio != null && Number(p.precio) > 0 ? 1 : 0) + (imagenes.length > 0 ? 1 : 0);
+  const pasosCompletos = (p.categoria ? 1 : 0) + (conPrecio ? 1 : 0) + (imagenes.length > 0 ? 1 : 0);
   const progreso = Math.round((pasosCompletos / 3) * 100);
   return `
     <div class="pedido-card borrador-card" style="animation-delay:${retraso}ms" data-producto-id="${escapeAttr(p.id)}">
@@ -6717,15 +6749,18 @@ function renderTarjetaBorrador(p, indice, imagenes) {
           <label>Categoría
             <select class="borrador-categoria">${opcionesCategoriaHTML(p.categoria)}</select>
           </label>
-          <label>Precio (S/)
-            <input type="number" class="borrador-precio" min="0" step="0.01" placeholder="0.00" value="${p.precio != null ? p.precio : ''}">
+          <label>Precio (S/ por ${escapeAttr(p.unidad_medida)})
+            <input type="number" class="borrador-precio" min="0" step="0.01" placeholder="0.00" value="${escapeAttr(precioInicial)}" aria-describedby="borrador-precio-ayuda-${escapeAttr(p.id)}">
+            <span class="borrador-sugerencia" id="borrador-precio-ayuda-${escapeAttr(p.id)}">${textoPrecioSugerido(p, sug)}</span>
           </label>
           <label><span>Descripción <span class="borrador-opcional">(opcional)</span></span>
             <textarea class="borrador-descripcion" rows="4" maxlength="${DESCRIPCION_MAXIMA}" aria-describedby="borrador-desc-ayuda-${escapeAttr(p.id)}"
-              placeholder="Ej.: Papa amarilla de altura, cosechada a mano en Quinua. Ideal para puré y sancochado.">${escapeAttr(p.descripcion || '')}</textarea>
+              placeholder="Ej.: Papa amarilla de altura, cosechada a mano en Quinua. Ideal para puré y sancochado.">${escapeAttr(descripcionInicial)}</textarea>
             <span class="borrador-descripcion-pie" id="borrador-desc-ayuda-${escapeAttr(p.id)}">
-              <span>Cuenta la variedad, cómo la cultivaste o para qué sirve. Sale en la página del producto.</span>
-              <span class="borrador-descripcion-contador" aria-live="polite">${(p.descripcion || '').length}/${DESCRIPCION_MAXIMA}</span>
+              <span>${descripcionSugerida
+    ? 'Te la escribimos con los datos de tu cosecha: cámbiala como quieras o agrégale la variedad y para qué sirve.'
+    : 'Cuenta la variedad, cómo la cultivaste o para qué sirve. Sale en la página del producto.'}</span>
+              <span class="borrador-descripcion-contador" aria-live="polite">${descripcionInicial.length}/${DESCRIPCION_MAXIMA}</span>
             </span>
           </label>
         </div>
@@ -6849,13 +6884,18 @@ async function cargarMisProductos() {
       // GET /productos/mios trae imagen_principal (una sola url) pero no la lista completa con
       // id/orden que necesita el gestor de fotos para eliminar/reordenar — eso solo lo trae el
       // detalle de cada producto (GET /productos/{id}), igual que ya usa alternarFotosProductor.
-      const detalles = await Promise.all(
-        borradores.map((p) => Api.productos.obtener(p.id).catch(() => null))
-      );
+      // Las siembras y las chacras dan el precio y la descripción sugeridos (H6); si fallan, el borrador sale sin ellos.
+      const [detalles, registros, chacras] = await Promise.all([
+        Promise.all(borradores.map((p) => Api.productos.obtener(p.id).catch(() => null))),
+        Api.productores.produccion.listarMe().catch(() => null),
+        Api.chacras.misChacras().catch(() => null),
+      ]);
+      if (registros) Estado.registrosProduccion = registros;
+      if (chacras) Estado.chacras = chacras;
       borradores.forEach((p, i) => {
         Estado.imagenesPorProducto[p.id] = detalles[i]?.imagenes || [];
       });
-      contBorradores.innerHTML = borradores.map((p, i) => renderTarjetaBorrador(p, i, Estado.imagenesPorProducto[p.id])).join('');
+      contBorradores.innerHTML = borradores.map((p, i) => renderTarjetaBorrador(p, i, Estado.imagenesPorProducto[p.id], sugerenciasDeBorrador(p))).join('');
       borradores.forEach((p) => actualizarPreviewBorrador(p.id));
     }
 
