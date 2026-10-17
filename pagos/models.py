@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Numeric, DateTime, UniqueConstraint
+from sqlalchemy import Column, String, Numeric, DateTime, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -155,3 +155,25 @@ class PagoBeneficiario(Base):
     hasta = Column(DateTime, nullable=False)  # lo cumplido antes de este momento
     pagado_por = Column(UUID(as_uuid=True), nullable=True)  # el admin
     fecha = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class DevolucionStock(Base):
+    """Stock que Pagos le devuelve a Productos (pago vencido, rechazado o reembolsado) y que NO entró a la primera.
+    El 2026-10-17 un pedido de maíz venció justo cuando Docker volvía a arrancar: Productos todavía no respondía, la
+    devolución falló, y los 5 kg se perdieron (solo quedó un print en el log). Ahora la devolución queda anotada aquí y el
+    ciclo de vencimientos la reintenta.
+    - pendiente: seguro NO llegó a Productos (no conectó, o 502/503/504): se reintenta.
+    - dudosa: pudo haber llegado (se cortó esperando la respuesta, u otro error): NO se reintenta, para no sumar dos veces;
+      se revisa a mano.
+    - devuelta: Productos la sumó."""
+    __tablename__ = "devoluciones_stock"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pedido_id = Column(UUID(as_uuid=True), nullable=True, index=True)
+    producto_id = Column(String, nullable=False)
+    cantidad = Column(Integer, nullable=False)  # en la unidad base del producto, ya redondeada como al descontar
+    estado = Column(String, nullable=False, default="pendiente", index=True)  # pendiente | dudosa | devuelta
+    intentos = Column(Integer, nullable=False, default=0)
+    ultimo_error = Column(String, nullable=True)
+    fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
+    fecha_devuelta = Column(DateTime, nullable=True)

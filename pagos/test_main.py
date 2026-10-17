@@ -695,7 +695,7 @@ def test_si_la_pasarela_no_responde_no_se_cobra_ni_cambia_el_pago(monkeypatch):
     assert resp.status_code == 502, resp.text
     assert _estado_del_pago(reintento) == "rechazado"
     reservar.assert_called_once_with(reintento.items)
-    compensar.assert_called_once_with(reintento.items)
+    compensar.assert_called_once_with(reintento.items, pedido_id=reintento.pedido_id)
 
 
 def test_un_segundo_intento_sobre_un_pago_ya_aprobado_falla_409_sin_cobrar_otra_vez(monkeypatch):
@@ -1031,7 +1031,7 @@ def test_rechazada_devuelve_el_stock_deja_el_motivo_y_el_comprador_puede_volver_
     assert rechazada.status_code == 200, rechazada.text
     fila = _fila_pago(pago)
     assert (fila.estado, fila.motivo_rechazo) == ("rechazado", "El monto transferido no coincide con el total")
-    transferencia["compensar"].assert_called_once_with(fila.items)
+    transferencia["compensar"].assert_called_once_with(fila.items, pedido_id=pago.pedido_id)
     assert transferencia["eventos"] == [{"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id),
                                          "motivo": "El monto transferido no coincide con el total"}]
 
@@ -1598,3 +1598,117 @@ def test_la_entrega_llega_por_el_evento_del_envio_y_vale_la_primera_vez():
     finally:
         db.close()
     assert canal.basic_ack.call_count == 4
+
+
+# ============ Devolución de stock que no entra a la primera (pedido de maíz del 2026-10-17) ============
+
+class _ClienteReponer:
+    """Productos para /stock/reponer: responde según `modo` ("caido": no conecta; "lento": se corta esperando la respuesta;
+    un número: ese código HTTP) y guarda cada (url, cantidad)."""
+    def __init__(self, llamadas, modo):
+        self._llamadas, self._modo = llamadas, modo
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def post(self, url, **kwargs):
+        self._llamadas.append((url, kwargs["json"]["cantidad"]))
+        if self._modo == "caido":
+            raise main.httpx.ConnectError("[Errno 111] Connection refused")
+        if self._modo == "lento":
+            raise main.httpx.ReadTimeout("timed out")
+        respuesta = MagicMock()
+        respuesta.status_code = self._modo
+        return respuesta
+
+
+def _productos_reponer(monkeypatch, modo, llamadas):
+    monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClienteReponer(llamadas, modo))
+
+
+def _devoluciones_de(pedido_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.DevolucionStock).filter(main.models.DevolucionStock.pedido_id == pedido_id).all()
+    finally:
+        db.close()
+
+
+def test_si_productos_no_responde_al_vencer_la_devolucion_queda_pendiente_y_se_reintenta(monkeypatch):
+    from datetime import datetime, timedelta
+
+    maiz = str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": maiz, "cantidad": 5, "precio_unitario": 6.0, "cantidad_base": 5}])
+    ahora = datetime.utcnow()
+    _con_vencimiento(pago, ahora - timedelta(minutes=1))
+    monkeypatch.setattr(main, "publicar_evento", lambda evento: None)
+    llamadas = []
+    _productos_reponer(monkeypatch, "caido", llamadas)  # Docker recién vuelve: Productos todavía no acepta conexiones
+
+    db = main.SessionLocal()
+    try:
+        main.vencer_pagos_sin_pagar(db, ahora=ahora)
+    finally:
+        db.close()
+
+    assert _estado_del_pago(pago) == "rechazado"
+    [devolucion] = _devoluciones_de(pago.pedido_id)
+    assert (devolucion.producto_id, devolucion.cantidad, devolucion.estado, devolucion.intentos) == (maiz, 5, "pendiente", 1)
+    assert "ConnectError" in devolucion.ultimo_error
+
+    # Productos sigue caído: sigue pendiente, con un intento más
+    db = main.SessionLocal()
+    try:
+        main.reintentar_devoluciones_pendientes(db)
+    finally:
+        db.close()
+    [devolucion] = _devoluciones_de(pago.pedido_id)
+    assert (devolucion.estado, devolucion.intentos) == ("pendiente", 2)
+
+    # Productos vuelve: la devolución entra una sola vez
+    llamadas.clear()
+    _productos_reponer(monkeypatch, 200, llamadas)
+    for _ in range(2):
+        db = main.SessionLocal()
+        try:
+            main.reintentar_devoluciones_pendientes(db)
+        finally:
+            db.close()
+    [devolucion] = _devoluciones_de(pago.pedido_id)
+    assert devolucion.estado == "devuelta" and devolucion.fecha_devuelta is not None
+    assert [(url.split("/")[-3], cantidad) for url, cantidad in llamadas] == [(maiz, 5)]
+
+
+def test_un_503_se_reintenta_y_una_respuesta_cortada_queda_dudosa_sin_reintentar(monkeypatch):
+    pedido_503, pedido_cortado = uuid.uuid4(), uuid.uuid4()
+    llamadas = []
+    _productos_reponer(monkeypatch, 503, llamadas)
+    assert main.compensar_stock(json.dumps([{"producto_id": "p-503", "cantidad": 2}]), pedido_id=pedido_503) == {"p-503": "pendiente"}
+    _productos_reponer(monkeypatch, "lento", llamadas)
+    assert main.compensar_stock(json.dumps([{"producto_id": "p-lento", "cantidad": 3}]), pedido_id=pedido_cortado) == {"p-lento": "dudosa"}
+    [cortada] = _devoluciones_de(pedido_cortado)
+    assert cortada.estado == "dudosa" and "ReadTimeout" in cortada.ultimo_error
+
+    # al reintentar: la del 503 sí se vuelve a pedir; la dudosa no (pudo haber entrado y se sumaría dos veces)
+    llamadas.clear()
+    _productos_reponer(monkeypatch, 200, llamadas)
+    db = main.SessionLocal()
+    try:
+        main.reintentar_devoluciones_pendientes(db)
+    finally:
+        db.close()
+    assert ("p-503", 2) in [(url.split("/")[-3], c) for url, c in llamadas]
+    assert all(url.split("/")[-3] != "p-lento" for url, _ in llamadas)
+    assert _devoluciones_de(pedido_503)[0].estado == "devuelta"
+    assert _devoluciones_de(pedido_cortado)[0].estado == "dudosa"
+
+
+def test_si_productos_responde_no_se_anota_ninguna_devolucion(monkeypatch):
+    pedido = uuid.uuid4()
+    _productos_reponer(monkeypatch, 200, [])
+    assert main.compensar_stock(json.dumps([{"producto_id": "p-ok", "cantidad": 1}]), pedido_id=pedido) == {"p-ok": "devuelta"}
+    assert _devoluciones_de(pedido) == []
+

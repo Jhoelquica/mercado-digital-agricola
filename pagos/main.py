@@ -123,31 +123,96 @@ def _cantidades_base_por_producto(items_json) -> dict:
     return totales
 
 
-def compensar_stock(items_json: str):
+# Respuestas de Productos que dicen que la devolución NO se aplicó y se puede reintentar sin sumar dos veces.
+HTTP_REINTENTABLES = {502, 503, 504}
+
+
+def _reponer_en_productos(client, producto_id, cantidad: int) -> tuple[str, str | None]:
+    """Le pide a Productos sumar `cantidad` al stock. Devuelve (estado, error):
+    - "devuelta": Productos la sumó.
+    - "pendiente": seguro NO llegó (no se pudo conectar, o 502/503/504): se puede reintentar.
+    - "dudosa": pudo haber llegado (se cortó esperando la respuesta, u otra respuesta): no se reintenta, porque
+      /stock/reponer suma cada vez que se lo llama."""
+    try:
+        resp = client.post(
+            f"{PRODUCTOS_URL}/productos/{producto_id}/stock/reponer",
+            json={"cantidad": cantidad},
+            headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
+            timeout=5,
+        )
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        return "pendiente", f"{type(e).__name__}: {e}"[:300]
+    except httpx.RequestError as e:
+        return "dudosa", f"{type(e).__name__}: {e}"[:300]
+    if resp.status_code == 200:
+        return "devuelta", None
+    return ("pendiente" if resp.status_code in HTTP_REINTENTABLES else "dudosa"), f"HTTP {resp.status_code}"
+
+
+def compensar_stock(items_json: str, pedido_id=None) -> dict:
     """Devuelve a Productos el stock reservado por un pedido, en la MISMA unidad y con el mismo redondeo con que
     se descontó (suma por producto, redondeada hacia arriba). Antes se devolvía la cantidad en la unidad que
-    eligió el comprador: 3 sacos de 10 kg descontaban 30 kg y devolvían 3."""
+    eligió el comprador: 3 sacos de 10 kg descontaban 30 kg y devolvían 3.
+
+    Lo que no entra a la primera queda anotado en devoluciones_stock (ver models.DevolucionStock) y el ciclo de
+    vencimientos lo reintenta: antes solo quedaba un print y el stock se perdía (pedido de maíz del 2026-10-17).
+    Devuelve {producto_id: "devuelta" | "pendiente" | "dudosa"}."""
     cantidades = _cantidades_base_por_producto(items_json)
     if not cantidades:
         print("[Pagos] No hay items guardados para este pago, no se puede compensar stock")
-        return
+        return {}
 
+    resultado, por_anotar = {}, []
     with httpx.Client() as client:
         for producto_id, cantidad in cantidades.items():
             reponer = math.ceil(cantidad)
-            try:
-                resp = client.post(
-                    f"{PRODUCTOS_URL}/productos/{producto_id}/stock/reponer",
-                    json={"cantidad": reponer},
-                    headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
-                    timeout=5,
-                )
-                if resp.status_code == 200:
-                    print(f"[Pagos] Stock repuesto: {reponer} de {producto_id}")
-                else:
-                    logger.error("Productos rechazó reponer %s de %s (HTTP %s)", reponer, producto_id, resp.status_code)
-            except httpx.RequestError as e:
-                print(f"[Pagos] ERROR al compensar stock de {producto_id}: {e}")
+            estado, error = _reponer_en_productos(client, producto_id, reponer)
+            resultado[producto_id] = estado
+            if estado == "devuelta":
+                print(f"[Pagos] Stock repuesto: {reponer} de {producto_id}")
+                continue
+            logger.error("No se pudo devolver %s de %s a Productos (%s): queda %s%s", reponer, producto_id, error, estado,
+                         ", se reintenta" if estado == "pendiente" else "; revisar a mano")
+            por_anotar.append(models.DevolucionStock(pedido_id=pedido_id, producto_id=str(producto_id), cantidad=reponer,
+                                                     estado=estado, intentos=1, ultimo_error=error))
+    if por_anotar:
+        db = SessionLocal()
+        try:
+            db.add_all(por_anotar)
+            db.commit()
+        except Exception:
+            db.rollback()
+            logger.error("No se pudieron anotar %d devoluciones de stock: %s", len(por_anotar),
+                         [(d.producto_id, d.cantidad) for d in por_anotar], exc_info=True)
+        finally:
+            db.close()
+    return resultado
+
+
+def reintentar_devoluciones_pendientes(db: Session) -> int:
+    """Reintenta las devoluciones de stock "pendiente" (las que seguro no llegaron). Una por una y con la fila bloqueada
+    (SKIP LOCKED: con varias réplicas, cada devolución la intenta una sola). Devuelve cuántas entraron."""
+    ids = [d.id for d in db.query(models.DevolucionStock.id).filter(models.DevolucionStock.estado == "pendiente").all()]
+    devueltas = 0
+    with httpx.Client() as client:
+        for devolucion_id in ids:
+            fila = (db.query(models.DevolucionStock)
+                    .filter(models.DevolucionStock.id == devolucion_id, models.DevolucionStock.estado == "pendiente")
+                    .with_for_update(skip_locked=True).first())
+            if fila is None:
+                db.rollback()
+                continue
+            estado, error = _reponer_en_productos(client, fila.producto_id, fila.cantidad)
+            fila.estado, fila.ultimo_error, fila.intentos = estado, error, (fila.intentos or 0) + 1
+            if estado == "devuelta":
+                fila.fecha_devuelta = datetime.utcnow()
+                devueltas += 1
+                logger.info("Devolución de stock reintentada: %s de %s (pedido %s)", fila.cantidad, fila.producto_id, fila.pedido_id)
+            elif estado == "dudosa":
+                logger.error("La devolución de %s de %s (pedido %s) quedó dudosa (%s): revisar a mano",
+                             fila.cantidad, fila.producto_id, fila.pedido_id, error)
+            db.commit()
+    return devueltas
 
 
 def reservar_stock(items_json: str):
@@ -369,13 +434,18 @@ def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
         pago.motivo_rechazo = MOTIVO_VENCIDO
         pago.vencido_en = ahora
     db.commit()
+    sin_devolver = 0
     for pago in vencidos:
-        compensar_stock(pago.items)
+        resultado = compensar_stock(pago.items, pedido_id=pago.pedido_id) or {}
+        sin_devolver += sum(1 for estado in resultado.values() if estado != "devuelta")
         try:
             publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": MOTIVO_VENCIDO, "vencido": True})
         except Exception:
             logger.error("No se pudo avisar que venció el pago del pedido %s", pago.pedido_id, exc_info=True)
-    if vencidos:
+    if vencidos and sin_devolver:
+        logger.warning("Vencieron %d pedido(s) sin pagar: %d devolución(es) de stock quedaron anotadas para reintentar",
+                       len(vencidos), sin_devolver)
+    elif vencidos:
         logger.info("Vencieron %d pedido(s) sin pagar: su stock volvió al catálogo", len(vencidos))
     return len(vencidos)
 
@@ -383,6 +453,12 @@ def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
 def _bucle_vencimientos():
     while True:
         db = SessionLocal()
+        try:
+            # Primero lo que no se pudo devolver antes (p. ej. Productos aún arrancaba), después los nuevos vencidos.
+            reintentar_devoluciones_pendientes(db)
+        except Exception:
+            db.rollback()
+            logger.error("El reintento de devoluciones de stock falló, reintenta en %ds", INTERVALO_VENCIMIENTOS_SEGUNDOS, exc_info=True)
         try:
             vencer_pagos_sin_pagar(db)
         except Exception:
@@ -506,7 +582,7 @@ def procesar_pago(
     except (httpx.RequestError, ValueError):
         # La pasarela no respondió (o respondió algo ilegible): no se cobró nada, el pago queda como estaba.
         if es_reintento:
-            compensar_stock(pago.items)
+            compensar_stock(pago.items, pedido_id=pago.pedido_id)
         logger.error("La pasarela de pagos no respondió al cobrar el pedido %s", pago.pedido_id, exc_info=True)
         raise HTTPException(status_code=502, detail="No se pudo comunicar con la pasarela de pagos. Inténtalo de nuevo en unos momentos.")
 
@@ -517,7 +593,7 @@ def procesar_pago(
         if not es_reintento:
             pago.estado = "rechazado"
             db.commit()
-        compensar_stock(pago.items)
+        compensar_stock(pago.items, pedido_id=pago.pedido_id)
         publicar_evento({
             "evento": "pago_rechazado",
             "pedido_id": str(pago.pedido_id),
@@ -594,7 +670,7 @@ def enviar_constancia_de_transferencia(
         objeto = subir_constancia(datos, tipo)
     except Exception:
         if es_reintento:
-            compensar_stock(pago.items)
+            compensar_stock(pago.items, pedido_id=pago.pedido_id)
         logger.error("No se pudo guardar la constancia del pedido %s", pedido_id, exc_info=True)
         raise HTTPException(status_code=502, detail="No se pudo guardar la constancia. Intenta de nuevo en unos momentos.")
 
@@ -707,7 +783,7 @@ def rechazar_transferencia(
         return _transferencia_resumen(pago, parte)
     pago.estado = "rechazado"
     db.commit()
-    compensar_stock(pago.items)
+    compensar_stock(pago.items, pedido_id=pago.pedido_id)
     publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
     return _transferencia_resumen(pago, parte)
 
@@ -810,7 +886,7 @@ def devolver_pago(pedido_id: uuid.UUID, datos: Devolucion, db: Session = Depends
         _devolver_descuentos_cobrados(db, liquidacion)
         liquidacion.estado = "anulada"
     db.commit()
-    compensar_stock(pago.items)
+    compensar_stock(pago.items, pedido_id=pago.pedido_id)
     try:
         publicar_evento({"evento": "pago_reembolsado", "pedido_id": str(pago.pedido_id), "motivo": motivo,
                          "monto": _dinero(pago.monto_reembolsado), "manual": _dinero(manual) if manual else None})
