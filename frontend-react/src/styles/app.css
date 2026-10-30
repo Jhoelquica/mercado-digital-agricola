@@ -1,0 +1,88 @@
+/* Lo que necesita la base en React y no existe en legacy.css. */
+
+.enlace-saltar {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 300;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--color-primario);
+  color: white;
+  font-weight: 700;
+}
+.enlace-saltar:focus { top: 16px; }
+
+/* En legacy.css estos son botones; aquí son enlaces reales, para que abrir en otra pestaña y el botón Atrás funcionen. */
+a.brand, a.nav-link, a.nav-account-item, a.btn, a.productor-tab-btn, a.admin-tab-btn { text-decoration: none; }
+a.brand { color: var(--color-primario); }
+a.nav-link.active { color: white; background: var(--color-primario); }
+a.btn { display: inline-flex; align-items: center; justify-content: center; }
+a.productor-tab-btn, a.admin-tab-btn { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+
+.pagina-pendiente { padding: 48px 16px; }
+.pagina-pendiente h2 { margin-bottom: 8px; }
+.pagina-pendiente code { padding: 2px 6px; border-radius: 6px; background: var(--color-superficie); }
+
+.cargando-ruta { display: grid; place-items: center; min-height: 40vh; }
+
+/* ---- Inicio de sesión: página completa con las clases del modal de acceso (.auth-*) ---- */
+.login-pagina {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
+  min-height: 100dvh;
+  margin-top: -10px; /* compensa el padding-top que legacy.css le da a body para el navbar */
+  background: white;
+}
+.login-pagina .auth-lado-marca { color: white; text-decoration: none; }
+.login-pagina .auth-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(24px, 5vw, 64px);
+}
+.login-contenido { width: 100%; max-width: 460px; }
+/* En legacy.css estas reglas están atadas a #modal-auth. */
+.login-pagina .auth-form { gap: 18px; }
+.login-pagina .auth-titulo { font-size: 1.9rem; margin-bottom: 4px; }
+.login-pagina .auth-campo input {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 16px 12px 48px;
+  border-radius: 14px;
+  border: 1.5px solid var(--borde);
+  background: white;
+  font-size: 1rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.login-pagina .auth-campo:has(.auth-ojo) input { padding-right: 56px; }
+.login-pagina .auth-campo input:hover { border-color: color-mix(in srgb, var(--color-borde) 60%, white); }
+.login-pagina .auth-campo input:focus {
+  border-color: var(--color-primario);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primario) 14%, transparent);
+}
+.login-pagina .auth-campo input:user-invalid { border-color: #c0492a; }
+.login-volver {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-bottom: 12px;
+  color: var(--color-secundario);
+  font-weight: 700;
+  text-decoration: none;
+}
+.login-volver:hover { color: var(--color-primario); }
+.login-volver:focus-visible, .login-pagina .auth-cambio a:focus-visible {
+  outline: 3px solid var(--color-borde);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.login-pagina .auth-cambio a { color: var(--color-primario); font-weight: 700; }
+
+@media (max-width: 860px) {
+  .login-pagina { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .login-pagina .auth-lado { padding: 24px 20px; }
+  .login-pagina .auth-lado-cuerpo { display: none; }
+  .login-pagina .auth-panel { align-items: flex-start; padding: 20px 16px 40px; }
+}

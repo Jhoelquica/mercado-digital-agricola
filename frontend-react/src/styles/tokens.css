@@ -1,0 +1,12 @@
+/* Paleta oficial y tipografía de ChakraShop. Las pantallas nuevas usan solo estas variables. */
+:root {
+  --color-primario: #2D3B2A;         /* verde oscuro: texto de marca, botón principal */
+  --color-primario-hover: #3D4F38;   /* hover del botón principal */
+  --color-secundario: #5C5850;       /* gris cálido: texto secundario, títulos suaves */
+  --color-fondo-secundario: #E8E1D3; /* beige cálido: fondo de botones y elementos secundarios */
+  --color-superficie: #EAEEE0;       /* verde beige tenue: fondo de página, hovers, chips */
+  --color-borde: #82907A;            /* verde gris apagado: bordes y anillos de foco */
+
+  --font-titulo: 'Rubik', sans-serif;
+  --font-texto: 'Nunito Sans', sans-serif;
+}
