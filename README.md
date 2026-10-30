@@ -154,7 +154,7 @@ seed_datos_demo.py     semilla de demostración (y crear_productos_seed.py, seed
 docker-compose.yml     entorno sin Kubernetes
 ```
 
-No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `backups/` y `deploy/gcp/salida/`.
+No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/settings.local.json`, `backups/`, `docs/` y `deploy/gcp/salida/`.
 
 ## Limitaciones conocidas
 
@@ -183,3 +183,9 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `backups/` y `deploy/gcp/
 **Pruebas y despliegue**
 - No hay pruebas automáticas del frontend ni pruebas de carga.
 - No hay NetworkPolicy ni respaldo automático de las bases en la nube.
+
+**Pendiente antes de producción**
+- `k8s/certificacion.yaml:70` fija `FRONTEND_URL` en `http://localhost:63342/mercado_agricola/frontend` (el servidor de
+  IntelliJ). Los QR de certificación se generan con esa URL: debe pasar a ser configurable por entorno (ConfigMap).
+  `deploy/gcp/generar_manifiestos.py` ya la sobrescribe para Google Cloud; el manifiesto base sigue con el valor fijo.
+- `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
