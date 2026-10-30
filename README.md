@@ -106,6 +106,11 @@ bash scripts/restaurar_completo.sh backups/<fecha>                    # restaura
 **Qué guarda el respaldo:** las 8 bases (`pg_dump` en formato personalizado), un inventario de filas por tabla y todos
 los archivos de MinIO. La carpeta `backups/` no se sube a git.
 
+**Dónde están los respaldos anteriores:** en `C:\dev\respaldos-mercado_agricola`, fuera del repositorio y de cualquier
+carpeta sincronizada (ya no en OneDrive), con acceso solo para el usuario de esta máquina porque tienen datos reales de
+usuarios. Ahí están `backups/`, `salida/` (la copia de `deploy/gcp/salida/`) y `commits-huerfanos.bundle`; para recuperar
+sus commits: `git fetch <bundle> "refs/huerfanos/*:refs/huerfanos/*"`.
+
 **Qué hace la restauración, en orden:**
 1. Guarda primero otro respaldo del estado de ese momento.
 2. Deja MinIO igual que en el respaldo.
