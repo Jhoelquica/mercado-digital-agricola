@@ -9,3 +9,10 @@ backups/
 
 # Despliegue en Google Cloud: lo que genera deploy/gcp (manifiestos con tu dominio y credenciales del admin)
 deploy/gcp/salida/
+
+# Claves y configuración local (.mcp.json lleva la x-api-key de 21st.dev)
+.mcp.json
+.claude/settings.local.json
+
+# Informe y capturas: no se versionan (docs/informe/validacion puede tener datos de personas)
+docs/
