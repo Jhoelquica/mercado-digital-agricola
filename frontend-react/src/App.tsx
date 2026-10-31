@@ -5,7 +5,6 @@ import { ApiError } from './api/errors';
 import { AuthProvider } from './auth/AuthContext';
 import { alCerrarSesion, leerSesion, terminarSalidaPorCierreManual, type MotivoCierre } from './auth/sesion';
 import { Toasts, toast } from './components/Toast';
-import type { EstadoLogin } from './features/auth/LoginPage';
 import { IdiomaProvider } from './idioma/IdiomaContext';
 import { router } from './router';
 
@@ -20,19 +19,14 @@ const queryClient = new QueryClient({
 });
 
 // Lo que tiene que pasar en la interfaz al cerrarse la sesión, venga de donde venga (botón o 401). Fuera de un componente
-// para que quede registrado una sola vez.
+// para que quede registrado una sola vez. Si expiró no se navega aquí: una ruta privada la saca RequireRole y una pública
+// se queda donde está, con el aviso de AppLayout.
 alCerrarSesion((motivo: MotivoCierre) => {
   queryClient.clear(); // los datos de esta cuenta no deben quedar a la vista de la siguiente
   if (motivo === 'manual') {
     void router.navigate('/').finally(terminarSalidaPorCierreManual);
     toast('Sesión cerrada. ¡Hasta pronto! 👋');
-    return;
   }
-  // Desde una página pública también se lleva al login, igual que el frontend actual abre ahí el acceso.
-  const { pathname, search } = window.location;
-  if (pathname === '/login') return;
-  const estado: EstadoLogin = { desde: `${pathname}${search}` };
-  void router.navigate('/login', { state: estado });
 });
 
 export function App() {

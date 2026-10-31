@@ -39,8 +39,8 @@ const oyentesDeCierre = new Set<(motivo: MotivoCierre) => void>();
 // Había una sesión guardada, pero su token ya había vencido.
 export let sesionVencidaAlIniciar = false;
 
-// El login muestra el motivo si llega aquí porque la sesión expiró, y RequireRole no manda al login a quien está saliendo
-// a propósito (el router tarda en llegar a "/"). No hacen falta en el estado de la ruta porque se decide antes de navegar.
+// La sesión expiró: una ruta privada lleva al login con el motivo, y una pública se queda donde está con un aviso.
+// RequireRole, por su parte, no manda al login a quien está saliendo a propósito (el router tarda en llegar a "/").
 let sesionRecienExpirada = false;
 let saliendoPorCierreManual = false;
 
@@ -48,7 +48,9 @@ export const haySesionRecienExpirada = (): boolean => sesionRecienExpirada;
 export const estaSaliendoPorCierreManual = (): boolean => saliendoPorCierreManual;
 
 export function olvidarSesionRecienExpirada(): void {
+  if (!sesionRecienExpirada) return;
   sesionRecienExpirada = false;
+  oyentes.forEach((o) => o());
 }
 
 export function terminarSalidaPorCierreManual(): void {
@@ -127,6 +129,7 @@ export async function iniciarSesionConToken(token: string): Promise<void> {
   const payload = decodeJwt(token);
   if (!payload) throw new Error('Token inválido recibido del servidor.');
 
+  sesionRecienExpirada = false;
   publicar({ ...SIN_SESION, token, usuarioId: payload.sub, rol: payload.rol });
 
   let cambios: Partial<Sesion> = { nombre: 'Usuario' };
@@ -152,4 +155,3 @@ conectarSesion({
   token: () => sesion.token,
   alExpirar: (tokenUsado) => cerrarSesion('expirada', tokenUsado),
 });
-if (sesion.token) void sincronizarAvisosCelular();

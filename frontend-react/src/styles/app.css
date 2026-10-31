@@ -17,7 +17,8 @@
 a.brand, a.nav-link, a.nav-account-item, a.btn, a.productor-tab-btn, a.admin-tab-btn { text-decoration: none; }
 a.brand { color: var(--color-primario); }
 a.nav-link.active { color: white; background: var(--color-primario); }
-a.btn { display: inline-flex; align-items: center; justify-content: center; }
+/* Un enlace con forma de botón mide y se alinea igual que un <button> (centrado, con la misma altura de línea). */
+a.btn { display: inline-block; text-align: center; line-height: normal; }
 a.productor-tab-btn, a.admin-tab-btn { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 
 .pagina-pendiente { padding: 48px 16px; }
@@ -25,6 +26,37 @@ a.productor-tab-btn, a.admin-tab-btn { display: inline-flex; align-items: center
 .pagina-pendiente code { padding: 2px 6px; border-radius: 6px; background: var(--color-superficie); }
 
 .cargando-ruta { display: grid; place-items: center; min-height: 40vh; }
+
+/* La sesión expiró en una página pública: se queda en ella, con la opción de volver a entrar. */
+.aviso-sesion {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  max-width: 1232px;
+  margin: 12px auto 0;
+  padding: 12px 16px;
+  border: 1px solid var(--color-borde);
+  border-radius: 14px;
+  background: var(--color-fondo-secundario);
+  color: var(--color-primario);
+  font-weight: 600;
+}
+.aviso-sesion > i { font-size: 1.3rem; }
+.aviso-sesion > span { flex: 1 1 220px; }
+.aviso-sesion .btn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; }
+.aviso-sesion-cerrar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--color-primario);
+  font-size: 1.1rem;
+}
+.aviso-sesion-cerrar:focus-visible { outline: 3px solid var(--color-borde); outline-offset: 2px; }
+@media (max-width: 1280px) { .aviso-sesion { margin-inline: 16px; } }
 
 /* ---- Inicio de sesión: página completa con las clases del modal de acceso (.auth-*) ---- */
 .login-pagina {
@@ -42,7 +74,11 @@ a.productor-tab-btn, a.admin-tab-btn { display: inline-flex; align-items: center
   padding: clamp(24px, 5vw, 64px);
 }
 .login-contenido { width: 100%; max-width: 460px; }
-/* En legacy.css estas reglas están atadas a #modal-auth. */
+/* En legacy.css estas reglas están atadas a #modal-auth, o dejan sitio para su botón de cerrar. */
+.login-pagina .auth-tabs { margin-right: 0; }
+.login-pagina a.auth-tab { display: grid; place-items: center; text-decoration: none; }
+.login-pagina a.auth-tab.active { background: white; color: var(--color-primario); }
+.login-pagina a.auth-cambio-btn { text-decoration: underline; }
 .login-pagina .auth-form { gap: 18px; }
 .login-pagina .auth-titulo { font-size: 1.9rem; margin-bottom: 4px; }
 .login-pagina .auth-campo input {

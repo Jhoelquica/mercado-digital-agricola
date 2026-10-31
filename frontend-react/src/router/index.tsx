@@ -48,7 +48,19 @@ export const router = createBrowserRouter([
     hydrateFallbackElement: Cargando,
     lazy: componente(() => import('../features/auth/LoginPage')),
   },
-  // Los QR ya impresos apuntan aquí (ver certificacion/main.py).
+  {
+    path: '/registro',
+    errorElement: <ErrorDeRuta />,
+    hydrateFallbackElement: Cargando,
+    lazy: componente(() => import('../features/auth/RegistroPage')),
+  },
+  // Página pública del QR: sin navbar y sin token. Los QR ya impresos apuntan a /verificar.html (ver certificacion/main.py).
+  {
+    path: '/verificar',
+    errorElement: <ErrorDeRuta />,
+    hydrateFallbackElement: Cargando,
+    lazy: componente(() => import('../features/verificar/VerificarPage')),
+  },
   {
     path: '/verificar.html',
     loader: ({ request }) => redirect(`/verificar${new URL(request.url).search}`),
@@ -58,10 +70,8 @@ export const router = createBrowserRouter([
     errorElement: <ErrorDeRuta />,
     hydrateFallbackElement: Cargando,
     children: [
-      { index: true, loader: cargarInicio, handle: { titulo: 'Catálogo' }, lazy: paginaPendiente },
-      pendiente('producto/:id', 'Detalle de producto'),
-      pendiente('registro', 'Crear cuenta'),
-      pendiente('verificar', 'Verificación de origen'),
+      { index: true, loader: cargarInicio, lazy: componente(() => import('../features/catalogo/LandingPage')) },
+      { path: 'producto/:id', lazy: componente(() => import('../features/producto/DetallePage')) },
       {
         element: <RequireRole roles={ROLES_CON_SESION} />,
         children: [pendiente('notificaciones', 'Notificaciones'), pendiente('perfil', 'Mi perfil')],

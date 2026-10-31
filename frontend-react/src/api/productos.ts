@@ -115,6 +115,8 @@ export const productos = {
   mios: () => request<ProductoMio[]>('productos', '/productos/mios', { auth: true }).then((lista) => lista.map(normalizarImagenesDeProducto)),
   // Con sesión si la hay: el detalle de un borrador solo lo devuelve a su productor (y al admin).
   obtener: (id: string) => request<ProductoDetalle>('productos', `/productos/${id}`, { auth: 'opcional' }).then(normalizarImagenesDeProducto),
+  // La página pública de verificación (QR) siempre pide como visitante: el dueño de un borrador no lo ve ahí.
+  obtenerComoVisitante: (id: string) => request<ProductoDetalle>('productos', `/productos/${id}`).then(normalizarImagenesDeProducto),
   precioReferencia: (nombre: string) => request<PrecioReferencia>('productos', `/productos/precio-referencia/${encodeURIComponent(nombre)}`),
   actualizar: (id: string, datos: Esquemas['ProductoActualizar']) => request<ProductoFila>('productos', `/productos/${id}`, { method: 'PATCH', body: datos, auth: true }),
   publicar: (id: string) => request<ProductoFila>('productos', `/productos/${id}/publicar`, { method: 'PATCH', auth: true }),

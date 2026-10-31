@@ -20,3 +20,21 @@ export function rutaInicialPara(rol: string | null | undefined): string {
 export function rutaTrasRegistro(rol: string | null | undefined, { reclamaRuc = false } = {}): string {
   return reclamaRuc ? '/perfil' : rutaInicialPara(rol);
 }
+
+// El valor de ?next=: solo una ruta de esta misma aplicación. Cualquier otra cosa ("//otro.sitio", "https://…", "/\otro")
+// se descarta para que un enlace no pueda llevar a otro sitio después de iniciar sesión.
+export function rutaInternaSegura(next: string | null | undefined): string | null {
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return null;
+  try {
+    const url = new URL(next, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    if (url.pathname === '/login' || url.pathname === '/registro') return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
+
+export function rutaDeLogin(next: string): string {
+  return `/login?next=${encodeURIComponent(next)}`;
+}

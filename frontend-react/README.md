@@ -29,3 +29,8 @@ Revisa los tipos con las tres configuraciones (aplicación, service worker y Vit
 - Las respuestas están escritas a mano en cada dominio de `src/api/`, leídas del código de cada servicio: la mayoría de
   las rutas no declara `response_model`, así que su OpenAPI no las describe. Si cambia lo que devuelve un servicio, hay
   que actualizar su tipo a mano.
+
+## Pendientes de backend
+
+- Añadir `response_model` a los endpoints para generar también los tipos de las respuestas, empezando por los de las
+  pantallas que se migren. Cuando un endpoint lo tenga, su tipo escrito a mano se reemplaza por el generado.
