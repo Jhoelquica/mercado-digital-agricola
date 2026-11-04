@@ -1,6 +1,7 @@
-import { PanelLayout } from '../../layouts/PanelLayout';
-import { SECCIONES_COMPRADOR } from '../../router/secciones';
+import { Outlet } from 'react-router';
+
+// El comprador no tiene panel con pestañas: Mis Pedidos se abre desde el menú de la cuenta y el pedido desde el carrito.
 
 export default function CompradorLayout() {
-  return <PanelLayout titulo="Mi cuenta" icono="shopping-bag" base="/comprador" secciones={SECCIONES_COMPRADOR} estilo="productor" />;
+  return <Outlet />;
 }

@@ -1,6 +1,8 @@
 # ChakraShop: frontend en React
 
-Migración de `frontend/` a React + Vite + TypeScript, por fases. Por ahora hay base y login; las pantallas son marcadores.
+Migración de `frontend/` a React + Vite + TypeScript, por fases. Ya están la parte pública (landing, búsqueda, detalle,
+/verificar), el login y el registro, y la compra completa del comprador (carrito, checkout, pago con Culqi o por
+transferencia y Mis Pedidos). Las demás pantallas son marcadores.
 
 ## Probar en local
 
@@ -11,8 +13,9 @@ npm install
 npm run dev
 ```
 
-Abre <http://localhost:5173>. El proxy de Vite lleva `/api` y `/media` a Traefik en `localhost:8000`, así que no hace
-falta ningún `.env` para desarrollar. Las variables están en `.env.example`.
+Abre <http://localhost:5173>. El proxy de Vite lleva `/api` y `/media` a Traefik en `localhost:8000`. Las variables están
+en `.env.example`: para pagar con Culqi en local, copia el archivo a `.env.local` y pon la llave pública de pruebas
+(`pk_test_...`). El script de Culqi se descarga recién al abrir el checkout.
 
 ## Comprobar antes de subir
 
@@ -21,6 +24,9 @@ npm run build
 ```
 
 Revisa los tipos con las tres configuraciones (aplicación, service worker y Vite) y genera `dist/`.
+
+Con el servidor de desarrollo en marcha, `BASE=http://localhost:5173 npm run e2e:mapa` comprueba tres veces seguidas que
+el mapa del detalle carga sus teselas.
 
 ## Tipos de la API
 

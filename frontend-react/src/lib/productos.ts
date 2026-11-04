@@ -51,7 +51,7 @@ export function nombreCategoria(categoria: string | null | undefined): string {
 }
 
 // Lo que comparten las tres formas en que la API entrega un producto.
-interface ProductoConPrecio {
+export interface ProductoConPrecio {
   precio: number | null;
   stock: number | null;
   unidad_medida: string | null;

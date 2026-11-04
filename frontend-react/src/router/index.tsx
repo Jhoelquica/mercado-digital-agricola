@@ -4,7 +4,7 @@ import { ROLES_CON_SESION, rutaInicialPara } from '../auth/rutasPorRol';
 import { leerSesion } from '../auth/sesion';
 import { AppLayout } from '../layouts/AppLayout';
 import { ErrorDeRuta, NoEncontrado } from '../pages/NoEncontrado';
-import { SECCIONES_ADMIN, SECCIONES_COMPRADOR, SECCIONES_PRODUCTOR, SECCIONES_REPARTIDOR, type SeccionDePanel } from './secciones';
+import { SECCIONES_ADMIN, SECCIONES_PRODUCTOR, SECCIONES_REPARTIDOR, type SeccionDePanel } from './secciones';
 
 const Cargando = (
   <div className="cargando-ruta" role="status" aria-label="Cargando">
@@ -81,7 +81,12 @@ export const router = createBrowserRouter([
         element: <RequireRole roles={['comprador']} />,
         children: [{
           lazy: componente(() => import('../features/comprador/CompradorLayout')),
-          children: [{ index: true, loader: () => redirect('/comprador/pedidos') }, ...rutasDePanel(SECCIONES_COMPRADOR)],
+          children: [
+            { index: true, loader: () => redirect('/comprador/pedidos') },
+            { path: 'pedidos', handle: { titulo: 'Mis Pedidos' }, lazy: componente(() => import('../features/pedidos/MisPedidosPage')) },
+            // Es un modal, como en el frontend actual: AppLayout mantiene la página de atrás a la vista.
+            { path: 'checkout', handle: { titulo: 'Tu pedido', modal: true }, lazy: componente(() => import('../features/checkout/CheckoutPage')) },
+          ],
         }],
       },
       {

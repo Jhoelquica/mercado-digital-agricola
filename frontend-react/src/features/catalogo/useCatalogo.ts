@@ -10,6 +10,8 @@ export function useCatalogo(enabled = true) {
 
 export interface EstadoDetalle {
   volverA?: string;
+  // Sección a la que bajar al abrirlo ("Califica" en Mis Pedidos va directo a las reseñas). Se usa una vez.
+  seccion?: string;
 }
 
 // Recuerda desde dónde se llegó al detalle para que su botón "Volver" regrese ahí. Si ya se estaba en un detalle (un

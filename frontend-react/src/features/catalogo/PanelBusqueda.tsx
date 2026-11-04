@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
+import { atraparFoco } from '../../lib/foco';
 import { productos as apiProductos, type ProductoCatalogo } from '../../api/productos';
 import { CATEGORIAS_PRODUCTO, ICONOS_CATEGORIA, NOMBRE_CATEGORIA, normalizarCategoria, ordenarPorDestacado, type Categoria } from '../../lib/productos';
 import { cerrarPanelBusqueda, leerBusqueda, suscribirMenus } from './menus';
@@ -19,22 +20,6 @@ const ORDENES_BUSQUEDA: Record<string, (a: ProductoCatalogo, b: ProductoCatalogo
   'precio-desc': (a, b) => Number(b.precio) - Number(a.precio),
   calificacion: (a, b) => (b.calificacion_promedio || 0) - (a.calificacion_promedio || 0) || (b.total_resenas || 0) - (a.total_resenas || 0),
 };
-
-function atraparFoco(e: KeyboardEvent<HTMLElement>): void {
-  if (e.key !== 'Tab') return;
-  const enfocables = [...e.currentTarget.querySelectorAll<HTMLElement>('button, input, select, textarea, [href]')]
-    .filter((el) => !(el as HTMLButtonElement).disabled && !el.hidden && el.offsetParent !== null);
-  const primero = enfocables[0];
-  const ultimo = enfocables[enfocables.length - 1];
-  if (!primero || !ultimo) return;
-  if (e.shiftKey && document.activeElement === primero) {
-    e.preventDefault();
-    ultimo.focus();
-  } else if (!e.shiftKey && document.activeElement === ultimo) {
-    e.preventDefault();
-    primero.focus();
-  }
-}
 
 export function PanelBusqueda() {
   const panel = useSyncExternalStore(suscribirMenus, leerBusqueda);

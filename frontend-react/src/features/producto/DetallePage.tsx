@@ -18,11 +18,12 @@ import { useAbrirProducto, useCatalogo, type EstadoDetalle } from '../catalogo/u
 import { fotosProducto, GaleriaDetalle } from './GaleriaDetalle';
 import { LineaTiempoCertificacion, QrCertificacion } from './LineaTiempoCertificacion';
 import { BotonReservaSticky, PanelReserva, useReserva } from './Reserva';
+import { useAgregarAlCarrito } from '../checkout/useAgregarAlCarrito';
 import { Estrellas, ResenasDetalle } from './ResenasDetalle';
 import { VideosDetalle } from './VideosDetalle';
 
 // Leaflet solo se descarga si el productor tiene coordenadas.
-const MapaSoloLectura = lazy(() => import('./Mapa').then((m) => ({ default: m.MapaSoloLectura })));
+const MapaSoloLectura = lazy(() => import('../../components/Mapa').then((m) => ({ default: m.MapaSoloLectura })));
 
 interface DatosDetalle {
   producto: ProductoDetalle;
@@ -300,9 +301,69 @@ function SelectorUnidad({ producto: p, seleccion, alCambiar }: { producto: Produ
   );
 }
 
-// El carrito se migra en su propia fase: el botón está para que la ficha quede igual, pero todavía no agrega nada.
-function avisarCarritoPendiente() {
-  toast('Agregar al pedido llega con la migración del carrito. Por ahora compra en la versión actual.');
+// Tras agregar, el botón confirma con "Agregado" un momento (mismo ancho, para que no salte).
+function BotonAgregar({ clase, agotado, texto, alAgregar }: { clase: string; agotado: boolean; texto: string; alAgregar: () => void }) {
+  const boton = useRef<HTMLButtonElement>(null);
+  const [anchoFijo, setAnchoFijo] = useState<number | null>(null);
+  const temporizador = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(temporizador.current), []);
+  return (
+    <button
+      ref={boton}
+      type="button"
+      className={`${clase}${anchoFijo !== null ? ' destello-exito' : ''}`}
+      style={anchoFijo !== null ? { minWidth: anchoFijo } : undefined}
+      disabled={agotado || anchoFijo !== null}
+      onClick={() => {
+        alAgregar();
+        setAnchoFijo(boton.current?.offsetWidth ?? 0);
+        temporizador.current = setTimeout(() => setAnchoFijo(null), 900);
+      }}
+    >
+      {anchoFijo !== null ? <><i className="ti ti-check" /> Agregado</> : agotado ? 'Agotado' : texto}
+    </button>
+  );
+}
+
+// Abre el detalle directo en una sección (por ejemplo, "Califica" en Mis Pedidos baja a las reseñas). Va después de
+// usePestanasDetalle: usa sus pestañas para el scroll suave. Se usa una vez: se borra del historial para que recargar no
+// vuelva a saltar.
+function useSaltoASeccion(raiz: React.RefObject<HTMLDivElement | null>) {
+  const { state, pathname, search } = useLocation();
+  const navigate = useNavigate();
+  const seccionInicial = useRef((state as EstadoDetalle | null)?.seccion);
+
+  useEffect(() => {
+    const seccionId = seccionInicial.current;
+    if (!seccionId) return undefined;
+    void navigate(`${pathname}${search}`, { replace: true, preventScrollReset: true, state: { volverA: (state as EstadoDetalle | null)?.volverA } satisfies EstadoDetalle });
+    const ir = (suave: boolean) => {
+      const tab = raiz.current?.querySelector<HTMLElement>(`.detalle-tab[data-target="${seccionId}"]`);
+      if (tab && suave) tab.click(); // marca la pestaña y baja con scroll suave
+      else document.getElementById(seccionId)?.scrollIntoView({ block: 'start' });
+    };
+    let temporizador: ReturnType<typeof setTimeout> | undefined;
+    // Un par de cuadros para que la barra de pestañas ya tenga su alto.
+    let cuadro = requestAnimationFrame(() => {
+      cuadro = requestAnimationFrame(() => {
+        ir(true);
+        // Si puede calificar, el foco queda en la primera estrella (sin volver a mover la página).
+        document.querySelector<HTMLElement>(`#${seccionId} .estrellas-selector button`)?.focus({ preventScroll: true });
+        // Las fotos de arriba terminan de cargar después y empujan la sección: si se corrió, se vuelve a ella.
+        temporizador = setTimeout(() => {
+          const seccion = document.getElementById(seccionId);
+          if (!seccion) return;
+          const esperado = (document.getElementById('detalle-barra')?.offsetHeight || 0) + 16;
+          if (Math.abs(seccion.getBoundingClientRect().top - esperado) > 40) ir(false);
+        }, 900);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(cuadro);
+      clearTimeout(temporizador);
+    };
+    // Solo al abrir el detalle: el navigate de arriba cambia el estado, pero el salto ya está en marcha.
+  }, []);
 }
 
 function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; alPublicarResena: () => Promise<void> }) {
@@ -312,6 +373,7 @@ function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; al
   const { state } = useLocation();
   const raiz = useRef<HTMLDivElement>(null);
   const reserva = useReserva(p, reservas);
+  const agregarAlCarrito = useAgregarAlCarrito();
 
   const stock = p.stock ?? 0;
   const sinStock = stock <= 0;
@@ -342,6 +404,7 @@ function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; al
   }
 
   usePestanasDetalle(raiz);
+  useSaltoASeccion(raiz);
   useBarraDetalle(raiz);
   useRevelarSecciones(raiz);
 
@@ -373,7 +436,7 @@ function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; al
           <span className="detalle-sticky-precio">{precioHtml}</span>
           {enCamino
             ? <span id="detalle-reserva-sticky"><BotonReservaSticky reserva={reserva} /></span>
-            : <button type="button" className="btn btn-primary" disabled={agotado} onClick={avisarCarritoPendiente}>{agotado ? 'Agotado' : '+ Agregar al carrito'}</button>}
+            : <BotonAgregar clase="btn btn-primary" agotado={agotado} texto="+ Agregar al carrito" alAgregar={() => agregarAlCarrito(p, cantidad, unidad)} />}
         </div>
       </header>
 
@@ -428,9 +491,7 @@ function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; al
                   </div>
                 </div>
               )}
-              <button className="btn btn-primary btn-lg btn-block" disabled={agotado} onClick={avisarCarritoPendiente}>
-                {agotado ? 'Agotado' : '+ Agregar al pedido'}
-              </button>
+              <BotonAgregar clase="btn btn-primary btn-lg btn-block" agotado={agotado} texto="+ Agregar al pedido" alAgregar={() => agregarAlCarrito(p, cantidad, unidad)} />
             </div>
           )}
 

@@ -6,11 +6,6 @@ export interface SeccionDePanel {
   claveIdioma?: string;
 }
 
-export const SECCIONES_COMPRADOR: SeccionDePanel[] = [
-  { ruta: 'pedidos', etiqueta: 'Mis Pedidos', icono: 'package' },
-  { ruta: 'checkout', etiqueta: 'Tu pedido', icono: 'shopping-cart' },
-];
-
 export const SECCIONES_PRODUCTOR: SeccionDePanel[] = [
   { ruta: '', etiqueta: 'Inicio', icono: 'home', claveIdioma: 'tab.inicio' },
   { ruta: 'que-sembrar', etiqueta: '¿Qué sembrar?', icono: 'bulb', claveIdioma: 'tab.que_sembrar' },

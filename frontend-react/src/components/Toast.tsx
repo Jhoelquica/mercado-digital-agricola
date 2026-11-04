@@ -16,6 +16,11 @@ function publicar(nuevos: Aviso[]): void {
   oyentes.forEach((o) => o());
 }
 
+export function manejarError(err: unknown, contexto: string): void {
+  console.error(contexto, err);
+  toast((err as Error).message || `Ocurrió un error en ${contexto}`, 'error');
+}
+
 export function toast(mensaje: string, tipo: Aviso['tipo'] = 'ok'): void {
   const id = siguienteId++;
   publicar([...avisos, { id, mensaje, tipo }]);

@@ -1,5 +1,5 @@
-import { useEffect, useSyncExternalStore } from 'react';
-import { Link, Outlet, ScrollRestoration, useLocation, useMatches } from 'react-router';
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { Link, ScrollRestoration, useLocation, useMatches, useOutlet } from 'react-router';
 import { MENSAJE_SESION_EXPIRADA } from '../api/errors';
 import { useAuth } from '../auth/AuthContext';
 import { rutaDeLogin } from '../auth/rutasPorRol';
@@ -11,6 +11,7 @@ import { Navbar } from './Navbar';
 
 export interface DatosDeRuta {
   titulo?: string;
+  modal?: boolean;
 }
 
 export function useTituloDeRuta(): string | undefined {
@@ -33,9 +34,20 @@ function AvisoSesionExpirada() {
   );
 }
 
+// Una ruta marcada como modal se dibuja encima de la página de la que se vino, que sigue montada: al cerrarla se vuelve a
+// ella tal como estaba. Si se entró directo a la dirección del modal, detrás no hay nada.
+function useOutletConFondo(): { pagina: ReactNode; modal: ReactNode } {
+  const outlet = useOutlet();
+  const esModal = Boolean((useMatches().at(-1)?.handle as DatosDeRuta | undefined)?.modal);
+  const fondo = useRef<ReactNode>(null);
+  if (!esModal) fondo.current = outlet;
+  return { pagina: fondo.current, modal: esModal ? outlet : null };
+}
+
 export function AppLayout() {
   const titulo = useTituloDeRuta();
   const { autenticado } = useAuth();
+  const { pagina, modal } = useOutletConFondo();
 
   useEffect(() => {
     document.title = titulo ? `${titulo} — ChakraShop` : 'ChakraShop — Mercado Digital Agrícola';
@@ -53,7 +65,7 @@ export function AppLayout() {
       <PanelBusqueda />
       <AvisoSesionExpirada />
       <main id="app-main" tabIndex={-1}>
-        <Outlet />
+        {pagina}
       </main>
       <footer className="footer">
         {!autenticado && (
@@ -69,6 +81,7 @@ export function AppLayout() {
         )}
         <p>🌾 Chakra Shop — Conectando el campo peruano con tu mesa. Proyecto de microservicios distribuidos.</p>
       </footer>
+      {modal}
       <ModalCertificacion />
       <ScrollRestoration />
     </>

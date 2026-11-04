@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { rutaInicialPara } from '../auth/rutasPorRol';
 import { Logo } from '../components/Logo';
 import { leerCarrito, suscribirCarrito } from '../features/checkout/carrito';
+import type { EstadoCheckout } from '../features/checkout/CheckoutPage';
 import { abrirMenu, abrirPanelBusqueda, cerrarMenuConRetraso, cerrarMenus, leerMenu, suscribirMenus } from '../features/catalogo/menus';
 import { NavCategorias } from '../features/catalogo/NavCategorias';
 
@@ -116,7 +117,7 @@ export function Navbar() {
           {esCompradorOInvitado && (
             <>
               <button className="btn btn-ghost" aria-label="Buscar productos" onClick={() => { setMenuMovilAbierto(false); abrirPanelBusqueda(); }}><i className="ti ti-search" /></button>
-              <Link className="btn btn-ghost cart-btn" to="/comprador/checkout" aria-label={`Carrito, ${unidades} ${unidades === 1 ? 'producto' : 'productos'}`}>
+              <Link className="btn btn-ghost cart-btn" to="/comprador/checkout" state={{ conFondo: true } satisfies EstadoCheckout} preventScrollReset aria-label={`Carrito, ${unidades} ${unidades === 1 ? 'producto' : 'productos'}`}>
                 <i className="ti ti-shopping-cart" aria-hidden="true" />
                 {unidades > 0 && <span className="cart-badge">{unidades}</span>}
               </Link>
