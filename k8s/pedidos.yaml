@@ -110,6 +110,10 @@ spec:
                   name: credenciales-app
                   key: RENIEC_TOKEN
                   optional: true
+            # Solo en local: RENIEC simulado con los DNIs de prueba de pedidos/reniec.py (DNIS_DE_PRUEBA). Para GKE,
+            # deploy/gcp/generar_manifiestos.py lo pone en "real".
+            - name: RENIEC_MODO
+              value: simulado
 ---
 apiVersion: v1
 kind: Service

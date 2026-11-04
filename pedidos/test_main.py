@@ -1341,6 +1341,38 @@ def test_reniec_entiende_los_formatos_del_servicio():
     assert main.reniec._nombre_de({"full_name": "ANA  TORRES"}) == "ANA TORRES"
 
 
+# El fixture _reniec_simulado reemplaza consultar_dni en cada prueba; estas necesitan la de verdad.
+_CONSULTAR_DNI_DE_VERDAD = main.reniec.consultar_dni
+
+
+def test_reniec_simulado_solo_conoce_los_dnis_de_prueba(monkeypatch):
+    monkeypatch.setenv("RENIEC_MODO", "simulado")
+    monkeypatch.setattr(main.reniec.httpx, "get", MagicMock(side_effect=AssertionError("en modo simulado no se consulta RENIEC")))
+    assert _CONSULTAR_DNI_DE_VERDAD("99999901") == {"nombre": "ROSA ELENA QUISPE HUAMAN"}
+    assert _CONSULTAR_DNI_DE_VERDAD("12345678") is None
+
+
+def test_reniec_es_real_por_defecto_y_si_el_modo_no_se_entiende(monkeypatch):
+    consulta = MagicMock(return_value=MagicMock(status_code=404))
+    monkeypatch.setattr(main.reniec.httpx, "get", consulta)
+    for valor in (None, "real", "simulad0"):
+        if valor is None:
+            monkeypatch.delenv("RENIEC_MODO", raising=False)
+        else:
+            monkeypatch.setenv("RENIEC_MODO", valor)
+        assert _CONSULTAR_DNI_DE_VERDAD("99999901") is None  # el 404 del servicio real, no el nombre de prueba
+    assert consulta.call_count == 3
+
+
+def test_el_endpoint_del_dni_con_reniec_simulado(monkeypatch):
+    monkeypatch.setenv("RENIEC_MODO", "simulado")
+    monkeypatch.setattr(main.reniec, "consultar_dni", _CONSULTAR_DNI_DE_VERDAD)
+    resp = client.get("/pedidos/dni/99999902")
+    assert resp.status_code == 200 and resp.json() == {"dni": "99999902", "nombre_para_confirmar": "JUAN C. M*** T***"}
+    resp = client.get("/pedidos/dni/12345678")
+    assert resp.status_code == 422 and "RENIEC no tiene registrado el DNI 12345678" in resp.json()["detail"]
+
+
 def test_el_resumen_para_transporte_dice_la_modalidad(monkeypatch):
     _lima()
     resp, _ = _pedido_lejano(2600, "camion")

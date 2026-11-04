@@ -10,6 +10,7 @@ Qué cambia respecto al clúster local:
   - HTTPS con Let's Encrypt (Traefik, 1 réplica y un volumen para el certificado) y redirección de http a https.
   - Una réplica por servicio y límites de memoria/CPU (para caber en un nodo pequeño).
   - FRONTEND_URL (a dónde apunta el QR) y MINIO_PUBLIC_URL (las fotos) con tu dominio.
+  - RENIEC de verdad (RENIEC_MODO=real): en local se simula con DNIs de prueba.
   - CORS del gateway restringido a tu dominio (la app y la API comparten origen, así que basta).
   - Sin Prometheus ni Grafana (traen admin/admin123 y no hacen falta para desplegar).
 
@@ -137,6 +138,16 @@ def construir(args):
             6,
         ) + "\n"
     )
+    # k8s/pedidos.yaml simula RENIEC para desarrollar en local: en Google Cloud se consulta de verdad.
+    partes.append(
+        "  - target: {kind: Deployment, name: \"^pedidos$\"}\n    patch: |-\n"
+        + sangrar(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: pedidos\nspec:\n  template:\n    spec:\n"
+            "      containers:\n        - name: pedidos\n          env:\n            - name: RENIEC_MODO\n"
+            "              value: real",
+            6,
+        ) + "\n"
+    )
     for servicio in ("productos", "transporte", "productores"):
         partes.append(
             f"  - target: {{kind: Deployment, name: \"^{servicio}$\"}}\n    patch: |-\n"
@@ -200,6 +211,8 @@ def main():
     )
     if resultado.returncode != 0:
         sys.exit(f"kubectl kustomize falló:\n{resultado.stderr}")
+    if re.search(r"name: RENIEC_MODO\s+value: (?!real\b)", resultado.stdout):
+        sys.exit("RENIEC_MODO no quedó en \"real\" en los manifiestos de Google Cloud: revisa el parche de pedidos.")
     (SALIDA / "manifiestos.yaml").write_text(resultado.stdout, encoding="utf-8", newline="\n")
     print(f"OK: {SALIDA / 'manifiestos.yaml'}  ({resultado.stdout.count(chr(10)) + 1} líneas)")
     print("Revísalo y aplícalo con:  kubectl apply -f deploy/gcp/salida/manifiestos.yaml")

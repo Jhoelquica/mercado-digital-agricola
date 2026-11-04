@@ -7,7 +7,12 @@ RENIEC no tiene una API pública gratuita; se usa el mismo servicio que Usuarios
 Al comprador solo se le muestra el nombre ENMASCARADO (nombre_para_confirmar): alcanza para que reconozca el suyo, pero
 el endpoint no sirve para averiguar el nombre completo de cualquier DNI. El nombre completo se guarda en el pedido (lo
 necesitan la agencia y el chofer) y no sale de Pedidos hacia el comprador.
+
+RENIEC_MODO=simulado (solo en el entorno local: k8s/pedidos.yaml y docker-compose.yml) no consulta a nadie: conoce los
+DNIs de DNIS_DE_PRUEBA y responde que cualquier otro no está registrado, igual que RENIEC. Así se prueba un pedido a otra
+ciudad sin usar el DNI de una persona real. Por defecto, y en Google Cloud, es "real".
 """
+import logging
 import os
 import threading
 import time
@@ -19,8 +24,25 @@ TIEMPO_MAXIMO_SEGUNDOS = 8
 CACHE_SEGUNDOS = 24 * 3600
 TAMANO_CACHE = 1000
 
+# Personas inventadas: ninguno de estos números se consulta nunca en RENIEC.
+DNIS_DE_PRUEBA = {
+    "99999901": "ROSA ELENA QUISPE HUAMAN",
+    "99999902": "JUAN CARLOS MAMANI TORRES",
+    "99999903": "LUCIA FLORES CCORAHUA",
+}
+
+logger = logging.getLogger(__name__)
 _cache = {}
 _candado = threading.Lock()
+
+
+def modo() -> str:
+    """ "simulado" o "real". Un valor que no se entiende cuenta como "real": nunca se simula por error."""
+    valor = (os.getenv("RENIEC_MODO") or "real").strip().lower()
+    if valor not in ("real", "simulado"):
+        logger.warning("RENIEC_MODO=%r no se entiende: se consulta RENIEC de verdad", valor)
+        return "real"
+    return valor
 
 
 class ReniecNoDisponible(Exception):
@@ -43,6 +65,10 @@ def _nombre_de(cuerpo: dict) -> str:
 def consultar_dni(dni: str):
     """{"nombre": "NOMBRES APELLIDOS"} o None si RENIEC no tiene ese DNI. Lanza ReniecNoDisponible si no se pudo
     consultar."""
+    if modo() == "simulado":
+        nombre = DNIS_DE_PRUEBA.get(dni)
+        return {"nombre": nombre} if nombre else None
+
     ahora = time.monotonic()
     with _candado:
         guardado = _cache.get(dni)

@@ -227,6 +227,8 @@ services:
       PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
       TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      # RENIEC simulado con los DNIs de prueba de pedidos/reniec.py (solo para desarrollo local).
+      RENIEC_MODO: simulado
     depends_on:
       db-pedidos:
         condition: service_healthy
