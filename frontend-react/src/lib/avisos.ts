@@ -2,8 +2,8 @@ import { notificaciones, type ConfiguracionAvisos, type SuscripcionPush } from '
 import { toast } from '../components/Toast';
 import { claveVapidABytes, mismaClaveVapid } from './reglas';
 
-// H6: avisos al celular (Web Push). La tarjeta para administrarlos llega con la pantalla de Notificaciones; aquí está lo
-// que toca la sesión y lo que usa la reserva de un producto ("Avisarme también al celular").
+// H6: avisos al celular (Web Push): lo que toca la sesión, lo que usa la reserva de un producto ("Avisarme también al
+// celular") y lo que administra la tarjeta de avisos de Notificaciones.
 let configAvisos: ConfiguracionAvisos | null = null;
 let avisosCelularActivos = false;
 
@@ -14,12 +14,12 @@ export function pushSoportado(): boolean {
 export const configuracionDeAvisos = (): ConfiguracionAvisos | null => configAvisos;
 export const hayAvisosCelularActivos = (): boolean => avisosCelularActivos;
 
-async function cargarConfigAvisos(): Promise<ConfiguracionAvisos> {
+export async function cargarConfigAvisos(): Promise<ConfiguracionAvisos> {
   if (!configAvisos) configAvisos = await notificaciones.avisos.configuracion().catch(() => null);
   return configAvisos || { push: false, clave_publica: null, correo: false };
 }
 
-async function suscripcionPushActual(): Promise<PushSubscription | null> {
+export async function suscripcionPushActual(): Promise<PushSubscription | null> {
   if (!pushSoportado()) return null;
   const registro = await navigator.serviceWorker.getRegistration('/');
   return registro ? registro.pushManager.getSubscription() : null;
@@ -50,6 +50,22 @@ export async function activarAvisosCelular(): Promise<boolean> {
   avisosCelularActivos = true;
   toast('Listo: los avisos te llegarán a este celular 🔔');
   return true;
+}
+
+export function esIphoneSinInstalar(): boolean {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const instalada = (window.navigator as { standalone?: boolean }).standalone === true || window.matchMedia?.('(display-mode: standalone)').matches;
+  return ios && !instalada;
+}
+
+export async function apagarAvisosCelular(): Promise<void> {
+  const suscripcion = await suscripcionPushActual();
+  if (suscripcion) {
+    await notificaciones.avisos.quitar(suscripcion.endpoint).catch(() => {});
+    await suscripcion.unsubscribe().catch(() => {});
+  }
+  avisosCelularActivos = false;
+  toast('Listo: ya no te llegarán avisos a este celular.');
 }
 
 // Al entrar: si este navegador ya tenía los avisos, pasan a la cuenta que entró (el servidor cambia el dueño).

@@ -122,3 +122,17 @@ a.productor-tab-btn, a.admin-tab-btn { display: inline-flex; align-items: center
   .login-pagina .auth-lado-cuerpo { display: none; }
   .login-pagina .auth-panel { align-items: flex-start; padding: 20px 16px 40px; }
 }
+
+/* Mi perfil del agricultor: sus siembras y chacras en solo lectura, a todo el ancho debajo del perfil. */
+.perfil-produccion { margin-top: 28px; }
+.perfil-produccion > h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+
+/* Los accesos rápidos del perfil que llevan a otra ruta son enlaces: se ven igual que los botones de frontend/. */
+a.perfil-acceso { text-decoration: none; }
+
+/* frontend/ arrastra un desborde aquí: en columna (flex) con align-items: start, la lista toma el ancho de la fila de
+   filtros entera y la página se mueve de lado a 375 px. Estirada, los filtros se desplazan dentro de su fila como manda
+   la regla de 700 px. */
+@media (max-width: 980px) {
+  .notif-layout > .notif-principal { align-self: stretch; }
+}

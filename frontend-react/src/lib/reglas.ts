@@ -34,3 +34,17 @@ export function rucValido(ruc: string): boolean {
   const esperado = resto === 10 ? 0 : resto === 11 ? 1 : resto;
   return Number(ruc[10]) === esperado;
 }
+
+export type EstadoAvisosCelular = 'apagado-servidor' | 'instalar-iphone' | 'no-soportado' | 'bloqueado' | 'activo' | 'inactivo';
+
+// H6: qué dice la fila "En este celular" de la tarjeta de avisos. En iPhone los avisos solo existen con ChakraShop
+// agregado a la pantalla de inicio, por eso se mira antes que el soporte del navegador.
+export function estadoAvisosCelular({ configurado, soportado, iphoneSinInstalar, permiso, suscrito }: {
+  configurado: boolean; soportado: boolean; iphoneSinInstalar: boolean; permiso: NotificationPermission; suscrito: boolean;
+}): EstadoAvisosCelular {
+  if (!configurado) return 'apagado-servidor';
+  if (iphoneSinInstalar) return 'instalar-iphone';
+  if (!soportado) return 'no-soportado';
+  if (permiso === 'denied') return 'bloqueado';
+  return suscrito && permiso === 'granted' ? 'activo' : 'inactivo';
+}

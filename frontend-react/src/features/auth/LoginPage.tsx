@@ -1,16 +1,19 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, Navigate, useSearchParams } from 'react-router';
-import { MENSAJE_SESION_EXPIRADA } from '../../api/errors';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router';
+import { ApiError, MENSAJE_SESION_EXPIRADA } from '../../api/errors';
+import { usuarios } from '../../api/usuarios';
 import { useAuth } from '../../auth/AuthContext';
 import { rutaInicialPara, rutaInternaSegura } from '../../auth/rutasPorRol';
-import { haySesionRecienExpirada, leerSesion, olvidarSesionRecienExpirada } from '../../auth/sesion';
-import { toast } from '../../components/Toast';
+import { haySesionRecienExpirada, iniciarSesionConToken, leerSesion, olvidarSesionRecienExpirada } from '../../auth/sesion';
+import { manejarError, toast } from '../../components/Toast';
 import { AuthLayout, mensajeDeError } from './AuthLayout';
+import { BotonGoogle } from './BotonGoogle';
 
 export default function LoginPage() {
   const { autenticado, sesion, iniciarSesion } = useAuth();
   const [params] = useSearchParams();
   const next = params.get('next');
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [verPassword, setVerPassword] = useState(false);
@@ -31,6 +34,26 @@ export default function LoginPage() {
       toast(`¡Bienvenido de nuevo, ${leerSesion().nombre}! 🌱`);
     } catch (err) {
       setError(mensajeDeError(err, 'No se pudo iniciar sesión. Inténtalo de nuevo.'));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function entrarConGoogle(credencial: string) {
+    setError(null);
+    setEnviando(true);
+    try {
+      const respuesta = await usuarios.oauthGoogle({ id_token: credencial });
+      await iniciarSesionConToken(respuesta.access_token);
+      toast(`¡Bienvenido, ${leerSesion().nombre}! 🌱`);
+    } catch (err) {
+      // Sin cuenta previa (ni por Google ni por correo): el login no pide un rol, así que el servidor no la crea a ciegas.
+      if (err instanceof ApiError && err.status === 400) {
+        toast('No encontramos una cuenta con ese Google. Usa "Registrarse" para crear una.', 'error');
+        void navigate(`/registro${next ? `?next=${encodeURIComponent(next)}` : ''}`);
+        return;
+      }
+      manejarError(err, 'iniciar sesión con Google');
     } finally {
       setEnviando(false);
     }
@@ -71,6 +94,8 @@ export default function LoginPage() {
         <button type="submit" className={`btn btn-primary btn-block auth-enviar ${enviando ? 'cargando' : ''}`} disabled={enviando} aria-busy={enviando}>
           <span className="auth-enviar-texto">{enviando ? 'Ingresando…' : 'Ingresar'}</span>
         </button>
+        <div className="auth-divider"><span>o continúa con</span></div>
+        <BotonGoogle id="google-btn-login" alRecibirCredencial={(credencial) => { void entrarConGoogle(credencial); }} />
         <p className="auth-cambio">¿Aún no tienes cuenta? <Link className="auth-cambio-btn" to={`/registro${next ? `?next=${encodeURIComponent(next)}` : ''}`}>Regístrate gratis</Link></p>
       </form>
     </AuthLayout>

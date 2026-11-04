@@ -74,7 +74,10 @@ export const router = createBrowserRouter([
       { path: 'producto/:id', lazy: componente(() => import('../features/producto/DetallePage')) },
       {
         element: <RequireRole roles={ROLES_CON_SESION} />,
-        children: [pendiente('notificaciones', 'Notificaciones'), pendiente('perfil', 'Mi perfil')],
+        children: [
+          { path: 'notificaciones', handle: { titulo: 'Notificaciones' }, lazy: componente(() => import('../features/notificaciones/NotificacionesPage')) },
+          { path: 'perfil', handle: { titulo: 'Mi perfil' }, lazy: componente(() => import('../features/perfil/PerfilPage')) },
+        ],
       },
       {
         path: 'comprador',

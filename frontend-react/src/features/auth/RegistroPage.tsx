@@ -1,33 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router';
-import { ApiError } from '../../api/errors';
 import { usuarios } from '../../api/usuarios';
 import { useAuth } from '../../auth/AuthContext';
 import { rutaInicialPara, rutaInternaSegura, rutaTrasRegistro } from '../../auth/rutasPorRol';
-import { iniciarSesionConCorreo, leerSesion } from '../../auth/sesion';
-import { toast } from '../../components/Toast';
-import { rucValido } from '../../lib/reglas';
+import { actualizarSesion, iniciarSesionConCorreo, iniciarSesionConToken, leerSesion } from '../../auth/sesion';
+import { manejarError, toast } from '../../components/Toast';
+import { datosDeComprador, rucOcupadoDe, type TipoComprador } from '../../lib/comprador';
 import { AuthLayout, mensajeDeError } from './AuthLayout';
+import { BotonGoogle } from './BotonGoogle';
 
 const ROLES_ABIERTOS = ['comprador', 'productor', 'repartidor'] as const;
 type RolAbierto = (typeof ROLES_ABIERTOS)[number];
-type TipoComprador = 'persona' | 'negocio';
-
-// Los datos de persona/negocio que se mandan al registrarse: { datos } o { error }. Un negocio tiene que dar su RUC:
-// Usuarios lo verifica en SUNAT (activo y habido) antes de crear la cuenta.
-function datosDeComprador(tipo: TipoComprador, nombreComercial: string, ruc: string) {
-  if (tipo !== 'negocio') return { datos: { tipo_comprador: 'persona' as const } };
-  const rucLimpio = ruc.replace(/\s+/g, '');
-  if (!rucLimpio) return { error: 'Para comprar como negocio pon el RUC de tu negocio: lo verificamos en SUNAT.' };
-  if (!rucValido(rucLimpio)) return { error: 'El RUC no es válido: son 11 dígitos y empieza con 10 o 20. Revisa que esté bien escrito.' };
-  return { datos: { tipo_comprador: 'negocio' as const, nombre_comercial: nombreComercial.trim() || null, ruc: rucLimpio } };
-}
-
-// El RUC que el comprador quiere ya está en otra cuenta (Usuarios responde 409 con el qué hacer): se ofrece reclamarlo.
-function rucOcupadoDe(err: unknown): string | null {
-  if (!(err instanceof ApiError) || err.status !== 409 || !/ya está registrado en otra cuenta/.test(err.message)) return null;
-  return (err.message.match(/RUC (\d{11})/) || [])[1] || '';
-}
 
 const OPCIONES_ROL: { valor: RolAbierto; icono: string; titulo: string; detalle: string }[] = [
   { valor: 'comprador', icono: 'shopping-cart', titulo: 'Comprador', detalle: 'Restaurante, mercado o persona' },
@@ -92,6 +75,38 @@ export default function RegistroPage() {
       reclamoPorAbrir.current = null;
       setError(mensajeDeError(err, 'No se pudo crear la cuenta. Revisa los datos e inténtalo de nuevo.'));
       setRucOcupado(rucOcupadoDe(err));
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  // Con Google la cuenta nace como "persona": si eligió negocio, se guarda enseguida (y si SUNAT no lo verifica, la cuenta
+  // queda para su casa y se puede cambiar desde el perfil).
+  async function registrarConGoogle(credencial: string) {
+    const { datos: comprador, error: errorDatos } = rol === 'comprador' ? datosDeComprador(tipo, nombreComercial, ruc) : { datos: null };
+    if (errorDatos) {
+      setError(errorDatos);
+      return;
+    }
+    setError(null);
+    setRucOcupado(null);
+    setTextoEnviando('Creando cuenta…');
+    setEnviando(true);
+    try {
+      const respuesta = await usuarios.oauthGoogle({ id_token: credencial, rol });
+      await iniciarSesionConToken(respuesta.access_token);
+      if (leerSesion().rol === 'comprador' && comprador?.tipo_comprador === 'negocio') {
+        try {
+          const perfil = await usuarios.actualizarComprador(comprador);
+          actualizarSesion({ tipoComprador: perfil.tipo_comprador ?? null });
+          toast(`Negocio verificado en SUNAT: ${perfil.razon_social}`);
+        } catch (err) {
+          toast(`Tu cuenta quedó para tu casa: ${(err as Error).message || 'no se pudo verificar el RUC'}. Puedes cambiarla a negocio desde tu perfil.`, 'error');
+        }
+      }
+      toast(`¡Cuenta creada! Bienvenido a Chakra Shop, ${leerSesion().nombre} 🎉`);
+    } catch (err) {
+      manejarError(err, 'crear la cuenta con Google');
     } finally {
       setEnviando(false);
     }
@@ -207,6 +222,9 @@ export default function RegistroPage() {
         <button type="submit" className={`btn btn-primary btn-block auth-enviar ${enviando ? 'cargando' : ''}`} disabled={enviando} aria-busy={enviando}>
           <span className="auth-enviar-texto">{enviando ? textoEnviando : 'Crear cuenta'}</span>
         </button>
+        <div className="auth-divider"><span>o continúa con</span></div>
+        {/* Usa el rol y el tipo de comprador elegidos arriba, igual que el registro con correo. */}
+        <BotonGoogle id="google-btn-registro" alRecibirCredencial={(credencial) => { void registrarConGoogle(credencial); }} />
         <p className="auth-cambio">¿Ya tienes cuenta? <Link className="auth-cambio-btn" to={`/login${next ? `?next=${encodeURIComponent(next)}` : ''}`}>Inicia sesión</Link></p>
       </form>
     </AuthLayout>

@@ -1,8 +1,9 @@
 # ChakraShop: frontend en React
 
 Migración de `frontend/` a React + Vite + TypeScript, por fases. Ya están la parte pública (landing, búsqueda, detalle,
-/verificar), el login y el registro, y la compra completa del comprador (carrito, checkout, pago con Culqi o por
-transferencia y Mis Pedidos). Las demás pantallas son marcadores.
+/verificar), el login y el registro, la compra completa del comprador (carrito, checkout, pago con Culqi o por
+transferencia y Mis Pedidos), Mi perfil de los 4 roles, Notificaciones con los avisos al celular y el acceso con Google.
+Los paneles de productor, repartidor y admin todavía son marcadores.
 
 ## Probar en local
 
@@ -15,7 +16,11 @@ npm run dev
 
 Abre <http://localhost:5173>. El proxy de Vite lleva `/api` y `/media` a Traefik en `localhost:8000`. Las variables están
 en `.env.example`: para pagar con Culqi en local, copia el archivo a `.env.local` y pon la llave pública de pruebas
-(`pk_test_...`). El script de Culqi se descarga recién al abrir el checkout.
+(`pk_test_...`). El script de Culqi se descarga recién al abrir el checkout. El botón de Google necesita además
+`VITE_GOOGLE_CLIENT_ID` y que el origen (por ejemplo `http://localhost:5173`) esté autorizado en ese Client ID.
+
+Los avisos al celular (push) necesitan el service worker, que el servidor de desarrollo no sirve: para probarlos,
+`npm run build` y `npm run preview` (puerto 4173, con el mismo proxy a la API).
 
 ## Comprobar antes de subir
 
