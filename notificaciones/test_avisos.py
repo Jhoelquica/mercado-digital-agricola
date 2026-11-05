@@ -6,6 +6,7 @@ los endpoints se llaman directo (la imagen de este servicio no trae httpx, que n
 import json
 import uuid
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 import pytest
 from fastapi import HTTPException
@@ -129,6 +130,33 @@ def test_un_navegador_que_ya_no_existe_se_borra_y_el_aviso_va_por_correo(db, can
     assert len(canales.correos) == 1
     destino, asunto, texto = canales.correos[0]
     assert destino == "rosa@ejemplo.test" and asunto == "ChakraShop · Tu recojo" and "Puedes apagarlo" in texto
+
+
+@pytest.mark.parametrize("codigo, endpoint", [
+    (410, "https://fcm.googleapis.com/fcm/send/dXc-TOKEN-DEL-NAVEGADOR:APA91bH"),
+    (404, "https://wns2-par02p.notify.windows.com/w/?token=BQYAAAD-TOKEN-DEL-NAVEGADOR"),
+])
+def test_la_suscripcion_rechazada_queda_en_el_log_solo_con_codigo_y_dominio(db, canales, monkeypatch, caplog, codigo, endpoint):
+    """FCM o WNS rechazan la suscripción (404/410): queda un WARNING con el código y el dominio del servicio de push, sin
+    el token del endpoint ni las claves p256dh/auth."""
+    usuario = str(uuid.uuid4())
+    endpoint = f"{endpoint}-{uuid.uuid4()}"
+    _activar(db, usuario, endpoint)
+
+    def rechaza(subscription_info, **kw):
+        raise WebPushException("rechazada", response=SimpleNamespace(status_code=codigo))
+    monkeypatch.setattr(avisos_externos, "webpush", rechaza)
+
+    with caplog.at_level("WARNING", logger="notificaciones.avisos"):
+        assert avisos_externos.enviar_push(db, usuario, "Título", "Cuerpo") == 0
+
+    avisos = [r for r in caplog.records if r.name == "notificaciones.avisos"]
+    assert len(avisos) == 1 and avisos[0].levelname == "WARNING"
+    texto = avisos[0].getMessage()
+    assert str(codigo) in texto and urlparse(endpoint).hostname in texto
+    assert "TOKEN-DEL-NAVEGADOR" not in texto and urlparse(endpoint).path not in texto
+    assert "B" * 87 not in texto and "a" * 22 not in texto  # p256dh y auth de _activar
+    assert main.mis_avisos(db, {"sub": usuario})["dispositivos"] == 0  # y se borra, como antes
 
 
 def test_el_correo_de_respaldo_se_apaga_y_sin_smtp_no_se_puede_encender(db, canales, monkeypatch):
