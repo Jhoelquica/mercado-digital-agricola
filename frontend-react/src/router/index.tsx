@@ -17,13 +17,22 @@ const componente = (cargar: () => Promise<{ default: React.ComponentType }>) => 
 
 const paginaPendiente = componente(() => import('../pages/PaginaPendiente'));
 
-function pendiente(path: string, titulo: string): RouteObject {
-  return { path, handle: { titulo }, lazy: paginaPendiente };
+type CargaDiferida = ReturnType<typeof componente>;
+
+// Las secciones ya portadas van con su página; las demás, con la página pendiente.
+function rutasDePanel(secciones: SeccionDePanel[], hechas: Record<string, CargaDiferida> = {}): RouteObject[] {
+  return secciones.map(({ ruta, etiqueta }) => {
+    const lazy = hechas[ruta] ?? paginaPendiente;
+    return ruta ? { path: ruta, handle: { titulo: etiqueta }, lazy } : { index: true, handle: { titulo: etiqueta }, lazy };
+  });
 }
 
-function rutasDePanel(secciones: SeccionDePanel[]): RouteObject[] {
-  return secciones.map(({ ruta, etiqueta }) => (ruta ? pendiente(ruta, etiqueta) : { index: true, handle: { titulo: etiqueta }, lazy: paginaPendiente }));
-}
+const PAGINAS_PRODUCTOR: Record<string, CargaDiferida> = {
+  '': componente(() => import('../features/productor/InicioPage')),
+  'que-sembrar': componente(() => import('../features/productor/QueSembrarPage')),
+  siembras: componente(() => import('../features/productor/SiembrasPage')),
+  chacras: componente(() => import('../features/productor/ChacrasPage')),
+};
 
 // El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend actual.
 // Solo vale para la página con la que se abre la aplicación; después, el logo sí lleva a "/" a cualquier rol.
@@ -97,7 +106,7 @@ export const router = createBrowserRouter([
         element: <RequireRole roles={['productor']} />,
         children: [{
           lazy: componente(() => import('../features/productor/ProductorLayout')),
-          children: rutasDePanel(SECCIONES_PRODUCTOR),
+          children: rutasDePanel(SECCIONES_PRODUCTOR, PAGINAS_PRODUCTOR),
         }],
       },
       {

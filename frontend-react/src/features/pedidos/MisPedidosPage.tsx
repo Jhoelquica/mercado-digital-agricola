@@ -6,6 +6,7 @@ import { transporte } from '../../api/transporte';
 import { useAuth } from '../../auth/AuthContext';
 import { toast } from '../../components/Toast';
 import { formatearMoneda } from '../../lib/formato';
+import { ContadorAnimado } from '../../components/ContadorAnimado';
 import { abrirPanelBusqueda } from '../catalogo/menus';
 import { useCatalogo } from '../catalogo/useCatalogo';
 import { esPedidoEntregado, pagoConfirmadoPedido, totalPedido, type DatosPedido } from './estadoPedido';
@@ -35,24 +36,6 @@ async function cargarMisPedidos(usuarioId: string | null | undefined): Promise<{
   const ids = deLaCuenta ? deLaCuenta.map((p) => p.id) : leerPedidosRecordados(usuarioId);
   const datos = await Promise.all(ids.map((id, i) => cargarDatosPedido(id, deLaCuenta?.[i] ?? null)));
   return { datos: datos.filter((d): d is DatosPedido => d !== null), habia: ids.length > 0 };
-}
-
-// Decorativo: respeta el movimiento reducido.
-function ContadorAnimado({ valor }: { valor: number }) {
-  const [mostrado, setMostrado] = useState(() => (window.matchMedia('(prefers-reduced-motion: reduce)').matches ? valor : 0));
-  useEffect(() => {
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setMostrado(valor); return undefined; }
-    const inicio = performance.now();
-    let cuadro = 0;
-    const paso = (ahora: number) => {
-      const avance = Math.min(1, (ahora - inicio) / 600);
-      setMostrado(Math.round(valor * (1 - (1 - avance) ** 3)));
-      if (avance < 1) cuadro = requestAnimationFrame(paso);
-    };
-    cuadro = requestAnimationFrame(paso);
-    return () => cancelAnimationFrame(cuadro);
-  }, [valor]);
-  return <span className="resumen-stat-valor">{mostrado}</span>;
 }
 
 function Estadistica({ icono, etiqueta, destacada = false, children }: { icono: string; etiqueta: string; destacada?: boolean; children: ReactNode }) {

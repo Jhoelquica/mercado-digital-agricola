@@ -48,3 +48,69 @@ export function estadoAvisosCelular({ configurado, soportado, iphoneSinInstalar,
   if (permiso === 'denied') return 'bloqueado';
   return suscrito && permiso === 'granted' ? 'activo' : 'inactivo';
 }
+
+// H1: cada alimento se mide y se vende solo en sus unidades. Sin lista (alimento no reconocido) no se restringe nada.
+export function opcionesPermitidas<T extends { valor: string }>(opciones: T[], permitidas: string[] | null | undefined): T[] {
+  if (!Array.isArray(permitidas) || !permitidas.length) return opciones;
+  return opciones.filter((o) => permitidas.includes(o.valor));
+}
+
+// La unidad con que se mide la cosecha al cambiar de cultivo: la que ya eligió si sigue permitida; si no, la típica del
+// alimento, o la primera permitida.
+export function unidadDeCosecha(actual: string | null | undefined, tipica: string | null | undefined, permitidas: string[] | null | undefined): string {
+  if (!Array.isArray(permitidas) || !permitidas.length) return actual || tipica || 'kg';
+  if (actual && permitidas.includes(actual)) return actual;
+  return tipica && permitidas.includes(tipica) ? tipica : (permitidas[0] as string);
+}
+
+// H3: lo que ya se anotó de una siembra (sus gastos por etapa), para no volver a pedirlo al cosechar.
+export function gastosYaRegistrados(etapas: { clave: string; nombre: string; total: number | string; momento: string }[] | null | undefined) {
+  const conGasto = (etapas || []).filter((e) => Number(e.total) > 0)
+    .map((e) => ({ clave: e.clave, nombre: e.nombre, total: Number(e.total), final: e.momento === 'final' }));
+  const total = Math.round(conGasto.reduce((s, e) => s + e.total, 0) * 100) / 100;
+  return { total, etapas: conGasto, enElFinal: conGasto.filter((e) => e.final) };
+}
+
+// H5: la respuesta de "¿qué me conviene sembrar?" en una sola frase, con la primera del ranking.
+export function fraseResumenSiembra(f: { nombre?: string; puntaje: number; riesgo: string; margen_kg: number | null } | undefined, moneda: (n: number) => string): string | null {
+  if (!f || !f.nombre) return null;
+  const nivel = f.puntaje >= 70 ? 'conviene mucho' : f.puntaje >= 50 ? 'conviene' : f.puntaje >= 35 ? 'puede ser' : 'conviene poco';
+  const riesgo = ({ bajo: 'hay poco riesgo de que sobre', medio: 'hay algo de riesgo de que sobre', alto: 'hay mucho riesgo de que sobre' } as Record<string, string>)[f.riesgo];
+  const ganancia = f.margen_kg == null ? 'todavía falta saber cuánto cuesta producirlo'
+    : `${f.margen_kg >= 0 ? 'ganas' : 'pierdes'} ${moneda(Math.abs(f.margen_kg))} por kg`;
+  const inicio = f.puntaje >= 35 ? `Lo que más te conviene sembrar ahora es ${f.nombre}` : `Ahora ningún cultivo conviene mucho; el mejor es ${f.nombre}`;
+  return `${inicio} (${f.puntaje} de 100, ${nivel}): ${ganancia}${riesgo ? ` y ${riesgo}` : ''}.`;
+}
+
+export type ManoDeObra =
+  | { datos: null; total: 0; error: null; campo: null }
+  | { datos: null; total: 0; error: string; campo: 'peones' | 'dias' | 'pago' }
+  | { datos: { peones: number; dias: number; precio_unitario: number; unidad: 'jornal' }; total: number; error: null; campo: null };
+
+// Mano de obra como se cuenta en el campo: peones enteros, días con decimales (medio día = 0,5) y el pago de cada peón por
+// día. Los tres vacíos = sin gasto; a medias = error que dice qué falta. Mismas reglas que el servidor.
+export function manoDeObra({ peones, dias, pago }: { peones: unknown; dias: unknown; pago: unknown }): ManoDeObra {
+  const texto = (v: unknown) => String(v ?? '').trim();
+  const vacios = [peones, dias, pago].map(texto).filter((v) => v === '').length;
+  if (vacios === 3) return { datos: null, total: 0, error: null, campo: null };
+  const p = Number(texto(peones));
+  const d = Math.round(Number(texto(dias).replace(',', '.')) * 100) / 100;
+  const s = Number(texto(pago).replace(',', '.'));
+  if (!(Number.isInteger(p) && p >= 1 && p <= 500)) return { datos: null, total: 0, campo: 'peones', error: 'Escribe cuántos peones trabajaron (un número entero, como 3).' };
+  if (!(d > 0 && d <= 366)) return { datos: null, total: 0, campo: 'dias', error: 'Escribe cuántos días trabajaron (por ejemplo 2, o 0,5 si fue medio día).' };
+  if (!(s > 0)) return { datos: null, total: 0, campo: 'pago', error: 'Escribe cuánto le pagaste a cada peón por día.' };
+  const total = Math.round(p * d * s * 100) / 100;
+  if (total > 9999999.99) return { datos: null, total: 0, campo: 'pago', error: 'Ese gasto de mano de obra es demasiado grande: revisa los peones, los días y el pago.' };
+  return { datos: { peones: p, dias: d, precio_unitario: s, unidad: 'jornal' }, total, error: null, campo: null };
+}
+
+// Los atajos de la fecha de cosecha salen del rango de ESE cultivo (lo más pronto, lo más probable, lo más tarde).
+export function atajosDeCosecha(s: { fecha_sugerida?: string | null; fecha_desde?: string | null; fecha_hasta?: string | null } | null | undefined) {
+  if (!s || !s.fecha_sugerida) return [];
+  const atajos = [
+    { etiqueta: 'Lo más pronto', fecha: s.fecha_desde },
+    { etiqueta: 'Lo más probable', fecha: s.fecha_sugerida },
+    { etiqueta: 'Lo más tarde', fecha: s.fecha_hasta },
+  ].filter((a): a is { etiqueta: string; fecha: string } => Boolean(a.fecha));
+  return atajos.filter((a, i) => atajos.findIndex((b) => b.fecha === a.fecha) === i);
+}

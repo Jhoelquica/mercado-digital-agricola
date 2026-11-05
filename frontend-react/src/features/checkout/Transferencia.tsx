@@ -2,13 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { pagos, type CondicionesDePago } from '../../api/pagos';
 import { toast } from '../../components/Toast';
 import { formatearMoneda } from '../../lib/formato';
+import { FOTO_TAMANO_MAXIMO, FOTO_TIPOS_VALIDOS, formatearTamanoArchivo } from '../../lib/fotos';
 
-const FOTO_TIPOS_VALIDOS = ['image/jpeg', 'image/png', 'image/webp'];
-const FOTO_TAMANO_MAXIMO = 5 * 1024 * 1024;
-
-function formatearTamanoArchivo(bytes: number): string {
-  return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 async function copiarAlPortapapeles(valor: string): Promise<void> {
   try {

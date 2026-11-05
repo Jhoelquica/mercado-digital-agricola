@@ -7,6 +7,7 @@ import { pedidos, type Cotizacion, type DestinoPublico } from '../../api/pedidos
 import { useAuth } from '../../auth/AuthContext';
 import { manejarError, toast } from '../../components/Toast';
 import { atraparFoco } from '../../lib/foco';
+import { obtenerUbicacionActual } from '../../lib/ubicacion';
 import { formatearMoneda } from '../../lib/formato';
 import { unidadCorta, unidadPlural } from '../../lib/productos';
 import { abrirPanelBusqueda } from '../catalogo/menus';
@@ -44,27 +45,6 @@ type Final =
   | { tipo: 'resultado'; pedidoId: string; monto: number; envio: number; resultado: ResultadoCobro | null; errorMsg: string | null }
   | { tipo: 'transferencia'; pedidoId: string; monto: number }
   | { tipo: 'constancia'; pedidoId: string; numeroOperacion: string };
-
-function obtenerUbicacionActual(): Promise<{ lat: number; lng: number }> {
-  return new Promise((resolver, rechazar) => {
-    if (!navigator.geolocation) {
-      rechazar(new Error('Tu navegador no soporta geolocalización.'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolver({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => {
-        const mensajes: Record<number, string> = {
-          [err.PERMISSION_DENIED]: 'Denegaste el permiso de ubicación. Puedes marcar el punto manualmente en el mapa.',
-          [err.POSITION_UNAVAILABLE]: 'No se pudo determinar tu ubicación actual.',
-          [err.TIMEOUT]: 'Se agotó el tiempo esperando tu ubicación.',
-        };
-        rechazar(new Error(mensajes[err.code] || 'No se pudo obtener tu ubicación.'));
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
-  });
-}
 
 function Stepper({ paso }: { paso: Paso }) {
   const etiquetas = ['Resumen', 'Pago', 'Confirmación'];
