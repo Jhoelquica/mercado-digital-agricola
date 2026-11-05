@@ -136,3 +136,9 @@ a.perfil-acceso { text-decoration: none; }
 @media (max-width: 980px) {
   .notif-layout > .notif-principal { align-self: stretch; }
 }
+
+/* Inicio del productor: a 375 px la tabla de "Últimas siembras" estiraba la columna (1fr = minmax(auto, 1fr)) y la página
+   se movía 8 px de lado (en frontend/ también, 5 px). Con minmax(0, …) la columna no pasa del ancho y la tabla se desplaza
+   dentro de su .tabla-wrap, que ya tiene overflow-x: auto. */
+.inicio-graficos { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) { .inicio-graficos { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } }
