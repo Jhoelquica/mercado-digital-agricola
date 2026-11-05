@@ -194,3 +194,5 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
   IntelliJ). Los QR de certificación se generan con esa URL: debe pasar a ser configurable por entorno (ConfigMap).
   `deploy/gcp/generar_manifiestos.py` ya la sobrescribe para Google Cloud; el manifiesto base sigue con el valor fijo.
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
+- Fase de despliegue: Google OAuth con dos proyectos (desarrollo con `localhost` en modo Prueba; producción solo HTTPS y
+  publicada), cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y `GOOGLE_CLIENT_ID` en Usuarios.
