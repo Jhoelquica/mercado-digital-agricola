@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { Chacra } from '../../api/chacras';
 import type { RegistroProduccion } from '../../api/productores';
 import { transporte, type Envio } from '../../api/transporte';
 import { ContadorAnimado } from '../../components/ContadorAnimado';
+import { useGrafico } from '../../components/Grafico';
 import { manejarError, toast } from '../../components/Toast';
 import { Texto } from '../../idioma/IdiomaContext';
 import { formatearFechaServidor } from '../../lib/formato';
@@ -106,9 +107,7 @@ function TarjetaEntregaDirecta({ envio, indice }: { envio: Envio; indice: number
 // Siembras registradas por mes, en los últimos 6 meses (Chart.js, como en el frontend actual).
 function GraficoSiembrasPorMes({ registros }: { registros: RegistroProduccion[] }) {
   const lienzo = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    let grafico: { destroy: () => void } | null = null;
-    let vigente = true;
+  useGrafico(lienzo, () => {
     const ahora = new Date();
     const meses = Array.from({ length: 6 }, (_, i) => new Date(ahora.getFullYear(), ahora.getMonth() - 5 + i, 1));
     const conteos = meses.map(() => 0);
@@ -118,20 +117,13 @@ function GraficoSiembrasPorMes({ registros }: { registros: RegistroProduccion[] 
       const idx = meses.findIndex((m) => m.getFullYear() === f.getFullYear() && m.getMonth() === f.getMonth());
       if (idx !== -1) conteos[idx] = (conteos[idx] ?? 0) + 1;
     });
-    void import('chart.js/auto').then(({ default: Chart }) => {
-      if (!vigente || !lienzo.current) return;
-      grafico = new Chart(lienzo.current, {
-        type: 'bar',
-        data: { labels: meses.map((m) => m.toLocaleDateString('es-PE', { month: 'short' })), datasets: [{ label: 'Siembras', data: conteos, backgroundColor: '#2D3B2A', borderRadius: 6, maxBarThickness: 44 }] },
-        options: {
-          plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.parsed.y} ${c.parsed.y === 1 ? 'siembra' : 'siembras'}` } } },
-          scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0, stepSize: 1 } } },
-        },
-      });
-    });
-    return () => {
-      vigente = false;
-      grafico?.destroy();
+    return {
+      type: 'bar',
+      data: { labels: meses.map((m) => m.toLocaleDateString('es-PE', { month: 'short' })), datasets: [{ label: 'Siembras', data: conteos, backgroundColor: '#2D3B2A', borderRadius: 6, maxBarThickness: 44 }] },
+      options: {
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => `${c.parsed.y} ${c.parsed.y === 1 ? 'siembra' : 'siembras'}` } } },
+        scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0, stepSize: 1 } } },
+      },
     };
   }, [registros]);
   return <canvas ref={lienzo} id="grafico-cosechas-mes" role="img" aria-label="Siembras registradas por mes en los últimos seis meses" />;

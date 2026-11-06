@@ -32,6 +32,10 @@ const PAGINAS_PRODUCTOR: Record<string, CargaDiferida> = {
   'que-sembrar': componente(() => import('../features/productor/QueSembrarPage')),
   siembras: componente(() => import('../features/productor/SiembrasPage')),
   chacras: componente(() => import('../features/productor/ChacrasPage')),
+  borradores: componente(() => import('../features/productor/BorradoresPage')),
+  productos: componente(() => import('../features/productor/ProductosPage')),
+  ganancias: componente(() => import('../features/productor/GananciasPage')),
+  economia: componente(() => import('../features/productor/EconomiaPage')),
 };
 
 // El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend actual.

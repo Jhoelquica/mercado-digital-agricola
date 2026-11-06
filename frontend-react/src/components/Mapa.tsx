@@ -64,11 +64,13 @@ interface PropsSeleccionable {
   clase?: string;
   color?: string;
   alSeleccionar: (lat: number, lng: number) => void;
+  // Punto con que arranca (zoom 14 y su marcador); sin él, todo el Perú.
+  inicial?: { lat: number; lng: number } | null;
   ref?: Ref<MapaSeleccionableApi>;
 }
 
 // Se toca el mapa para marcar un punto. Arranca mostrando todo el Perú y sin marcador.
-export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar, ref }: PropsSeleccionable) {
+export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar, inicial, ref }: PropsSeleccionable) {
   const contenedor = useRef<HTMLDivElement>(null);
   const mapaRef = useRef<L.Map | null>(null);
   const marcador = useRef<L.Marker | null>(null);
@@ -92,9 +94,11 @@ export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar,
 
   useEffect(() => {
     if (!contenedor.current) return undefined;
-    const mapa = L.map(contenedor.current).setView(MAPA_CENTRO_PERU, 5);
+    const punto = inicial && hayCoordenadas(inicial.lat, inicial.lng) ? [Number(inicial.lat), Number(inicial.lng)] as L.LatLngTuple : null;
+    const mapa = L.map(contenedor.current).setView(punto ?? MAPA_CENTRO_PERU, punto ? 14 : 5);
     mapaRef.current = mapa;
     agregarCapaBase(mapa);
+    if (punto) ponerMarcador(punto[0], punto[1]);
     mapa.on('click', (e: L.LeafletMouseEvent) => {
       ponerMarcador(e.latlng.lat, e.latlng.lng);
       alSeleccionarRef.current(e.latlng.lat, e.latlng.lng);
@@ -106,7 +110,7 @@ export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar,
       mapaRef.current = null;
       marcador.current = null;
     };
-    // El color no cambia durante la vida del mapa.
+    // El color y el punto inicial no cambian durante la vida del mapa.
   }, []);
 
   return <div ref={contenedor} id={id} className={clase} />;

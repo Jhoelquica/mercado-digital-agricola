@@ -114,3 +114,51 @@ export function atajosDeCosecha(s: { fecha_sugerida?: string | null; fecha_desde
   ].filter((a): a is { etiqueta: string; fecha: string } => Boolean(a.fecha));
   return atajos.filter((a, i) => atajos.findIndex((b) => b.fecha === a.fecha) === i);
 }
+
+// Unidades de venta adicionales que el agricultor todavía puede agregar a su producto: las del alimento (o todas, si no
+// tiene lista) menos la base y las que ya agregó.
+export function unidadesParaAgregar(todas: string[], permitidas: string[] | null | undefined, base: string | null | undefined, yaAgregadas: string[] = []): string[] {
+  const posibles = Array.isArray(permitidas) && permitidas.length ? todas.filter((u) => permitidas.includes(u)) : todas;
+  return posibles.filter((u) => u !== base && !yaAgregadas.includes(u));
+}
+
+// H6 (validación con usuarios del 2026-10-14): el precio sugerido al publicar es el precio de referencia por kg de la
+// tienda, llevado a la unidad del producto con su equivalencia (1 unidad = X kg). Sin referencia, o sin equivalencia para
+// otra unidad, no se sugiere nada.
+export function precioSugerido({ precioReferenciaKg, unidad, equivalenciaKg }: { precioReferenciaKg: number | string | null | undefined; unidad: string | null | undefined; equivalenciaKg: number | string | null | undefined }): number | null {
+  const porKg = Number(precioReferenciaKg);
+  if (precioReferenciaKg == null || !(porKg > 0)) return null;
+  const factor = unidad === 'kg' || !unidad ? 1 : Number(equivalenciaKg);
+  if (!(factor > 0)) return null;
+  return Math.round(porKg * factor * 100) / 100;
+}
+
+// H6: una descripción hecha con lo que ya se sabe de la cosecha (cultivo, chacra, fechas y cantidad). Solo dice lo que hay.
+export function descripcionSugerida({ cultivo, chacra, fechaSiembra, fechaCosecha, cantidad, unidad }: { cultivo: string | null | undefined; chacra: string | null | undefined; fechaSiembra: string | null | undefined; fechaCosecha: string | null | undefined; cantidad: number | string | null | undefined; unidad: string | null | undefined }): string | null {
+  if (!cultivo) return null;
+  const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'];
+  const fecha = (iso: string | null | undefined) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? `${Number(m[3])} de ${meses[Number(m[2]) - 1]} de ${m[1]}` : null;
+  };
+  const siembra = fecha(fechaSiembra);
+  const cosecha = fecha(fechaCosecha);
+  const partes = [`${cultivo.trim()}${chacra ? ` de la chacra «${String(chacra).trim()}»` : ''}.`];
+  if (siembra && cosecha) partes.push(`Se sembró el ${siembra} y se cosechó el ${cosecha}.`);
+  else if (cosecha) partes.push(`Se cosechó el ${cosecha}.`);
+  const n = Number(cantidad);
+  if (n > 0) {
+    const nombres: Record<string, string> = { kg: 'kg', unidad: n === 1 ? 'unidad' : 'unidades', litro: n === 1 ? 'litro' : 'litros' };
+    partes.push(`De esta cosecha salieron ${String(Math.round(n * 100) / 100).replace('.', ',')} ${nombres[unidad || ''] || unidad || 'kg'}.`);
+  }
+  return partes.join(' ');
+}
+
+// H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
+export function fechaHoraLegible(iso: string | null | undefined): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  const dias = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const dia = dias[new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))).getUTCDay()];
+  return `${dia} ${m[3]}/${m[2]} a las ${Number(m[4])}:${m[5]}`;
+}

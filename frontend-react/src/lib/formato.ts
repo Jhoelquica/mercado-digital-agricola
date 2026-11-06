@@ -19,6 +19,12 @@ export function formatearFechaServidor(fechaStr: string | null | undefined): str
   return isNaN(d.getTime()) ? fechaStr : formatearFecha(d.toISOString());
 }
 
+// Fecha corta (02 nov. 2026) de un timestamp del servidor (sin zona: es UTC).
+export function formatearFechaCortaServidor(fechaStr: string | null | undefined): string {
+  const d = parsearFechaServidor(fechaStr);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 export function formatearMoneda(valor: number | string | null | undefined): string {
   const n = Number(valor) || 0;
   const monto = Math.abs(n).toFixed(2);

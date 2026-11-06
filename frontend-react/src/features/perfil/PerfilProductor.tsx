@@ -5,23 +5,9 @@ import type { Productor, RegistroProduccion } from '../../api/productores';
 import { Texto } from '../../idioma/IdiomaContext';
 import { formatearFechaServidor, formatearMoneda } from '../../lib/formato';
 import { hayCoordenadas } from '../../lib/productos';
+import { calcularResumenEconomico } from '../productor/comun';
 
 const MapaSoloLectura = lazy(() => import('../../components/Mapa').then((m) => ({ default: m.MapaSoloLectura })));
-
-// Cálculo de "Gestión económica" (el mismo que la pestaña del panel del productor).
-function calcularResumenEconomico(registros: RegistroProduccion[]) {
-  const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
-  // "cosechado" es donde termina hoy una cosecha; "aprobado" es su equivalente de antes de retirar al Verificador.
-  const cosechados = registros.filter((r) => r.estado === 'aprobado' || r.estado === 'cosechado');
-  const totalCosechadoKg = cosechados.reduce((suma, r) => {
-    if (r.cantidad_cosechada == null) return suma;
-    const enKg = r.unidad_medida === 'kg' ? Number(r.cantidad_cosechada) : Number(r.cantidad_cosechada) * Number(r.equivalencia_kg || 0);
-    return suma + enKg;
-  }, 0);
-  const conGanancia = cosechados.filter((r) => r.ganancia_estimada != null);
-  const gananciaAcumulada = conGanancia.reduce((suma, r) => suma + Number(r.ganancia_estimada), 0);
-  return { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular: cosechados.length - conGanancia.length };
-}
 
 function EstadisticasProductor({ registros }: { registros: RegistroProduccion[] }) {
   const { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular } = calcularResumenEconomico(registros);

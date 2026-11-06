@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { chacras } from '../../api/chacras';
 import { ApiError } from '../../api/errors';
-import { productores, type CatalogoPlantillas } from '../../api/productores';
+import { productores, type CatalogoPlantillas, type RegistroProduccion } from '../../api/productores';
 import { productos } from '../../api/productos';
 import { transporte } from '../../api/transporte';
 import { useAuth } from '../../auth/AuthContext';
@@ -140,4 +140,19 @@ export function alimentoPorNombre(catalogo: CatalogoPlantillas | null | undefine
 export function textoPeonesDias(peones: number | string, dias: number | string): string {
   const d = Number(dias);
   return `${peones} ${Number(peones) === 1 ? 'peón' : 'peones'} × ${String(d).replace('.', ',')} ${d === 1 ? 'día' : 'días'}`;
+}
+
+// Cálculo de "Gestión económica": lo usan Mi perfil y la pestaña del panel del productor (mismos números).
+export function calcularResumenEconomico(registros: RegistroProduccion[]) {
+  const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
+  // "cosechado" es donde termina hoy una cosecha; "aprobado" es su equivalente de antes de retirar al Verificador.
+  const cosechados = registros.filter((r) => r.estado === 'aprobado' || r.estado === 'cosechado');
+  const totalCosechadoKg = cosechados.reduce((suma, r) => {
+    if (r.cantidad_cosechada == null) return suma;
+    const enKg = r.unidad_medida === 'kg' ? Number(r.cantidad_cosechada) : Number(r.cantidad_cosechada) * Number(r.equivalencia_kg || 0);
+    return suma + enKg;
+  }, 0);
+  const conGanancia = cosechados.filter((r) => r.ganancia_estimada != null);
+  const gananciaAcumulada = conGanancia.reduce((suma, r) => suma + Number(r.ganancia_estimada), 0);
+  return { totalInvertido, cosechados, totalCosechadoKg, conGanancia, gananciaAcumulada, sinCalcular: cosechados.length - conGanancia.length };
 }

@@ -142,3 +142,11 @@ a.perfil-acceso { text-decoration: none; }
    dentro de su .tabla-wrap, que ya tiene overflow-x: auto. */
 .inicio-graficos { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 960px) { .inicio-graficos { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); } }
+
+/* Fase 5b, desbordes que también tiene frontend/:
+   - Economía (254 px a 1280, 425 px a 375): los textos "sin ventas" para lector de pantalla (.sr-only, position:absolute)
+     de la tabla producto × mes se salían de su .tabla-wrap, que no era su bloque contenedor, y ensanchaban la página.
+   - Ganancias (5 px a 375): .ganancias era un grid sin columnas definidas (auto = el mínimo de la tabla de movimientos). */
+.tabla-wrap { position: relative; }
+.ganancias { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 960px) { .ganancias-cuerpo { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } }

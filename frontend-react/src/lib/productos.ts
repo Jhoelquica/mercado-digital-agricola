@@ -68,6 +68,14 @@ const UNIDADES_MEDIDA: Record<string, { singular: string; plural: string; etique
   litro: { singular: 'litro', plural: 'litros', etiqueta: 'litros', label: 'Litro', esBase: true },
 };
 
+export const CODIGOS_UNIDADES = Object.keys(UNIDADES_MEDIDA);
+
+// Redondea a la misma precisión con que se guarda (factor_a_base es Numeric(10,4)) y quita ceros sobrantes: un 2 que
+// llega como 1.9999999999999998 se muestra "2".
+export function formatearFactor(valor: number | string): number {
+  return parseFloat(Number(valor).toFixed(4));
+}
+
 export function infoUnidad(codigo: string | null | undefined) {
   return (codigo && UNIDADES_MEDIDA[codigo]) || UNIDADES_MEDIDA.unidad!;
 }
