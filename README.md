@@ -196,3 +196,5 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
 - Fase de despliegue: Google OAuth con dos proyectos (desarrollo con `localhost` en modo Prueba; producción solo HTTPS y
   publicada), cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y `GOOGLE_CLIENT_ID` en Usuarios.
+- Cosechas más grandes que la capacidad del vehículo más grande (decisión de negocio, no de la migración): decidir si se
+  sugiere transporte contratado automáticamente o se divide el recojo.
