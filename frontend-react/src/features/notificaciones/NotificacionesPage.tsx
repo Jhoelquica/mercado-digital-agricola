@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import { notificaciones, type Notificacion } from '../../api/notificaciones';
 import { useAuth } from '../../auth/AuthContext';
 import { manejarError } from '../../components/Toast';
+import { ETIQUETAS_ESTADO_ENVIO, tiempoRelativo } from '../../lib/envios';
 import { formatearFechaServidor, parsearFechaServidor } from '../../lib/formato';
 import { abrirPanelBusqueda } from '../catalogo/menus';
 import { leerPedidosRecordados } from '../pedidos/pedidosRecordados';
@@ -36,12 +37,6 @@ const FILTROS: { clave: Filtro; etiqueta: string }[] = [
   { clave: 'producto', etiqueta: 'Productos' },
 ];
 
-const ETIQUETAS_ESTADO_ENVIO: Record<string, string> = {
-  pendiente: 'Pendiente', pendiente_asignacion: 'Buscando repartidor', propuesto: 'Propuesto a un repartidor', asignado: 'Repartidor asignado',
-  en_camino: 'En camino', esperando_camion: 'Esperando que se llene el camión', en_destino: 'El camión llegó a tu ciudad',
-  en_agencia: 'En la agencia de tu ciudad', recogido: 'Recogida en la chacra', en_almacen: 'En el almacén', completado: 'Pesada y a la venta',
-  entregado: 'Entregado', cancelado: 'Cancelado',
-};
 const ICONOS_ESTADO: Record<string, string> = {
   pendiente: 'hourglass', pendiente_asignacion: 'hourglass', propuesto: 'mail', confirmado: 'receipt', asignado: 'clipboard-list',
   en_camino: 'truck', en_transito: 'truck', en_ruta: 'truck', entregado: 'circle-check', cancelado: 'circle-x', rechazado: 'circle-x',
@@ -64,19 +59,6 @@ function PillEstado({ estado }: { estado: string }) {
   );
 }
 
-function tiempoRelativo(fechaStr: string | null): string {
-  const d = parsearFechaServidor(fechaStr);
-  if (isNaN(d.getTime())) return '—';
-  const min = Math.floor(Math.max(0, Date.now() - d.getTime()) / 60000);
-  if (min < 1) return 'hace un momento';
-  if (min < 60) return `hace ${min} min`;
-  const horas = Math.floor(min / 60);
-  if (horas < 24) return `hace ${horas} h`;
-  const dias = Math.floor(horas / 24);
-  if (dias === 1) return 'ayer';
-  if (dias < 7) return `hace ${dias} días`;
-  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
-}
 
 // Grupo de día para los encabezados de la lista (por día calendario local, no por horas transcurridas).
 function grupoDeDia(fecha: Date): string {

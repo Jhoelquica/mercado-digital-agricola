@@ -30,9 +30,12 @@ interface PropsSoloLectura {
   longitud: number | string;
   popup: string;
   etiqueta: string;
+  icono?: string;
+  color?: string;
+  clase?: string;
 }
 
-export function MapaSoloLectura({ latitud, longitud, popup, etiqueta }: PropsSoloLectura) {
+export function MapaSoloLectura({ latitud, longitud, popup, etiqueta, icono = 'map-pin', color = '#2d6a4f', clase = 'mapa-mini' }: PropsSoloLectura) {
   const contenedor = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -42,45 +45,52 @@ export function MapaSoloLectura({ latitud, longitud, popup, etiqueta }: PropsSol
     agregarCapaBase(mapa);
     const texto = document.createElement('span');
     texto.textContent = popup;
-    L.marker(punto, { icon: iconoMarcador('map-pin', '#2d6a4f') }).addTo(mapa).bindPopup(texto);
+    L.marker(punto, { icon: iconoMarcador(icono, color) }).addTo(mapa).bindPopup(texto);
     const temporizador = setTimeout(() => mapa.invalidateSize(), 80);
     return () => {
       clearTimeout(temporizador);
       mapa.remove();
     };
-  }, [latitud, longitud, popup]);
+  }, [latitud, longitud, popup, icono, color]);
 
-  return <div ref={contenedor} className="mapa-mini" role="img" aria-label={etiqueta} />;
+  return <div ref={contenedor} className={clase} role="img" aria-label={etiqueta} />;
 }
 
 export interface MapaSeleccionableApi {
   moverMarcador: (lat: number, lng: number) => void;
   verPunto: (lat: number, lng: number, zoom: number) => void;
   cambiarZoom: (zoom: number) => void;
+  // Un círculo (p. ej. el radio de entrega de una ciudad) centrado en el punto; con `encuadrar`, el mapa lo muestra entero.
+  dibujarCirculo: (lat: number, lng: number, radioMetros: number, encuadrar?: boolean) => void;
 }
 
 interface PropsSeleccionable {
   id: string;
   clase?: string;
   color?: string;
+  icono?: string;
   alSeleccionar: (lat: number, lng: number) => void;
   // Punto con que arranca (zoom 14 y su marcador); sin él, todo el Perú.
   inicial?: { lat: number; lng: number } | null;
+  // Con el punto inicial: el radio (en metros) del círculo con que arranca, encuadrado entero.
+  radioInicialMetros?: number | null;
+  zoomInicial?: number;
   ref?: Ref<MapaSeleccionableApi>;
 }
 
 // Se toca el mapa para marcar un punto. Arranca mostrando todo el Perú y sin marcador.
-export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar, inicial, ref }: PropsSeleccionable) {
+export function MapaSeleccionable({ id, clase, color = '#e76f51', icono = 'map-pin', alSeleccionar, inicial, radioInicialMetros, zoomInicial = 14, ref }: PropsSeleccionable) {
   const contenedor = useRef<HTMLDivElement>(null);
   const mapaRef = useRef<L.Map | null>(null);
   const marcador = useRef<L.Marker | null>(null);
+  const circulo = useRef<L.Circle | null>(null);
   const alSeleccionarRef = useRef(alSeleccionar);
   alSeleccionarRef.current = alSeleccionar;
 
   function ponerMarcador(lat: number, lng: number) {
     if (!mapaRef.current) return;
     if (marcador.current) marcador.current.setLatLng([lat, lng]);
-    else marcador.current = L.marker([lat, lng], { icon: iconoMarcador('map-pin', color) }).addTo(mapaRef.current);
+    else marcador.current = L.marker([lat, lng], { icon: iconoMarcador(icono, color) }).addTo(mapaRef.current);
   }
 
   useImperativeHandle(ref, () => ({
@@ -90,15 +100,25 @@ export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar,
     },
     verPunto: (lat, lng, zoom) => { mapaRef.current?.setView([lat, lng], zoom); },
     cambiarZoom: (zoom) => { mapaRef.current?.setZoom(zoom); },
+    dibujarCirculo(lat, lng, radioMetros, encuadrar = false) {
+      if (!mapaRef.current) return;
+      if (circulo.current) circulo.current.setLatLng([lat, lng]).setRadius(radioMetros);
+      else circulo.current = L.circle([lat, lng], { radius: radioMetros, color, weight: 1.5, fillOpacity: 0.08 }).addTo(mapaRef.current);
+      if (encuadrar) mapaRef.current.fitBounds(circulo.current.getBounds(), { padding: [12, 12] });
+    },
   }));
 
   useEffect(() => {
     if (!contenedor.current) return undefined;
     const punto = inicial && hayCoordenadas(inicial.lat, inicial.lng) ? [Number(inicial.lat), Number(inicial.lng)] as L.LatLngTuple : null;
-    const mapa = L.map(contenedor.current).setView(punto ?? MAPA_CENTRO_PERU, punto ? 14 : 5);
+    const mapa = L.map(contenedor.current).setView(punto ?? MAPA_CENTRO_PERU, punto ? zoomInicial : 5);
     mapaRef.current = mapa;
     agregarCapaBase(mapa);
     if (punto) ponerMarcador(punto[0], punto[1]);
+    if (punto && radioInicialMetros) {
+      circulo.current = L.circle(punto, { radius: radioInicialMetros, color, weight: 1.5, fillOpacity: 0.08 }).addTo(mapa);
+      mapa.fitBounds(circulo.current.getBounds(), { padding: [12, 12] });
+    }
     mapa.on('click', (e: L.LeafletMouseEvent) => {
       ponerMarcador(e.latlng.lat, e.latlng.lng);
       alSeleccionarRef.current(e.latlng.lat, e.latlng.lng);
@@ -109,6 +129,7 @@ export function MapaSeleccionable({ id, clase, color = '#e76f51', alSeleccionar,
       mapa.remove();
       mapaRef.current = null;
       marcador.current = null;
+      circulo.current = null;
     };
     // El color y el punto inicial no cambian durante la vida del mapa.
   }, []);

@@ -46,6 +46,20 @@ const PAGINAS_REPARTIDOR: Record<string, CargaDiferida> = {
   vehiculo: componente(() => import('../features/repartidor/VehiculoPage')),
 };
 
+const PAGINAS_ADMIN: Record<string, CargaDiferida> = {
+  '': componente(() => import('../features/admin/InicioPage')),
+  transferencias: componente(() => import('../features/admin/TransferenciasPage')),
+  pagos: componente(() => import('../features/admin/PagosPage')),
+  'sin-entregar': componente(() => import('../features/admin/SinEntregarPage')),
+  'reclamos-ruc': componente(() => import('../features/admin/ReclamosRucPage')),
+  transportistas: componente(() => import('../features/admin/TransportistasPage')),
+  viajes: componente(() => import('../features/admin/ViajesPage')),
+  destinos: componente(() => import('../features/admin/DestinosPage')),
+  productores: componente(() => import('../features/admin/ProductoresPage')),
+  capacidad: componente(() => import('../features/admin/CapacidadPage')),
+  transito: componente(() => import('../features/admin/TransitoPage')),
+};
+
 // El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend actual.
 // Solo vale para la página con la que se abre la aplicación; después, el logo sí lleva a "/" a cualquier rol.
 let aterrizajePendiente = window.location.pathname === '/';
@@ -134,7 +148,7 @@ export const router = createBrowserRouter([
         element: <RequireRole roles={['admin']} />,
         children: [{
           lazy: componente(() => import('../features/admin/AdminLayout')),
-          children: rutasDePanel(SECCIONES_ADMIN),
+          children: rutasDePanel(SECCIONES_ADMIN, PAGINAS_ADMIN),
         }],
       },
       { path: '*', element: <NoEncontrado /> },

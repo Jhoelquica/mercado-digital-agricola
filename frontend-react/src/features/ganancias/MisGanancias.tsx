@@ -22,7 +22,7 @@ const CONCEPTOS_COBRO: Record<string, string> = { venta: 'Venta', envio: 'Envío
 const hoyIso = () => new Date().toLocaleDateString('sv-SE');
 
 // "2026-10-12" -> "lunes 12 oct." (la fecha viene sin hora: se lee como fecha local, no UTC)
-function fechaDePago(fechaIso: string) {
+export function fechaDePago(fechaIso: string) {
   return new Date(`${fechaIso}T12:00:00`).toLocaleDateString('es-PE', { weekday: 'long', day: 'numeric', month: 'short' }).replace(',', '');
 }
 

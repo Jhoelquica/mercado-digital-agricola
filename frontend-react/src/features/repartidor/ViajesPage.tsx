@@ -8,6 +8,7 @@ import { SkeletonFilas } from '../../components/SkeletonFilas';
 import { manejarError, toast } from '../../components/Toast';
 import { FOTO_TAMANO_MAXIMO, formatearTamanoArchivo } from '../../lib/fotos';
 import { formatearFechaServidor } from '../../lib/formato';
+import { BotonViaje, EnviosDelViaje, EtapasViaje, MedidorViaje } from '../viajes/piezas';
 import { useMiRepartidor, useRefrescarPanel, useViajes } from './comun';
 
 const KG_MINIMOS_CAMION = 2500; // 50 sacos de 50 kg: lo mínimo que pide un comprador lejano (mismo tope que Transporte)
@@ -182,62 +183,34 @@ function SeccionCarga({ perfil }: { perfil: Repartidor }) {
   );
 }
 
-const ETAPAS_VIAJE = [
-  { estado: 'abierto', texto: 'Juntando carga' },
-  { estado: 'listo', texto: 'Listo para salir' },
-  { estado: 'en_ruta', texto: 'En ruta' },
-  { estado: 'llegado', texto: 'En destino' },
-];
-
-// Botón con su paso de confirmación: mover un viaje avisa a todos sus compradores.
-function BotonViaje({ v, accion, icono, texto, pregunta, confirmar }: { v: Viaje; accion: 'salir' | 'llegar'; icono: string; texto: string; pregunta: string; confirmar: string }) {
+// Salir o llegar: el transportista mueve su viaje.
+function useMoverViaje(v: Viaje, accion: 'salir' | 'llegar') {
   const refrescar = useRefrescarPanel();
-  const [confirmando, setConfirmando] = useState(false);
-  const [moviendo, setMoviendo] = useState(false);
-  const botonConfirmar = useRef<HTMLButtonElement>(null);
-  const botonAccion = useRef<HTMLButtonElement>(null);
-  async function mover() {
-    setMoviendo(true);
+  return async () => {
     try {
       const viaje = accion === 'salir' ? await transporte.salirViaje(v.id) : await transporte.llegarViaje(v.id);
       toast(accion === 'salir'
         ? `¡Buen viaje! Los compradores ya ven que su pedido va a ${viaje.destino_ciudad} 🚛`
         : `Llegaste a ${viaje.destino_ciudad}: descarga cada pedido cuando su saldo figure pagado.`);
       await refrescar();
-      setConfirmando(false);
+      return true;
     } catch (err) {
       manejarError(err, accion === 'salir' ? 'marcar la salida del viaje' : 'marcar la llegada del viaje');
+      return false;
     }
-    setMoviendo(false);
-  }
-  return (
-    <>
-      <div className={`viaje-acciones ${confirmando ? 'hidden' : ''}`}>
-        <button ref={botonAccion} type="button" className="btn btn-primary btn-viaje-accion" disabled={moviendo} onClick={() => { setConfirmando(true); setTimeout(() => botonConfirmar.current?.focus()); }}><i className={`ti ti-${icono}`} aria-hidden="true" /> {texto}</button>
-      </div>
-      <div className={`viaje-confirmar ${confirmando ? '' : 'hidden'}`} role="group" aria-label={texto}>
-        <p>{pregunta}</p>
-        <div>
-          <button type="button" className="btn btn-ghost btn-sm btn-viaje-cancelar" disabled={moviendo} onClick={() => { setConfirmando(false); setTimeout(() => botonAccion.current?.focus()); }}>Todavía no</button>
-          <button ref={botonConfirmar} type="button" className="btn btn-primary btn-sm btn-viaje-confirmar" data-accion={accion} disabled={moviendo} onClick={() => { void mover(); }}>{confirmar}</button>
-        </div>
-      </div>
-    </>
-  );
+  };
 }
 
 function TarjetaViaje({ v, indice }: { v: Viaje; indice: number }) {
   const ciudad = v.destino_ciudad || 'su destino';
-  const capacidad = Number(v.capacidad_sacos) || 0;
   const cargados = Number(v.sacos_cargados) || 0;
   const paraSalir = Number(v.sacos_para_salir) || 0;
-  const porcentaje = (n: number) => (capacidad ? Math.min(100, (n / capacidad) * 100) : 0);
-  const actual = Math.max(0, ETAPAS_VIAJE.findIndex((e) => e.estado === v.estado));
-  const llegado = v.estado === 'llegado';
+  const salir = useMoverViaje(v, 'salir');
+  const llegar = useMoverViaje(v, 'llegar');
   const acciones = {
     abierto: <p className="viaje-nota"><i className="ti ti-info-circle" aria-hidden="true" /> Sale al juntar {paraSalir} sacos: faltan {Math.max(0, paraSalir - cargados)}. Si hace falta salir antes, lo decide el admin.</p>,
-    listo: <BotonViaje key="salir" v={v} accion="salir" icono="truck-delivery" texto={`Salir hacia ${ciudad}`} pregunta={`¿Ya cargaste los ${cargados} sacos? Al salir, cada comprador ve que su pedido va en camino a ${ciudad}.`} confirmar="Sí, salir ahora" />,
-    en_ruta: <BotonViaje key="llegar" v={v} accion="llegar" icono="map-pin" texto={`Llegué a ${ciudad}`} pregunta={`¿Ya estás en ${ciudad}? Cada comprador recibe el aviso para pagar su saldo (30%) antes de que descargues.`} confirmar="Sí, ya llegué" />,
+    listo: <BotonViaje key="salir" accion="salir" icono="truck-delivery" texto={`Salir hacia ${ciudad}`} pregunta={`¿Ya cargaste los ${cargados} sacos? Al salir, cada comprador ve que su pedido va en camino a ${ciudad}.`} confirmar="Sí, salir ahora" alConfirmar={salir} />,
+    en_ruta: <BotonViaje key="llegar" accion="llegar" icono="map-pin" texto={`Llegué a ${ciudad}`} pregunta={`¿Ya estás en ${ciudad}? Cada comprador recibe el aviso para pagar su saldo (30%) antes de que descargues.`} confirmar="Sí, ya llegué" alConfirmar={llegar} />,
     llegado: <p className="viaje-nota"><i className="ti ti-wallet" aria-hidden="true" /> Cobra antes de descargar: entrega cada pedido en «Mis envíos» cuando su saldo figure pagado, con el código del comprador.</p>,
   }[v.estado] ?? null;
   return (
@@ -248,28 +221,9 @@ function TarjetaViaje({ v, indice }: { v: Viaje; indice: number }) {
           <small>Viaje #{String(v.id).slice(0, 8)}{v.fecha_salida ? ` · salió el ${formatearFechaServidor(v.fecha_salida)}` : ''}</small>
         </div>
       </div>
-      <ol className="viaje-etapas" aria-label="Etapas del viaje">
-        {ETAPAS_VIAJE.map((e, i) => <li key={e.estado} className={i < actual ? 'hecho' : i === actual ? 'actual' : ''} aria-current={i === actual ? 'step' : undefined}><span className="viaje-paso-punto" aria-hidden="true" />{e.texto}</li>)}
-      </ol>
-      <div className="viaje-medidor">
-        <div className="viaje-medidor-texto"><strong>{cargados} sacos cargados</strong><span>de {capacidad} · sale con {paraSalir}</span></div>
-        <div className="viaje-medidor-barra" role="progressbar" aria-valuemin={0} aria-valuemax={capacidad} aria-valuenow={Math.min(cargados, capacidad)} aria-label="Sacos en el camión">
-          <span className="viaje-medidor-relleno" style={{ width: `${porcentaje(cargados)}%` }} />
-          <span className="viaje-medidor-marca" style={{ left: `${porcentaje(paraSalir)}%` }} />
-        </div>
-        <span className="viaje-medidor-leyenda">Sale al llegar a esta marca ({paraSalir} sacos)</span>
-      </div>
-      {v.envios?.length > 0 && (
-        <ul className="viaje-envios" aria-label="Pedidos en este viaje">
-          {v.envios.map((e) => (
-            <li key={e.id}>
-              <span className="viaje-envio-id">Pedido #{String(e.pedido_id).slice(0, 8)}</span>
-              <span>{e.sacos ?? '—'} sacos</span>
-              {llegado && (e.estado === 'entregado' ? <span className="viaje-saldo ok">Entregado</span> : e.saldo_pagado ? <span className="viaje-saldo ok">Saldo pagado</span> : <span className="viaje-saldo espera">Falta el saldo</span>)}
-            </li>
-          ))}
-        </ul>
-      )}
+      <EtapasViaje v={v} />
+      <MedidorViaje v={v} />
+      <EnviosDelViaje v={v} />
       {acciones}
     </article>
   );
