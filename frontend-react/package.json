@@ -8,7 +8,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.sw.json && tsc --noEmit -p tsconfig.node.json",
     "build": "npm run typecheck && vite build",
     "preview": "vite preview",
-    "e2e:mapa": "node e2e/mapa.mjs"
+    "e2e:mapa": "node e2e/mapa.mjs",
+    "e2e:siembra": "node e2e/productor-siembra.mjs",
+    "e2e:borrador": "node e2e/productor-borrador.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.0",
