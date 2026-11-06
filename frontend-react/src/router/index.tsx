@@ -38,6 +38,14 @@ const PAGINAS_PRODUCTOR: Record<string, CargaDiferida> = {
   economia: componente(() => import('../features/productor/EconomiaPage')),
 };
 
+const PAGINAS_REPARTIDOR: Record<string, CargaDiferida> = {
+  '': componente(() => import('../features/repartidor/EnviosPage')),
+  recojos: componente(() => import('../features/repartidor/RecojosPage')),
+  viajes: componente(() => import('../features/repartidor/ViajesPage')),
+  ganancias: componente(() => import('../features/repartidor/GananciasPage')),
+  vehiculo: componente(() => import('../features/repartidor/VehiculoPage')),
+};
+
 // El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend actual.
 // Solo vale para la página con la que se abre la aplicación; después, el logo sí lleva a "/" a cualquier rol.
 let aterrizajePendiente = window.location.pathname === '/';
@@ -118,7 +126,7 @@ export const router = createBrowserRouter([
         element: <RequireRole roles={['repartidor']} />,
         children: [{
           lazy: componente(() => import('../features/repartidor/RepartidorLayout')),
-          children: rutasDePanel(SECCIONES_REPARTIDOR),
+          children: rutasDePanel(SECCIONES_REPARTIDOR, PAGINAS_REPARTIDOR),
         }],
       },
       {

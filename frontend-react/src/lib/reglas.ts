@@ -154,6 +154,13 @@ export function descripcionSugerida({ cultivo, chacra, fechaSiembra, fechaCosech
   return partes.join(' ');
 }
 
+// H11 (validación con usuarios del 2026-10-13, R03): el estado que sigue en el orden de ese envío, o null si ya está en el
+// último o fuera del orden.
+export function siguienteEstadoEnvio(estado: string | null | undefined, estados: string[]): string | null {
+  const i = estados.indexOf(estado || '');
+  return i >= 0 && i < estados.length - 1 ? (estados[i + 1] as string) : null;
+}
+
 // H8: "jueves 15/10 a las 8:30" de "2026-10-15T08:30" (hora de Perú tal como la escribió el admin: sin zona horaria).
 export function fechaHoraLegible(iso: string | null | undefined): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(iso || ''));

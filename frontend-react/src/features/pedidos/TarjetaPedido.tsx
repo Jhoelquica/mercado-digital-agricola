@@ -96,7 +96,7 @@ function PinEntrega({ pin }: { pin: string }) {
   );
 }
 
-function BloqueRuta({ envio, ruta }: { envio: EnvioDetalle; ruta: RutaEnvio | null }) {
+export function BloqueRuta({ envio, ruta }: { envio: { id: string }; ruta: RutaEnvio | null }) {
   const [actual, setActual] = useState(ruta);
   const disponible = actual?.disponible === true;
 

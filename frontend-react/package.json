@@ -10,7 +10,10 @@
     "preview": "vite preview",
     "e2e:mapa": "node e2e/mapa.mjs",
     "e2e:siembra": "node e2e/productor-siembra.mjs",
-    "e2e:borrador": "node e2e/productor-borrador.mjs"
+    "e2e:borrador": "node e2e/productor-borrador.mjs",
+    "e2e:entrega": "node e2e/repartidor-entrega.mjs",
+    "e2e:recojo": "node e2e/repartidor-recojo.mjs",
+    "e2e:viajes": "node e2e/repartidor-viajes.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.0",
