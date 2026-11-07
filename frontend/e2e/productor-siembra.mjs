@@ -255,7 +255,10 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
     ok('sin foto no avanza', await contiene(error, 'Falta la foto'));
     await p.setInputFiles('#asistente-foto-cosecha', FOTO);
     await p.waitForSelector('.foto-entrega[data-estado="lista"]');
-    ok('foto lista con vista previa', (await p.locator('.foto-entrega-previa img').getAttribute('src'))?.startsWith('blob:') && await esIgual(p.locator('.foto-nombre'), FOTO.split(/[\\/]/).pop()));
+    // La vista previa se pone un render después de "lista" (un efecto crea la URL blob:): se espera a que esté.
+    await p.waitForFunction(() => document.querySelector('.foto-entrega-previa img')?.getAttribute('src')?.startsWith('blob:'), null, { timeout: 5000 }).catch(() => {});
+    const previa = { src: await p.locator('.foto-entrega-previa img').getAttribute('src'), nombre: await texto(p.locator('.foto-nombre')) };
+    ok('foto lista con vista previa', previa.src?.startsWith('blob:') && await esIgual(p.locator('.foto-nombre'), FOTO.split(/[\\/]/).pop()), previa);
     ok('dice "Foto lista. Toca Siguiente."', (await habla()).includes('Foto lista. Toca Siguiente.'));
     await siguiente();
     await esperarPregunta('¿Cuánto cosechaste?');
