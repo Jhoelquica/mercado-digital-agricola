@@ -194,7 +194,9 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
   IntelliJ). Los QR de certificación se generan con esa URL: debe pasar a ser configurable por entorno (ConfigMap).
   `deploy/gcp/generar_manifiestos.py` ya la sobrescribe para Google Cloud; el manifiesto base sigue con el valor fijo.
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
-- Fase de despliegue: Google OAuth con dos proyectos (desarrollo con `localhost` en modo Prueba; producción solo HTTPS y
-  publicada), cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y `GOOGLE_CLIENT_ID` en Usuarios.
+- Fase de despliegue: Google OAuth con dos proyectos, cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y
+  `GOOGLE_CLIENT_ID` en Usuarios. El de desarrollo está **cerrado**: con `localhost` en modo Prueba, el inicio de sesión
+  con Google en `http://localhost:5173/login`, la sesión al recargar y `?next=` funcionan (2026-11-07). Falta el de
+  producción: solo HTTPS y publicado.
 - Cosechas más grandes que la capacidad del vehículo más grande (decisión de negocio, no de la migración): decidir si se
   sugiere transporte contratado automáticamente o se divide el recojo.
