@@ -15,10 +15,18 @@ function agregarCapaBase(mapa: L.Map): void {
   L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19, referrerPolicy: 'origin' }).addTo(mapa);
 }
 
+// El marcador se arma como elemento (no como HTML con style="..."): el color va por CSSOM, que la CSP permite sin
+// 'unsafe-inline' en los estilos.
 function iconoMarcador(icono: string, color: string): L.DivIcon {
+  const marca = document.createElement('span');
+  marca.className = 'marcador-mapa';
+  marca.style.background = color;
+  const simbolo = document.createElement('i');
+  simbolo.className = `ti ti-${icono}`;
+  marca.append(simbolo);
   return L.divIcon({
     className: 'marcador-mapa-wrap',
-    html: `<span class="marcador-mapa" style="background:${color}"><i class="ti ti-${icono}"></i></span>`,
+    html: marca,
     iconSize: [30, 30],
     iconAnchor: [15, 15],
     popupAnchor: [0, -18],

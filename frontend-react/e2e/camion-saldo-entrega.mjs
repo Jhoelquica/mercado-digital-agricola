@@ -93,7 +93,7 @@ await C.p.locator(`.pedido-card[data-pedido-id="${pedidoId}"]`).waitFor({ timeou
 ok('el comprador lo ve entregado', await contiene(C.p.locator(`.pedido-card[data-pedido-id="${pedidoId}"]`), 'Entregado'));
 // Esperados: Mis Pedidos pide el envío de pedidos viejos que nunca tuvieron uno (404, igual que el frontend anterior) y el
 // servidor rechaza el código equivocado de la prueba.
-const esperado = (e) => /404 .*\/api\/transporte\/envios\/[0-9a-f-]+\)$/.test(e) || /\/entregar\)$/.test(e);
+const esperado = (e) => /404 .*\/api\/transporte\/envios\/[0-9a-f-]+\)$/.test(e) || /\/entregar\)$/.test(e) || /El código no coincide/.test(e);
 const inesperados = [...C.errores, ...T.errores].filter((e) => !esperado(e));
 ok('sin errores de página', !inesperados.length, inesperados);
 cerrar();

@@ -255,7 +255,7 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
     ok('sin foto no avanza', await contiene(error, 'Falta la foto'));
     await p.setInputFiles('#asistente-foto-cosecha', FOTO);
     await p.waitForSelector('.foto-entrega[data-estado="lista"]');
-    ok('foto lista con vista previa', (await p.locator('.foto-entrega-previa img').getAttribute('src'))?.startsWith('blob:') && await esIgual(p.locator('.foto-nombre'), 'hero-valle-andino-800.jpg'));
+    ok('foto lista con vista previa', (await p.locator('.foto-entrega-previa img').getAttribute('src'))?.startsWith('blob:') && await esIgual(p.locator('.foto-nombre'), FOTO.split(/[\\/]/).pop()));
     ok('dice "Foto lista. Toca Siguiente."', (await habla()).includes('Foto lista. Toca Siguiente.'));
     await siguiente();
     await esperarPregunta('¿Cuánto cosechaste?');
