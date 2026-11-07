@@ -4,7 +4,7 @@ Plataforma de venta directa del productor al comprador para Ayacucho (Perú). La
 cada uno con su propia base PostgreSQL. Se comunican por HTTP (con una clave por cada par de servicios) y por eventos en
 RabbitMQ.
 
-- **Frontend:** una SPA en HTML, CSS y JavaScript.
+- **Frontend:** React + Vite + TypeScript (`frontend/`), servido por nginx.
 - **Gateway:** Traefik.
 - **Trazabilidad:** una cadena de hashes por producto, verificable con un QR.
 - **Despliegue:** Kubernetes (Docker Desktop en local y Google Kubernetes Engine en la nube).
@@ -90,7 +90,8 @@ docker build -t localhost:5000/pedidos:latest pedidos && docker push localhost:5
 kubectl rollout restart deployment/pedidos && kubectl rollout status deployment/pedidos
 ```
 
-Para el frontend, corre antes `python frontend/bump_cache_version.py`, para que el navegador no use archivos viejos.
+El frontend se actualiza igual (`docker build -t localhost:5000/frontend:latest frontend` y el rollout): sus archivos llevan
+un hash en el nombre, así que el navegador nunca usa uno viejo.
 
 ### Respaldo y restauración
 
@@ -129,7 +130,7 @@ cambia respecto de Kubernetes. **No incluye el gateway Traefik, Prometheus ni Gr
 ## Pruebas automáticas
 
 ```bash
-bash scripts/correr_pruebas.sh                  # los 8 servicios
+bash scripts/correr_pruebas.sh                  # los 8 servicios y las reglas del frontend (Vitest)
 bash scripts/correr_pruebas.sh pedidos pagos    # solo algunos
 bash scripts/correr_pruebas.sh --cobertura      # con cobertura (pytest-cov)
 ```
@@ -149,7 +150,7 @@ dominio y HTTPS, y crean secretos aleatorios.
 
 ```
 <servicio>/            8 microservicios: main.py, models.py, auth.py, módulos de lógica, Dockerfile, requirements.txt y test_*.py
-frontend/              SPA (index.html, verificar.html, js/, css/), nginx.conf y Dockerfile
+frontend/              aplicación de React (src/), pruebas (Vitest en src/**/*.test.ts, E2E en e2e/), nginx.conf y Dockerfile
 k8s/                   manifiestos del clúster local (servicios, bases con volumen, RabbitMQ, Redis, MinIO, Traefik,
                        Prometheus, Grafana con su tablero)
 deploy/gcp/            guía y scripts para Google Kubernetes Engine
@@ -186,12 +187,12 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
 - El mapa del repartidor se actualiza cada 15 s (consulta periódica, no WebSocket).
 
 **Pruebas y despliegue**
-- No hay pruebas automáticas del frontend ni pruebas de carga.
+- Las E2E del frontend (`frontend/e2e/`) corren a mano contra el clúster local, no en CI. No hay pruebas de carga.
 - No hay NetworkPolicy ni respaldo automático de las bases en la nube.
 
 **Pendiente antes de producción**
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
-- Fase de despliegue: Google OAuth con dos proyectos, cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y
+- Fase de despliegue: Google OAuth con dos proyectos, cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend) y
   `GOOGLE_CLIENT_ID` en Usuarios. El de desarrollo está **cerrado**: con `localhost` en modo Prueba, el inicio de sesión
   con Google en `http://localhost:5173/login`, la sesión al recargar y `?next=` funcionan (2026-11-07). Falta el de
   producción: solo HTTPS y publicado.

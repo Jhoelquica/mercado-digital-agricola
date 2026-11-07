@@ -46,7 +46,7 @@ USUARIOS_URL = os.getenv("USUARIOS_URL", "http://localhost:8006")
 
 # Un aviso que no se pudo entregar (celular apagado) espera hasta un día en el servicio de push; después ya no sirve.
 VIDA_DEL_AVISO_SEGUNDOS = 24 * 60 * 60
-# Al tocar el aviso se abre la aplicación en Notificaciones (ver frontend/sw.js y el ?vista= de app.js).
+# Al tocar el aviso se abre la aplicación en Notificaciones (ver frontend/src/sw.ts y el ?vista= de frontend/src/router).
 URL_AL_TOCAR = "/?vista=notificaciones"
 # Cuántos navegadores puede tener activos una cuenta: al pasar, se quita el más antiguo.
 MAXIMO_DISPOSITIVOS = 10
