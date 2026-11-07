@@ -4,7 +4,8 @@ desarrollo local. NO modifica k8s/: arma un kustomize en deploy/gcp/salida/ y lo
 se revisa y se aplica con kubectl (ver README.md).
 
 Qué cambia respecto al clúster local:
-  - Las imágenes salen de tu Artifact Registry (no de localhost:5000).
+  - Las imágenes salen de tu Artifact Registry (no de localhost:5000). La del frontend es la aplicación de React
+    (frontend-react/Dockerfile, construida con construir_imagenes.py): su nginx no depende del dominio (CSP con 'self').
   - Solo Traefik (el gateway) tiene IP pública: los microservicios y MinIO pasan a ClusterIP (sin esto cada puerto
     quedaría abierto a Internet saltándose el JWT, el rate-limit y el CORS del gateway).
   - HTTPS con Let's Encrypt (Traefik, 1 réplica y un volumen para el certificado) y redirección de http a https.

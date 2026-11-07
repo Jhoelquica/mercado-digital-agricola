@@ -33,8 +33,8 @@ Los manifiestos de `k8s/` **no se tocan**: los scripts de esta carpeta generan l
    en *Orígenes autorizados de JavaScript*. Si la pantalla de consentimiento está en modo *Prueba*, agrega como
    usuarios de prueba a quienes vayan a entrar con Google (o publícala).
 5. Las **llaves de Culqi** reales, si quieres cobrar de verdad. Sin ellas se usan las de prueba y los pagos son simulados.
-   La llave *secreta* va al Secret (paso 6); la *pública* está escrita en `frontend/js/api.js` (`CULQI_PUBLIC_KEY`): si usas
-   llaves reales, cámbiala ahí y vuelve a construir la imagen del frontend (paso 7 con `--solo frontend`).
+   La llave *secreta* va al Secret (paso 6); la *pública* se fija al construir el frontend: `construir_imagenes.py
+   --culqi-publica pk_live_... --google-client-id <Client ID de producción>` (paso 7; para cambiarla, `--solo frontend`).
 
 Costo aproximado con un nodo `e2-standard-4`: unos US$4 al día (nodo + discos + balanceador). **Bórralo al terminar** (paso 12).
 
@@ -102,7 +102,7 @@ clúster local y a reemplazar un Secret que ya existe.
 
 **7. Imágenes**
 ```bash
-python deploy/gcp/construir_imagenes.py --registro $REGISTRO --etiqueta v1
+python deploy/gcp/construir_imagenes.py --registro $REGISTRO --etiqueta v1 --culqi-publica pk_live_... --google-client-id TU-CLIENT-ID
 ```
 
 **8. Manifiestos y despliegue** (la primera vez con `--acme-staging`: certificado de prueba, sin agotar los límites de Let's Encrypt)

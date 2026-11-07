@@ -17,4 +17,6 @@ FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+# Vacía en Kubernetes; docker-compose.yml monta aquí el gateway de /api y /media (deploy/compose/frontend-gateway.conf).
+RUN mkdir -p /etc/nginx/extra
 EXPOSE 8080

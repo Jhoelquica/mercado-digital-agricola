@@ -190,9 +190,6 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
 - No hay NetworkPolicy ni respaldo automático de las bases en la nube.
 
 **Pendiente antes de producción**
-- `k8s/certificacion.yaml:70` fija `FRONTEND_URL` en `http://localhost:63342/mercado_agricola/frontend` (el servidor de
-  IntelliJ). Los QR de certificación se generan con esa URL: debe pasar a ser configurable por entorno (ConfigMap).
-  `deploy/gcp/generar_manifiestos.py` ya la sobrescribe para Google Cloud; el manifiesto base sigue con el valor fijo.
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
 - Fase de despliegue: Google OAuth con dos proyectos, cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend-react) y
   `GOOGLE_CLIENT_ID` en Usuarios. El de desarrollo está **cerrado**: con `localhost` en modo Prueba, el inicio de sesión
