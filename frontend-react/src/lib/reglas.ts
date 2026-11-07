@@ -72,7 +72,7 @@ export function gastosYaRegistrados(etapas: { clave: string; nombre: string; tot
 }
 
 // H5: la respuesta de "¿qué me conviene sembrar?" en una sola frase, con la primera del ranking.
-export function fraseResumenSiembra(f: { nombre?: string; puntaje: number; riesgo: string; margen_kg: number | null } | undefined, moneda: (n: number) => string): string | null {
+export function fraseResumenSiembra(f: { nombre?: string; puntaje: number; riesgo: string; margen_kg: number | null } | undefined, moneda: (n: number) => string = (n) => `S/ ${Number(n).toFixed(2)}`): string | null {
   if (!f || !f.nombre) return null;
   const nivel = f.puntaje >= 70 ? 'conviene mucho' : f.puntaje >= 50 ? 'conviene' : f.puntaje >= 35 ? 'puede ser' : 'conviene poco';
   const riesgo = ({ bajo: 'hay poco riesgo de que sobre', medio: 'hay algo de riesgo de que sobre', alto: 'hay mucho riesgo de que sobre' } as Record<string, string>)[f.riesgo];
@@ -125,7 +125,7 @@ export function unidadesParaAgregar(todas: string[], permitidas: string[] | null
 // H6 (validación con usuarios del 2026-10-14): el precio sugerido al publicar es el precio de referencia por kg de la
 // tienda, llevado a la unidad del producto con su equivalencia (1 unidad = X kg). Sin referencia, o sin equivalencia para
 // otra unidad, no se sugiere nada.
-export function precioSugerido({ precioReferenciaKg, unidad, equivalenciaKg }: { precioReferenciaKg: number | string | null | undefined; unidad: string | null | undefined; equivalenciaKg: number | string | null | undefined }): number | null {
+export function precioSugerido({ precioReferenciaKg, unidad, equivalenciaKg }: { precioReferenciaKg?: number | string | null; unidad?: string | null; equivalenciaKg?: number | string | null }): number | null {
   const porKg = Number(precioReferenciaKg);
   if (precioReferenciaKg == null || !(porKg > 0)) return null;
   const factor = unidad === 'kg' || !unidad ? 1 : Number(equivalenciaKg);
@@ -134,7 +134,7 @@ export function precioSugerido({ precioReferenciaKg, unidad, equivalenciaKg }: {
 }
 
 // H6: una descripción hecha con lo que ya se sabe de la cosecha (cultivo, chacra, fechas y cantidad). Solo dice lo que hay.
-export function descripcionSugerida({ cultivo, chacra, fechaSiembra, fechaCosecha, cantidad, unidad }: { cultivo: string | null | undefined; chacra: string | null | undefined; fechaSiembra: string | null | undefined; fechaCosecha: string | null | undefined; cantidad: number | string | null | undefined; unidad: string | null | undefined }): string | null {
+export function descripcionSugerida({ cultivo, chacra, fechaSiembra, fechaCosecha, cantidad, unidad }: { cultivo?: string | null; chacra?: string | null; fechaSiembra?: string | null; fechaCosecha?: string | null; cantidad?: number | string | null; unidad?: string | null }): string | null {
   if (!cultivo) return null;
   const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'];
   const fecha = (iso: string | null | undefined) => {

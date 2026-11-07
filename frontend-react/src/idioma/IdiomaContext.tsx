@@ -1,7 +1,7 @@
 import { createContext, use, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { TEXTOS } from './textos';
+import { normalizar, traduccion, type CodigoIdioma } from './textos';
 
-export type CodigoIdioma = 'es' | 'qu';
+export type { CodigoIdioma };
 
 export const IDIOMAS: { codigo: CodigoIdioma; nombre: string }[] = [
   { codigo: 'es', nombre: 'Castellano' },
@@ -10,18 +10,8 @@ export const IDIOMAS: { codigo: CodigoIdioma; nombre: string }[] = [
 
 const CLAVE_GUARDADA = 'chakrashop.idioma';
 
-// 'es' para cualquier código que no conocemos.
-function normalizar(codigo: string | null): CodigoIdioma {
-  return codigo === 'qu' ? 'qu' : 'es';
-}
-
 function leerGuardado(): CodigoIdioma {
   try { return normalizar(localStorage.getItem(CLAVE_GUARDADA)); } catch { return 'es'; }
-}
-
-// El texto traducido de `clave`, o undefined si no hay traducción para el idioma elegido.
-function traduccion(idioma: CodigoIdioma, clave: string): string | undefined {
-  return idioma === 'es' ? undefined : TEXTOS[idioma][clave];
 }
 
 interface ValorIdioma {

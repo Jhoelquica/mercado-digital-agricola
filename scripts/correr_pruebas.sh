@@ -4,7 +4,7 @@
 # algunas pruebas crean y borran datos.
 #
 # Uso (desde la raíz del repositorio; en Windows, con Git Bash):
-#   bash scripts/correr_pruebas.sh                       # los 8 servicios y las reglas del frontend (node --test)
+#   bash scripts/correr_pruebas.sh                       # los 8 servicios y las reglas del frontend (Vitest)
 #   bash scripts/correr_pruebas.sh pedidos pagos         # solo esos
 #   bash scripts/correr_pruebas.sh --cobertura           # además mide la cobertura (pytest-cov, solo en el contenedor)
 #   bash scripts/correr_pruebas.sh --limpiar             # borra el Postgres y la red de pruebas
@@ -59,14 +59,16 @@ for s in "${SERVICIOS[@]}"; do
   fi
 done
 
-# Reglas puras del frontend (frontend/js/reglas.js), con el corredor de pruebas que trae node. Solo en la corrida completa.
+# Reglas puras del frontend (src/lib/reglas.ts y el diccionario de quechua), con Vitest. Solo en la corrida completa.
+DIR_FRONTEND=frontend-react
 if [ ${#SERVICIOS[@]} -eq ${#SERVICIOS_TODOS[@]} ]; then
-  echo "=== frontend (node --test)"
-  if command -v node >/dev/null 2>&1; then
-    node --test "frontend/pruebas/*.test.js" 2>&1 | grep -E "^ℹ (tests|pass|fail)" || FALLARON+=("frontend")
-    node --test "frontend/pruebas/*.test.js" >/dev/null 2>&1 || FALLARON+=("frontend")
+  echo "=== frontend (vitest)"
+  if command -v npm >/dev/null 2>&1; then
+    [ -d "$DIR_FRONTEND/node_modules" ] || npm --prefix "$DIR_FRONTEND" ci --no-audit --no-fund >/dev/null
+    npm --prefix "$DIR_FRONTEND" test --silent 2>&1 | grep -E "Test Files|Tests " || true
+    npm --prefix "$DIR_FRONTEND" test --silent >/dev/null 2>&1 || FALLARON+=("frontend")
   else
-    echo "node no está instalado: se saltan las pruebas del frontend"
+    echo "npm no está instalado: se saltan las pruebas del frontend"
   fi
 fi
 

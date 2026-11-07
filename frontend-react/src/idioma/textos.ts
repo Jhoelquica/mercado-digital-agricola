@@ -42,3 +42,15 @@ export const TEXTOS: Record<'qu', Record<string, string>> = {
     'idioma.nota': 'Runasimipi qallarichkanchikraq: wakin rimaykuna castellanopi kachkan.',
   },
 };
+
+export type CodigoIdioma = 'es' | 'qu';
+
+// 'es' para cualquier código que no conocemos.
+export function normalizar(codigo: string | null): CodigoIdioma {
+  return codigo === 'qu' ? 'qu' : 'es';
+}
+
+// El texto traducido de `clave`, o undefined si no hay traducción para el idioma elegido.
+export function traduccion(idioma: CodigoIdioma, clave: string): string | undefined {
+  return idioma === 'es' ? undefined : TEXTOS[idioma][clave];
+}
