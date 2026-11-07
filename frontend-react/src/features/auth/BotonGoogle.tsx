@@ -25,6 +25,16 @@ declare global {
 }
 
 let carga: Promise<boolean> | null = null;
+// initialize() va UNA vez por carga de página (GSI avisa "called multiple times" si se repite: pasaba con el doble montaje de
+// StrictMode y al ir de login a registro). El callback de Google es fijo y le pasa la credencial al botón montado ahora.
+let inicializado = false;
+let receptor: ((credencial: string) => void) | null = null;
+
+function inicializarUnaVez(google: GoogleIdentity): void {
+  if (inicializado) return;
+  inicializado = true;
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: (r) => receptor?.(r.credential) });
+}
 
 function cargarGis(): Promise<boolean> {
   if (window.google?.accounts?.id) return Promise.resolve(true);
@@ -53,12 +63,14 @@ export function BotonGoogle({ id, alRecibirCredencial }: { id: string; alRecibir
     if (!GOOGLE_CLIENT_ID) return undefined;
     let vigente = true;
     let observador: ResizeObserver | undefined;
+    // El botón montado (login o registro) es el que recibe la credencial.
+    const recibir = (credencial: string) => callback.current(credencial);
+    receptor = recibir;
     void cargarGis().then((ok) => {
       const el = contenedor.current;
       const google = window.google;
       if (!ok || !vigente || !el || !google) return;
-      // Un solo callback para toda la página: el que esté montado (login o registro) recibe la credencial.
-      google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: (r) => callback.current(r.credential) });
+      inicializarUnaVez(google);
       // Google admite entre 200 y 400 px: se vuelve a dibujar solo si cambia el ancho disponible.
       let anchoDibujado = 0;
       const dibujar = () => {
@@ -75,6 +87,7 @@ export function BotonGoogle({ id, alRecibirCredencial }: { id: string; alRecibir
     return () => {
       vigente = false;
       observador?.disconnect();
+      if (receptor === recibir) receptor = null;
     };
   }, []);
 

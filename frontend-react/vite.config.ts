@@ -4,6 +4,10 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 // Traefik (ver k8s/traefik.yaml): las APIs van por /api/<servicio> y las fotos de MinIO por /media/...
 const GATEWAY_LOCAL = 'http://localhost:8000';
+// La ventana de "Continuar con Google" (popup de GIS) le escribe a esta página con postMessage: con COOP same-origin se
+// cortaría. same-origin-allow-popups aísla la página igual y deja hablar a los popups que ella abre (mismo valor que
+// frontend/security-headers.conf, que servirá también a frontend-react).
+const CABECERAS = { 'Cross-Origin-Opener-Policy': 'same-origin-allow-popups' };
 
 export default defineConfig({
   plugins: [
@@ -34,9 +38,11 @@ export default defineConfig({
     }),
   ],
   server: {
+    headers: CABECERAS,
     proxy: {
       '/api': { target: GATEWAY_LOCAL, changeOrigin: true },
       '/media': { target: GATEWAY_LOCAL, changeOrigin: true },
     },
   },
+  preview: { headers: CABECERAS },
 });
