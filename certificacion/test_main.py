@@ -456,3 +456,13 @@ def test_las_rutas_del_perfil_del_verificador_ya_no_existen():
             assert client.request(metodo, ruta, json=cuerpo).status_code in (404, 405), ruta
     finally:
         main.app.dependency_overrides.pop(verificar_token, None)
+
+
+def test_el_qr_abre_la_pagina_verificar_del_frontend(monkeypatch):
+    # El QR lleva a /verificar (la ruta de la aplicación de React); los ya impresos con /verificar.html los redirige el
+    # frontend. Una barra final en FRONTEND_URL no duplica la barra.
+    monkeypatch.setattr(main, "FRONTEND_URL", "http://localhost:8000/")
+    assert main.url_de_verificacion("abc") == "http://localhost:8000/verificar?producto_id=abc"
+    with TestClient(main.app) as client:
+        respuesta = client.get(f"/certificacion/{uuid.uuid4()}/qr")
+    assert respuesta.status_code == 200 and respuesta.headers["content-type"] == "image/png"

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dev-dist/
+.env*
+!.env.example
+# Credenciales de la cuenta fija de pruebas (qa-comprador).
+.env.qa
+*.tsbuildinfo

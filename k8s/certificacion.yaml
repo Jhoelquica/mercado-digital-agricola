@@ -66,8 +66,10 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
+            # A dónde lleva el QR (la página /verificar del frontend), por el gateway Traefik. En Google Cloud,
+            # deploy/gcp/generar_manifiestos.py la cambia por https://<dominio>.
             - name: FRONTEND_URL
-              value: http://localhost:63342/mercado_agricola/frontend
+              value: http://localhost:8000
             - name: PRODUCTORES_URL
               value: http://productores:8001
             # Reemplaza SERVICIO_SECRETO: Certificación valida la clave del par

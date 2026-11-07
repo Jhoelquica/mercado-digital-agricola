@@ -1,2 +1,8 @@
+* text=auto
 # Los scripts de bash deben quedar con fin de línea LF (con CRLF, bash falla al ejecutarlos).
 *.sh text eol=lf
+Dockerfile text eol=lf
+**/Dockerfile text eol=lf
+*.conf text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf

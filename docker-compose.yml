@@ -9,9 +9,9 @@
 #
 # Qué es igual que en Kubernetes (k8s/): las mismas imágenes, variables de entorno, URLs entre servicios y bases.
 # Qué cambia a propósito:
-#   - NO hay Traefik, Prometheus ni Grafana: existen solo en Kubernetes. Sin gateway, el navegador llama a cada servicio por
-#     su puerto (el frontend lo detecta solo: en localhost, salvo el puerto 8000, usa los puertos directos), y no hay validación
-#     de JWT previa, límite de peticiones ni rutas bloqueadas.
+#   - NO hay Traefik, Prometheus ni Grafana: existen solo en Kubernetes. En su lugar, el nginx del frontend reparte /api/<servicio>
+#     y /media con las mismas rutas (deploy/compose/frontend-gateway.conf), sin validación de JWT previa, límite de peticiones ni
+#     rutas bloqueadas. Los puertos 8001..8008 siguen publicados para probar cada API directo.
 #   - Una sola instancia de cada cosa (en k8s/ los microservicios van con 3 réplicas).
 #   - Los secretos entre servicios son valores de desarrollo escritos aquí (dev-...); en Kubernetes salen del Secret
 #     credenciales-app y, en Google Cloud, son aleatorios.
@@ -227,6 +227,8 @@ services:
       PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
       TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
       QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      # RENIEC simulado con los DNIs de prueba de pedidos/reniec.py (solo para desarrollo local).
+      RENIEC_MODO: simulado
     depends_on:
       db-pedidos:
         condition: service_healthy
@@ -483,7 +485,7 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_HOST: db-certificacion
       JWT_SECRET: ${JWT_SECRET}
-      # A dónde apunta el QR de cada producto (verificar.html lo sirve el contenedor frontend de abajo).
+      # A dónde apunta el QR de cada producto (/verificar lo sirve el contenedor frontend de abajo).
       FRONTEND_URL: http://localhost:8090
       PRODUCTORES_URL: http://productores:8001
       TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
@@ -499,14 +501,18 @@ services:
       retries: 6
       start_period: 30s
 
-  # La SPA servida por nginx (frontend/Dockerfile). En localhost y con un puerto distinto de 8000 llama a cada servicio por su
-  # puerto (8001..8008), que es lo que publica este compose; en Kubernetes va detrás del gateway, en /api/<servicio>.
+  # La aplicación de React servida por nginx (frontend/Dockerfile). Como en Kubernetes, llama a /api/<servicio> y a
+  # /media en su mismo origen: aquí los reparte su propio nginx (deploy/compose/frontend-gateway.conf).
   frontend:
     build: ./frontend
     container_name: frontend
     restart: unless-stopped
     ports:
       - "8090:8080"
+    volumes:
+      - ./deploy/compose/frontend-gateway.conf:/etc/nginx/extra/gateway.conf:ro
+    # nginx resuelve los nombres de los servicios al arrancar.
+    depends_on: [usuarios, productores, productos, pedidos, transporte, notificaciones, pagos, certificacion, minio]
     healthcheck:
       # 127.0.0.1 y no localhost: en la imagen de nginx (alpine) localhost se resuelve primero a IPv6 y nginx escucha solo en IPv4.
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]

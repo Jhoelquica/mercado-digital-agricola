@@ -5,7 +5,7 @@ llamar a la API: acá el servidor exige las mismas reglas y además números fin
 Infinity), textos sin caracteres nulos y topes que caben en las columnas de la base (Numeric(10,2)
 revienta con un error 500 por encima de 99.999.999,99).
 
-Los mensajes van en español; el frontend los muestra tal cual (ver mensajeDeDetalle en api.js).
+Los mensajes van en español; el frontend los muestra tal cual (ver mensajeDeDetalle en frontend/src/api/errors.ts).
 Los límites inferiores que ya tienen su propio mensaje en cada endpoint ("debe ser mayor a 0")
 no se repiten acá, para no cambiar esos mensajes.
 """

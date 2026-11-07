@@ -256,9 +256,14 @@ def verificar(producto_id: str, db: Session = Depends(get_db)):
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5500")
 
+def url_de_verificacion(producto_id: str) -> str:
+    """La página pública que abre quien escanea el QR. Los QR ya impresos apuntan a /verificar.html: el frontend los lleva a
+    /verificar con los mismos parámetros."""
+    return f"{FRONTEND_URL.rstrip('/')}/verificar?producto_id={producto_id}"
+
 @app.get("/certificacion/{producto_id}/qr")
 def generar_qr(producto_id: str):
-    url_verificacion = f"{FRONTEND_URL}/verificar.html?producto_id={producto_id}"
+    url_verificacion = url_de_verificacion(producto_id)
 
     qr = qrcode.QRCode(box_size=10, border=4)
     qr.add_data(url_verificacion)

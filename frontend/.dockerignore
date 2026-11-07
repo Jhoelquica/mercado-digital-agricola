@@ -1,2 +1,10 @@
-bump_cache_version.py
-**/__pycache__
+# Nada de credenciales ni de lo que se genera: la imagen se construye desde el código.
+.env*
+!.env.example
+node_modules
+dist
+dev-dist
+e2e
+*.tsbuildinfo
+Dockerfile
+.dockerignore

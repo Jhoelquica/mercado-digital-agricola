@@ -89,11 +89,11 @@ PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 # (string libre), pero UnidadAlternativa.unidad sí lo necesita para no terminar con valores
 # inconsistentes ("Kg", "kilos", etc.) mezclados con los ya establecidos. Constante Python
 # compartida en este servicio (la usa crear_unidad_alternativa) en vez de repetirla en cada
-# endpoint. Mismo conjunto que ya usa el frontend en UNIDADES_MEDIDA/OPCIONES_UNIDAD_MEDIDA_HTML
-# (app.js) — si se agrega una unidad acá, hay que agregarla ahí también.
+# endpoint. Mismo conjunto que ya usa el frontend en UNIDADES_MEDIDA (frontend/src/lib/productos.ts) —
+# si se agrega una unidad acá, hay que agregarla ahí también.
 UNIDADES_VALIDAS = ["kg", "unidad", "saco", "arroba", "litro"]
 
-# Las 8 categorías del catálogo (mismo conjunto que CATEGORIAS_PRODUCTO en frontend/js/app.js — si
+# Las 8 categorías del catálogo (mismo conjunto que CATEGORIAS_PRODUCTO en frontend/src/lib/productos.ts — si
 # cambia en un lado, hay que cambiarlo en el otro). Antes la categoría era texto libre: cualquier
 # cosa que un productor escribiera terminaba en la página pública del producto.
 CATEGORIAS_VALIDAS = ("fruta", "verdura", "tuberculo", "grano", "legumbre", "lacteo", "huevo", "hierba")

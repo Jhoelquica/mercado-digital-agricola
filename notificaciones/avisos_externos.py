@@ -46,7 +46,7 @@ USUARIOS_URL = os.getenv("USUARIOS_URL", "http://localhost:8006")
 
 # Un aviso que no se pudo entregar (celular apagado) espera hasta un día en el servicio de push; después ya no sirve.
 VIDA_DEL_AVISO_SEGUNDOS = 24 * 60 * 60
-# Al tocar el aviso se abre la aplicación en Notificaciones (ver frontend/sw.js y el ?vista= de app.js).
+# Al tocar el aviso se abre la aplicación en Notificaciones (ver frontend/src/sw.ts y el ?vista= de frontend/src/router).
 URL_AL_TOCAR = "/?vista=notificaciones"
 # Cuántos navegadores puede tener activos una cuenta: al pasar, se quita el más antiguo.
 MAXIMO_DISPOSITIVOS = 10
@@ -98,6 +98,14 @@ def _de(modelo, usuario_id, rol):
     return modelo.rol == rol if rol else modelo.usuario_id == usuario_id
 
 
+def _dominio(endpoint: str) -> str:
+    """El dominio del servicio de push de un endpoint, sin la ruta (que lleva el token del navegador)."""
+    try:
+        return urlparse(endpoint).hostname or "desconocido"
+    except ValueError:
+        return "desconocido"
+
+
 def enviar_push(db, usuario_id, titulo: str, cuerpo: str, rol: str = None) -> int:
     """Manda el aviso a cada navegador activo del usuario (o de todos los de un rol). Devuelve a cuántos llegó al
     servicio de push. Los que el servicio ya no reconoce (404/410: el usuario borró los datos del navegador o quitó el
@@ -114,7 +122,11 @@ def enviar_push(db, usuario_id, titulo: str, cuerpo: str, rol: str = None) -> in
                     ttl=VIDA_DEL_AVISO_SEGUNDOS, timeout=10)
             enviados += 1
         except WebPushException as error:
-            if getattr(error.response, "status_code", None) in (404, 410):
+            codigo = getattr(error.response, "status_code", None)
+            if codigo in (404, 410):
+                # Solo el código y el dominio (fcm.googleapis.com, *.notify.windows.com...): la ruta del endpoint es el
+                # token del navegador, y p256dh/auth son sus claves; nada de eso va al log.
+                logger.warning("El servicio de push %s rechazó una suscripción (%s): se borra", _dominio(s.endpoint), codigo)
                 db.delete(s)
                 db.commit()
             else:
