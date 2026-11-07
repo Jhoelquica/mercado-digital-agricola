@@ -3,7 +3,7 @@ import type { ProductoDetalle } from '../../api/productos';
 import { slugProducto } from '../../lib/productos';
 
 // Productos con video en su galería de detalle. Un producto nuevo se activa subiendo
-// public/assets/videos/<slug>-video-1.mp4 (y -2/-3 si aplica) y agregando su slug aquí.
+// public/static/videos/<slug>-video-1.mp4 (y -2/-3 si aplica) y agregando su slug aquí.
 const PRODUCTOS_CON_VIDEO = ['chirimoya'];
 
 // Etiqueta/título/párrafo/fondo/tema por posición (hero=0, primera foto extra=1, segunda=2). "tema" decide el color del
@@ -118,7 +118,7 @@ export function VideosDetalle({ producto, fotos }: { producto: ProductoDetalle; 
       {fotos.map((url, i) => {
         const texto = textos[i];
         if (!url || !texto) return null;
-        return <SeccionVideo key={url} poster={url} indice={i} texto={texto} videoUrl={`/assets/videos/${slug}-video-${i + 1}.mp4`} />;
+        return <SeccionVideo key={url} poster={url} indice={i} texto={texto} videoUrl={`/static/videos/${slug}-video-${i + 1}.mp4`} />;
       })}
     </>
   );

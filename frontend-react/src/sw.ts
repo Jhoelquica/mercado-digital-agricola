@@ -23,8 +23,8 @@ self.addEventListener('push', (evento) => {
   }
   evento.waitUntil(self.registration.showNotification(aviso.titulo || 'ChakraShop', {
     body: aviso.cuerpo || 'Tienes un aviso nuevo.',
-    icon: '/assets/icono-192.png',
-    badge: '/assets/icono-192.png',
+    icon: '/static/icono-192.png',
+    badge: '/static/icono-192.png',
     lang: 'es',
     data: { url: aviso.url || '/?vista=notificaciones' },
   }));

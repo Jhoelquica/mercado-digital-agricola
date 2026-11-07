@@ -221,8 +221,8 @@ export default function LandingPage() {
             loop
             playsInline
             preload="auto"
-            poster="/assets/hero-valle-andino-1600.jpg"
-            src="/assets/videos/hero-valle-bg.mp4"
+            poster="/static/hero-valle-andino-1600.jpg"
+            src="/static/videos/hero-valle-bg.mp4"
             aria-label="Valle andino con terrazas de cultivo agrícola, video ambiental"
           />
           <div className="detalle-video-degradado" />

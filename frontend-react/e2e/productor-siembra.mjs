@@ -13,7 +13,7 @@ import {
 
 const MODO = process.env.MODO || 'voz';
 const CANAL = process.env.CANAL || 'msedge';
-const FOTO = rutaDelRepo('frontend/assets/hero-valle-andino-800.jpg');
+const FOTO = rutaDelRepo('frontend-react/public/static/hero-valle-andino-1600.jpg');
 const env = leerEnvQa();
 const { ok, cerrar } = marcador();
 

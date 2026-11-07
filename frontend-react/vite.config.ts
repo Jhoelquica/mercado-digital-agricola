@@ -31,8 +31,8 @@ export default defineConfig({
         background_color: '#F4F1EA',
         theme_color: '#2D3B2A',
         icons: [
-          { src: '/assets/icono-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
-          { src: '/assets/icono-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/static/icono-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/static/icono-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
         ],
       },
     }),

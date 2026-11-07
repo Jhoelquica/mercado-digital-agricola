@@ -964,7 +964,7 @@ input, select { font-family: inherit; }
    landing (hero-valle-andino), no una fototeca nueva — con degradado de la paleta de marca
    encima para que el texto/ícono queden legibles en blanco. */
 .panel-header-hero {
-  background-image: linear-gradient(120deg, color-mix(in srgb, var(--color-primario) 92%, transparent), color-mix(in srgb, var(--color-primario-hover) 78%, transparent)), url('/assets/hero-valle-andino-1600.jpg');
+  background-image: linear-gradient(120deg, color-mix(in srgb, var(--color-primario) 92%, transparent), color-mix(in srgb, var(--color-primario-hover) 78%, transparent)), url('/static/hero-valle-andino-1600.jpg');
   background-size: cover;
   background-position: center 65%;
   border-radius: var(--radio-lg, 22px);
@@ -4107,7 +4107,7 @@ table.tabla-simple tr:hover td { background: color-mix(in srgb, var(--color-bord
 main:has(#view-landing.active) + .footer .footer-ctas {
   max-width: min(1180px, calc(100% - 8px)); margin: 8px auto 36px;
   padding: clamp(40px, 7vw, 76px) clamp(22px, 6vw, 72px); border-radius: 30px; color: white;
-  background: linear-gradient(120deg, rgba(20, 32, 19, 0.9), rgba(45, 59, 42, 0.5)), url('/assets/hero-valle-andino-1600.jpg') center 62% / cover;
+  background: linear-gradient(120deg, rgba(20, 32, 19, 0.9), rgba(45, 59, 42, 0.5)), url('/static/hero-valle-andino-1600.jpg') center 62% / cover;
   box-shadow: 0 34px 60px -32px rgba(27, 67, 50, 0.7);
 }
 main:has(#view-landing.active) + .footer .footer-ctas-title { color: white; font-size: clamp(1.9rem, 3.6vw, 3rem); font-weight: 800; line-height: 1.1; margin-bottom: 12px; }
@@ -4170,7 +4170,7 @@ main:has(#view-landing.active) + .footer .footer-ctas-buttons .btn-primary:hover
 .auth-lado {
   position: relative; display: flex; flex-direction: column; justify-content: space-between; gap: 32px;
   padding: 40px; color: white;
-  background: linear-gradient(160deg, rgba(20, 32, 19, 0.9), rgba(45, 59, 42, 0.6)), url('/assets/hero-valle-andino-1600.jpg') 35% center / cover;
+  background: linear-gradient(160deg, rgba(20, 32, 19, 0.9), rgba(45, 59, 42, 0.6)), url('/static/hero-valle-andino-1600.jpg') 35% center / cover;
 }
 .auth-lado-marca { display: flex; align-items: center; gap: 12px; font-family: var(--font-titulo); font-size: 1.35rem; color: white; }
 .auth-lado-marca strong { font-weight: 800; }
