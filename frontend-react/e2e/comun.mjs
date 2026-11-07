@@ -116,3 +116,30 @@ export async function fotoDePrueba(pagina, nombre, color) {
   }, color);
   return { name: nombre, mimeType: 'image/jpeg', buffer: Buffer.from(base64, 'base64') };
 }
+
+// Paga en la ventana de Culqi (sandbox) lo que el checkout ya tiene listo: elige el medio y confirma. Tarjeta: la de
+// prueba publicada por Culqi, desde QA_CULQI_TARJETA de .env.qa (numero|MMAA|cvv; no se imprime ni se guarda en el
+// repositorio). Yape: el número y el código de aprobación de prueba de Culqi (no son datos de nadie).
+export async function pagarConCulqi(pagina, medio, env) {
+  await pagina.locator('.metodo-pago-card', { hasText: medio === 'yape' ? 'Yape' : 'Tarjeta' }).click();
+  await pagina.locator('#btn-checkout-pagar').click();
+  const culqi = pagina.frameLocator('iframe[src*="checkoutview.culqi.com"]');
+  if (medio === 'tarjeta') {
+    const [numero, vence, cvv] = String(env.QA_CULQI_TARJETA || '').split('|');
+    if (!cvv) throw new Error('Falta QA_CULQI_TARJETA en .env.qa');
+    await culqi.locator('#cardNum').waitFor({ timeout: 30000 });
+    await culqi.locator('#cardNum').pressSequentially(numero, { delay: 20 });
+    await culqi.locator('#cardDate').pressSequentially(vence, { delay: 20 });
+    await culqi.locator('#cardCvv').pressSequentially(cvv, { delay: 20 });
+    await culqi.locator('#cardEmail').fill(env.QA_EMAIL);
+    await culqi.locator('button', { hasText: /^Pagar/ }).click();
+  } else {
+    await culqi.locator('button', { hasText: 'Continuar' }).click({ timeout: 30000 });
+    await pagina.waitForTimeout(1500);
+    const campos = culqi.locator('input');
+    await campos.nth(0).pressSequentially('900000001', { delay: 20 });
+    if ((await campos.count()) >= 7) { for (let i = 1; i <= 6; i++) await campos.nth(i).fill(String(i)); } else await campos.nth(1).pressSequentially('123456', { delay: 20 });
+    await culqi.locator('button', { hasText: /Pagar|Yapear|Confirmar/i }).last().click();
+  }
+  await pagina.waitForSelector('#checkout-panel-3.active #checkout-confirmacion h3', { timeout: 90000 });
+}

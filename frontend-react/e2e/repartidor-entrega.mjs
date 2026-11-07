@@ -4,9 +4,12 @@
 //   salir del panel y al cerrar sesión, y que vuelve al regresar → entrega con el código del comprador y una foto → el GPS
 //   queda detenido (sin intervalos ni vigilancias vivas) → qa-comprador ve su pedido entregado.
 // Requiere que qa-repartidor esté disponible con su moto (es el vehículo más chico: le llega la propuesta).
-//   npm run e2e:entrega        (PEDIDO=<id> retoma un pedido cuyo envío ya va "en camino" con qa-repartidor)
+//   npm run e2e:entrega        (PEDIDO=<id> retoma un pedido cuyo envío ya va "en camino" con qa-repartidor;
+//                               MEDIO=tarjeta paga con la tarjeta de prueba de Culqi en lugar de Yape)
 import { chromium } from 'playwright';
-import { API, BASE, contiene, entrarPorPantalla, fotoDePrueba, iniciarSesionApi, leerEnvQa, marcador, sesionDelFrontend, texto, vigilarErrores } from './comun.mjs';
+import { API, BASE, contiene, entrarPorPantalla, fotoDePrueba, iniciarSesionApi, leerEnvQa, marcador, pagarConCulqi, sesionDelFrontend, texto, vigilarErrores } from './comun.mjs';
+
+const MEDIO = process.env.MEDIO === 'tarjeta' ? 'tarjeta' : 'yape';
 
 const env = leerEnvQa();
 const { ok, cerrar } = marcador();
@@ -41,18 +44,8 @@ await pc.click('#btn-usar-mi-ubicacion');
 await pc.waitForFunction(() => document.getElementById('mapa-destino-ayuda')?.textContent?.includes('-13.16000'));
 await pc.click('#btn-checkout-paso1-siguiente');
 await pc.waitForSelector('#checkout-panel-2.active');
-await pc.locator('.metodo-pago-card', { hasText: 'Yape' }).click();
-await pc.locator('#btn-checkout-pagar').click();
-const culqi = pc.frameLocator('iframe[src*="checkoutview.culqi.com"]');
-await culqi.locator('button', { hasText: 'Continuar' }).click({ timeout: 30000 });
-await pc.waitForTimeout(1500);
-// Número y código de aprobación de prueba publicados por Culqi para su sandbox (no son datos de nadie).
-const campos = culqi.locator('input');
-await campos.nth(0).pressSequentially('900000001', { delay: 20 });
-if ((await campos.count()) >= 7) { for (let i = 1; i <= 6; i++) await campos.nth(i).fill(String(i)); } else await campos.nth(1).pressSequentially('123456', { delay: 20 });
-await culqi.locator('button', { hasText: /Pagar|Yapear|Confirmar/i }).last().click();
-await pc.waitForSelector('#checkout-panel-3.active #checkout-confirmacion h3', { timeout: 90000 });
-ok('qa-comprador compra y paga con Yape (sandbox)', Boolean(pedidoId), pedidoId);
+await pagarConCulqi(pc, MEDIO, env);
+ok(`qa-comprador compra y paga con ${MEDIO === 'yape' ? 'Yape' : 'tarjeta'} (sandbox)`, Boolean(pedidoId), pedidoId);
 }
 console.log('   DATO: pedido', pedidoId);
 

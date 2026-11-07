@@ -16,7 +16,8 @@
     "e2e:viajes": "node e2e/repartidor-viajes.mjs",
     "e2e:admin": "node e2e/admin-pantallas.mjs",
     "e2e:transferencia-viaje": "node e2e/admin-transferencia-viaje.mjs",
-    "e2e:reclamo-pagos": "node e2e/admin-reclamo-pagos.mjs"
+    "e2e:reclamo-pagos": "node e2e/admin-reclamo-pagos.mjs",
+    "e2e:camion-saldo": "node e2e/camion-saldo-entrega.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.105.0",
