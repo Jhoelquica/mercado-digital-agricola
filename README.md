@@ -191,6 +191,7 @@ No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/set
 - No hay NetworkPolicy ni respaldo automático de las bases en la nube.
 
 **Pendiente antes de producción**
+- Fase 8b: desplegar en Google Cloud la versión con el frontend en React (etiqueta `v2.0-react`). Sin planificar todavía.
 - `seed_imagenes.py:9` tiene fija la ruta a las imágenes en OneDrive (`...\OneDrive\Documentos\Proyectos\imagenes-productos`).
 - Fase de despliegue: Google OAuth con dos proyectos, cada uno con su `VITE_GOOGLE_CLIENT_ID` (frontend) y
   `GOOGLE_CLIENT_ID` en Usuarios. El de desarrollo está **cerrado**: con `localhost` en modo Prueba, el inicio de sesión
