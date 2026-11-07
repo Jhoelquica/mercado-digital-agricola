@@ -1,6 +1,6 @@
-# La aplicación de React (build de Vite) servida por nginx (ver frontend-react/Dockerfile y nginx.conf), incluida la
+# La aplicación de React (build de Vite) servida por nginx (ver frontend/Dockerfile y nginx.conf), incluida la
 # página del QR (/verificar). Solo es alcanzable por el gateway Traefik (ClusterIP): la ruta "todo lo que no es /api/..."
-# está en k8s/traefik-routes.yaml. Imagen: docker build -t localhost:5000/frontend:latest frontend-react
+# está en k8s/traefik-routes.yaml. Imagen: docker build -t localhost:5000/frontend:latest frontend
 apiVersion: apps/v1
 kind: Deployment
 metadata:

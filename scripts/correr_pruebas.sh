@@ -60,7 +60,7 @@ for s in "${SERVICIOS[@]}"; do
 done
 
 # Reglas puras del frontend (src/lib/reglas.ts y el diccionario de quechua), con Vitest. Solo en la corrida completa.
-DIR_FRONTEND=frontend-react
+DIR_FRONTEND=frontend
 if [ ${#SERVICIOS[@]} -eq ${#SERVICIOS_TODOS[@]} ]; then
   echo "=== frontend (vitest)"
   if command -v npm >/dev/null 2>&1; then

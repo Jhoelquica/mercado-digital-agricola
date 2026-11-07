@@ -501,10 +501,10 @@ services:
       retries: 6
       start_period: 30s
 
-  # La aplicación de React servida por nginx (frontend-react/Dockerfile). Como en Kubernetes, llama a /api/<servicio> y a
+  # La aplicación de React servida por nginx (frontend/Dockerfile). Como en Kubernetes, llama a /api/<servicio> y a
   # /media en su mismo origen: aquí los reparte su propio nginx (deploy/compose/frontend-gateway.conf).
   frontend:
-    build: ./frontend-react
+    build: ./frontend
     container_name: frontend
     restart: unless-stopped
     ports:

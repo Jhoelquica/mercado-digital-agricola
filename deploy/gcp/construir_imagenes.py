@@ -16,8 +16,6 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[2]
 IMAGENES = ["usuarios", "productores", "productos", "pedidos", "transporte", "notificaciones", "pagos", "certificacion", "frontend"]
-# La carpeta de cada imagen (la del frontend es la aplicación de React).
-CARPETAS = {"frontend": "frontend-react"}
 
 
 def correr(*comando):
@@ -40,7 +38,15 @@ def main():
     for nombre in args.solo or IMAGENES:
         etiqueta = f"{args.registro}/{nombre}:{args.etiqueta}"
         print(f"\n== {nombre}")
-        if not (correr("docker", "build", "-t", etiqueta, str(RAIZ / nombre)) and correr("docker", "push", etiqueta)):
+        extra = []
+        if nombre == "frontend":
+            if args.culqi_publica:
+                extra += ["--build-arg", f"VITE_CULQI_PUBLIC_KEY={args.culqi_publica}"]
+            if args.google_client_id:
+                extra += ["--build-arg", f"VITE_GOOGLE_CLIENT_ID={args.google_client_id}"]
+            if not (args.culqi_publica and args.google_client_id):
+                print("  AVISO: sin --culqi-publica o --google-client-id el frontend lleva los de desarrollo.")
+        if not (correr("docker", "build", *extra, "-t", etiqueta, str(RAIZ / nombre)) and correr("docker", "push", etiqueta)):
             fallidas.append(nombre)
     if fallidas:
         sys.exit(f"\nFallaron: {', '.join(fallidas)}")

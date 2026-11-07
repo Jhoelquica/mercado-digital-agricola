@@ -11,7 +11,7 @@ Uso (desde la raíz del repositorio):
   python scripts/limpiar-qa.py --dry-run --busqueda papa --busquedas-desde "2026-10-31 00:30:00"
 
 Lo que NO toca, a propósito:
-  - qa-comprador@chakrashop-demo.pe, la cuenta fija de las pruebas (frontend-react/.env.qa), salvo con --incluir-cuenta-fija.
+  - qa-comprador@chakrashop-demo.pe, la cuenta fija de las pruebas (frontend/.env.qa), salvo con --incluir-cuenta-fija.
   - Cuentas qa-* que no sean comprador: pueden tener perfil de productor o repartidor, y aquí no se cubre. Se avisan.
   - Los bloques de la cadena de certificación: cada uno está enlazado por hash al anterior, así que borrar uno la rompe.
     Se avisa si alguno menciona un pedido de estas cuentas.
