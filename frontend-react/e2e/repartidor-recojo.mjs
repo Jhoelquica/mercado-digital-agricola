@@ -1,15 +1,13 @@
-// Fase 6, recojo de una cosecha de punta a punta:
+// Fases 6 y 7, recojo de una cosecha de punta a punta, todo en React:
 //   qa-repartidor cambia su vehículo (PATCH desde /repartidor/vehiculo) a uno que carga la cosecha → agricultor01 pide el
-//   recojo desde React → qa-repartidor lo acepta, lo marca recogido y en el almacén → el agricultor lo ve "en el almacén" →
-//   el admin confirma la llegada en el FRONTEND VIEJO (el admin se migra en la Fase 7) → el producto queda a la venta →
-//   qa-repartidor vuelve a su vehículo de antes.
-// PRODUCTO=<id de un producto en_transito de agricultor01 sin recojo>; por defecto, el primero que haya.
+//   recojo → qa-repartidor lo acepta, lo marca recogido y en el almacén → el agricultor lo ve "en el almacén" → el admin
+//   pesa y confirma la llegada en /admin/transito → el producto queda a la venta → qa-repartidor vuelve a su vehículo.
+// PRODUCTO=<id de un producto en_transito de agricultor01 sin recojo>; por defecto, el publicado más recientemente.
 // RECOJO=<id> VEHICULO=moto:50 retoma un recojo ya pedido (sin cambiar el vehículo; al final lo deja en VEHICULO).
 //   npm run e2e:recojo
 import { chromium } from 'playwright';
 import { API, BASE, contiene, entrarPorPantalla, iniciarSesionApi, leerEnvQa, marcador, sesionDelFrontend, texto, vigilarErrores } from './comun.mjs';
 
-const VIEJO = process.env.VIEJO || 'http://localhost:8000';
 const env = leerEnvQa();
 const { ok, cerrar } = marcador();
 const agricultor = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_PASSWORD);
@@ -23,7 +21,8 @@ const recojosAgricultor = await agricultor.api('/transporte/recojos/mios');
 const conRecojo = new Set(recojosAgricultor.filter((r) => !['cancelado', 'completado'].includes(r.estado)).map((r) => r.producto_id));
 const mios = await agricultor.api('/productos/productos/mios');
 const recojoRetomado = RECOJO ? recojosAgricultor.find((r) => r.id === RECOJO) : null;
-const producto = mios.find((x) => x.id === (recojoRetomado?.producto_id || process.env.PRODUCTO)) || mios.find((x) => x.estado === 'en_transito' && !conRecojo.has(x.id));
+const recientes = [...mios].sort((a, b) => String(b.fecha_publicacion || '').localeCompare(String(a.fecha_publicacion || '')));
+const producto = mios.find((x) => x.id === (recojoRetomado?.producto_id || process.env.PRODUCTO)) || recientes.find((x) => x.estado === 'en_transito' && !conRecojo.has(x.id));
 console.log('   producto:', producto?.id, producto?.nombre, producto?.stock, 'kg; qa-repartidor:', vehiculoAntes.tipo_vehiculo, vehiculoAntes.capacidad_maxima_kg, 'kg');
 if (!producto) { console.log('No hay un producto en tránsito sin recojo.'); process.exit(1); }
 
@@ -102,19 +101,24 @@ await A.p.reload({ waitUntil: 'domcontentloaded' });
 await alm.waitFor({ timeout: 30000 });
 ok('el agricultor ve "En el almacén, por pesar"', await contiene(alm.locator('.alm-pasos li.actual'), 'En el almacén, por pesar'));
 
-// ---- 4. El admin confirma la llegada en el frontend viejo
+// ---- 4. El admin pesa y confirma la llegada (React, /admin/transito)
 const V = await nuevo();
-await V.c.addInitScript((s) => { if (!sessionStorage.getItem('puesta')) { localStorage.setItem('agro_sesion', s); sessionStorage.setItem('puesta', '1'); } }, sesionDelFrontend(admin, { nombre: 'Admin', email: env.QA_ADMIN_EMAIL }));
-await V.p.goto(`${VIEJO}/`, { waitUntil: 'domcontentloaded' });
-await V.p.waitForFunction(() => typeof cambiarVista === 'function' && typeof activarTabAdmin === 'function');
-await V.p.evaluate(() => cambiarVista('panel-admin'));
-await V.p.waitForTimeout(2500);
-await V.p.evaluate(() => activarTabAdmin('transito'));
-const formLlegada = V.p.locator(`.pedido-card[data-producto-id="${producto.id}"] .form-llegada`);
-await formLlegada.waitFor({ timeout: 30000 });
+await V.c.addInitScript((s) => localStorage.setItem('agro_sesion', s), sesionDelFrontend(admin, { nombre: 'Admin', email: env.QA_ADMIN_EMAIL }));
+await V.p.goto(`${BASE}/admin/transito`, { waitUntil: 'domcontentloaded' });
+const tarjetaAdmin = V.p.locator(`.pedido-card[data-producto-id="${producto.id}"]`);
+await tarjetaAdmin.waitFor({ timeout: 30000 });
+ok('el admin ve que la dejaron en el almacén', await contiene(tarjetaAdmin.locator('.alm-admin-llega'), 'la dejó en el almacén: pésala y confirma la llegada'));
+const formLlegada = tarjetaAdmin.locator('.form-llegada');
+const declarada = Number(await formLlegada.getAttribute('data-declarada'));
+await formLlegada.locator('input[name="cantidad"]').fill(String(declarada + 1));
+ok('no deja confirmar más de lo declarado', (await contiene(formLlegada.locator('.form-llegada-ayuda'), 'No puede llegar más de lo declarado')) && await formLlegada.locator('button[type=submit]').isDisabled());
+await formLlegada.locator('input[name="cantidad"]').fill(String(declarada));
+ok('con lo declarado: "Llegó todo lo declarado."', await contiene(formLlegada.locator('.form-llegada-ayuda'), 'Llegó todo lo declarado.'));
+await formLlegada.locator('input[name="observaciones"]').fill('Prueba QA Fase 7: pesada en el almacén');
 await formLlegada.locator('button[type=submit]').click();
-await V.p.locator('.toast', { hasText: 'Llegada confirmada' }).first().waitFor({ timeout: 20000 });
-ok('el admin confirma la llegada (frontend viejo)', true);
+await toast(V.p, 'Llegada confirmada');
+await tarjetaAdmin.waitFor({ state: 'detached', timeout: 15000 });
+ok('el admin confirma la llegada (React) y la tarjeta sale de la lista', true);
 await V.p.waitForTimeout(2000);
 const publico = await (await fetch(`${API}/productos/productos/${producto.id}`)).json();
 ok('el producto queda a la venta (disponible)', publico.estado === 'disponible', publico.estado);
@@ -126,6 +130,6 @@ await cambiarVehiculo(vehiculoAntes.tipo_vehiculo, Number(vehiculoAntes.capacida
 const restaurado = await repartidor.api('/transporte/repartidores/me');
 ok('qa-repartidor vuelve a su vehículo', restaurado.tipo_vehiculo === vehiculoAntes.tipo_vehiculo && Number(restaurado.capacidad_maxima_kg) === Number(vehiculoAntes.capacidad_maxima_kg), { tipo: restaurado.tipo_vehiculo, kg: restaurado.capacidad_maxima_kg });
 
-ok('sin errores de página (React)', !R.errores.length && !A.errores.length, [...R.errores, ...A.errores]);
+ok('sin errores de página (React)', !R.errores.length && !A.errores.length && !V.errores.length, [...R.errores, ...A.errores, ...V.errores]);
 cerrar();
 await b.close();

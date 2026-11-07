@@ -33,6 +33,11 @@ Revisa los tipos con las tres configuraciones (aplicación, service worker y Vit
 Con el servidor de desarrollo en marcha, `BASE=http://localhost:5173 npm run e2e:mapa` comprueba tres veces seguidas que
 el mapa del detalle carga sus teselas.
 
+Las demás pruebas de `e2e/` usan las cuentas de `.env.qa` (no se sube) y comparan textos normalizados (`e2e/comun.mjs`).
+Solo leen: `e2e:admin` (las 11 pantallas del admin a 375 y 1280 px) y `e2e:viajes` (API simulada). **Escriben datos
+reales en el clúster local:** `e2e:siembra`, `e2e:borrador`, `e2e:entrega`, `e2e:recojo`, `e2e:transferencia-viaje` y
+`e2e:reclamo-pagos`; cada una dice al empezar qué crea.
+
 ## Tipos de la API
 
 - `src/api/esquemas/` son los cuerpos que acepta cada servicio, generados de su OpenAPI. Con el clúster arriba, se

@@ -93,7 +93,11 @@ export async function entrarPorPantalla(pagina, email, password, destino) {
 export function vigilarErrores(pagina) {
   const errores = [];
   pagina.on('pageerror', (e) => errores.push(e.message));
-  pagina.on('console', (m) => { if (m.type() === 'error' && !/favicon|openstreetmap|tile|GSI|403/i.test(m.text())) errores.push(m.text().slice(0, 200)); });
+  // Un recurso que no cargó se informa con su dirección (el texto de la consola no la dice).
+  pagina.on('console', (m) => {
+    const textoError = `${m.text()}${m.location()?.url && /Failed to load resource/.test(m.text()) ? ` (${m.location().url})` : ''}`;
+    if (m.type() === 'error' && !/favicon|openstreetmap|tile|GSI|403/i.test(textoError)) errores.push(textoError.slice(0, 260));
+  });
   return errores;
 }
 
