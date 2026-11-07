@@ -1,4 +1,4 @@
-// Filas grises mientras carga una lista (renderSkeletonFilas del frontend actual).
+// Filas grises mientras carga una lista (renderSkeletonFilas del frontend anterior).
 export function SkeletonFilas({ cantidad = 3 }: { cantidad?: number }) {
   return (
     <>

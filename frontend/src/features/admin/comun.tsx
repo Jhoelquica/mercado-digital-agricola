@@ -14,7 +14,7 @@ import { usuarios } from '../../api/usuarios';
 import { manejarError } from '../../components/Toast';
 import { ETIQUETAS_ESTADO_ENVIO } from '../../lib/envios';
 
-// Una carga que falla avisa con el mismo texto que el frontend actual y deja la pantalla vacía.
+// Una carga que falla avisa con el mismo texto que el frontend anterior y deja la pantalla vacía.
 const conAviso = <T,>(cargar: () => Promise<T>, accion: string) => () => cargar().catch((err: unknown) => { manejarError(err, accion); throw err; });
 
 // ---- datos
@@ -71,7 +71,7 @@ export const useProductosEnTransito = () => useQuery({
   }, 'cargar los productos en tránsito'),
 });
 
-// Sección discreta y poco frecuente: si falla, queda vacía sin avisar (como en el frontend actual).
+// Sección discreta y poco frecuente: si falla, queda vacía sin avisar (como en el frontend anterior).
 export const usePendientesPorCapacidad = () => useQuery({ queryKey: ['admin', 'capacidad'], queryFn: () => transporte.pendientesPorCapacidad().catch(() => []) });
 
 // Lo que se le paga a cada uno este lunes y los pagos ya hechos. Quien todavía no registró su cuenta de cobro no trae

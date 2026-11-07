@@ -11,7 +11,7 @@ function fijar(id: string | null): void {
   oyentes.forEach((o) => o());
 }
 
-// En el frontend actual lo abre el botón de cada producto en "Mis Productos" del panel del productor.
+// En el frontend anterior lo abre el botón de cada producto en "Mis Productos" del panel del productor.
 export function abrirModalCertificacion(productoId: string): void {
   fijar(productoId);
 }

@@ -104,7 +104,7 @@ function TarjetaEntregaDirecta({ envio, indice }: { envio: Envio; indice: number
   );
 }
 
-// Siembras registradas por mes, en los últimos 6 meses (Chart.js, como en el frontend actual).
+// Siembras registradas por mes, en los últimos 6 meses (Chart.js, como en el frontend anterior).
 function GraficoSiembrasPorMes({ registros }: { registros: RegistroProduccion[] }) {
   const lienzo = useRef<HTMLCanvasElement>(null);
   useGrafico(lienzo, () => {

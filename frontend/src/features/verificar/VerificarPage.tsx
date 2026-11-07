@@ -113,7 +113,7 @@ type Estado =
   | { tipo: 'error'; mensaje: string }
   | { tipo: 'listo'; producto: ProductoDetalle; verificacion: VerificacionCadena; historial: Bloque[] };
 
-// La página pública del QR: siempre como visitante, sin token, aunque haya sesión (igual que frontend/verificar.html).
+// La página pública del QR: siempre como visitante, sin token, aunque haya sesión (igual que verificar.html del frontend anterior).
 export default function VerificarPage() {
   const [params] = useSearchParams();
   const productoId = (params.get('producto_id') || '').trim();

@@ -108,7 +108,7 @@ export default function RecojosPage() {
         <div id="recojos-list" className="envios-grid">
           {consulta.isLoading ? <SkeletonFilas cantidad={2} /> : lista.map((r, i) => <TarjetaRecojo key={r.id} r={r} indice={i} />)}
         </div>
-        {/* En el frontend actual la sección se esconde vacía; aquí es su propia pantalla y dice que no hay. */}
+        {/* En el frontend anterior la sección se esconde vacía; aquí es su propia pantalla y dice que no hay. */}
         {!consulta.isLoading && !lista.length && (
           <div className="empty-state">
             <span className="empty-state-icon"><i className="ti ti-plant-2" /></span>

@@ -160,7 +160,7 @@ export default function MisPedidosPage() {
   const [aResaltar, setAResaltar] = useState<string | null>(null);
   const lista = useRef<HTMLDivElement>(null);
 
-  // Sin caché entre visitas: al entrar siempre se consulta, igual que en el frontend actual.
+  // Sin caché entre visitas: al entrar siempre se consulta, igual que en el frontend anterior.
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['mis-pedidos', sesion.usuarioId],
     queryFn: () => cargarMisPedidos(sesion.usuarioId),

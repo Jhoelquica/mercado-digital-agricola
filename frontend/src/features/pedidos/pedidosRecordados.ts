@@ -1,4 +1,4 @@
-// Los pedidos que este navegador recuerda: solo se usan si no se pudo consultar la cuenta. La clave es la del frontend actual.
+// Los pedidos que este navegador recuerda: solo se usan si no se pudo consultar la cuenta. La clave es la del frontend anterior.
 const clave = (usuarioId: string) => `agro_pedidos_${usuarioId}`;
 
 export function leerPedidosRecordados(usuarioId: string | null | undefined): string[] {

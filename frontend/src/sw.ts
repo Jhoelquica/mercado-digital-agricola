@@ -1,6 +1,6 @@
 // Service worker de ChakraShop (H6 de la validación con usuarios del 2026-10-13): recibe los avisos al celular (Web Push)
 // y abre la aplicación en Notificaciones al tocarlos. No guarda nada en caché: la página sigue cargando como siempre.
-// Se publica en la raíz (/sw.js) para que su alcance sea todo el sitio. Es el mismo comportamiento de frontend/sw.js.
+// Se publica en la raíz (/sw.js) para que su alcance sea todo el sitio. Es el mismo comportamiento del sw.js del frontend anterior.
 export {};
 
 declare const self: ServiceWorkerGlobalScope;

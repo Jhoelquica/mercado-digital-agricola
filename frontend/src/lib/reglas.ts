@@ -1,4 +1,4 @@
-// Reglas de negocio puras: las mismas de frontend/js/reglas.js que usan estas pantallas.
+// Reglas de negocio puras: las mismas de js/reglas.js del frontend anterior que usan estas pantallas.
 
 // H7: lo que el comprador dice que le interesa al reservar. Sin cantidad, la reserva es solo el aviso.
 export function cantidadDeReserva(texto: string | undefined, unidad: string | undefined) {

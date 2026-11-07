@@ -1,7 +1,7 @@
 import { toast } from '../../components/Toast';
 import { precioEnUnidad, stockEnUnidad, type ProductoConPrecio } from '../../lib/productos';
 
-// El carrito vive solo en memoria, como en el frontend actual: no tiene datos personales y se conserva si la sesión
+// El carrito vive solo en memoria, como en el frontend anterior: no tiene datos personales y se conserva si la sesión
 // vence (el usuario suele volver a entrar), pero se vacía al cerrar sesión a propósito.
 export interface LineaCarrito {
   producto_id: string;
@@ -23,7 +23,7 @@ interface ProductoParaCarrito extends ProductoConPrecio {
 }
 
 let lineas: LineaCarrito[] = [];
-// Sobrevive a cerrar y volver a abrir el checkout, igual que el campo del formulario en el frontend actual.
+// Sobrevive a cerrar y volver a abrir el checkout, igual que el campo del formulario en el frontend anterior.
 let telefonoDeEntrega = '';
 const oyentes = new Set<() => void>();
 

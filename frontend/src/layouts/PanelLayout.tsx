@@ -14,7 +14,7 @@ interface Props {
   insignias?: Record<string, { valor: number; titulo: string }>;
   // En lugar de las pestañas (p. ej. el formulario para crear el perfil antes de usar el panel).
   sinPestanas?: ReactNode;
-  // El id de la vista en el frontend actual (p. ej. "view-panel-admin"): algunas reglas de legacy.css dependen de él.
+  // El id de la vista en el frontend anterior (p. ej. "view-panel-admin"): algunas reglas de legacy.css dependen de él.
   id?: string;
   children?: ReactNode;
 }

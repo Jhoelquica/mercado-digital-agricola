@@ -60,7 +60,7 @@ const PAGINAS_ADMIN: Record<string, CargaDiferida> = {
   transito: componente(() => import('../features/admin/TransitoPage')),
 };
 
-// El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend actual.
+// El comprador aterriza en "/" (rutaInicialPara), los demás roles en su panel: igual que al recargar en el frontend anterior.
 // Solo vale para la página con la que se abre la aplicación; después, el logo sí lleva a "/" a cualquier rol.
 let aterrizajePendiente = window.location.pathname === '/';
 
@@ -122,7 +122,7 @@ export const router = createBrowserRouter([
           children: [
             { index: true, loader: () => redirect('/comprador/pedidos') },
             { path: 'pedidos', handle: { titulo: 'Mis Pedidos' }, lazy: componente(() => import('../features/pedidos/MisPedidosPage')) },
-            // Es un modal, como en el frontend actual: AppLayout mantiene la página de atrás a la vista.
+            // Es un modal, como en el frontend anterior: AppLayout mantiene la página de atrás a la vista.
             { path: 'checkout', handle: { titulo: 'Tu pedido', modal: true }, lazy: componente(() => import('../features/checkout/CheckoutPage')) },
           ],
         }],

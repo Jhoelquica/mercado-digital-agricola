@@ -1,4 +1,4 @@
-// La prueba del quechua de frontend/pruebas/reglas.test.js: cada texto marcado en las pantallas (<Texto clave>,
+// La prueba del quechua de pruebas/reglas.test.js del frontend anterior: cada texto marcado en las pantallas (<Texto clave>,
 // claveIdioma de las pestañas y t('…')) tiene traducción, y lo que no la tiene vuelve al castellano.   npm test
 import { expect, test } from 'vitest';
 import { normalizar, TEXTOS, traduccion } from './textos';

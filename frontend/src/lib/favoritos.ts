@@ -1,6 +1,6 @@
 import { leerSesion } from '../auth/sesion';
 
-// Favoritos en este navegador, por cuenta. Misma clave que el frontend actual.
+// Favoritos en este navegador, por cuenta. Misma clave que el frontend anterior.
 function claveFavoritos(): string {
   return `agro_favoritos_${leerSesion().usuarioId || 'invitado'}`;
 }

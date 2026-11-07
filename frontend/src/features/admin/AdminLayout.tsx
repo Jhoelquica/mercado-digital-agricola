@@ -2,7 +2,7 @@ import { PanelLayout } from '../../layouts/PanelLayout';
 import { SECCIONES_ADMIN } from '../../router/secciones';
 import { textoEnvioSinEntregar, usePagosPorHacer, usePedidosSinEntregar, useReclamosRuc, useTransferencias, useTransportistas, useViajesAdmin } from './comun';
 
-// Como en el frontend actual, al abrir el panel se cargan las listas que tienen contador en su pestaña (lo que espera una
+// Como en el frontend anterior, al abrir el panel se cargan las listas que tienen contador en su pestaña (lo que espera una
 // acción del admin); cada pantalla lee la misma consulta.
 export default function AdminLayout() {
   const transferencias = useTransferencias();

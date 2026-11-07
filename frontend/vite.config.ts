@@ -6,7 +6,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 const GATEWAY_LOCAL = 'http://localhost:8000';
 // La ventana de "Continuar con Google" (popup de GIS) le escribe a esta página con postMessage: con COOP same-origin se
 // cortaría. same-origin-allow-popups aísla la página igual y deja hablar a los popups que ella abre (mismo valor que
-// frontend/security-headers.conf, que servirá también a frontend-react).
+// security-headers.conf, el de nginx).
 const CABECERAS = { 'Cross-Origin-Opener-Policy': 'same-origin-allow-popups' };
 
 export default defineConfig({
@@ -16,7 +16,7 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      // El service worker no guarda nada en caché (igual que frontend/sw.js), así que no hay manifiesto que inyectar.
+      // El service worker no guarda nada en caché (igual que el sw.js del frontend anterior), así que no hay manifiesto que inyectar.
       injectManifest: { injectionPoint: undefined },
       // Se registra solo cuando el usuario activa los avisos, nunca al abrir la página.
       injectRegister: false,

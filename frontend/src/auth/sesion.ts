@@ -62,7 +62,7 @@ function publicar(nueva: Sesion): void {
   oyentes.forEach((o) => o());
 }
 
-// Misma clave y mismo formato que el frontend actual, para no cerrar las sesiones que ya existen.
+// Misma clave y mismo formato que el frontend anterior, para no cerrar las sesiones que ya existen.
 function guardarSesion(): void {
   const { token, usuarioId, nombre, email, rol, tipoComprador } = sesion;
   try {

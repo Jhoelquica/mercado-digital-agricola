@@ -1,4 +1,4 @@
-// Pruebas de las reglas puras de las pantallas (src/lib/reglas.ts). Son las de frontend/pruebas/reglas.test.js, caso por
+// Pruebas de las reglas puras de las pantallas (src/lib/reglas.ts). Son las de pruebas/reglas.test.js del frontend anterior, caso por
 // caso; la del quechua está en src/idioma/textos.test.ts.   npm test
 import { expect, test } from 'vitest';
 import {

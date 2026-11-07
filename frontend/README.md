@@ -1,9 +1,13 @@
-# ChakraShop: frontend en React
+# ChakraShop: frontend
 
-Migración de `frontend/` a React + Vite + TypeScript, por fases. Ya están la parte pública (landing, búsqueda, detalle,
-/verificar), el login y el registro, la compra completa del comprador (carrito, checkout, pago con Culqi o por
-transferencia y Mis Pedidos), Mi perfil de los 4 roles, Notificaciones con los avisos al celular y el acceso con Google.
-Los paneles de productor, repartidor y admin todavía son marcadores.
+La aplicación web en React + Vite + TypeScript: la parte pública (landing, búsqueda, detalle, la página del QR en
+/verificar), el acceso (correo o Google), la compra (carrito, checkout, Culqi con tarjeta o Yape, transferencia, Mis
+Pedidos), Mi perfil, Notificaciones con los avisos al celular, y los paneles del productor, el repartidor y el admin.
+Reemplazó al frontend anterior en HTML/JS (fases 0 a 8a de la rama `feat/frontend-react`; el anterior queda en el
+historial de git).
+
+En el clúster la sirve nginx (`Dockerfile`, `nginx.conf`, `security-headers.conf` con la CSP); el gateway Traefik le
+manda todo lo que no es `/api/...` ni `/media/...`.
 
 ## Probar en local
 
@@ -26,17 +30,22 @@ Los avisos al celular (push) necesitan el service worker, que el servidor de des
 
 ```bash
 npm run build
+npm test
 ```
 
-Revisa los tipos con las tres configuraciones (aplicación, service worker y Vite) y genera `dist/`.
+`npm run build` revisa los tipos con las tres configuraciones (aplicación, service worker y Vite) y genera `dist/`.
+`npm test` corre con Vitest las pruebas de las reglas puras y del diccionario de quechua (`src/**/*.test.ts`); también las
+corre `scripts/correr_pruebas.sh` en la raíz.
 
 Con el servidor de desarrollo en marcha, `BASE=http://localhost:5173 npm run e2e:mapa` comprueba tres veces seguidas que
 el mapa del detalle carga sus teselas.
 
 Las demás pruebas de `e2e/` usan las cuentas de `.env.qa` (no se sube) y comparan textos normalizados (`e2e/comun.mjs`).
-Solo leen: `e2e:admin` (las 11 pantallas del admin a 375 y 1280 px) y `e2e:viajes` (API simulada). **Escriben datos
-reales en el clúster local:** `e2e:siembra`, `e2e:borrador`, `e2e:entrega`, `e2e:recojo`, `e2e:transferencia-viaje` y
-`e2e:reclamo-pagos`; cada una dice al empezar qué crea.
+Corren contra Vite (`BASE=http://localhost:5173`, por defecto) o contra el clúster (`BASE=http://localhost:8000`).
+Solo leen: `e2e:admin` (las 11 pantallas del admin a 375 y 1280 px), `e2e:notificaciones` y `e2e:viajes` (API
+simulada). **Escriben datos reales en el clúster local:** `e2e:siembra`, `e2e:borrador`, `e2e:recojo`, `e2e:entrega`
+(Yape, o `MEDIO=tarjeta`), `e2e:transferencia-viaje`, `e2e:camion-saldo` y `e2e:reclamo-pagos`; cada una dice al
+empezar qué crea. La tarjeta de prueba de Culqi se lee de `QA_CULQI_TARJETA` en `.env.qa`.
 
 ## Tipos de la API
 

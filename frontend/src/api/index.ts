@@ -14,7 +14,7 @@ import { ventas } from './ventas';
 
 export { ApiError, MENSAJE_SESION_EXPIRADA } from './errors';
 
-// La misma forma que el objeto Api de frontend/js/api.js.
+// La misma forma que el objeto Api de js/api.js del frontend anterior.
 export const Api = {
   usuarios,
   productores,
