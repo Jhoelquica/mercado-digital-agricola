@@ -150,3 +150,59 @@ a.perfil-acceso { text-decoration: none; }
 .tabla-wrap { position: relative; }
 .ganancias { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 960px) { .ganancias-cuerpo { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); } }
+
+/* ---- Contorno de la chacra: el polígono en los mapas y el editor satelital (diálogo de "Mis chacras") ---- */
+.contorno-tooltip { font-family: var(--font-titulo); font-weight: 700; color: var(--color-primario); border: 1px solid var(--color-borde); border-radius: 8px; padding: 4px 10px; }
+.chacra-card-banner-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.chacra-area-chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; font-weight: 700;
+  color: var(--color-primario); background: rgba(255, 255, 255, 0.88); padding: 4px 10px; border-radius: 999px;
+}
+.btn-contorno-chacra i { color: var(--color-primario); }
+
+.contorno-dialogo {
+  width: min(1120px, 96vw); max-height: 94vh; padding: 0; border: none; border-radius: 22px;
+  background: var(--blanco); color: var(--texto); box-shadow: 0 24px 64px rgba(27, 43, 36, 0.35); overflow: hidden;
+}
+.contorno-dialogo::backdrop { background: rgba(27, 43, 36, 0.55); backdrop-filter: blur(2px); }
+.contorno-dialogo-cuerpo { display: grid; gap: 14px; padding: 20px 22px 22px; max-height: 94vh; overflow: auto; }
+.contorno-dialogo-cabecera { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.contorno-dialogo-cabecera h3 { margin: 0 0 4px; font-family: var(--font-titulo); font-size: 1.3rem; color: var(--color-primario); display: flex; align-items: center; gap: 10px; }
+.contorno-dialogo-cabecera p { margin: 0; color: var(--texto-suave); line-height: 1.5; }
+.btn-cerrar-contorno {
+  flex: none; width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--color-borde);
+  background: var(--color-superficie); color: var(--color-primario); font-size: 1.2rem; display: grid; place-items: center; cursor: pointer;
+}
+.btn-cerrar-contorno:hover { background: var(--color-fondo-secundario); }
+.contorno-pasos { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.contorno-pasos li {
+  display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px;
+  background: var(--color-superficie); color: var(--color-primario); font-size: 0.86rem; font-weight: 600;
+}
+.contorno-pasos b { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--color-primario); color: #fff; font-size: 0.8rem; }
+.contorno-editor { display: grid; gap: 10px; }
+.contorno-editor-mapa {
+  width: 100%; height: clamp(340px, 60vh, 640px); border-radius: 16px; overflow: hidden;
+  border: 1.5px solid var(--color-borde); background: var(--color-superficie);
+}
+.contorno-editor-area { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-height: 32px; font-variant-numeric: tabular-nums; }
+.contorno-editor-area strong { font-family: var(--font-titulo); font-size: 1.5rem; color: var(--color-primario); }
+.contorno-editor-area span { color: var(--texto-suave); font-weight: 600; font-size: 0.9rem; }
+.contorno-dialogo-pie { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--color-borde); }
+.contorno-dialogo-pie .btn { min-height: 48px; display: inline-flex; align-items: center; gap: 8px; }
+.contorno-dialogo-pie .contorno-quitar { margin-right: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.contorno-confirmar { font-weight: 700; color: #b42318; }
+/* La barra de Geoman y los controles de Leaflet dentro del editor: botones de 44 px (táctiles) con la paleta. */
+.contorno-editor-mapa .leaflet-bar a,
+.contorno-editor-mapa .leaflet-pm-toolbar .leaflet-buttons-control-button { width: 44px !important; height: 44px !important; line-height: 44px !important; }
+.contorno-editor-mapa .leaflet-pm-toolbar .leaflet-buttons-control-button { background-size: 24px 24px !important; background-position: center !important; }
+.contorno-editor-mapa .leaflet-pm-toolbar .button-container.active .leaflet-buttons-control-button { box-shadow: inset 0 0 0 3px var(--color-primario); background-color: var(--color-superficie) !important; }
+.contorno-editor-mapa .leaflet-pm-actions-container .leaflet-pm-action { background: var(--color-primario); color: #fff; font-weight: 600; min-height: 44px; line-height: 44px; padding: 0 12px; }
+.contorno-editor-mapa .leaflet-pm-actions-container .leaflet-pm-action:hover { background: var(--color-primario-hover); }
+.contorno-editor-mapa .leaflet-control-layers-toggle { width: 44px; height: 44px; }
+.contorno-editor-mapa .leaflet-control-layers label { font-size: 0.9rem; padding: 2px 4px; }
+@media (max-width: 640px) {
+  .contorno-dialogo { width: 100vw; max-width: 100vw; max-height: 100vh; border-radius: 0; }
+  .contorno-dialogo-cuerpo { padding: 16px; max-height: 100vh; }
+  .contorno-dialogo-pie .btn { flex: 1 1 auto; justify-content: center; }
+}

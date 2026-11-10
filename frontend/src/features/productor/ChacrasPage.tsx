@@ -1,27 +1,31 @@
 import { useQueryClient } from '@tanstack/react-query';
+import type { Polygon } from 'geojson';
 import { lazy, Suspense, useRef, useState, type FormEvent } from 'react';
 import { chacras as apiChacras, type Chacra } from '../../api/chacras';
 import type { MapaSeleccionableApi } from '../../components/Mapa';
 import { manejarError, toast } from '../../components/Toast';
 import { Texto } from '../../idioma/IdiomaContext';
+import { formatearHectareas } from '../../lib/formato';
 import { hayCoordenadas } from '../../lib/productos';
 import { BotonMiUbicacion, TEXTO_UN_SOLO_PIN } from './AltaPerfil';
 import { usePerfilProductor, useChacras, useRegistros } from './comun';
+import { DialogoContorno } from './ContornoChacra';
 
 const MapaSeleccionable = lazy(() => import('../../components/Mapa').then((m) => ({ default: m.MapaSeleccionable })));
 const MapaSoloLectura = lazy(() => import('../../components/Mapa').then((m) => ({ default: m.MapaSoloLectura })));
 
-function MapaMini({ lat, lng, nombre, id }: { lat: number | string; lng: number | string; nombre: string; id: string }) {
+// Con contorno, el mapa chico lo muestra sobre el satélite, con su área al pasar el cursor.
+function MapaMini({ lat, lng, nombre, id, contorno, areaM2 }: { lat: number | string; lng: number | string; nombre: string; id: string; contorno?: Polygon | null; areaM2?: number | null }) {
   return (
     <div id={id} className="chacra-card-mapa-mini">
-      <Suspense fallback={null}><MapaSoloLectura latitud={lat} longitud={lng} popup={nombre} etiqueta={`Mapa de ${nombre}`} /></Suspense>
+      <Suspense fallback={null}><MapaSoloLectura latitud={lat} longitud={lng} popup={nombre} etiqueta={`Mapa de ${nombre}`} contorno={contorno} areaM2={areaM2} /></Suspense>
     </div>
   );
 }
 
 // Primer toque: pregunta en la misma tarjeta (Sí / No); segundo: elimina. El servidor no deja eliminar una chacra con
 // siembras y dice por qué.
-function TarjetaChacra({ c, indice, cultivos, siembras, alEditar, alEliminar }: { c: Chacra; indice: number; cultivos: string[]; siembras: number; alEditar: () => void; alEliminar: () => Promise<boolean> }) {
+function TarjetaChacra({ c, indice, cultivos, siembras, alEditar, alEliminar, alDibujar }: { c: Chacra; indice: number; cultivos: string[]; siembras: number; alEditar: () => void; alEliminar: () => Promise<boolean>; alDibujar: () => void }) {
   const [confirmando, setConfirmando] = useState(false);
   const [borrando, setBorrando] = useState(false);
   const no = useRef<HTMLButtonElement>(null);
@@ -29,16 +33,20 @@ function TarjetaChacra({ c, indice, cultivos, siembras, alEditar, alEliminar }: 
     <div className="chacra-card" style={{ animationDelay: `${Math.min(indice, 12) * 35}ms` }}>
       <div className="chacra-card-banner">
         <span className="chacra-codigo-badge">{c.codigo}</span>
-        <span className="chacra-siembras">{siembras} {siembras === 1 ? 'siembra' : 'siembras'}</span>
+        <span className="chacra-card-banner-chips">
+          {c.area_m2 != null && <span className="chacra-area-chip" title="Área del contorno dibujado"><i className="ti ti-ruler-measure" aria-hidden="true" /> {formatearHectareas(c.area_m2)} ha</span>}
+          <span className="chacra-siembras">{siembras} {siembras === 1 ? 'siembra' : 'siembras'}</span>
+        </span>
       </div>
       <div className="chacra-card-body">
         <h4>{c.nombre || c.codigo}</h4>
         <div className="chacra-card-cultivos">
           {cultivos.length ? cultivos.map((n) => <span key={n} className="chacra-cultivo-chip">{n}</span>) : <span className="muted">Sin siembras todavía</span>}
         </div>
-        {hayCoordenadas(c.ubicacion_latitud, c.ubicacion_longitud) && <MapaMini id={`mapa-chacra-mini-${c.id}`} lat={c.ubicacion_latitud} lng={c.ubicacion_longitud} nombre={c.nombre || c.codigo} />}
+        {hayCoordenadas(c.ubicacion_latitud, c.ubicacion_longitud) && <MapaMini id={`mapa-chacra-mini-${c.id}`} lat={c.ubicacion_latitud} lng={c.ubicacion_longitud} nombre={c.nombre || c.codigo} contorno={c.contorno} areaM2={c.area_m2} />}
         <div className="chacra-card-ubicacion"><i className="ti ti-map-pin" /> {Number(c.ubicacion_latitud).toFixed(5)}, {Number(c.ubicacion_longitud).toFixed(5)}</div>
         <div className={`chacra-card-acciones ${confirmando ? 'confirmando' : ''}`}>
+          <button type="button" className="btn btn-outline btn-sm btn-contorno-chacra" onClick={alDibujar}><i className="ti ti-polygon" aria-hidden="true" /> {c.contorno ? 'Editar contorno' : 'Dibujar contorno'}</button>
           <button type="button" className="btn btn-outline btn-sm btn-editar-chacra" onClick={alEditar}><i className="ti ti-pencil" aria-hidden="true" /> Editar</button>
           <button type="button" className="btn btn-ghost btn-sm btn-borrar-chacra" onClick={() => { setConfirmando(true); requestAnimationFrame(() => no.current?.focus()); }}><i className="ti ti-trash" aria-hidden="true" /> Eliminar</button>
           <span className="chacra-confirmar" role="group" aria-label="Confirmar eliminación">
@@ -86,6 +94,8 @@ export default function ChacrasPage() {
   const [guardando, setGuardando] = useState(false);
   // El mapa del formulario se vuelve a crear (sin alfiler) al terminar de registrar o editar.
   const [versionMapa, setVersionMapa] = useState(0);
+  // La chacra cuyo contorno se está dibujando en el diálogo satelital.
+  const [contornoDe, setContornoDe] = useState<Chacra | null>(null);
   const mapa = useRef<MapaSeleccionableApi>(null);
   const formulario = useRef<HTMLFormElement>(null);
   const campoNombre = useRef<HTMLInputElement>(null);
@@ -171,7 +181,7 @@ export default function ChacrasPage() {
       <div className="chacras-layout">
         <div className="card-panel">
           <h4 id="form-chacra-titulo">{enEdicion ? `Editar chacra ${enEdicion.codigo}` : 'Registrar nueva chacra'}</h4>
-          <p className="muted">Cada siembra que registres en "Mis siembras" se asocia a una de tus chacras.</p>
+          <p className="muted">Cada siembra que registres en "Mis siembras" se asocia a una de tus chacras. Después puedes dibujar su contorno sobre la imagen satelital desde su tarjeta.</p>
           <form ref={formulario} id="form-chacra" className="form-grid" onSubmit={(e) => { void guardar(e); }}>
             <label>Código
               <input type="text" id="chacra-codigo" required maxLength={30} placeholder="Ej. CH-01" value={codigo} onChange={(e) => setCodigo(e.target.value)} />
@@ -200,7 +210,7 @@ export default function ChacrasPage() {
             {chacras.isLoading && [0, 1].map((i) => <div className="skeleton-row-card" key={i}><div className="skeleton skeleton-line w-40" /><div className="skeleton skeleton-line tall w-70" /><div className="skeleton skeleton-line w-60" /></div>)}
             {lista.map((c, i) => {
               const propias = deRegistros.filter((r) => r.chacra_id === c.id);
-              return <TarjetaChacra key={c.id} c={c} indice={i} siembras={propias.length} cultivos={[...new Set(propias.map((r) => r.cultivo))]} alEditar={() => editar(c)} alEliminar={() => eliminar(c)} />;
+              return <TarjetaChacra key={c.id} c={c} indice={i} siembras={propias.length} cultivos={[...new Set(propias.map((r) => r.cultivo))]} alEditar={() => editar(c)} alEliminar={() => eliminar(c)} alDibujar={() => setContornoDe(c)} />;
             })}
             {parcelaDelPerfil && <ParcelaDelPerfil lat={parcelaDelPerfil.lat} lng={parcelaDelPerfil.lng} alGuardar={() => guardarParcelaDelPerfil(parcelaDelPerfil.lat, parcelaDelPerfil.lng)} />}
           </div>
@@ -213,6 +223,7 @@ export default function ChacrasPage() {
           )}
         </div>
       </div>
+      {contornoDe && <DialogoContorno key={contornoDe.id} chacra={contornoDe} alCerrar={() => setContornoDe(null)} />}
     </div>
   );
 }

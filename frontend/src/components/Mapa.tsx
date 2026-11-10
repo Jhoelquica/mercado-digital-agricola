@@ -1,6 +1,8 @@
+import type { Polygon } from 'geojson';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useEffect, useImperativeHandle, useRef, type Ref } from 'react';
+import { formatearHectareas } from '../lib/formato';
 import { hayCoordenadas } from '../lib/productos';
 
 // Teselas del servidor comunitario de OpenStreetMap. Su política exige identificar la aplicación con la cabecera Referer;
@@ -10,14 +12,42 @@ const MAPA_TILE_URL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const MAPA_ATRIBUCION = '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
 const MAPA_CENTRO_PERU: L.LatLngTuple = [-9.19, -75.015];
 
-function agregarCapaBase(mapa: L.Map): void {
+// Imagen satelital (Esri World Imagery): sobre ella el agricultor reconoce su chacra y dibuja su contorno. La CSP del
+// frontend (security-headers.conf) permite estas teselas en img-src.
+const SATELITE_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const SATELITE_ATRIBUCION = 'Tiles &copy; Esri';
+
+function capaCalles(): L.TileLayer {
   // referrerPolicy 'origin': cada tesela lleva "Referer: <origen de la página>" aunque la política de la página sea más estricta.
-  L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19, referrerPolicy: 'origin' }).addTo(mapa);
+  return L.tileLayer(MAPA_TILE_URL, { attribution: MAPA_ATRIBUCION, maxZoom: 19, referrerPolicy: 'origin' });
+}
+
+function agregarCapaBase(mapa: L.Map): void {
+  capaCalles().addTo(mapa);
+}
+
+// Satélite por defecto y Calles como alternativa, con el selector de capas de Leaflet (arriba a la derecha).
+export function agregarCapasSateliteYCalles(mapa: L.Map): L.Control.Layers {
+  const satelite = L.tileLayer(SATELITE_TILE_URL, { attribution: SATELITE_ATRIBUCION, maxZoom: 19 }).addTo(mapa);
+  return L.control.layers({ 'Satélite': satelite, 'Calles': capaCalles() }, undefined, { position: 'topright' }).addTo(mapa);
+}
+
+// El contorno de la chacra con la paleta oficial (tokens.css): borde --color-primario y relleno --color-borde al 35 %.
+export const ESTILO_CONTORNO: L.PathOptions = { color: '#2D3B2A', weight: 2.5, fillColor: '#82907A', fillOpacity: 0.35 };
+// Línea guía mientras se dibuja (ámbar, para distinguirla del contorno ya cerrado).
+export const COLOR_GUIA_DIBUJO = '#f59e0b';
+
+// El polígono guardado, de solo lectura, con la etiqueta "nombre · X.XX ha" que sigue al puntero. La etiqueta se arma
+// como elemento, no como HTML: el nombre lo escribe el productor.
+function capaContorno(contorno: Polygon, nombre: string, areaM2: number | null | undefined): L.GeoJSON {
+  const etiqueta = document.createElement('span');
+  etiqueta.textContent = areaM2 != null ? `${nombre} · ${formatearHectareas(areaM2)} ha` : nombre;
+  return L.geoJSON(contorno, { style: () => ESTILO_CONTORNO }).bindTooltip(etiqueta, { sticky: true, direction: 'top', className: 'contorno-tooltip' });
 }
 
 // El marcador se arma como elemento (no como HTML con style="..."): el color va por CSSOM, que la CSP permite sin
 // 'unsafe-inline' en los estilos.
-function iconoMarcador(icono: string, color: string): L.DivIcon {
+export function iconoMarcador(icono: string, color: string): L.DivIcon {
   const marca = document.createElement('span');
   marca.className = 'marcador-mapa';
   marca.style.background = color;
@@ -41,16 +71,25 @@ interface PropsSoloLectura {
   icono?: string;
   color?: string;
   clase?: string;
+  // Con el contorno de la chacra, el mapa lo encuadra sobre la imagen satelital (con "Calles" como alternativa).
+  contorno?: Polygon | null;
+  areaM2?: number | null;
 }
 
-export function MapaSoloLectura({ latitud, longitud, popup, etiqueta, icono = 'map-pin', color = '#2d6a4f', clase = 'mapa-mini' }: PropsSoloLectura) {
+export function MapaSoloLectura({ latitud, longitud, popup, etiqueta, icono = 'map-pin', color = '#2d6a4f', clase = 'mapa-mini', contorno = null, areaM2 = null }: PropsSoloLectura) {
   const contenedor = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!contenedor.current) return undefined;
     const punto: L.LatLngExpression = [Number(latitud), Number(longitud)];
-    const mapa = L.map(contenedor.current, { scrollWheelZoom: false }).setView(punto, 14);
-    agregarCapaBase(mapa);
+    const mapa = L.map(contenedor.current, { scrollWheelZoom: false });
+    if (contorno) {
+      agregarCapasSateliteYCalles(mapa);
+      mapa.fitBounds(capaContorno(contorno, popup, areaM2).addTo(mapa).getBounds(), { padding: [18, 18] });
+    } else {
+      mapa.setView(punto, 14);
+      agregarCapaBase(mapa);
+    }
     const texto = document.createElement('span');
     texto.textContent = popup;
     L.marker(punto, { icon: iconoMarcador(icono, color) }).addTo(mapa).bindPopup(texto);
@@ -59,7 +98,7 @@ export function MapaSoloLectura({ latitud, longitud, popup, etiqueta, icono = 'm
       clearTimeout(temporizador);
       mapa.remove();
     };
-  }, [latitud, longitud, popup, icono, color]);
+  }, [latitud, longitud, popup, icono, color, contorno, areaM2]);
 
   return <div ref={contenedor} className={clase} role="img" aria-label={etiqueta} />;
 }

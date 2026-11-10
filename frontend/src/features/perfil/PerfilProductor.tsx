@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import type { Chacra } from '../../api/chacras';
 import type { Productor, RegistroProduccion } from '../../api/productores';
 import { Texto } from '../../idioma/IdiomaContext';
-import { formatearFechaServidor, formatearMoneda } from '../../lib/formato';
+import { formatearFechaServidor, formatearHectareas, formatearMoneda } from '../../lib/formato';
 import { hayCoordenadas } from '../../lib/productos';
 import { calcularResumenEconomico } from '../productor/comun';
 
@@ -79,12 +79,21 @@ function TarjetaChacra({ c, registros }: { c: Chacra; registros: RegistroProducc
     <div className="chacra-card">
       <div className="chacra-card-banner">
         <span className="chacra-codigo-badge">{c.codigo}</span>
-        <span className="chacra-siembras">{propias.length} siembra{propias.length === 1 ? '' : 's'}</span>
+        <span className="chacra-card-banner-chips">
+          {c.area_m2 != null && <span className="chacra-area-chip" title="Área del contorno dibujado"><i className="ti ti-ruler-measure" aria-hidden="true" /> {formatearHectareas(c.area_m2)} ha</span>}
+          <span className="chacra-siembras">{propias.length} siembra{propias.length === 1 ? '' : 's'}</span>
+        </span>
       </div>
       <div className="chacra-card-body">
         <h4>{c.nombre || c.codigo}</h4>
         {cultivos.length > 0 && <div className="chacra-card-cultivos">{cultivos.join(', ')}</div>}
+        {c.contorno && (
+          <div className="chacra-card-mapa-mini">
+            <Suspense fallback={null}><MapaSoloLectura latitud={c.ubicacion_latitud} longitud={c.ubicacion_longitud} popup={c.nombre || c.codigo} etiqueta={`Contorno de ${c.nombre || c.codigo} sobre el mapa satelital`} contorno={c.contorno} areaM2={c.area_m2} /></Suspense>
+          </div>
+        )}
         <div className="chacra-card-ubicacion"><i className="ti ti-map-pin" /> {Number(c.ubicacion_latitud).toFixed(5)}, {Number(c.ubicacion_longitud).toFixed(5)}</div>
+        {c.area_m2 != null && <div className="chacra-card-ubicacion"><i className="ti ti-ruler-measure" /> Contorno dibujado: {formatearHectareas(c.area_m2)} ha</div>}
       </div>
     </div>
   );

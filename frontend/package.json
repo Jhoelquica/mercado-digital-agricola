@@ -19,10 +19,13 @@
     "e2e:transferencia-viaje": "node e2e/admin-transferencia-viaje.mjs",
     "e2e:reclamo-pagos": "node e2e/admin-reclamo-pagos.mjs",
     "e2e:camion-saldo": "node e2e/camion-saldo-entrega.mjs",
-    "e2e:notificaciones": "node e2e/notificaciones.mjs"
+    "e2e:notificaciones": "node e2e/notificaciones.mjs",
+    "e2e:contorno": "node e2e/productor-contorno.mjs"
   },
   "dependencies": {
+    "@geoman-io/leaflet-geoman-free": "^2.20.6",
     "@tanstack/react-query": "^5.105.0",
+    "@turf/area": "^7.4.0",
     "chart.js": "4.4.4",
     "leaflet": "^1.9.4",
     "react": "^19.3.1",
@@ -30,6 +33,7 @@
     "react-router": "^8.5.1"
   },
   "devDependencies": {
+    "@types/geojson": "^7946.0.16",
     "@types/leaflet": "^1.9.22",
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",

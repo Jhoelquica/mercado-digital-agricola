@@ -48,6 +48,14 @@ export interface components {
              * Format: date-time
              */
             fecha_registro: string;
+            /** Contorno */
+            contorno?: {
+                [key: string]: unknown;
+            } | null;
+            /** Area M2 */
+            area_m2?: number | null;
+            /** Contorno Actualizado En */
+            contorno_actualizado_en?: string | null;
         };
         /** CompletarCosechaDatos */
         CompletarCosechaDatos: {
@@ -66,6 +74,16 @@ export interface components {
             costo_mano_obra?: number | null;
             /** Gastos */
             gastos?: components["schemas"]["GastoDatos"][];
+        };
+        /**
+         * ContornoDatos
+         * @description El polígono que dibujó el agricultor. Cualquier área que mande el cliente se ignora: la calcula el servidor.
+         */
+        ContornoDatos: {
+            /** Contorno */
+            contorno: {
+                [key: string]: unknown;
+            };
         };
         /**
          * GastoDatos

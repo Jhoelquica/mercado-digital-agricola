@@ -35,3 +35,8 @@ export function hashCorto(hash: string | null | undefined): string {
   if (!hash) return '—';
   return hash.length > 16 ? `${hash.slice(0, 8)}…${hash.slice(-6)}` : hash;
 }
+
+// Área de una chacra en hectáreas con dos decimales ("1.25"); el servidor la manda en m².
+export function formatearHectareas(areaM2: number): string {
+  return (areaM2 / 10_000).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
