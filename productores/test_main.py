@@ -1357,3 +1357,158 @@ def test_la_migracion_pasa_los_dias_enteros_a_decimal_y_conserva_los_valores():
     finally:
         with main.engine.begin() as conexion:
             conexion.execute(text(f'DROP TABLE "{tabla}"'))
+
+
+# ============ Contorno poligonal de la chacra (contornos.py) ============
+import math  # noqa: E402
+
+import contornos  # noqa: E402
+
+METROS_POR_GRADO_LAT = 111_320.0
+
+
+def _cuadrado(lat, lng, lado_m=100.0, cerrado=True):
+    """GeoJSON Polygon de un cuadrado de `lado_m` metros centrado en (lat, lng), con las coordenadas en [lng, lat]."""
+    dlat = lado_m / 2 / METROS_POR_GRADO_LAT
+    dlng = lado_m / 2 / (METROS_POR_GRADO_LAT * math.cos(math.radians(lat)))
+    esquinas = [[lng - dlng, lat - dlat], [lng + dlng, lat - dlat], [lng + dlng, lat + dlat], [lng - dlng, lat + dlat]]
+    return {"type": "Polygon", "coordinates": [esquinas + ([esquinas[0]] if cerrado else [])]}
+
+
+def _desplazar(lat, lng, metros_este=0.0, metros_norte=0.0):
+    return lat + metros_norte / METROS_POR_GRADO_LAT, lng + metros_este / (METROS_POR_GRADO_LAT * math.cos(math.radians(lat)))
+
+
+def _chacra_nueva():
+    """Un productor nuevo (queda autenticado) con una chacra; devuelve la chacra."""
+    _nuevo_productor()
+    resp = client.post("/chacras", json=_chacra_payload(codigo=f"CH-{uuid.uuid4().hex[:6]}"))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_contorno_valido_guarda_el_poligono_y_el_area_calculada_en_el_servidor():
+    chacra = _chacra_nueva()
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    # El área que mande el cliente se ignora: la calcula el servidor (100 m × 100 m ≈ 1 ha).
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(lat, lng), "area_m2": 1})
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["contorno"]["type"] == "Polygon" and len(cuerpo["contorno"]["coordinates"][0]) == 5
+    assert 9_800 <= cuerpo["area_m2"] <= 10_200
+    assert cuerpo["contorno_actualizado_en"]
+    # el punto registrado no cambia
+    assert (cuerpo["ubicacion_latitud"], cuerpo["ubicacion_longitud"]) == (lat, lng)
+    # la lista y el detalle lo traen
+    [mia] = client.get("/chacras/me").json()
+    assert mia["contorno"] == cuerpo["contorno"] and mia["area_m2"] == cuerpo["area_m2"]
+    assert client.get(f"/chacras/{chacra['id']}").json()["area_m2"] == cuerpo["area_m2"]
+
+
+def test_un_anillo_abierto_se_cierra_solo():
+    chacra = _chacra_nueva()
+    abierto = _cuadrado(chacra["ubicacion_latitud"], chacra["ubicacion_longitud"], cerrado=False)
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": abierto})
+    assert resp.status_code == 200, resp.text
+    anillo = resp.json()["contorno"]["coordinates"][0]
+    assert len(anillo) == 5 and anillo[0] == anillo[-1]
+
+
+def test_contorno_autointersectado_falla_422():
+    chacra = _chacra_nueva()
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    d = 0.0005  # ~50 m
+    lazo = {"type": "Polygon", "coordinates": [[[lng - d, lat - d], [lng + d, lat + d], [lng + d, lat - d], [lng - d, lat + d], [lng - d, lat - d]]]}
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": lazo})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"].startswith("El contorno no es válido")
+    assert client.get(f"/chacras/{chacra['id']}").json()["contorno"] is None
+
+
+def test_contorno_fuera_del_peru_falla_422():
+    chacra = _chacra_nueva()
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(4.71, -74.07)})  # Bogotá
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == "El contorno debe estar dentro del Perú"
+
+
+def test_contorno_con_el_punto_de_la_chacra_fuera_falla_422_y_a_menos_de_50_m_pasa():
+    chacra = _chacra_nueva()
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    # un cuadrado de 100 m cuyo borde más cercano queda a 500 m del punto registrado
+    lejos_lat, lejos_lng = _desplazar(lat, lng, metros_este=550)
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(lejos_lat, lejos_lng)})
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"] == contornos.MENSAJE_PUNTO_FUERA
+    assert client.get(f"/chacras/{chacra['id']}").json()["contorno"] is None
+    # con el borde a 30 m del punto se tolera (el GPS falla seguido en el campo)
+    cerca_lat, cerca_lng = _desplazar(lat, lng, metros_este=80)
+    resp = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(cerca_lat, cerca_lng)})
+    assert resp.status_code == 200, resp.text
+
+
+def test_contorno_demasiado_chico_o_demasiado_grande_falla_422():
+    chacra = _chacra_nueva()
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    chico = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(lat, lng, lado_m=5)})       # 25 m²
+    grande = client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(lat, lng, lado_m=2_000)})  # 400 ha
+    assert chico.status_code == 422 and "entre 50 m² y 200 ha" in chico.json()["detail"], chico.text
+    assert grande.status_code == 422 and "ha)" in grande.json()["detail"], grande.text  # ~398 ha geodésicas
+
+
+def test_contorno_de_una_chacra_ajena_falla_403():
+    ajena = _chacra_nueva()
+    _nuevo_productor()  # otro productor
+    contorno = _cuadrado(ajena["ubicacion_latitud"], ajena["ubicacion_longitud"])
+    puesto = client.put(f"/chacras/{ajena['id']}/contorno", json={"contorno": contorno})
+    borrado = client.delete(f"/chacras/{ajena['id']}/contorno")
+    assert puesto.status_code == 403 and puesto.json()["detail"] == "Esta chacra no te pertenece"
+    assert borrado.status_code == 403
+
+
+def test_borrar_el_contorno_deja_la_chacra_con_su_punto():
+    chacra = _chacra_nueva()
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    assert client.put(f"/chacras/{chacra['id']}/contorno", json={"contorno": _cuadrado(lat, lng)}).status_code == 200
+    resp = client.delete(f"/chacras/{chacra['id']}/contorno")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["contorno"] is None and resp.json()["area_m2"] is None and resp.json()["contorno_actualizado_en"] is None
+    [mia] = client.get("/chacras/me").json()
+    assert mia["contorno"] is None and mia["area_m2"] is None
+    assert (mia["ubicacion_latitud"], mia["ubicacion_longitud"]) == (lat, lng)
+
+
+def test_el_contorno_se_dibuja_aunque_la_chacra_tenga_cosechas():
+    registro_id = _crear_registro_planificado()
+    chacra_id = _fila(registro_id).chacra_id
+    _poner_estado(registro_id, "cosechado")
+    antes = client.get(f"/chacras/{chacra_id}").json()
+    resp = client.put(f"/chacras/{chacra_id}/contorno", json={"contorno": _cuadrado(antes["ubicacion_latitud"], antes["ubicacion_longitud"])})
+    assert resp.status_code == 200, resp.text
+    despues = resp.json()
+    assert despues["area_m2"] > 50
+    assert (despues["ubicacion_latitud"], despues["ubicacion_longitud"]) == (antes["ubicacion_latitud"], antes["ubicacion_longitud"])
+
+
+def test_validar_contorno_rechaza_lo_que_no_es_un_poligono_simple():
+    lat, lng = -13.16, -74.22
+
+    def validar(geo):
+        return contornos.validar_contorno(geo, lat, lng, main.calcular_distancia_km)
+
+    def invalido(geo):
+        with pytest.raises(contornos.ContornoInvalido):
+            validar(geo)
+
+    invalido({"type": "LineString", "coordinates": [[lng, lat], [lng + 0.001, lat]]})
+    invalido({"type": "Polygon", "coordinates": []})
+    invalido({"type": "Polygon", "coordinates": [[[lng, lat], [lng + 0.001, lat]]]})                      # dos vértices
+    invalido({"type": "Polygon", "coordinates": [[[lng, lat], [lng + 0.001, "x"], [lng, lat + 0.001]]]})   # no numérico
+    invalido({"type": "Polygon", "coordinates": [[[lng, lat], [lng + 0.001, float("nan")], [lng, lat + 0.001]]]})
+    cuadrado = _cuadrado(lat, lng)
+    invalido({**cuadrado, "coordinates": cuadrado["coordinates"] + _cuadrado(lat, lng, lado_m=10)["coordinates"]})  # con hueco
+    muchos = [[lng + 0.0004 * math.cos(i * 2 * math.pi / 501), lat + 0.0004 * math.sin(i * 2 * math.pi / 501)] for i in range(501)]
+    invalido({"type": "Polygon", "coordinates": [muchos + [muchos[0]]]})  # 502 coordenadas
+    # un triángulo abierto de tres vértices sí vale: se cierra solo
+    contorno, area = validar({"type": "Polygon", "coordinates": [[[lng - 0.001, lat - 0.001], [lng + 0.001, lat - 0.001], [lng, lat + 0.001]]]})
+    assert len(contorno["coordinates"][0]) == 4 and area > 50

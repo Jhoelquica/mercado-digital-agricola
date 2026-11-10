@@ -27,6 +27,7 @@ from validaciones import (
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from migraciones import agregar_columnas_faltantes, pasar_entero_a_decimal
+from contornos import ContornoInvalido, validar_contorno
 import sugerencia_cosecha
 import plantillas_produccion as plantillas
 import recomendacion_siembra
@@ -160,6 +161,16 @@ class ChacraSalida(BaseModel):
     ubicacion_latitud: float
     ubicacion_longitud: float
     fecha_registro: datetime
+    # Contorno dibujado sobre el mapa satelital (GeoJSON Polygon, [lng, lat]) y su área calculada en el servidor;
+    # nulos mientras el productor no lo dibuje.
+    contorno: dict | None = None
+    area_m2: float | None = None
+    contorno_actualizado_en: datetime | None = None
+
+
+class ContornoDatos(BaseModel):
+    """El polígono que dibujó el agricultor. Cualquier área que mande el cliente se ignora: la calcula el servidor."""
+    contorno: dict
 
 # ============ Gestión Económica (Módulo 1) ============
 
@@ -531,6 +542,49 @@ def eliminar_chacra(
     db.delete(chacra)
     db.commit()
     return {"mensaje": "Chacra eliminada"}
+
+
+@app.put("/chacras/{chacra_id}/contorno", response_model=ChacraSalida)
+def dibujar_contorno(
+    chacra_id: uuid.UUID,
+    datos: ContornoDatos,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """El contorno de la chacra dibujado sobre el mapa satelital. Se dibuja o se corrige aunque la chacra ya tenga
+    cosechas: el punto registrado (el que quedó en la cadena de certificación) no cambia, y el contorno tiene que
+    rodearlo o quedar a menos de 50 m de él. El área la calcula el servidor (contornos.py); la del cliente se ignora.
+    chacra_id va tipado como UUID: un id mal formado da 422 en vez de un error de la base."""
+    productor = _obtener_productor_del_token(usuario, db)
+    chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
+    try:
+        contorno, area_m2 = validar_contorno(datos.contorno, chacra.ubicacion_latitud, chacra.ubicacion_longitud,
+                                             calcular_distancia_km)
+    except ContornoInvalido as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    chacra.contorno = contorno
+    chacra.area_m2 = area_m2
+    chacra.contorno_actualizado_en = datetime.utcnow()
+    db.commit()
+    db.refresh(chacra)
+    return chacra
+
+
+@app.delete("/chacras/{chacra_id}/contorno", response_model=ChacraSalida)
+def borrar_contorno(
+    chacra_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor")),
+):
+    """Quita el contorno dibujado; la chacra sigue con su punto registrado."""
+    productor = _obtener_productor_del_token(usuario, db)
+    chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
+    chacra.contorno = None
+    chacra.area_m2 = None
+    chacra.contorno_actualizado_en = None
+    db.commit()
+    db.refresh(chacra)
+    return chacra
 
 
 # Mismo patrón que breaker_productores en productos/main.py (fail_max=3, reset_timeout=30):

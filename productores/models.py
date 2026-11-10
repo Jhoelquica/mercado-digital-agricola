@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, Integer, Numeric, Float, ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from database import Base
 
 class Productor(Base):
@@ -37,6 +37,12 @@ class Chacra(Base):
     ubicacion_latitud = Column(Float, nullable=False)
     ubicacion_longitud = Column(Float, nullable=False)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
+    # Contorno de la chacra dibujado sobre el mapa satelital: GeoJSON Polygon con las coordenadas en [lng, lat], y
+    # su área en m² calculada SIEMPRE en el servidor (contornos.py). Opcionales: el punto de arriba sigue siendo la
+    # ubicación oficial (la que queda en la cadena de certificación). En una base ya creada los agrega migraciones.py.
+    contorno = Column(JSONB, nullable=True)
+    area_m2 = Column(Float, nullable=True)
+    contorno_actualizado_en = Column(DateTime, nullable=True)
 
 
 class RegistroProduccion(Base):
