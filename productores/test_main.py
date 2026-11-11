@@ -1512,3 +1512,99 @@ def test_validar_contorno_rechaza_lo_que_no_es_un_poligono_simple():
     # un triángulo abierto de tres vértices sí vale: se cierra solo
     contorno, area = validar({"type": "Polygon", "coordinates": [[[lng - 0.001, lat - 0.001], [lng + 0.001, lat - 0.001], [lng, lat + 0.001]]]})
     assert len(contorno["coordinates"][0]) == 4 and area > 50
+
+
+# ============ Origen público del producto (sin coordenadas) y contorno exacto por rol ============
+
+# Lo público nunca expone la finca exacta: ni el polígono ni un punto sin redondear.
+CLAVES_QUE_LO_PUBLICO_NO_TRAE = {"contorno", "coordinates", "ubicacion_latitud", "ubicacion_longitud", "latitud", "longitud"}
+
+
+def _claves(dato):
+    """Todas las claves de un JSON, a cualquier profundidad."""
+    if isinstance(dato, dict):
+        return set(dato) | {clave for valor in dato.values() for clave in _claves(valor)}
+    if isinstance(dato, list):
+        return {clave for valor in dato for clave in _claves(valor)}
+    return set()
+
+
+def _sin_sesion():
+    """Quita al usuario simulado: la siguiente petición va como la de un visitante, sin token (corre el verificar_token real)."""
+    main.app.dependency_overrides.pop(verificar_token, None)
+
+
+def _siembra_en_chacra_con_contorno():
+    """Un productor nuevo (queda autenticado) con una siembra en una chacra con contorno. Devuelve (registro_id, chacra)."""
+    registro_id = _crear_registro_planificado()
+    chacra_id = _fila(registro_id).chacra_id
+    chacra = client.get(f"/chacras/{chacra_id}").json()
+    resp = client.put(f"/chacras/{chacra_id}/contorno", json={"contorno": _cuadrado(chacra["ubicacion_latitud"], chacra["ubicacion_longitud"])})
+    assert resp.status_code == 200, resp.text
+    return registro_id, resp.json()
+
+
+def test_origen_publico_sin_token_solo_dice_la_chacra_su_area_y_si_tiene_contorno():
+    registro_id, chacra = _siembra_en_chacra_con_contorno()
+    _sin_sesion()
+    resp = client.get(f"/productores/produccion/{registro_id}/origen")  # sin cabecera Authorization
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert set(cuerpo) == {"chacra_codigo", "chacra_nombre", "area_m2", "tiene_contorno"}
+    assert cuerpo == {"chacra_codigo": chacra["codigo"], "chacra_nombre": chacra["nombre"], "area_m2": chacra["area_m2"], "tiene_contorno": True}
+    # Explícito: ni el polígono ni coordenadas, con ningún nombre de clave ni como texto suelto.
+    assert _claves(cuerpo).isdisjoint(CLAVES_QUE_LO_PUBLICO_NO_TRAE)
+    assert "coordinates" not in resp.text and "Polygon" not in resp.text
+    assert str(chacra["ubicacion_latitud"]) not in resp.text and str(chacra["ubicacion_longitud"]) not in resp.text
+
+
+def test_origen_publico_de_una_chacra_sin_contorno_no_inventa_el_area():
+    registro_id = _crear_registro_planificado()
+    _sin_sesion()
+    cuerpo = client.get(f"/productores/produccion/{registro_id}/origen").json()
+    assert cuerpo["tiene_contorno"] is False and cuerpo["area_m2"] is None
+    assert cuerpo["chacra_codigo"].startswith("CH-") and _claves(cuerpo).isdisjoint(CLAVES_QUE_LO_PUBLICO_NO_TRAE)
+
+
+def test_origen_publico_de_un_registro_que_no_existe_da_404_y_un_id_mal_formado_422():
+    _sin_sesion()
+    assert client.get(f"/productores/produccion/{uuid.uuid4()}/origen").status_code == 404
+    assert client.get("/productores/produccion/no-es-un-uuid/origen").status_code == 422
+
+
+def test_contorno_exacto_lo_ven_el_dueno_el_verificador_y_el_admin():
+    registro_id, chacra = _siembra_en_chacra_con_contorno()   # queda autenticado el dueño
+    ruta = f"/chacras/{chacra['id']}/contorno"
+    dueno = client.get(ruta)
+    assert dueno.status_code == 200, dueno.text
+    assert dueno.json()["contorno"] == chacra["contorno"] and dueno.json()["area_m2"] == chacra["area_m2"]
+    assert dueno.json()["chacra_id"] == chacra["id"] and dueno.json()["codigo"] == chacra["codigo"]
+    for rol in ("verificador", "admin"):
+        _auth(str(uuid.uuid4()), rol)
+        resp = client.get(ruta)
+        assert resp.status_code == 200 and resp.json()["contorno"] == chacra["contorno"], (rol, resp.text)
+
+
+def test_contorno_exacto_no_lo_ven_el_comprador_el_productor_ajeno_ni_quien_no_tiene_token():
+    registro_id, chacra = _siembra_en_chacra_con_contorno()
+    ruta = f"/chacras/{chacra['id']}/contorno"
+    for rol in ("comprador", "repartidor"):
+        _auth(str(uuid.uuid4()), rol)
+        resp = client.get(ruta)
+        assert resp.status_code == 403 and "contorno" not in resp.text.replace("/contorno", ""), (rol, resp.text)
+    _nuevo_productor()  # otro productor, con su perfil
+    ajeno = client.get(ruta)
+    assert ajeno.status_code == 403 and ajeno.json()["detail"] == "Esta chacra no te pertenece"
+    _sin_sesion()
+    sin_token = client.get(ruta)
+    assert sin_token.status_code == 401, sin_token.text
+    assert "coordinates" not in ajeno.text and "coordinates" not in sin_token.text
+
+
+def test_contorno_exacto_de_una_chacra_sin_contorno_o_que_no_existe():
+    chacra = _chacra_nueva()
+    sin_contorno = client.get(f"/chacras/{chacra['id']}/contorno")
+    assert sin_contorno.status_code == 200 and sin_contorno.json()["contorno"] is None and sin_contorno.json()["area_m2"] is None
+    _auth(str(uuid.uuid4()), "admin")
+    assert client.get(f"/chacras/{uuid.uuid4()}/contorno").status_code == 404
+    assert client.get("/chacras/no-es-un-uuid/contorno").status_code == 422

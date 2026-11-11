@@ -172,6 +172,29 @@ class ContornoDatos(BaseModel):
     """El polígono que dibujó el agricultor. Cualquier área que mande el cliente se ignora: la calcula el servidor."""
     contorno: dict
 
+
+class ContornoSalida(BaseModel):
+    """El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño, un verificador o un admin."""
+    chacra_id: uuid.UUID
+    productor_id: uuid.UUID
+    codigo: str
+    nombre: str | None = None
+    contorno: dict | None = None
+    area_m2: float | None = None
+    contorno_actualizado_en: datetime | None = None
+
+
+class OrigenPublico(BaseModel):
+    """Lo que cualquiera puede saber de la chacra de la que salió un producto (GET
+    /productores/produccion/{id}/origen, sin sesión): su código, su nombre, su área si el productor dibujó el contorno y
+    si lo dibujó. NUNCA el polígono ni coordenadas: lo público no expone la finca exacta (mismo criterio que
+    ProductorPublico, que redondea su punto). Tampoco "con sesión": cualquiera puede registrarse como comprador.
+    Si acá se agrega un campo, que no permita ubicar la chacra."""
+    chacra_codigo: str
+    chacra_nombre: str | None = None
+    area_m2: float | None = None
+    tiene_contorno: bool
+
 # ============ Gestión Económica (Módulo 1) ============
 
 class _ConUbicacionGps(BaseModel):
@@ -542,6 +565,27 @@ def eliminar_chacra(
     db.delete(chacra)
     db.commit()
     return {"mensaje": "Chacra eliminada"}
+
+
+# El contorno exacto ubica la finca: además del dueño lo ven quienes verifican el origen (rol "verificador") y el admin.
+# Un productor solo ve el de sus chacras (403 en una ajena, como en el resto de /chacras); un comprador, ninguno.
+@app.get("/chacras/{chacra_id}/contorno", response_model=ContornoSalida)
+def ver_contorno(
+    chacra_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor", "verificador", "admin")),
+):
+    if usuario.get("rol") == "productor":
+        productor = _obtener_productor_del_token(usuario, db)
+        chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
+    else:
+        chacra = db.query(models.Chacra).filter(models.Chacra.id == chacra_id).first()
+        if not chacra:
+            raise HTTPException(status_code=404, detail="Chacra no encontrada")
+    return ContornoSalida(
+        chacra_id=chacra.id, productor_id=chacra.productor_id, codigo=chacra.codigo, nombre=chacra.nombre,
+        contorno=chacra.contorno, area_m2=chacra.area_m2, contorno_actualizado_en=chacra.contorno_actualizado_en,
+    )
 
 
 @app.put("/chacras/{chacra_id}/contorno", response_model=ChacraSalida)
@@ -1266,6 +1310,21 @@ def plantilla_para_un_nombre(nombre: str = Query(min_length=1, max_length=80)):
     la genérica de cultivo de temporada (reconocido=false)."""
     clave = plantillas.clave_para(nombre)
     return {**plantillas.plantilla(clave or ""), "reconocido": clave is not None}
+
+
+# Pública a propósito (la consume el detalle de producto, sin sesión): de qué chacra salió, sin decir dónde está.
+# response_model=OrigenPublico es la garantía: aunque acá se devolviera la fila entera, solo salen esos cuatro campos.
+@app.get("/productores/produccion/{registro_id}/origen", response_model=OrigenPublico)
+def origen_publico(registro_id: uuid.UUID, db: Session = Depends(get_db)):
+    registro = db.query(models.RegistroProduccion).filter(models.RegistroProduccion.id == registro_id).first()
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first() if registro else None
+    if not chacra:
+        raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
+    tiene_contorno = chacra.contorno is not None
+    return OrigenPublico(
+        chacra_codigo=chacra.codigo, chacra_nombre=chacra.nombre,
+        area_m2=chacra.area_m2 if tiene_contorno else None, tiene_contorno=tiene_contorno,
+    )
 
 
 @app.get("/productores/produccion/{registro_id}/gastos")
