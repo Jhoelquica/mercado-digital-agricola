@@ -12,7 +12,7 @@ const env = leerEnvQa();
 const { ok, cerrar } = marcador();
 const CAPTURAS = rutaDelRepo('frontend/e2e/capturas');
 mkdirSync(CAPTURAS, { recursive: true });
-const captura = (p, nombre) => p.screenshot({ path: `${CAPTURAS}/contorno-${nombre}.png` });
+const captura = (p, nombre) => p.screenshot({ path: `${CAPTURAS}/contorno-${process.env.ANCHO ? `${process.env.ANCHO}-` : ''}${nombre}.png` });
 
 const sesion = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_PASSWORD);
 const chacras = await sesion.api('/productores/chacras/me');
@@ -26,7 +26,9 @@ const miChacra = async () => (await sesion.api('/productores/chacras/me')).find(
 if (chacra.contorno) await sesion.api(`/productores/chacras/${chacra.id}/contorno`, { method: 'DELETE' });
 
 const b = await chromium.launch({ channel: CANAL, headless: true });
-const ctx = await b.newContext({ viewport: { width: 1280, height: 900 }, locale: 'es-PE', timezoneId: 'America/Lima' });
+// ANCHO=390 lo corre con el ancho de un celular (el diálogo ocupa toda la pantalla).
+const ANCHO = Number(process.env.ANCHO) || 1280;
+const ctx = await b.newContext({ viewport: { width: ANCHO, height: 900 }, locale: 'es-PE', timezoneId: 'America/Lima' });
 await ctx.addInitScript((s) => localStorage.setItem('agro_sesion', s), sesionDelFrontend(sesion, { nombre: 'Agricultor QA', email: env.QA_PRODUCTOR_EMAIL }));
 const p = await ctx.newPage();
 const errores = vigilarErrores(p);
@@ -40,7 +42,7 @@ const abrirEditor = async () => {
   await tarjeta().waitFor({ timeout: 30000 });
   await tarjeta().locator('.btn-contorno-chacra').click();
   await dialogo.waitFor({ state: 'visible', timeout: 15000 });
-  await mapa.locator('.leaflet-pm-toolbar').waitFor({ timeout: 30000 });
+  await mapa.locator('.leaflet-pm-toolbar').first().waitFor({ timeout: 30000 });
   // La imagen satelital (si hay internet); sin ella el editor funciona igual.
   await mapa.locator('.leaflet-tile-loaded').first().waitFor({ timeout: 30000 }).catch(() => {});
 };
@@ -65,7 +67,13 @@ try {
   const caja = await mapa.boundingBox();
   const cx = caja.x + caja.width / 2;
   const cy = caja.y + caja.height / 2;
-  const esquinas = [[cx - 120, cy - 80], [cx + 130, cy - 90], [cx + 110, cy + 90], [cx - 100, cy + 70]];
+  // A escala del mapa, y con las esquinas de arriba por debajo del botón del polígono: al dibujar, Geoman abre a su
+  // derecha la fila "Finalizar · Eliminar último vértice · Cancelar", que en un celular cruza casi todo el mapa.
+  const boton = await mapa.locator('.leaflet-pm-icon-polygon').boundingBox();
+  const dx = Math.min(125, caja.width * 0.2);
+  const dy = Math.min(85, caja.height * 0.18);
+  const arriba = (y) => Math.max(y, boton.y + boton.height + 22);
+  const esquinas = [[cx - dx, arriba(cy - dy)], [cx + dx * 1.05, arriba(cy - dy * 1.1)], [cx + dx * 0.9, cy + dy * 1.1], [cx - dx * 0.8, cy + dy * 0.85]];
   for (const [x, y] of esquinas) {
     await p.mouse.click(x, y);
     await p.waitForTimeout(150);

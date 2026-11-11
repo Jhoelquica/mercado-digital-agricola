@@ -29,7 +29,10 @@ export function DialogoContorno({ chacra, alCerrar }: Props) {
   useEffect(() => {
     const d = dialogo.current;
     if (!d) return undefined;
-    const alCerrarse = () => alCerrarRef.current();
+    // El evento "close" llega un instante DESPUÉS de close(). En desarrollo, StrictMode monta, desmonta y vuelve a
+    // montar: el "close" del desmontaje de prueba llegaba con el diálogo ya reabierto y lo cerraba. Solo cuenta si de
+    // verdad quedó cerrado (Escape, la X, Cancelar o después de guardar).
+    const alCerrarse = () => { if (!d.open) alCerrarRef.current(); };
     d.addEventListener('close', alCerrarse);
     if (!d.open) d.showModal();
     return () => {

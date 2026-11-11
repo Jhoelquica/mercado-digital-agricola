@@ -16,6 +16,9 @@ const MAPA_CENTRO_PERU: L.LatLngTuple = [-9.19, -75.015];
 // frontend (security-headers.conf) permite estas teselas en img-src.
 const SATELITE_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const SATELITE_ATRIBUCION = 'Tiles &copy; Esri';
+// En el campo Esri no tiene imagen por encima del zoom 17: devuelve teselas grises con "Map data not yet available"
+// (y con código 200, así que Leaflet no se entera). Hasta el 19 se sigue pudiendo acercar: se amplía la imagen del 17.
+const SATELITE_ZOOM_NATIVO = 17;
 
 function capaCalles(): L.TileLayer {
   // referrerPolicy 'origin': cada tesela lleva "Referer: <origen de la página>" aunque la política de la página sea más estricta.
@@ -28,7 +31,7 @@ function agregarCapaBase(mapa: L.Map): void {
 
 // Satélite por defecto y Calles como alternativa, con el selector de capas de Leaflet (arriba a la derecha).
 export function agregarCapasSateliteYCalles(mapa: L.Map): L.Control.Layers {
-  const satelite = L.tileLayer(SATELITE_TILE_URL, { attribution: SATELITE_ATRIBUCION, maxZoom: 19 }).addTo(mapa);
+  const satelite = L.tileLayer(SATELITE_TILE_URL, { attribution: SATELITE_ATRIBUCION, maxZoom: 19, maxNativeZoom: SATELITE_ZOOM_NATIVO }).addTo(mapa);
   return L.control.layers({ 'Satélite': satelite, 'Calles': capaCalles() }, undefined, { position: 'topright' }).addTo(mapa);
 }
 

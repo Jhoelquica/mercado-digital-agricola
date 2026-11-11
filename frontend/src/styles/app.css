@@ -161,7 +161,7 @@ a.perfil-acceso { text-decoration: none; }
 .btn-contorno-chacra i { color: var(--color-primario); }
 
 .contorno-dialogo {
-  width: min(1120px, 96vw); max-height: 94vh; padding: 0; border: none; border-radius: 22px;
+  width: min(1120px, 96vw); max-height: 94vh; margin: auto; padding: 0; border: none; border-radius: 22px;
   background: var(--blanco); color: var(--texto); box-shadow: 0 24px 64px rgba(27, 43, 36, 0.35); overflow: hidden;
 }
 .contorno-dialogo::backdrop { background: rgba(27, 43, 36, 0.55); backdrop-filter: blur(2px); }
@@ -184,10 +184,13 @@ a.perfil-acceso { text-decoration: none; }
 .contorno-editor-mapa {
   width: 100%; height: clamp(340px, 60vh, 640px); border-radius: 16px; overflow: hidden;
   border: 1.5px solid var(--color-borde); background: var(--color-superficie);
+  /* Los controles de Leaflet (z-index hasta 1000) se quedan dentro del mapa: no tapan el pie del diálogo. */
+  isolation: isolate;
 }
 .contorno-editor-area { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; min-height: 32px; font-variant-numeric: tabular-nums; }
 .contorno-editor-area strong { font-family: var(--font-titulo); font-size: 1.5rem; color: var(--color-primario); }
 .contorno-editor-area span { color: var(--texto-suave); font-weight: 600; font-size: 0.9rem; }
+.contorno-editor-area .contorno-editor-nota { font-weight: 400; font-size: 0.82rem; }
 .contorno-dialogo-pie { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 12px; border-top: 1px solid var(--color-borde); }
 .contorno-dialogo-pie .btn { min-height: 48px; display: inline-flex; align-items: center; gap: 8px; }
 .contorno-dialogo-pie .contorno-quitar { margin-right: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -202,7 +205,13 @@ a.perfil-acceso { text-decoration: none; }
 .contorno-editor-mapa .leaflet-control-layers-toggle { width: 44px; height: 44px; }
 .contorno-editor-mapa .leaflet-control-layers label { font-size: 0.9rem; padding: 2px 4px; }
 @media (max-width: 640px) {
-  .contorno-dialogo { width: 100vw; max-width: 100vw; max-height: 100vh; border-radius: 0; }
-  .contorno-dialogo-cuerpo { padding: 16px; max-height: 100vh; }
+  .contorno-dialogo { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border-radius: 0; }
+  .contorno-dialogo-cuerpo { padding: 16px 16px 0; max-height: 100dvh; gap: 10px; }
+  .contorno-dialogo-cabecera p { font-size: 0.9rem; }
+  .contorno-pasos li { font-size: 0.8rem; }
+  .contorno-editor-area .contorno-editor-nota { display: none; }
+  .contorno-editor-mapa { height: clamp(300px, 50dvh, 520px); }
+  /* "Guardar" siempre a la vista: el pie se queda pegado abajo mientras se desplaza el contenido. */
+  .contorno-dialogo-pie { position: sticky; bottom: 0; z-index: 1; background: var(--blanco); padding: 10px 0 14px; }
   .contorno-dialogo-pie .btn { flex: 1 1 auto; justify-content: center; }
 }

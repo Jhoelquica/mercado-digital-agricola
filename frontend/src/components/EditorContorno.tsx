@@ -17,7 +17,7 @@ interface Props {
 }
 
 const ZOOM_SIN_FIGURA = 17;
-const MARGEN_ENCUADRE: L.FitBoundsOptions = { padding: [28, 28] };
+const MARGEN_ENCUADRE: L.FitBoundsOptions = { padding: [28, 28], maxZoom: 18 };
 
 // Editor del contorno de UNA chacra sobre la imagen satelital, con Geoman (dibujar polígono, editar vértices, quitar).
 // Sigue el patrón de Mapa.tsx: Leaflet puro dentro de un useEffect que lo crea y lo destruye. Una sola figura: dibujar
@@ -123,7 +123,7 @@ export function EditorContorno({ id, punto, inicial, onChange }: Props) {
       <div ref={contenedor} id={id} className="contorno-editor-mapa" role="application" aria-label="Mapa satelital para dibujar el contorno de la chacra" />
       <div className="contorno-editor-area" aria-live="polite">
         {hayFigura
-          ? <><strong>{formatearHectareas(areaM2)} ha</strong><span>{Math.round(areaM2).toLocaleString('es-PE')} m² (área aproximada; la exacta la calcula el servidor al guardar)</span></>
+          ? <><strong>{formatearHectareas(areaM2)} ha</strong><span>{Math.round(areaM2).toLocaleString('es-PE')} m²</span><span className="contorno-editor-nota">Área aproximada; la exacta la calcula el servidor al guardar.</span></>
           : <span className="muted">Todavía no hay contorno: toca el polígono de la barra del mapa y marca las esquinas de tu chacra.</span>}
       </div>
     </div>

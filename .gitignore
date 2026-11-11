@@ -16,3 +16,6 @@ deploy/gcp/salida/
 
 # Informe y capturas: no se versionan (docs/informe/validacion puede tener datos de personas)
 docs/
+
+# Capturas que deja el e2e del contorno de la chacra (npm run e2e:contorno)
+frontend/e2e/capturas/
