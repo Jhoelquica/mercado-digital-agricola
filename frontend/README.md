@@ -47,6 +47,10 @@ simulada). **Escriben datos reales en el clúster local:** `e2e:siembra`, `e2e:b
 (Yape, o `MEDIO=tarjeta`), `e2e:transferencia-viaje`, `e2e:camion-saldo` y `e2e:reclamo-pagos`; cada una dice al
 empezar qué crea. La tarjeta de prueba de Culqi se lee de `QA_CULQI_TARJETA` en `.env.qa`.
 
+`e2e:contorno` dibuja el contorno de la chacra CH-01 del agricultor QA en el editor satelital, lo guarda, lo comprueba en
+la tarjeta y en Mi perfil y al final lo quita (no deja datos). `ANCHO=390` lo corre con el ancho de un celular. Necesita
+internet (teselas de Esri) y deja capturas en `e2e/capturas/`, que no se versionan.
+
 ## Tipos de la API
 
 - `src/api/esquemas/` son los cuerpos que acepta cada servicio, generados de su OpenAPI. Con el clúster arriba, se

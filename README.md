@@ -133,6 +133,7 @@ cambia respecto de Kubernetes. **No incluye el gateway Traefik, Prometheus ni Gr
 bash scripts/correr_pruebas.sh                  # los 8 servicios y las reglas del frontend (Vitest)
 bash scripts/correr_pruebas.sh pedidos pagos    # solo algunos
 bash scripts/correr_pruebas.sh --cobertura      # con cobertura (pytest-cov)
+python scripts/probar_contorno_chacra.py        # contorno de la chacra contra el clúster local (crea y borra QA-CTN)
 ```
 
 - **Cómo corren:** cada suite usa `pytest` dentro de la imagen de su servicio, contra un PostgreSQL desechable

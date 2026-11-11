@@ -56,6 +56,10 @@ try {
   const capas = await dialogo.locator('.leaflet-control-layers-base label').allTextContents();
   const activa = await dialogo.locator('.leaflet-control-layers-base label', { has: p.locator('input:checked') }).textContent();
   ok('el editor arranca en Satélite y ofrece Calles', capas.join(' ').includes('Satélite') && capas.join(' ').includes('Calles') && activa.includes('Satélite'), { capas, activa });
+  // Leaflet solo marca "loaded" las teselas que cargaron de verdad: si la CSP del frontend (security-headers.conf) no
+  // dejara pasar las de Esri, no habría ninguna. Necesita internet.
+  const teselasEsri = await mapa.locator('img.leaflet-tile-loaded[src*="server.arcgisonline.com"]').count();
+  ok('la imagen satelital de Esri carga (la CSP la permite)', teselasEsri > 0, teselasEsri);
   ok('el alfiler de la chacra se ve como referencia', (await mapa.locator('.marcador-mapa').count()) === 1);
   const botones = await mapa.locator('.leaflet-pm-toolbar .control-icon').evaluateAll((els) => els.map((e) => e.className));
   ok('la barra solo tiene dibujar polígono, editar y quitar', botones.length === 3 && /polygon/.test(botones[0]) && /edit/.test(botones[1]) && /delete/.test(botones[2]), botones);
