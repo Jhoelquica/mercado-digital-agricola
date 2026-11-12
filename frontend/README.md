@@ -48,8 +48,10 @@ simulada). **Escriben datos reales en el clúster local:** `e2e:siembra`, `e2e:b
 empezar qué crea. La tarjeta de prueba de Culqi se lee de `QA_CULQI_TARJETA` en `.env.qa`.
 
 `e2e:contorno` dibuja el contorno de la chacra CH-01 del agricultor QA en el editor satelital, lo guarda, lo comprueba en
-la tarjeta y en Mi perfil y al final lo quita (no deja datos). `ANCHO=390` lo corre con el ancho de un celular. Necesita
-internet (teselas de Esri) y deja capturas en `e2e/capturas/`, que no se versionan.
+la tarjeta y en Mi perfil y al final lo quita (no deja datos). Con el contorno guardado abre, como visitante sin sesión,
+el detalle de un producto de esa chacra: debe decir su nombre, sus hectáreas y "Contorno registrado", con el mapa en la
+zona aproximada y sin que ninguna respuesta de la red traiga el polígono ni coordenadas. `ANCHO=390` lo corre con el
+ancho de un celular. Necesita internet (teselas de Esri) y deja capturas en `e2e/capturas/`, que no se versionan.
 
 ## Tipos de la API
 

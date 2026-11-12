@@ -1,7 +1,9 @@
 // Contorno de la chacra: el agricultor QA (QA_PRODUCTOR_* de .env.qa) abre "Mis chacras", dibuja el contorno de su chacra
 // CH-01 sobre la imagen satelital, lo guarda (el servidor valida y calcula el área), lo ve en la tarjeta (chip con las
-// hectáreas y el polígono en el mapa chico) y en "Mi perfil", vuelve a abrir el editor con el polígono cargado y al final
-// lo quita, para no dejar datos. Capturas en e2e/capturas/contorno-*.png (no se versionan).
+// hectáreas y el polígono en el mapa chico) y en "Mi perfil", abre como visitante sin sesión el detalle de un producto de
+// esa chacra (nombre, hectáreas e insignia "Contorno registrado", y la red sin el polígono ni coordenadas), vuelve a abrir
+// el editor con el polígono cargado y al final lo quita, para no dejar datos. Capturas en e2e/capturas/contorno-*.png
+// (no se versionan).
 //   BASE=http://localhost:5173 CANAL=msedge npm run e2e:contorno
 import { mkdirSync } from 'node:fs';
 import { chromium } from 'playwright';
@@ -109,6 +111,49 @@ try {
   ok('Mi perfil muestra el contorno y las hectáreas de la chacra', (await tarjetaPerfil.textContent()).includes('Contorno dibujado'));
   await tarjetaPerfil.scrollIntoViewIfNeeded();
   await captura(p, '4-perfil');
+
+  // Detalle público de un producto de esta chacra, como visitante SIN sesión: dice la chacra, sus hectáreas y que el
+  // contorno está registrado, pero el mapa sigue siendo la zona aproximada y ninguna respuesta de la red trae el
+  // polígono ni las coordenadas de la chacra.
+  const deLaChacra = new Set((await sesion.api('/productores/productores/produccion/me')).filter((r) => r.chacra_id === chacra.id).map((r) => r.id));
+  const producto = (await sesion.api('/productos/productos/mios')).find((x) => x.estado !== 'borrador' && deLaChacra.has(x.registro_produccion_id));
+  ok('la cuenta QA tiene un producto público salido de esta chacra', Boolean(producto));
+  if (producto) {
+    const visitante = await b.newContext({ viewport: { width: ANCHO, height: 900 }, locale: 'es-PE', timezoneId: 'America/Lima' });
+    const pv = await visitante.newPage();
+    const erroresVisitante = vigilarErrores(pv);
+    const respuestas = [];
+    pv.on('response', (r) => {
+      if (r.url().includes('/api/')) respuestas.push(r.text().then((cuerpo) => ({ url: r.url(), cuerpo })).catch(() => null));
+    });
+    await pv.goto(`${BASE}/producto/${producto.id}`, { waitUntil: 'domcontentloaded' });
+    const origen = pv.locator('.detalle-origen-chacra');
+    await origen.waitFor({ timeout: 30000 });
+    const textoOrigen = await origen.textContent();
+    const hectareas = (guardada.area_m2 / 10000).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    ok('el detalle público dice la chacra y sus hectáreas', textoOrigen.includes(chacra.nombre || chacra.codigo) && textoOrigen.includes(`${hectareas} ha`), textoOrigen);
+    ok('y lleva la insignia "Contorno registrado"', (await origen.locator('.detalle-origen-insignia').count()) === 1 && textoOrigen.includes('Contorno registrado'), textoOrigen);
+    const tarjetaProductor = pv.locator('.detalle-productor-card');
+    ok('el mapa del detalle sigue siendo la zona aproximada, sin polígono',
+      (await tarjetaProductor.locator('path.leaflet-interactive').count()) === 0 && (await tarjetaProductor.locator('.mapa-ayuda').textContent()).includes('aproximada'));
+    await pv.waitForLoadState('networkidle').catch(() => {});
+    const cuerpos = (await Promise.all(respuestas)).filter(Boolean);
+    const delOrigen = cuerpos.find((r) => r.url.includes(`/produccion/${producto.registro_produccion_id}/origen`));
+    ok('la página pidió el origen público y solo trae sus cuatro campos',
+      Boolean(delOrigen) && Object.keys(JSON.parse(delOrigen.cuerpo)).sort().join() === 'area_m2,chacra_codigo,chacra_nombre,tiene_contorno', delOrigen?.cuerpo);
+    const conLaFinca = cuerpos.filter((r) => /"coordinates"|"contorno"\s*:|"ubicacion_latitud"|"ubicacion_longitud"/.test(r.cuerpo)
+      || r.cuerpo.includes(String(chacra.ubicacion_latitud)) || r.cuerpo.includes(String(chacra.ubicacion_longitud)));
+    ok('ninguna respuesta de la red trae el polígono ni las coordenadas de la chacra', cuerpos.length > 0 && conLaFinca.length === 0, conLaFinca.map((r) => r.url));
+    // La sección aparece (clase "visible") al llegar a ella con el scroll: la captura espera a que termine de mostrarse.
+    await origen.scrollIntoViewIfNeeded();
+    const seVe = await pv.locator('#detalle-seccion-productor.visible').waitFor({ timeout: 8000 }).then(() => true, () => false);
+    ok('la sección del productor se muestra al llegar a ella, con la línea de la chacra', seVe && (await origen.isVisible()));
+    await tarjetaProductor.locator('.leaflet-tile-loaded').first().waitFor({ timeout: 20000 }).catch(() => {});
+    await pv.waitForTimeout(900);
+    await captura(pv, '6-detalle-publico');
+    ok('sin errores en la consola del visitante', erroresVisitante.length === 0, erroresVisitante);
+    await visitante.close();
+  }
 
   // Editar: el polígono guardado ya está en el mapa; quitarlo pide confirmación y deja la chacra con su punto.
   await abrirEditor();
