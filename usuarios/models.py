@@ -18,7 +18,9 @@ class Usuario(Base):
     # tiene contraseña propia — ver verificar_password en seguridad.py, ajustada para no
     # explotar contra un hash None en vez de simplemente rechazar el login normal.
     password_hash = Column(String, nullable=True)
-    rol = Column(String, default="comprador")  # comprador, productor, repartidor, admin ("verificador" en cuentas de antes)
+    # comprador, productor, repartidor, admin. "verificador" solo en cuentas de antes: el rol se retiró y esas cuentas
+    # están desactivadas (no inician sesión ni valen sus tokens; ver ROLES_RETIRADOS en auth.py). No se borran.
+    rol = Column(String, default="comprador")
     fecha_registro = Column(DateTime, default=datetime.utcnow)
     # "sub" del id_token de Google ya verificado — único por cuenta de Google, nunca compartido.
     # Null hasta que la cuenta se vincule (login/registro con Google, ver

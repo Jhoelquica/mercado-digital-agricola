@@ -1172,3 +1172,79 @@ def test_solo_un_comprador_reclama_y_solo_el_admin_revisa():
     _admin_autenticado()
     assert client.get(f"/usuarios/admin/reclamos-ruc/{reclamo_id}/documento/otro").status_code == 404
     assert client.post(f"/usuarios/admin/reclamos-ruc/{uuid.uuid4()}/aprobar").status_code == 404
+
+
+def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
+    """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
+    en este servicio igual que uno vencido, antes de mirar qué pide."""
+    import auth
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+    from jose import jwt
+
+    def credenciales(rol):
+        token = jwt.encode({"sub": "11111111-1111-1111-1111-111111111111", "rol": rol}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    assert auth.verificar_token(credenciales("comprador"))["rol"] == "comprador"
+    try:
+        auth.verificar_token(credenciales("verificador"))
+    except HTTPException as error:
+        assert error.status_code == 401 and "desactivada" in error.detail
+    else:
+        raise AssertionError("un token con rol verificador pasó la validación")
+
+
+# ============ Cuentas desactivadas: el rol verificador se retiró del todo ============
+
+def test_una_cuenta_con_rol_retirado_no_inicia_sesion_ni_con_la_contrasena_correcta():
+    clave = "Clave-correcta-2026"
+    email = _usuario_con_password(clave, rol="verificador")
+
+    for intento in (clave, "otra-clave-cualquiera"):
+        resp = _login(email, intento)
+        assert resp.status_code == 403 and "desactivada" in resp.json()["detail"], resp.text
+        assert "access_token" not in resp.text
+    # no cuenta como intento fallido (no se bloquea por insistir) y la cuenta sigue en la base: no se borra
+    assert _fila_de_intentos(email) is None
+    assert _existe_usuario(email)
+    # una cuenta con un rol vigente entra como siempre
+    assert _login(_usuario_con_password(clave, rol="productor"), clave).status_code == 200
+
+
+def test_una_cuenta_con_rol_retirado_tampoco_entra_con_google(monkeypatch):
+    google_sub = f"google-{uuid.uuid4().hex}"
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.Usuario(nombre="Verificador de antes", email=_email(), password_hash=None,
+                                   google_id=google_sub, rol="verificador"))
+        db.commit()
+    finally:
+        db.close()
+    _mockear_google(monkeypatch, sub=google_sub)
+    ya_vinculada = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+    assert ya_vinculada.status_code == 403 and "access_token" not in ya_vinculada.text
+
+    # ni vinculando ahora una cuenta de Google a su correo: no se le agrega ese acceso
+    email = _usuario_con_password("Clave-correcta-2026", rol="verificador")
+    _mockear_google(monkeypatch, email=email)
+    por_correo = client.post("/usuarios/oauth/google", json={"id_token": "fake-token"})
+    assert por_correo.status_code == 403 and "access_token" not in por_correo.text
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Usuario).filter(main.models.Usuario.email == email).one().google_id is None
+    finally:
+        db.close()
+
+
+def test_el_gateway_rechaza_el_token_vigente_de_una_cuenta_desactivada():
+    """GET /usuarios/validar-token es lo que consulta Traefik (ForwardAuth) antes de dejar pasar una petición."""
+    main.app.dependency_overrides.pop(verificar_token, None)
+    vigente = seguridad.crear_token(str(uuid.uuid4()), "verificador")   # recién emitido: no está vencido
+    de_un_comprador = seguridad.crear_token(str(uuid.uuid4()), "comprador")
+
+    rechazado = client.get("/usuarios/validar-token", headers={"Authorization": f"Bearer {vigente}"})
+    aceptado = client.get("/usuarios/validar-token", headers={"Authorization": f"Bearer {de_un_comprador}"})
+
+    assert rechazado.status_code == 401 and "desactivada" in rechazado.json()["detail"]
+    assert aceptado.status_code == 200

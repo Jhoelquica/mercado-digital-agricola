@@ -16,6 +16,7 @@ from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
 from auth import verificar_token, requiere_rol
+from auth import ROLES_RETIRADOS, MENSAJE_CUENTA_DESACTIVADA
 from auth import secreto_de_servicio_valido
 
 from database import Base, engine, SessionLocal
@@ -295,6 +296,15 @@ def _validar_rol_de_registro(rol: str) -> None:
         )
 
 
+def _rechazar_cuenta_desactivada(usuario) -> None:
+    """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en auth.py: hoy, "verificador") está desactivada: no se borra, pero
+    no vuelve a iniciar sesión, ni con contraseña ni con Google, así que no recibe tokens nuevos; los que tuviera
+    dejan de valer en todos los servicios (verificar_token). Se responde antes de mirar la contraseña y sin contar
+    el intento: lo único que revela es que ese correo es de una cuenta que ya no se puede usar."""
+    if usuario is not None and usuario.rol in ROLES_RETIRADOS:
+        raise HTTPException(status_code=403, detail=MENSAJE_CUENTA_DESACTIVADA)
+
+
 @app.post("/usuarios/registro")
 def registrar(datos: UsuarioRegistro, db: Session = Depends(get_db)):
     rol = datos.rol
@@ -326,6 +336,7 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
     acceso.comprobar_que_no_esta_bloqueado(db, datos.email)
 
     usuario = db.query(models.Usuario).filter(models.Usuario.email == datos.email).first()
+    _rechazar_cuenta_desactivada(usuario)
     # Siempre se compara UNA contraseña con bcrypt, exista o no la cuenta (o si es solo de Google), para que el
     # tiempo de respuesta no delate qué correos están registrados.
     hash_real = usuario.password_hash if usuario else None
@@ -363,6 +374,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
 
     usuario = db.query(models.Usuario).filter(models.Usuario.google_id == google_id).first()
     if usuario:
+        _rechazar_cuenta_desactivada(usuario)
         return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
 
     # Desde acá el correo decide a quién se vincula esta cuenta de Google (o con qué correo se crea una nueva): solo
@@ -376,6 +388,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
 
     usuario = db.query(models.Usuario).filter(models.Usuario.email == email).first()
     if usuario:
+        _rechazar_cuenta_desactivada(usuario)  # antes de vincularla: tampoco se le agrega un acceso por Google
         usuario.google_id = google_id
         db.commit()
         return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}

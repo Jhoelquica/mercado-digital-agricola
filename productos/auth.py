@@ -9,6 +9,13 @@ JWT_ALGORITHM = "HS256"
 
 security = HTTPBearer()
 
+# Roles que ya no existen ("verificador" se retiró del todo). Sus cuentas quedaron desactivadas sin borrarse: no inician
+# sesión (usuarios/main.py) y un token que todavía lleve uno de estos roles no vale en ningún servicio, aunque no haya
+# vencido. Cada servicio tiene su copia de esta lista (no hay librería común entre microservicios): si se retira otro
+# rol, se agrega en los ocho auth.py.
+ROLES_RETIRADOS = frozenset({"verificador"})
+MENSAJE_CUENTA_DESACTIVADA = "Esta cuenta está desactivada: su rol ya no existe en ChakraShop."
+
 # Para rutas públicas que muestran algo distinto según quién mira (un borrador solo lo ve su productor): trae
 # al usuario si el token es válido y, si no hay token o está vencido, sigue como visitante en vez de dar 401
 # (mirar un producto público no exige sesión).
@@ -19,9 +26,11 @@ def usuario_opcional(credentials: HTTPAuthorizationCredentials | None = Depends(
     if credentials is None:
         return None
     try:
-        return jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         return None
+    # Una cuenta desactivada (rol retirado) mira lo público como cualquier visitante, sin sesión.
+    return None if payload.get("rol") in ROLES_RETIRADOS else payload
 
 def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
@@ -29,6 +38,8 @@ def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except JWTError:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    if payload.get("rol") in ROLES_RETIRADOS:
+        raise HTTPException(status_code=401, detail=MENSAJE_CUENTA_DESACTIVADA)
     return payload
 
 def requiere_rol(*roles_permitidos):

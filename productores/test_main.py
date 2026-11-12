@@ -1622,3 +1622,24 @@ def test_quitar_el_contorno_deja_un_null_de_sql_y_no_el_null_de_json():
     with main.engine.connect() as conexion:
         es_null = conexion.execute(text("SELECT contorno IS NULL FROM chacras WHERE id = :id"), {"id": chacra["id"]}).scalar()
     assert es_null is True
+
+
+def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
+    """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
+    en este servicio igual que uno vencido, antes de mirar qué pide."""
+    import auth
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+    from jose import jwt
+
+    def credenciales(rol):
+        token = jwt.encode({"sub": "11111111-1111-1111-1111-111111111111", "rol": rol}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    assert auth.verificar_token(credenciales("comprador"))["rol"] == "comprador"
+    try:
+        auth.verificar_token(credenciales("verificador"))
+    except HTTPException as error:
+        assert error.status_code == 401 and "desactivada" in error.detail
+    else:
+        raise AssertionError("un token con rol verificador pasó la validación")
