@@ -833,6 +833,9 @@ def obtener_producto(
         "imagen_url": producto.imagen_url,
         "fecha_publicacion": producto.fecha_publicacion,
         "estado": producto.estado,
+        # La siembra de la que nació (None en los creados a mano): con ella el detalle le pide a Productores el origen
+        # público (GET /productores/produccion/{id}/origen: la chacra, su área y si tiene contorno, sin coordenadas).
+        "registro_produccion_id": producto.registro_produccion_id,
         "imagenes": [{"id": img.id, "url": img.url, "orden": img.orden} for img in imagenes],
         "calificacion_promedio": promedio,
         "total_resenas": total_resenas,

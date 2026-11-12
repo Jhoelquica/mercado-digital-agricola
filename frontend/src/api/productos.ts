@@ -54,6 +54,8 @@ export interface ProductoMio extends ProductoBase {
 
 export interface ProductoDetalle extends ProductoBase {
   descripcion: string | null;
+  // La siembra de la que nació (null en los creados a mano): con ella se pide el origen público a Productores.
+  registro_produccion_id: string | null;
   equivalencia_kg: number | null;
   imagenes: ImagenProducto[];
   calificacion_promedio: number | null;

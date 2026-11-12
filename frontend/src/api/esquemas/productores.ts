@@ -86,6 +86,34 @@ export interface components {
             };
         };
         /**
+         * ContornoSalida
+         * @description El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño, un verificador o un admin.
+         */
+        ContornoSalida: {
+            /**
+             * Chacra Id
+             * Format: uuid
+             */
+            chacra_id: string;
+            /**
+             * Productor Id
+             * Format: uuid
+             */
+            productor_id: string;
+            /** Codigo */
+            codigo: string;
+            /** Nombre */
+            nombre?: string | null;
+            /** Contorno */
+            contorno?: {
+                [key: string]: unknown;
+            } | null;
+            /** Area M2 */
+            area_m2?: number | null;
+            /** Contorno Actualizado En */
+            contorno_actualizado_en?: string | null;
+        };
+        /**
          * GastoDatos
          * @description Un gasto de una etapa: o el monto, o cantidad × precio ("4 jornales × S/ 50").
          */
@@ -115,6 +143,24 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * OrigenPublico
+         * @description Lo que cualquiera puede saber de la chacra de la que salió un producto (GET
+         *     /productores/produccion/{id}/origen, sin sesión): su código, su nombre, su área si el productor dibujó el contorno y
+         *     si lo dibujó. NUNCA el polígono ni coordenadas: lo público no expone la finca exacta (mismo criterio que
+         *     ProductorPublico, que redondea su punto). Tampoco "con sesión": cualquiera puede registrarse como comprador.
+         *     Si acá se agrega un campo, que no permita ubicar la chacra.
+         */
+        OrigenPublico: {
+            /** Chacra Codigo */
+            chacra_codigo: string;
+            /** Chacra Nombre */
+            chacra_nombre?: string | null;
+            /** Area M2 */
+            area_m2?: number | null;
+            /** Tiene Contorno */
+            tiene_contorno: boolean;
         };
         /** ProductorCrear */
         ProductorCrear: {

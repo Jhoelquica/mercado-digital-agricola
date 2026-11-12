@@ -4,6 +4,8 @@ import type { components } from './esquemas/productores';
 type Esquemas = components['schemas'];
 
 export type ProductorPublico = Esquemas['ProductorPublico'];
+// De qué chacra salió un producto (público, sin sesión): su nombre, su área y si tiene contorno. Nunca dónde está.
+export type OrigenPublico = Esquemas['OrigenPublico'];
 
 // Lista completa, con contacto y coordenadas exactas: el dueño o un admin.
 export interface Productor {
@@ -203,6 +205,8 @@ export const productores = {
   queSembrar: () => request<QueSembrar>('productores', '/que-sembrar', { auth: true }),
   plantillaPara: (nombre: string) => request<Plantilla>('productores', `/plantillas/para?nombre=${encodeURIComponent(nombre)}`),
   produccion: {
+    // Público: la chacra de origen de la siembra de la que salió un producto, sin el contorno ni coordenadas.
+    origen: (id: string) => request<OrigenPublico>('productores', `/productores/produccion/${id}/origen`),
     crear: (datos: Esquemas['RegistroProduccionCrear']) => request<RegistroProduccion>('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
     // Gastos por etapa de un registro (con plantilla): se anotan cuando ocurren.
     gastos: (id: string) => request<DetalleGastos>('productores', `/productores/produccion/${id}/gastos`, { auth: true }),

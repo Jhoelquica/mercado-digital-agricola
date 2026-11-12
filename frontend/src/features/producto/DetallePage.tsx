@@ -3,12 +3,12 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router';
 import { certificacion, type Bloque } from '../../api/certificacion';
 import { pedidos } from '../../api/pedidos';
-import { productores, type ProductorPublico } from '../../api/productores';
+import { productores, type OrigenPublico, type ProductorPublico } from '../../api/productores';
 import { productos, type MisReservas, type ProductoDetalle, type Resena } from '../../api/productos';
 import { useAuth } from '../../auth/AuthContext';
 import { toast } from '../../components/Toast';
 import { alternarFavorito, esFavorito } from '../../lib/favoritos';
-import { formatearMoneda } from '../../lib/formato';
+import { formatearHectareas, formatearMoneda } from '../../lib/formato';
 import {
   esUnidadPorMayor, hayCoordenadas, iconoCategoria, infoUnidad, insigniaProducto, mejorUnidadPorMayor, nombreCategoria,
   nombreUnidadPorMayor, normalizarCategoria, ordenarPorDestacado, precioEnUnidad, precioPorMayor, stockEnUnidad, unidadCorta, unidadPlural,
@@ -29,6 +29,8 @@ interface DatosDetalle {
   producto: ProductoDetalle;
   resenas: Resena[];
   productor: ProductorPublico | null;
+  // La chacra de la que salió (solo si el producto nació de una siembra): nombre, área y si tiene contorno.
+  origen: OrigenPublico | null;
   recibidos: Set<string> | null;
   reservas: MisReservas | null;
 }
@@ -48,7 +50,26 @@ function SkeletonDetalle() {
   );
 }
 
-function BloqueProductor({ producto: p, productor }: { producto: ProductoDetalle; productor: ProductorPublico | null }) {
+// "Chacra Parcela alta", pero no "Chacra Mi chacra": si el nombre ya dice que es una chacra, va tal cual.
+function nombreDeChacra(origen: OrigenPublico): string {
+  const nombre = (origen.chacra_nombre || origen.chacra_codigo).trim();
+  return /^(mi\s+)?cha[ck]ra\b/i.test(nombre) ? nombre : `Chacra ${nombre}`;
+}
+
+// La chacra de origen debajo del mapa. El mapa sigue mostrando la zona aproximada: de la chacra se dice el nombre, el
+// área y si su contorno está registrado, nunca dónde está (el servidor ni siquiera manda el polígono).
+function OrigenDeLaChacra({ origen }: { origen: OrigenPublico }) {
+  return (
+    <p className="detalle-origen-chacra">
+      <span className="detalle-origen-chacra-texto">
+        <i className="ti ti-map-pin" aria-hidden="true" /> {nombreDeChacra(origen)}{origen.area_m2 != null && ` · ${formatearHectareas(origen.area_m2)} ha`}
+      </span>
+      {origen.tiene_contorno && <span className="detalle-origen-insignia"><i className="ti ti-polygon" aria-hidden="true" /> Contorno registrado</span>}
+    </p>
+  );
+}
+
+function BloqueProductor({ producto: p, productor, origen }: { producto: ProductoDetalle; productor: ProductorPublico | null; origen: OrigenPublico | null }) {
   const nombre = productor?.nombre || p.productor_nombre || 'Productor local';
   const ubicacion = productor?.comunidad || productor?.ubicacion || null;
   const tieneMapa = hayCoordenadas(productor?.latitud, productor?.longitud);
@@ -70,6 +91,7 @@ function BloqueProductor({ producto: p, productor }: { producto: ProductoDetalle
           <p className="mapa-ayuda">Zona de origen aproximada.</p>
         </>
       )}
+      {origen && <OrigenDeLaChacra origen={origen} />}
     </div>
   );
 }
@@ -367,7 +389,7 @@ function useSaltoASeccion(raiz: React.RefObject<HTMLDivElement | null>) {
 }
 
 function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; alPublicarResena: () => Promise<void> }) {
-  const { producto: p, resenas, productor, recibidos, reservas } = datos;
+  const { producto: p, resenas, productor, origen, recibidos, reservas } = datos;
   const { sesion } = useAuth();
   const navigate = useNavigate();
   const { state } = useLocation();
@@ -522,7 +544,7 @@ function ContenidoDetalle({ datos, alPublicarResena }: { datos: DatosDetalle; al
       <div className="detalle-secciones">
         <section className="detalle-bloque detalle-bloque--productor detalle-scroll-seccion" id="detalle-seccion-productor">
           <h3 className="detalle-seccion-titulo"><i className="ti ti-plant-2" aria-hidden="true" /> De la chacra a tu mesa</h3>
-          <BloqueProductor producto={p} productor={productor} />
+          <BloqueProductor producto={p} productor={productor} origen={origen} />
         </section>
 
         <section className="detalle-bloque detalle-bloque--certificacion detalle-scroll-seccion" id="detalle-seccion-certificacion">
@@ -555,13 +577,15 @@ export default function DetallePage() {
     queryKey: clave,
     queryFn: async (): Promise<DatosDetalle> => {
       const producto = await productos.obtener(id);
-      const [resenas, productor, recibidos, reservas] = await Promise.all([
+      const [resenas, productor, origen, recibidos, reservas] = await Promise.all([
         productos.listarResenas(id).catch(() => [] as Resena[]), // sin reseñas disponibles por ahora
         productores.obtener(producto.productor_id).catch(() => null), // seguimos sin mapa
+        // Solo los productos que nacieron de una siembra; si falla, la página sigue igual, sin esa línea.
+        producto.registro_produccion_id ? productores.produccion.origen(producto.registro_produccion_id).catch(() => null) : null,
         esComprador ? pedidos.productosRecibidos().catch(() => null) : null,
         esComprador && producto.estado === 'en_transito' ? productos.misReservas().catch(() => null) : null,
       ]);
-      return { producto, resenas, productor, recibidos: recibidos ? new Set(recibidos.productos.map(String)) : null, reservas };
+      return { producto, resenas, productor, origen, recibidos: recibidos ? new Set(recibidos.productos.map(String)) : null, reservas };
     },
   });
 

@@ -1951,3 +1951,13 @@ def test_no_se_reserva_en_otra_unidad_ni_mas_de_lo_que_viene():
     assert demasiado.status_code == 422 and "Solo vienen 500 kg" in demasiado.json()["detail"]
     assert client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 0}, headers=HEADERS_AUTH).status_code == 422
     assert client.post(f"/productos/{producto.id}/reservar", json={"cantidad": 10, "unidad": "saco"}, headers=HEADERS_AUTH).status_code == 200
+
+
+def test_el_detalle_publico_dice_de_que_siembra_salio_el_producto():
+    """Con ese id el detalle de producto le pide a Productores el origen público (la chacra, sin coordenadas)."""
+    registro_id = uuid.uuid4()
+    de_una_siembra = _crear_producto_directo(registro_produccion_id=registro_id)
+    a_mano = _crear_producto_directo()
+
+    assert client.get(f"/productos/{de_una_siembra.id}").json()["registro_produccion_id"] == str(registro_id)
+    assert client.get(f"/productos/{a_mano.id}").json()["registro_produccion_id"] is None
