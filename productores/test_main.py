@@ -1608,3 +1608,17 @@ def test_contorno_exacto_de_una_chacra_sin_contorno_o_que_no_existe():
     _auth(str(uuid.uuid4()), "admin")
     assert client.get(f"/chacras/{uuid.uuid4()}/contorno").status_code == 404
     assert client.get("/chacras/no-es-un-uuid/contorno").status_code == 422
+
+
+def test_quitar_el_contorno_deja_un_null_de_sql_y_no_el_null_de_json():
+    """JSONB guarda por defecto el None de Python como el JSON `null`, que para SQL NO es NULL: una consulta
+    `contorno IS NOT NULL` (un reporte, la geocerca) contaría como dibujadas las chacras a las que se les quitó."""
+    from sqlalchemy import text
+
+    chacra = _chacra_nueva()
+    ruta = f"/chacras/{chacra['id']}/contorno"
+    assert client.put(ruta, json={"contorno": _cuadrado(chacra["ubicacion_latitud"], chacra["ubicacion_longitud"])}).status_code == 200
+    assert client.delete(ruta).status_code == 200
+    with main.engine.connect() as conexion:
+        es_null = conexion.execute(text("SELECT contorno IS NULL FROM chacras WHERE id = :id"), {"id": chacra["id"]}).scalar()
+    assert es_null is True

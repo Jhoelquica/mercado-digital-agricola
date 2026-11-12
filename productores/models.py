@@ -40,7 +40,9 @@ class Chacra(Base):
     # Contorno de la chacra dibujado sobre el mapa satelital: GeoJSON Polygon con las coordenadas en [lng, lat], y
     # su área en m² calculada SIEMPRE en el servidor (contornos.py). Opcionales: el punto de arriba sigue siendo la
     # ubicación oficial (la que queda en la cadena de certificación). En una base ya creada los agrega migraciones.py.
-    contorno = Column(JSONB, nullable=True)
+    # none_as_null: al quitar el contorno queda un NULL de SQL. Sin esto JSONB guarda el None de Python como el JSON
+    # `null`, que para SQL no es NULL: un `WHERE contorno IS NOT NULL` contaría esa chacra como dibujada.
+    contorno = Column(JSONB(none_as_null=True), nullable=True)
     area_m2 = Column(Float, nullable=True)
     contorno_actualizado_en = Column(DateTime, nullable=True)
 
