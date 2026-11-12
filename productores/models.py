@@ -45,6 +45,25 @@ class Chacra(Base):
     contorno = Column(JSONB(none_as_null=True), nullable=True)
     area_m2 = Column(Float, nullable=True)
     contorno_actualizado_en = Column(DateTime, nullable=True)
+    # La versión vigente del contorno (ChacraContornoVersion); nulo si no tiene contorno. Sin ForeignKey a propósito:
+    # la tabla de versiones ya apunta a esta, y dos claves foráneas cruzadas complican crear y borrar las dos tablas.
+    contorno_version_id = Column(UUID(as_uuid=True), nullable=True)
+
+
+class ChacraContornoVersion(Base):
+    """Cada contorno que tuvo una chacra. Guardar un contorno distinto crea una versión nueva; quitarlo no borra
+    ninguna. Una siembra o una cosecha anota contra qué versión se midió su geocerca y la huella de esa versión, que es
+    lo que queda sellado en la cadena de certificación: con esta tabla la huella se puede recalcular
+    (contornos.hash_del_contorno) y comprobar que el contorno de aquel día es este. Tabla nueva: la crea create_all()."""
+    __tablename__ = "chacra_contorno_versiones"
+    __table_args__ = (UniqueConstraint("chacra_id", "version", name="uq_contorno_version_chacra"),)
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    chacra_id = Column(UUID(as_uuid=True), ForeignKey("chacras.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)      # 1, 2, 3... dentro de cada chacra
+    contorno = Column(JSONB, nullable=False)       # GeoJSON Polygon, [lng, lat]
+    hash_sha256 = Column(String(64), nullable=False)
+    creado_en = Column(DateTime, default=datetime.utcnow)
 
 
 class RegistroProduccion(Base):
@@ -103,6 +122,24 @@ class RegistroProduccion(Base):
     foto_cosecha_url = Column(String, nullable=True)
     foto_cosecha_sha256 = Column(String, nullable=True)
     foto_cosecha_fecha = Column(DateTime, nullable=True)
+    # Geocerca de la siembra y de la cosecha (contornos.evaluar_geocerca). Con contorno en la chacra el método es
+    # "poligono" y se anota la distancia al borde (0 si cayó dentro), la versión del contorno contra la que se midió y su
+    # huella; sin contorno es "radio" (lo de siempre: distancia al punto, radio de 1,5 km) y esas tres quedan nulas.
+    # resultado: dentro | cerca | fuera | precision_baja | sin_gps | radio. precision_m es la que dio el GPS del teléfono.
+    # Lo mismo queda sellado como frase en la cadena de certificación: si alguna vez no coinciden, manda lo sellado.
+    # Nulas en los registros de antes. En una base ya creada las agrega migraciones.py.
+    siembra_metodo_geocerca = Column(String, nullable=True)
+    siembra_resultado_geocerca = Column(String, nullable=True)
+    siembra_distancia_borde_m = Column(Float, nullable=True)
+    siembra_precision_m = Column(Float, nullable=True)
+    siembra_contorno_version_id = Column(UUID(as_uuid=True), nullable=True)
+    siembra_contorno_hash = Column(String(64), nullable=True)
+    cosecha_metodo_geocerca = Column(String, nullable=True)
+    cosecha_resultado_geocerca = Column(String, nullable=True)
+    cosecha_distancia_borde_m = Column(Float, nullable=True)
+    cosecha_precision_m = Column(Float, nullable=True)
+    cosecha_contorno_version_id = Column(UUID(as_uuid=True), nullable=True)
+    cosecha_contorno_hash = Column(String(64), nullable=True)
     # Cómo se obtiene este alimento y sus etapas (ver plantillas_produccion.py): la clave del alimento ("papa",
     # "huevo", "generica_temporada"...) y su tipo (temporada | frutal | crianza | elaboracion). None en los registros
     # de antes (decisión del usuario 2026-10-07: esos se quedan con sus 3 costos). Con plantilla, costo_semillas,

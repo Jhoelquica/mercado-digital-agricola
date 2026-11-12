@@ -1982,3 +1982,13 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+def test_el_catalogo_tambien_dice_de_que_siembra_salio_cada_producto():
+    registro_id = uuid.uuid4()
+    producto = _crear_producto_directo(registro_produccion_id=registro_id, estado="en_transito")
+    main.cache.invalidar(main.cache.CLAVE_CATALOGO)
+
+    del_catalogo = next(p for p in client.get("/productos").json() if p["id"] == str(producto.id))
+
+    assert del_catalogo["registro_produccion_id"] == str(registro_id)

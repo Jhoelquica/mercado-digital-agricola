@@ -1643,3 +1643,349 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+# ============ Geocerca por contorno, con la huella del contorno versionada ============
+
+COORDENADAS_QUE_NUNCA_SALEN = {"siembra_latitud", "siembra_longitud", "cosecha_latitud", "cosecha_longitud",
+                               "latitud", "longitud", "ubicacion_latitud", "ubicacion_longitud", "contorno", "coordinates"}
+
+
+def _chacra_con_contorno():
+    """Un productor nuevo (queda autenticado) con una chacra y su contorno: un cuadrado de 100 m de lado centrado en
+    su punto, así que el borde queda a 50 m hacia cualquier lado. Devuelve la chacra."""
+    chacra = _chacra_nueva()
+    resp = client.put(f"/chacras/{chacra['id']}/contorno",
+                      json={"contorno": _cuadrado(chacra["ubicacion_latitud"], chacra["ubicacion_longitud"])})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _gps(chacra, metros_este=0.0, precision=None):
+    """Dónde está el agricultor: a `metros_este` del punto de la chacra, con la precisión que dio el GPS (o sin ella)."""
+    lat, lng = _desplazar(chacra["ubicacion_latitud"], chacra["ubicacion_longitud"], metros_este=metros_este)
+    return {"latitud": lat, "longitud": lng, **({} if precision is None else {"precision_m": precision})}
+
+
+def _sembrar(chacra, **gps):
+    resp = client.post("/productores/produccion", json={**_registro_payload(chacra["id"]), **gps})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _huella(chacra):
+    return client.get(f"/chacras/{chacra['id']}/contorno").json()["hash_sha256"]
+
+
+def test_los_resultados_de_la_geocerca_por_contorno_al_registrar_la_siembra():
+    chacra = _chacra_con_contorno()
+    huella = _huella(chacra)
+    assert len(huella) == 64
+    #  resultado esperado: (ubicación, metros al borde esperados, precisión guardada)
+    casos = [
+        ("dentro", _gps(chacra, 0, precision=12), 0, 12),
+        ("dentro", _gps(chacra, 0, precision=100), 0, 100),            # 100 m todavía alcanza
+        ("dentro", _gps(chacra, 0), 0, None),                          # un cliente de antes no manda la precisión
+        ("cerca", _gps(chacra, 80, precision=12), 30, 12),             # 30 m fuera del borde: dentro de la tolerancia
+        ("fuera", _gps(chacra, 250, precision=12), 200, 12),
+        ("precision_baja", _gps(chacra, 0, precision=150), 0, 150),
+        ("precision_baja", _gps(chacra, 250, precision=100.5), 200, 100.5),  # la precisión se mira antes que la posición
+    ]
+    for esperado, gps, borde, precision in casos:
+        r = _sembrar(chacra, **gps)
+        assert (r["siembra_metodo_geocerca"], r["siembra_resultado_geocerca"]) == ("poligono", esperado), (esperado, gps, r)
+        assert abs(r["siembra_distancia_borde_m"] - borde) <= 3, (esperado, r["siembra_distancia_borde_m"])
+        assert r["siembra_precision_m"] == precision and r["siembra_contorno_hash"] == huella
+        assert r["estado"] == "planificado"                            # nunca rechaza ni cambia el estado
+        assert _claves(r).isdisjoint(COORDENADAS_QUE_NUNCA_SALEN)
+
+    sin_gps = _sembrar(chacra)
+    assert (sin_gps["siembra_metodo_geocerca"], sin_gps["siembra_resultado_geocerca"]) == ("poligono", "sin_gps")
+    assert sin_gps["siembra_distancia_borde_m"] is None and sin_gps["siembra_precision_m"] is None
+    assert sin_gps["siembra_contorno_hash"] == huella                  # el contorno vigente queda anotado igual
+    # la cosecha todavía no ocurrió
+    assert sin_gps["cosecha_metodo_geocerca"] is None and sin_gps["cosecha_resultado_geocerca"] is None
+
+
+def test_una_chacra_sin_contorno_sigue_con_el_radio_de_siempre():
+    chacra = _chacra_nueva()
+    con_gps = _sembrar(chacra, **_gps(chacra, 300, precision=150))     # sin contorno, la precisión no cambia el resultado
+    assert (con_gps["siembra_metodo_geocerca"], con_gps["siembra_resultado_geocerca"]) == ("radio", "radio")
+    assert con_gps["siembra_distancia_borde_m"] is None and con_gps["siembra_contorno_hash"] is None
+    assert con_gps["siembra_precision_m"] == 150
+    assert 0.25 <= con_gps["siembra_distancia_km"] <= 0.35 and con_gps["radio_chacra_km"] == 1.5   # lo de siempre
+    assert _fila(con_gps["id"]).siembra_contorno_version_id is None
+
+    sin_gps = _sembrar(chacra)
+    assert (sin_gps["siembra_metodo_geocerca"], sin_gps["siembra_resultado_geocerca"]) == ("radio", "sin_gps")
+    assert sin_gps["siembra_distancia_km"] is None
+
+
+def test_la_precision_del_gps_es_opcional_y_no_puede_ser_negativa():
+    chacra = _chacra_con_contorno()
+    negativa = client.post("/productores/produccion", json={**_registro_payload(chacra["id"]), **_gps(chacra, 0, precision=-1)})
+    assert negativa.status_code == 422
+    # la precisión sola, sin ubicación, se ignora: es un registro sin GPS
+    r = _sembrar(chacra, precision_m=10)
+    assert r["siembra_resultado_geocerca"] == "sin_gps" and r["siembra_precision_m"] is None
+
+
+def test_la_huella_del_contorno_es_canonica_y_se_recalcula_fuera_del_servicio():
+    geo = _cuadrado(-13.16, -74.22)
+    huella = contornos.hash_del_contorno(geo)
+    # La receta, escrita aparte: claves ordenadas, sin espacios, coordenadas a 7 decimales, SHA-256.
+    canonico = json.dumps(
+        {"type": "Polygon", "coordinates": [[[round(lng, 7), round(lat, 7)] for lng, lat in geo["coordinates"][0]]]},
+        sort_keys=True, separators=(",", ":"),
+    )
+    assert huella == hashlib.sha256(canonico.encode("utf-8")).hexdigest()
+    # mismo contorno con las claves en otro orden y decimales de sobra más allá del séptimo: misma huella
+    con_ruido = {"coordinates": [[[lng + 1e-9, lat - 1e-9] for lng, lat in geo["coordinates"][0]]], "type": "Polygon"}
+    assert contornos.hash_del_contorno(con_ruido) == huella
+    # un vértice movido un metro: otra huella
+    movido = {"type": "Polygon", "coordinates": [[list(p) for p in geo["coordinates"][0]]]}
+    movido["coordinates"][0][1][0] += 0.00001
+    assert contornos.hash_del_contorno(movido) != huella
+
+
+def test_cada_contorno_distinto_es_una_version_y_quitarlo_no_borra_ninguna():
+    chacra = _chacra_con_contorno()
+    ruta = f"/chacras/{chacra['id']}/contorno"
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+
+    [v1] = client.get(f"{ruta}/versiones").json()
+    assert (v1["version"], v1["vigente"]) == (1, True) and v1["contorno"] == chacra["contorno"]
+    assert v1["hash_sha256"] == contornos.hash_del_contorno(v1["contorno"]) == client.get(ruta).json()["hash_sha256"]
+
+    # volver a guardar el mismo no crea otra versión
+    assert client.put(ruta, json={"contorno": _cuadrado(lat, lng)}).status_code == 200
+    assert len(client.get(f"{ruta}/versiones").json()) == 1
+
+    # uno distinto sí: la 2 pasa a ser la vigente
+    assert client.put(ruta, json={"contorno": _cuadrado(lat, lng, lado_m=140)}).status_code == 200
+    v1, v2 = client.get(f"{ruta}/versiones").json()
+    assert (v1["version"], v1["vigente"], v2["version"], v2["vigente"]) == (1, False, 2, True)
+    assert v2["hash_sha256"] != v1["hash_sha256"] and client.get(ruta).json()["version"] == 2
+
+    # quitar el contorno no borra versiones; reponer el último tampoco crea una tercera
+    assert client.delete(ruta).status_code == 200
+    sin_vigente = client.get(f"{ruta}/versiones").json()
+    assert [v["version"] for v in sin_vigente] == [1, 2] and not any(v["vigente"] for v in sin_vigente)
+    assert client.get(ruta).json()["version"] is None and client.get(ruta).json()["hash_sha256"] is None
+    assert client.put(ruta, json={"contorno": _cuadrado(lat, lng, lado_m=140)}).status_code == 200
+    assert [(v["version"], v["vigente"]) for v in client.get(f"{ruta}/versiones").json()] == [(1, False), (2, True)]
+
+    # las versiones llevan el polígono: como el contorno exacto, solo para el dueño y el admin
+    _auth(str(uuid.uuid4()), "admin")
+    assert len(client.get(f"{ruta}/versiones").json()) == 2
+    _auth(str(uuid.uuid4()), "comprador")
+    assert client.get(f"{ruta}/versiones").status_code == 403
+    _nuevo_productor()
+    assert client.get(f"{ruta}/versiones").status_code == 403
+    _sin_sesion()
+    assert client.get(f"{ruta}/versiones").status_code == 401
+
+
+def test_editar_el_contorno_despues_de_una_cosecha_no_cambia_lo_que_quedo_en_el_registro():
+    chacra = _chacra_con_contorno()
+    ruta = f"/chacras/{chacra['id']}/contorno"
+    lat, lng = chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]
+    siembra = _sembrar(chacra, **_gps(chacra, 0, precision=8))
+    assert _subir_foto(siembra["id"]).status_code == 200
+    cosecha = _completar_cosecha(siembra["id"], **_gps(chacra, 80, precision=20))
+    assert cosecha.status_code == 200, cosecha.text
+    huella_v1 = cosecha.json()["cosecha_contorno_hash"]
+    assert (cosecha.json()["cosecha_metodo_geocerca"], cosecha.json()["cosecha_resultado_geocerca"]) == ("poligono", "cerca")
+    assert huella_v1 == cosecha.json()["siembra_contorno_hash"] == _huella(chacra)
+
+    # El agricultor redibuja su chacra más grande: versión 2, otra huella.
+    assert client.put(ruta, json={"contorno": _cuadrado(lat, lng, lado_m=300)}).status_code == 200
+    assert _huella(chacra) != huella_v1
+
+    # El registro viejo conserva su versión y su huella...
+    despues = _mi_registro(siembra["id"])
+    assert despues["siembra_contorno_hash"] == despues["cosecha_contorno_hash"] == huella_v1
+    assert despues["cosecha_resultado_geocerca"] == "cerca"            # no se vuelve a evaluar con el contorno nuevo
+    fila = _fila(siembra["id"])
+    v1, v2 = client.get(f"{ruta}/versiones").json()
+    db = main.SessionLocal()
+    try:
+        guardada = db.get(main.models.ChacraContornoVersion, fila.cosecha_contorno_version_id)
+        assert guardada.version == 1 and guardada.id == fila.siembra_contorno_version_id
+        # ...y esa huella se recalcula desde chacra_contorno_versiones
+        assert contornos.hash_del_contorno(guardada.contorno) == guardada.hash_sha256 == huella_v1 == v1["hash_sha256"]
+    finally:
+        db.close()
+    # una siembra nueva ya se mide contra la versión 2 (a 80 m del punto ahora es "dentro")
+    nueva = _sembrar(chacra, **_gps(chacra, 80, precision=20))
+    assert nueva["siembra_contorno_hash"] == v2["hash_sha256"] and nueva["siembra_resultado_geocerca"] == "dentro"
+
+    # Sin contorno, lo siguiente vuelve al radio; lo ya registrado sigue igual.
+    assert client.delete(ruta).status_code == 200
+    por_radio = _sembrar(chacra, **_gps(chacra, 80, precision=20))
+    assert (por_radio["siembra_metodo_geocerca"], por_radio["siembra_contorno_hash"]) == ("radio", None)
+    assert _mi_registro(siembra["id"])["cosecha_contorno_hash"] == huella_v1
+
+
+def test_un_contorno_de_antes_de_las_versiones_recibe_la_suya_al_hacer_falta():
+    chacra = _chacra_con_contorno()
+    db = main.SessionLocal()
+    try:   # como quedó una chacra con contorno antes de esta entrega: sin versión
+        db.query(main.models.ChacraContornoVersion).filter(main.models.ChacraContornoVersion.chacra_id == chacra["id"]).delete()
+        db.query(main.models.Chacra).filter(main.models.Chacra.id == chacra["id"]).update({"contorno_version_id": None})
+        db.commit()
+    finally:
+        db.close()
+
+    r = _sembrar(chacra, **_gps(chacra, 0, precision=5))
+
+    assert r["siembra_resultado_geocerca"] == "dentro" and r["siembra_contorno_hash"] == contornos.hash_del_contorno(chacra["contorno"])
+    [version] = client.get(f"/chacras/{chacra['id']}/contorno/versiones").json()
+    assert (version["version"], version["vigente"], version["hash_sha256"]) == (1, True, r["siembra_contorno_hash"])
+
+
+def test_una_chacra_con_contorno_y_sin_siembras_se_elimina_con_sus_versiones():
+    chacra = _chacra_con_contorno()
+    assert client.delete(f"/chacras/{chacra['id']}").status_code == 200
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.ChacraContornoVersion).filter(main.models.ChacraContornoVersion.chacra_id == chacra["id"]).count() == 0
+    finally:
+        db.close()
+
+
+HUELLA_DE_PRUEBA = "c0" * 32
+
+
+def _con_geocerca(momento, metodo, resultado, borde=None, precision=None, huella=None, km=None):
+    return {f"{momento}_metodo_geocerca": metodo, f"{momento}_resultado_geocerca": resultado,
+            f"{momento}_distancia_borde_m": borde, f"{momento}_precision_m": precision,
+            f"{momento}_contorno_hash": huella, f"{momento}_distancia_km": km}
+
+
+def _texto_sellado(monkeypatch, **cambios):
+    capturado = _capturar_post_a_certificacion(monkeypatch)
+    _registrar_certificacion_real(_registro_para_la_cadena(**cambios), SimpleNamespace(nombre="Sol Naciente"),
+                                  SimpleNamespace(codigo="CH-01", nombre="Parcela norte"), "producto-1")
+    return capturado["json"]["datos_cosecha"]
+
+
+def test_la_frase_sellada_de_cada_resultado_de_la_geocerca(monkeypatch):
+    h = HUELLA_DE_PRUEBA
+    # resultado: (columnas del registro, frases que DEBEN quedar selladas, lo que NO debe aparecer en ese momento)
+    casos = {
+        "dentro": (_con_geocerca("siembra", "poligono", "dentro", 0.0, 12.4, h, km=0.02),
+                   [f"Geocerca siembra: metodo=poligono; resultado=dentro; distancia_borde_m=0; precision_m=12; contorno_sha256={h}."],
+                   ["Al registrar la siembra"]),
+        "cerca": (_con_geocerca("siembra", "poligono", "cerca", 30.2, 20.0, h, km=0.08),
+                  [f"Geocerca siembra: metodo=poligono; resultado=cerca; distancia_borde_m=30; precision_m=20; contorno_sha256={h}."],
+                  ["Al registrar la siembra"]),
+        "fuera": (_con_geocerca("siembra", "poligono", "fuera", 200.0, 15.0, h, km=0.25),
+                  [f"Geocerca siembra: metodo=poligono; resultado=fuera; distancia_borde_m=200; precision_m=15; contorno_sha256={h}."],
+                  ["Al registrar la siembra"]),
+        "precision_baja": (_con_geocerca("siembra", "poligono", "precision_baja", 0.0, 150.0, h, km=0.01),
+                           [f"Geocerca siembra: metodo=poligono; resultado=precision_baja; distancia_borde_m=0; precision_m=150; contorno_sha256={h}."],
+                           ["Al registrar la siembra"]),
+        "sin_gps": (_con_geocerca("siembra", "poligono", "sin_gps", None, None, h, km=None),
+                    ["Al registrar la siembra: sin ubicación GPS (advertencia).",
+                     f"Geocerca siembra: metodo=poligono; resultado=sin_gps; contorno_sha256={h}."],
+                    ["distancia_borde_m", "precision_m"]),
+        "radio": (_con_geocerca("siembra", "radio", "radio", None, 12.0, None, km=0.42),
+                  ["Al registrar la siembra: a 0,42 km de la chacra (dentro del radio de 1,5 km).",
+                   "Geocerca siembra: metodo=radio; resultado=radio; precision_m=12."],
+                  ["distancia_borde_m", "contorno_sha256"]),
+    }
+    for resultado, (columnas, selladas, ausentes) in casos.items():
+        # la cosecha, sin geocerca (como un registro de antes): solo su frase de siempre
+        texto = _texto_sellado(monkeypatch, **columnas, cosecha_distancia_km=3.1)
+        de_la_siembra = texto.split("Al completar la cosecha")[0]
+        for frase in selladas:
+            assert frase in de_la_siembra, (resultado, texto)
+        for ausente in ausentes:
+            assert ausente not in de_la_siembra, (resultado, ausente, texto)
+        assert "Al completar la cosecha: a 3,10 km de la chacra, fuera del radio de 1,5 km (advertencia)." in texto
+        assert "Geocerca cosecha" not in texto
+        assert f"Foto de la cosecha (SHA-256 {'ab' * 32})." in texto
+
+    # sin contorno y sin GPS; y lo mismo vale para la cosecha
+    texto = _texto_sellado(monkeypatch, **_con_geocerca("siembra", "radio", "sin_gps"),
+                           **_con_geocerca("cosecha", "poligono", "cerca", 30.0, 20.0, h, km=0.08))
+    assert "Al registrar la siembra: sin ubicación GPS (advertencia). Geocerca siembra: metodo=radio; resultado=sin_gps." in texto
+    assert f"Geocerca cosecha: metodo=poligono; resultado=cerca; distancia_borde_m=30; precision_m=20; contorno_sha256={h}." in texto
+    assert "Al completar la cosecha" not in texto
+
+
+def test_un_registro_de_antes_sella_exactamente_el_texto_de_siempre(monkeypatch):
+    """Sin columnas de geocerca (una siembra y una cosecha anteriores a esta entrega) el texto no cambia ni una letra."""
+    texto = _texto_sellado(monkeypatch)
+    assert texto == (
+        "45.5 kg de Papa Nativa cosechados en chacra CH-01 (Parcela norte) por Sol Naciente "
+        "(sembrado el 01/01/2026, cosechado el 20/08/2026). "
+        "Al registrar la siembra: a 0,42 km de la chacra (dentro del radio de 1,5 km). "
+        "Al completar la cosecha: a 3,10 km de la chacra, fuera del radio de 1,5 km (advertencia). "
+        f"Foto de la cosecha (SHA-256 {'ab' * 32})."
+    )
+
+
+def test_la_cosecha_real_sella_lo_mismo_que_guarda_el_registro_y_nunca_coordenadas(monkeypatch):
+    chacra = _chacra_con_contorno()
+    huella = _huella(chacra)
+    en_la_siembra, en_la_cosecha = _gps(chacra, 0, precision=8), _gps(chacra, 80, precision=20)
+    siembra = _sembrar(chacra, **en_la_siembra)
+    assert _subir_foto(siembra["id"]).status_code == 200
+    capturado = _capturar_post_a_certificacion(monkeypatch)
+    monkeypatch.setattr(main, "_registrar_certificacion_cosecha", _registrar_certificacion_real)
+
+    resp = _completar_cosecha(siembra["id"], **en_la_cosecha)
+
+    assert resp.status_code == 200 and resp.json()["certificacion_registrada"] is True, resp.text
+    texto = capturado["json"]["datos_cosecha"]
+    r = resp.json()
+    assert f"Geocerca siembra: metodo=poligono; resultado=dentro; distancia_borde_m=0; precision_m=8; contorno_sha256={huella}." in texto
+    borde = round(r["cosecha_distancia_borde_m"])
+    assert 27 <= borde <= 33
+    assert f"Geocerca cosecha: metodo=poligono; resultado=cerca; distancia_borde_m={borde}; precision_m=20; contorno_sha256={huella}." in texto
+    # con contorno no va la frase de los km; y ni una coordenada, ni del agricultor ni de la chacra
+    assert "km de la chacra" not in texto and "radio de" not in texto
+    crudo = json.dumps(capturado["json"])
+    for coordenada in (*en_la_siembra.values(), *en_la_cosecha.values(), chacra["ubicacion_latitud"], chacra["ubicacion_longitud"]):
+        if coordenada >= 0:      # las precisiones (8, 20) sí van en la frase; las coordenadas del Perú son negativas
+            continue
+        assert str(coordenada)[:8] not in crudo, coordenada
+    assert "coordinates" not in crudo and "Polygon" not in crudo
+    assert _claves(r).isdisjoint(COORDENADAS_QUE_NUNCA_SALEN)
+
+
+def test_la_geocerca_del_registro_la_ve_el_admin_y_no_trae_coordenadas():
+    chacra = _chacra_con_contorno()
+    huella = _huella(chacra)
+    siembra = _sembrar(chacra, **_gps(chacra, 250, precision=15))
+    assert _subir_foto(siembra["id"]).status_code == 200
+    assert _completar_cosecha(siembra["id"], **_gps(chacra, 0, precision=9)).status_code == 200
+    ruta = f"/productores/produccion/{siembra['id']}/geocerca"
+
+    assert client.get(ruta).status_code == 403                         # ni siquiera su productor: es la vista del almacén
+    for rol in ("comprador", "repartidor", "verificador"):
+        _auth(str(uuid.uuid4()), rol)
+        assert client.get(ruta).status_code == 403, rol
+    _sin_sesion()
+    assert client.get(ruta).status_code == 401
+
+    _auth(str(uuid.uuid4()), "admin")
+    resp = client.get(ruta)
+    assert resp.status_code == 200, resp.text
+    cuerpo = resp.json()
+    assert cuerpo["estado"] == "cosechado" and cuerpo["chacra_codigo"] == chacra["codigo"]
+    assert (cuerpo["radio_km"], cuerpo["tolerancia_borde_m"], cuerpo["precision_maxima_m"]) == (1.5, 50, 100)
+    assert cuerpo["cosecha"] == {"metodo": "poligono", "resultado": "dentro", "distancia_borde_m": 0, "precision_m": 9,
+                                 "distancia_km": 0, "contorno_sha256": huella}
+    assert cuerpo["siembra"]["resultado"] == "fuera" and 197 <= cuerpo["siembra"]["distancia_borde_m"] <= 203
+    assert _claves(cuerpo).isdisjoint(COORDENADAS_QUE_NUNCA_SALEN)
+    assert "coordinates" not in resp.text and str(chacra["ubicacion_latitud"]) not in resp.text
+    assert client.get(f"/productores/produccion/{uuid.uuid4()}/geocerca").status_code == 404
+
+    # un registro de antes (sin geocerca): todo nulo salvo la distancia de siempre
+    viejo = _crear_registro_planificado(**CERCA)
+    _auth(str(uuid.uuid4()), "admin")
+    de_antes = client.get(f"/productores/produccion/{viejo}/geocerca").json()
+    assert de_antes["cosecha"]["resultado"] is None and de_antes["siembra"]["metodo"] == "radio"

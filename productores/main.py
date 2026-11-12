@@ -27,6 +27,7 @@ from validaciones import (
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from migraciones import agregar_columnas_faltantes, pasar_entero_a_decimal
+import contornos
 from contornos import ContornoInvalido, validar_contorno
 import sugerencia_cosecha
 import plantillas_produccion as plantillas
@@ -182,6 +183,43 @@ class ContornoSalida(BaseModel):
     contorno: dict | None = None
     area_m2: float | None = None
     contorno_actualizado_en: datetime | None = None
+    # La versión vigente y su huella (la que queda sellada en la cadena con cada siembra y cada cosecha).
+    version: int | None = None
+    hash_sha256: str | None = None
+
+
+class ContornoVersionSalida(BaseModel):
+    """Una versión del contorno de una chacra (GET /chacras/{id}/contorno/versiones): con el polígono, para poder
+    recalcular su huella. Solo para el dueño o un admin."""
+    version: int
+    hash_sha256: str
+    creado_en: datetime | None = None
+    vigente: bool
+    contorno: dict
+
+
+class GeocercaMomento(BaseModel):
+    """La geocerca de una siembra o de una cosecha, sin coordenadas. Todo nulo en un registro de antes."""
+    metodo: str | None = None              # poligono | radio
+    resultado: str | None = None           # dentro | cerca | fuera | precision_baja | sin_gps | radio
+    distancia_borde_m: float | None = None
+    precision_m: float | None = None
+    distancia_km: float | None = None      # al punto registrado de la chacra, como siempre
+    contorno_sha256: str | None = None
+
+
+class GeocercaRegistro(BaseModel):
+    """Lo que ve el admin al recibir una cosecha en el almacén (GET /productores/produccion/{id}/geocerca): dónde estaba
+    el agricultor respecto de su chacra al sembrar y al cosechar. Nunca coordenadas ni el polígono."""
+    registro_id: uuid.UUID
+    estado: str
+    chacra_codigo: str | None = None
+    chacra_nombre: str | None = None
+    radio_km: float
+    tolerancia_borde_m: float
+    precision_maxima_m: float
+    siembra: GeocercaMomento
+    cosecha: GeocercaMomento
 
 
 class OrigenPublico(BaseModel):
@@ -202,11 +240,16 @@ class _ConUbicacionGps(BaseModel):
     permiso, sin señal) se registra igual, con advertencia en la cadena. Si llega, tienen que llegar las dos."""
     latitud: Latitud | None = None
     longitud: Longitud | None = None
+    # La precisión que dio el GPS del teléfono, en metros (coords.accuracy). Opcional: un cliente de antes no la manda.
+    # Con más de 100 m la geocerca por contorno queda como "precision_baja"; nunca impide registrar.
+    precision_m: float | None = Field(default=None, ge=0, le=1_000_000)
 
     @model_validator(mode="after")
     def _las_dos_o_ninguna(self):
         if (self.latitud is None) != (self.longitud is None):
             raise ValueError("La ubicación necesita latitud y longitud")
+        if self.latitud is None:
+            self.precision_m = None   # sin ubicación no hay precisión que guardar
         return self
 
 
@@ -312,6 +355,67 @@ def calcular_distancia_km(lat1, lon1, lat2, lon2):
     dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     return round(radio_tierra * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)), 3)
+
+
+# ---- Versiones del contorno y geocerca (ver contornos.py) ----
+
+def _nueva_version_del_contorno(chacra, contorno, db: Session) -> models.ChacraContornoVersion:
+    """Guarda `contorno` como la versión siguiente de la chacra y la deja como vigente. Si es idéntico a la última
+    versión guardada (misma huella: el agricultor volvió a guardar sin cambiar nada, o repuso el que había quitado),
+    no se duplica: vuelve a ser la vigente."""
+    huella = contornos.hash_del_contorno(contorno)
+    ultima = db.query(models.ChacraContornoVersion).filter(
+        models.ChacraContornoVersion.chacra_id == chacra.id
+    ).order_by(models.ChacraContornoVersion.version.desc()).first()
+    if ultima is None or ultima.hash_sha256 != huella:
+        ultima = models.ChacraContornoVersion(
+            chacra_id=chacra.id, version=(ultima.version + 1 if ultima else 1), contorno=contorno, hash_sha256=huella,
+        )
+        db.add(ultima)
+        db.flush()
+    chacra.contorno_version_id = ultima.id
+    return ultima
+
+
+def _version_vigente_del_contorno(chacra, db: Session) -> models.ChacraContornoVersion | None:
+    """La versión del contorno contra la que se mide hoy la geocerca; None si la chacra no tiene contorno. Un contorno
+    guardado antes de que existieran las versiones recibe la suya la primera vez que hace falta."""
+    if chacra is None or chacra.contorno is None:
+        return None
+    if chacra.contorno_version_id:
+        version = db.get(models.ChacraContornoVersion, chacra.contorno_version_id)
+        if version is not None:
+            return version
+    return _nueva_version_del_contorno(chacra, chacra.contorno, db)
+
+
+def _geocerca_de(chacra, datos, db: Session) -> dict:
+    """Las columnas de geocerca (sin el prefijo siembra_/cosecha_) para lo que mandó el agricultor: método, resultado,
+    distancia al borde, precisión y, con contorno, la versión contra la que se midió y su huella."""
+    version = _version_vigente_del_contorno(chacra, db)
+    geocerca = contornos.evaluar_geocerca(
+        version.contorno if version else None, datos.latitud, datos.longitud, datos.precision_m, calcular_distancia_km,
+    )
+    geocerca["contorno_version_id"] = version.id if version else None
+    geocerca["contorno_hash"] = version.hash_sha256 if version else None
+    return geocerca
+
+
+def _poner_geocerca(registro, momento: str, geocerca: dict) -> None:
+    """momento: "siembra" o "cosecha"."""
+    for campo, valor in geocerca.items():
+        setattr(registro, f"{momento}_{campo}", valor)
+
+
+def _geocerca_del_momento(registro, momento: str) -> "GeocercaMomento":
+    return GeocercaMomento(
+        metodo=getattr(registro, f"{momento}_metodo_geocerca"),
+        resultado=getattr(registro, f"{momento}_resultado_geocerca"),
+        distancia_borde_m=getattr(registro, f"{momento}_distancia_borde_m"),
+        precision_m=getattr(registro, f"{momento}_precision_m"),
+        distancia_km=getattr(registro, f"{momento}_distancia_km"),
+        contorno_sha256=getattr(registro, f"{momento}_contorno_hash"),
+    )
 
 
 def _distancia_a_la_chacra(chacra, latitud, longitud):
@@ -562,31 +666,59 @@ def eliminar_chacra(
             detail="Esta chacra ya tiene cosechas en su historia (quedaron en la cadena de certificación): no se "
                    "elimina. Si quieres, cámbiale el nombre.",
         )
+    # Sin siembras, ninguna huella de sus contornos quedó sellada en la cadena: sus versiones se van con ella.
+    db.query(models.ChacraContornoVersion).filter(models.ChacraContornoVersion.chacra_id == chacra.id).delete()
     db.delete(chacra)
     db.commit()
     return {"mensaje": "Chacra eliminada"}
 
 
 # El contorno exacto ubica la finca: además del dueño solo lo ve el admin. Un productor ve el de sus chacras (403 en
-# una ajena, como en el resto de /chacras); cualquier otro rol, ninguno. El rol "verificador" se retiró del todo: una
-# cuenta de antes que todavía lo tenga recibe 403 como las demás.
+# una ajena, como en el resto de /chacras); cualquier otro rol, ninguno.
+def _chacra_para_ver_su_contorno(chacra_id: uuid.UUID, usuario: dict, db: Session) -> models.Chacra:
+    if usuario.get("rol") == "productor":
+        return _obtener_chacra_propia(str(chacra_id), _obtener_productor_del_token(usuario, db), db)
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == chacra_id).first()
+    if not chacra:
+        raise HTTPException(status_code=404, detail="Chacra no encontrada")
+    return chacra
+
+
 @app.get("/chacras/{chacra_id}/contorno", response_model=ContornoSalida)
 def ver_contorno(
     chacra_id: uuid.UUID,
     db: Session = Depends(get_db),
     usuario: dict = Depends(requiere_rol("productor", "admin")),
 ):
-    if usuario.get("rol") == "productor":
-        productor = _obtener_productor_del_token(usuario, db)
-        chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
-    else:
-        chacra = db.query(models.Chacra).filter(models.Chacra.id == chacra_id).first()
-        if not chacra:
-            raise HTTPException(status_code=404, detail="Chacra no encontrada")
+    chacra = _chacra_para_ver_su_contorno(chacra_id, usuario, db)
+    version = _version_vigente_del_contorno(chacra, db)
+    db.commit()   # por si un contorno de antes acaba de recibir su versión
     return ContornoSalida(
         chacra_id=chacra.id, productor_id=chacra.productor_id, codigo=chacra.codigo, nombre=chacra.nombre,
         contorno=chacra.contorno, area_m2=chacra.area_m2, contorno_actualizado_en=chacra.contorno_actualizado_en,
+        version=version.version if version else None, hash_sha256=version.hash_sha256 if version else None,
     )
+
+
+# Todas las versiones que tuvo el contorno, con su polígono: sirve para recalcular la huella que quedó sellada en la
+# cadena de certificación con una siembra o una cosecha de aquel momento. Mismos permisos que el contorno exacto.
+@app.get("/chacras/{chacra_id}/contorno/versiones", response_model=list[ContornoVersionSalida])
+def versiones_del_contorno(
+    chacra_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("productor", "admin")),
+):
+    chacra = _chacra_para_ver_su_contorno(chacra_id, usuario, db)
+    _version_vigente_del_contorno(chacra, db)
+    db.commit()
+    versiones = db.query(models.ChacraContornoVersion).filter(
+        models.ChacraContornoVersion.chacra_id == chacra.id
+    ).order_by(models.ChacraContornoVersion.version).all()
+    return [
+        ContornoVersionSalida(version=v.version, hash_sha256=v.hash_sha256, creado_en=v.creado_en,
+                              vigente=v.id == chacra.contorno_version_id, contorno=v.contorno)
+        for v in versiones
+    ]
 
 
 @app.put("/chacras/{chacra_id}/contorno", response_model=ChacraSalida)
@@ -599,6 +731,8 @@ def dibujar_contorno(
     """El contorno de la chacra dibujado sobre el mapa satelital. Se dibuja o se corrige aunque la chacra ya tenga
     cosechas: el punto registrado (el que quedó en la cadena de certificación) no cambia, y el contorno tiene que
     rodearlo o quedar a menos de 50 m de él. El área la calcula el servidor (contornos.py); la del cliente se ignora.
+    Cada contorno distinto queda como una versión nueva (ChacraContornoVersion): las siembras y cosechas ya
+    registradas conservan la versión y la huella contra las que se midieron.
     chacra_id va tipado como UUID: un id mal formado da 422 en vez de un error de la base."""
     productor = _obtener_productor_del_token(usuario, db)
     chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
@@ -610,6 +744,7 @@ def dibujar_contorno(
     chacra.contorno = contorno
     chacra.area_m2 = area_m2
     chacra.contorno_actualizado_en = datetime.utcnow()
+    _nueva_version_del_contorno(chacra, contorno, db)
     db.commit()
     db.refresh(chacra)
     return chacra
@@ -621,12 +756,14 @@ def borrar_contorno(
     db: Session = Depends(get_db),
     usuario: dict = Depends(requiere_rol("productor")),
 ):
-    """Quita el contorno dibujado; la chacra sigue con su punto registrado."""
+    """Quita el contorno dibujado; la chacra sigue con su punto registrado y sus siembras vuelven a medirse por el
+    radio. Las versiones guardadas NO se borran: son la prueba de las huellas ya selladas en la cadena."""
     productor = _obtener_productor_del_token(usuario, db)
     chacra = _obtener_chacra_propia(str(chacra_id), productor, db)
     chacra.contorno = None
     chacra.area_m2 = None
     chacra.contorno_actualizado_en = None
+    chacra.contorno_version_id = None
     db.commit()
     db.refresh(chacra)
     return chacra
@@ -673,6 +810,27 @@ def _texto_ubicacion(momento: str, distancia_km, lugar: str = "chacra") -> str:
     return f"Al {momento}: a {_km(distancia_km, '.2f')} km de la {lugar} (dentro del radio de {radio} km)."
 
 
+def _frases_de_ubicacion(momento_texto: str, momento: str, registro, lugar: str) -> list[str]:
+    """Lo que la cadena dice de dónde estaba el agricultor en un momento ("siembra" o "cosecha"):
+    - la frase de siempre (distancia en km al punto de la chacra, o "sin ubicación GPS"), cuando la geocerca fue por el
+      radio, cuando no hubo GPS y en los registros de antes;
+    - la frase de formato fijo de la geocerca (contornos.frase_de_geocerca), si el registro la tiene. Con contorno es la
+      única: lo que vale es el resultado contra el polígono, con la huella de su versión.
+    Ninguna lleva coordenadas."""
+    metodo = getattr(registro, f"{momento}_metodo_geocerca", None)
+    resultado = getattr(registro, f"{momento}_resultado_geocerca", None)
+    frases = []
+    if metodo != contornos.METODO_POLIGONO or resultado == "sin_gps":
+        frases.append(_texto_ubicacion(momento_texto, getattr(registro, f"{momento}_distancia_km"), lugar))
+    if metodo:
+        frases.append(contornos.frase_de_geocerca(
+            momento, metodo, resultado,
+            getattr(registro, f"{momento}_distancia_borde_m", None), getattr(registro, f"{momento}_precision_m", None),
+            getattr(registro, f"{momento}_contorno_hash", None),
+        ))
+    return frases
+
+
 def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: str) -> bool:
     """Deja en la cadena de Certificación el primer evento del producto (cosecha_registrada) con la evidencia en
     origen: dónde estaba el agricultor al sembrar y al cosechar respecto de su chacra, y la huella SHA-256 de la foto
@@ -691,8 +849,8 @@ def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: s
         f"{float(registro.cantidad_cosechada):g} {registro.unidad_medida} de {registro.cultivo} {t['obtenidos']} en "
         f"{ubicacion} por {productor.nombre} ({t['desde']} {_fecha(registro.fecha_siembra)}, "
         f"{t['hasta']} {_fecha(registro.fecha_cosecha_real)}).",
-        _texto_ubicacion(t["al_inicio"], registro.siembra_distancia_km, lugar),
-        _texto_ubicacion(t["al_fin"], registro.cosecha_distancia_km, lugar),
+        *_frases_de_ubicacion(t["al_inicio"], "siembra", registro, lugar),
+        *_frases_de_ubicacion(t["al_fin"], "cosecha", registro, lugar),
     ]
     if registro.foto_cosecha_sha256:
         partes.append(f"{t['foto']} (SHA-256 {registro.foto_cosecha_sha256}).")
@@ -820,6 +978,11 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "siembra_distancia_km": registro.siembra_distancia_km,
         "cosecha_distancia_km": registro.cosecha_distancia_km,
         "radio_chacra_km": RADIO_CHACRA_KM,
+        # Geocerca de cada momento (método, resultado, metros al borde, precisión del GPS y huella del contorno):
+        # nulos en los registros de antes. Tampoco llevan coordenadas.
+        **{f"{momento}_{campo}": getattr(registro, f"{momento}_{campo}")
+           for momento in ("siembra", "cosecha")
+           for campo in ("metodo_geocerca", "resultado_geocerca", "distancia_borde_m", "precision_m", "contorno_hash")},
         "foto_cosecha_url": registro.foto_cosecha_url,
         **_resumen_plantilla(registro, db),
         **_calcular_metricas(registro, cache_precios),
@@ -891,6 +1054,7 @@ def crear_registro_produccion(
         siembra_longitud=datos.longitud,
         siembra_distancia_km=_distancia_a_la_chacra(chacra, datos.latitud, datos.longitud),
     )
+    _poner_geocerca(nuevo, "siembra", _geocerca_de(chacra, datos, db))
     db.add(nuevo)
     db.flush()
     gastos = [_gasto_validado(plantilla, g, datos.fecha_siembra) for g in datos.gastos]
@@ -1127,6 +1291,7 @@ def completar_cosecha(
     registro.cosecha_latitud = datos.latitud
     registro.cosecha_longitud = datos.longitud
     registro.cosecha_distancia_km = _distancia_a_la_chacra(chacra, datos.latitud, datos.longitud)
+    _poner_geocerca(registro, "cosecha", _geocerca_de(chacra, datos, db))
 
     # El producto se crea ANTES de confirmar: si falla, nada de lo de arriba se guarda (la sesión se descarta) y el
     # agricultor puede reintentar; nunca queda una cosecha "cosechada" sin su producto.
@@ -1311,6 +1476,27 @@ def plantilla_para_un_nombre(nombre: str = Query(min_length=1, max_length=80)):
     la genérica de cultivo de temporada (reconocido=false)."""
     clave = plantillas.clave_para(nombre)
     return {**plantillas.plantilla(clave or ""), "reconocido": clave is not None}
+
+
+# Para el admin al recibir la cosecha en el almacén: dónde estaba el agricultor respecto de su chacra. response_model
+# es la garantía de que no salen las coordenadas guardadas en el registro (siembra_latitud, cosecha_longitud...).
+@app.get("/productores/produccion/{registro_id}/geocerca", response_model=GeocercaRegistro)
+def geocerca_del_registro(
+    registro_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("admin")),
+):
+    registro = db.query(models.RegistroProduccion).filter(models.RegistroProduccion.id == registro_id).first()
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
+    chacra = db.query(models.Chacra).filter(models.Chacra.id == registro.chacra_id).first()
+    return GeocercaRegistro(
+        registro_id=registro.id, estado=registro.estado,
+        chacra_codigo=chacra.codigo if chacra else None, chacra_nombre=chacra.nombre if chacra else None,
+        radio_km=RADIO_CHACRA_KM, tolerancia_borde_m=contornos.TOLERANCIA_PUNTO_M,
+        precision_maxima_m=contornos.PRECISION_MAXIMA_M,
+        siembra=_geocerca_del_momento(registro, "siembra"), cosecha=_geocerca_del_momento(registro, "cosecha"),
+    )
 
 
 # Pública a propósito (la consume el detalle de producto, sin sesión): de qué chacra salió, sin decir dónde está.

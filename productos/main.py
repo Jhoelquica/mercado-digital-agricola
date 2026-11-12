@@ -672,6 +672,9 @@ def listar_productos(db: Session = Depends(get_db)):
             "calificacion_promedio": stats_por_producto.get(str(p.id), (None, 0))[0],
             "total_resenas": stats_por_producto.get(str(p.id), (None, 0))[1],
             "estado": p.estado,
+            # La siembra de la que nació (None en los creados a mano), igual que en el detalle: con ella el admin
+            # consulta la geocerca de la cosecha al recibirla en el almacén.
+            "registro_produccion_id": p.registro_produccion_id,
             "unidades_alternativas": alternativas_a_la_venta(p, unidades_por_producto.get(str(p.id), [])),
             "unidades_permitidas": unidades_permitidas_de(p),
         }
