@@ -1572,23 +1572,23 @@ def test_origen_publico_de_un_registro_que_no_existe_da_404_y_un_id_mal_formado_
     assert client.get("/productores/produccion/no-es-un-uuid/origen").status_code == 422
 
 
-def test_contorno_exacto_lo_ven_el_dueno_el_verificador_y_el_admin():
+def test_contorno_exacto_lo_ven_el_dueno_y_el_admin():
     registro_id, chacra = _siembra_en_chacra_con_contorno()   # queda autenticado el dueño
     ruta = f"/chacras/{chacra['id']}/contorno"
     dueno = client.get(ruta)
     assert dueno.status_code == 200, dueno.text
     assert dueno.json()["contorno"] == chacra["contorno"] and dueno.json()["area_m2"] == chacra["area_m2"]
     assert dueno.json()["chacra_id"] == chacra["id"] and dueno.json()["codigo"] == chacra["codigo"]
-    for rol in ("verificador", "admin"):
-        _auth(str(uuid.uuid4()), rol)
-        resp = client.get(ruta)
-        assert resp.status_code == 200 and resp.json()["contorno"] == chacra["contorno"], (rol, resp.text)
+    _auth(str(uuid.uuid4()), "admin")
+    admin = client.get(ruta)
+    assert admin.status_code == 200 and admin.json()["contorno"] == chacra["contorno"], admin.text
 
 
 def test_contorno_exacto_no_lo_ven_el_comprador_el_productor_ajeno_ni_quien_no_tiene_token():
     registro_id, chacra = _siembra_en_chacra_con_contorno()
     ruta = f"/chacras/{chacra['id']}/contorno"
-    for rol in ("comprador", "repartidor"):
+    # "verificador": el rol se retiró del todo; una cuenta de antes que aún lo tenga no ve ningún contorno.
+    for rol in ("comprador", "repartidor", "verificador"):
         _auth(str(uuid.uuid4()), rol)
         resp = client.get(ruta)
         assert resp.status_code == 403 and "contorno" not in resp.text.replace("/contorno", ""), (rol, resp.text)

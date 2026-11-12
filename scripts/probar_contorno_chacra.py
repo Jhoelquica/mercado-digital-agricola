@@ -8,9 +8,7 @@ primera chacra real de esa cuenta (o en Ayacucho si no tiene ninguna) y recorre 
     punto de la chacra fuera del contorno (422), chacra ajena (403; su id sale de la base con kubectl), DELETE del
     contorno (200 y GET sin él).
   GET /chacras/{id}/contorno (el contorno exacto, por rol)
-    dueño 200, admin 200 (QA_ADMIN_*), verificador 200, comprador 403 (QA_EMAIL), productor ajeno 403, sin token 401.
-    El rol "verificador" ya no se puede registrar ni tiene cuenta QA: su token se firma aquí con el JWT_SECRET del
-    clúster LOCAL (leído con kubectl, nunca se imprime). Con otro contexto que no sea docker-desktop ese caso se omite.
+    dueño 200, admin 200 (QA_ADMIN_*), comprador 403 (QA_EMAIL), productor ajeno 403, sin token 401.
   GET /productores/produccion/{registro_id}/origen (público)
     sin token 200 con solo chacra_codigo, chacra_nombre, area_m2 y tiene_contorno; ni el polígono ni coordenadas, con
     ningún nombre de clave ni como texto; un registro que no existe, 404. Usa una siembra real de la cuenta QA, solo
@@ -23,14 +21,10 @@ Uso (desde la raíz del repositorio, con el clúster docker-desktop arriba):
 Sale con código 1 si algún caso falla.
 """
 import argparse
-import base64
-import hashlib
-import hmac
 import json
 import math
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -125,25 +119,6 @@ def chacra_ajena(contexto, productor_id):
                    f'psql -U "$POSTGRES_USER" -d productores -tAc "{consulta}"') or None
 
 
-def token_de_rol(contexto, rol):
-    """Un token de 5 minutos con ese rol y un usuario inventado, firmado (HS256) con el JWT_SECRET del clúster local.
-    Solo para probar permisos de un rol que no tiene cuenta. None si no es el clúster local o no se pudo leer el secreto."""
-    if contexto != CONTEXTO_LOCAL:
-        return None
-    secreto = base64.b64decode(kubectl(contexto, "get", "secret", "credenciales-app", "-o", "jsonpath={.data.JWT_SECRET}") or "")
-    if not secreto:
-        return None
-
-    def b64(crudo):
-        return base64.urlsafe_b64encode(crudo).rstrip(b"=")
-
-    def parte(dato):
-        return b64(json.dumps(dato, separators=(",", ":")).encode("utf-8"))
-
-    firmado = parte({"alg": "HS256", "typ": "JWT"}) + b"." + parte({"sub": str(uuid.uuid4()), "rol": rol, "exp": int(time.time()) + 300})
-    return (firmado + b"." + b64(hmac.new(secreto, firmado, hashlib.sha256).digest())).decode("ascii")
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="http://localhost:8000/api")
@@ -221,15 +196,6 @@ def main():
         admin = Api(args.base).entrar(env["QA_ADMIN_EMAIL"], env["QA_ADMIN_PASSWORD"], "admin")
         estado, cuerpo = admin.llamar("GET", ruta)
         caso("admin → 200", estado == 200 and cuerpo.get("contorno") == guardado, detalle_de(estado, cuerpo) if estado != 200 else "200")
-
-        token_verificador = token_de_rol(args.contexto, "verificador")
-        if token_verificador:
-            estado, cuerpo = Api(args.base, token_verificador).llamar("GET", ruta)
-            caso("verificador → 200", estado == 200 and cuerpo.get("contorno") == guardado, detalle_de(estado, cuerpo) if estado != 200 else "200")
-        elif args.contexto != CONTEXTO_LOCAL:
-            print(f"  [OMITIDO] verificador → 200: solo se firma un token de prueba en el clúster local ({CONTEXTO_LOCAL})")
-        else:
-            caso("verificador → 200", False, "no se pudo leer JWT_SECRET del clúster para firmar el token de prueba")
 
         comprador = Api(args.base).entrar(env["QA_EMAIL"], env["QA_PASSWORD"], "comprador")
         estado, cuerpo = comprador.llamar("GET", ruta)

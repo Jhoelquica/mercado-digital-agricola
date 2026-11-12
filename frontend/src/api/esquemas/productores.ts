@@ -87,7 +87,7 @@ export interface components {
         };
         /**
          * ContornoSalida
-         * @description El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño, un verificador o un admin.
+         * @description El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño o un admin.
          */
         ContornoSalida: {
             /**

@@ -174,7 +174,7 @@ class ContornoDatos(BaseModel):
 
 
 class ContornoSalida(BaseModel):
-    """El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño, un verificador o un admin."""
+    """El contorno EXACTO de una chacra (GET /chacras/{id}/contorno): solo para su dueño o un admin."""
     chacra_id: uuid.UUID
     productor_id: uuid.UUID
     codigo: str
@@ -567,13 +567,14 @@ def eliminar_chacra(
     return {"mensaje": "Chacra eliminada"}
 
 
-# El contorno exacto ubica la finca: además del dueño lo ven quienes verifican el origen (rol "verificador") y el admin.
-# Un productor solo ve el de sus chacras (403 en una ajena, como en el resto de /chacras); un comprador, ninguno.
+# El contorno exacto ubica la finca: además del dueño solo lo ve el admin. Un productor ve el de sus chacras (403 en
+# una ajena, como en el resto de /chacras); cualquier otro rol, ninguno. El rol "verificador" se retiró del todo: una
+# cuenta de antes que todavía lo tenga recibe 403 como las demás.
 @app.get("/chacras/{chacra_id}/contorno", response_model=ContornoSalida)
 def ver_contorno(
     chacra_id: uuid.UUID,
     db: Session = Depends(get_db),
-    usuario: dict = Depends(requiere_rol("productor", "verificador", "admin")),
+    usuario: dict = Depends(requiere_rol("productor", "admin")),
 ):
     if usuario.get("rol") == "productor":
         productor = _obtener_productor_del_token(usuario, db)
