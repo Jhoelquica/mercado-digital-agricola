@@ -6,6 +6,8 @@ type Esquemas = components['schemas'];
 export type ProductorPublico = Esquemas['ProductorPublico'];
 // De qué chacra salió un producto (público, sin sesión): su nombre, su área y si tiene contorno. Nunca dónde está.
 export type OrigenPublico = Esquemas['OrigenPublico'];
+// La geocerca de una siembra y su cosecha para el admin (llegada al almacén): resultados, sin coordenadas.
+export type GeocercaRegistro = Esquemas['GeocercaRegistro'];
 
 // Lista completa, con contacto y coordenadas exactas: el dueño o un admin.
 export interface Productor {
@@ -134,6 +136,18 @@ export interface RegistroProduccion {
   siembra_distancia_km: number | null;
   cosecha_distancia_km: number | null;
   radio_chacra_km: number;
+  // Geocerca de cada momento: "poligono" (contra el contorno de la chacra) o "radio"; el resultado es dentro | cerca |
+  // fuera | precision_baja | sin_gps | radio. Nulos en los registros de antes.
+  siembra_metodo_geocerca: string | null;
+  siembra_resultado_geocerca: string | null;
+  siembra_distancia_borde_m: number | null;
+  siembra_precision_m: number | null;
+  siembra_contorno_hash: string | null;
+  cosecha_metodo_geocerca: string | null;
+  cosecha_resultado_geocerca: string | null;
+  cosecha_distancia_borde_m: number | null;
+  cosecha_precision_m: number | null;
+  cosecha_contorno_hash: string | null;
   foto_cosecha_url: string | null;
   plantilla: string | null;
   tipo_produccion: string | null;
@@ -207,6 +221,8 @@ export const productores = {
   produccion: {
     // Público: la chacra de origen de la siembra de la que salió un producto, sin el contorno ni coordenadas.
     origen: (id: string) => request<OrigenPublico>('productores', `/productores/produccion/${id}/origen`),
+    // Solo el admin: dónde estaba el agricultor respecto de su chacra al sembrar y al cosechar (sin coordenadas).
+    geocerca: (id: string) => request<GeocercaRegistro>('productores', `/productores/produccion/${id}/geocerca`, { auth: true }),
     crear: (datos: Esquemas['RegistroProduccionCrear']) => request<RegistroProduccion>('productores', '/productores/produccion', { method: 'POST', body: datos, auth: true }),
     // Gastos por etapa de un registro (con plantilla): se anotan cuando ocurren.
     gastos: (id: string) => request<DetalleGastos>('productores', `/productores/produccion/${id}/gastos`, { auth: true }),

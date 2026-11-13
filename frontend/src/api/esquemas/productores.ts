@@ -63,6 +63,8 @@ export interface components {
             latitud?: number | null;
             /** Longitud */
             longitud?: number | null;
+            /** Precision M */
+            precision_m?: number | null;
             /** Cantidad Cosechada */
             cantidad_cosechada: number;
             /**
@@ -112,6 +114,29 @@ export interface components {
             area_m2?: number | null;
             /** Contorno Actualizado En */
             contorno_actualizado_en?: string | null;
+            /** Version */
+            version?: number | null;
+            /** Hash Sha256 */
+            hash_sha256?: string | null;
+        };
+        /**
+         * ContornoVersionSalida
+         * @description Una versión del contorno de una chacra (GET /chacras/{id}/contorno/versiones): con el polígono, para poder
+         *     recalcular su huella. Solo para el dueño o un admin.
+         */
+        ContornoVersionSalida: {
+            /** Version */
+            version: number;
+            /** Hash Sha256 */
+            hash_sha256: string;
+            /** Creado En */
+            creado_en?: string | null;
+            /** Vigente */
+            vigente: boolean;
+            /** Contorno */
+            contorno: {
+                [key: string]: unknown;
+            };
         };
         /**
          * GastoDatos
@@ -138,6 +163,50 @@ export interface components {
             peones?: number | null;
             /** Dias */
             dias?: number | null;
+        };
+        /**
+         * GeocercaMomento
+         * @description La geocerca de una siembra o de una cosecha, sin coordenadas. Todo nulo en un registro de antes.
+         */
+        GeocercaMomento: {
+            /** Metodo */
+            metodo?: string | null;
+            /** Resultado */
+            resultado?: string | null;
+            /** Distancia Borde M */
+            distancia_borde_m?: number | null;
+            /** Precision M */
+            precision_m?: number | null;
+            /** Distancia Km */
+            distancia_km?: number | null;
+            /** Contorno Sha256 */
+            contorno_sha256?: string | null;
+        };
+        /**
+         * GeocercaRegistro
+         * @description Lo que ve el admin al recibir una cosecha en el almacén (GET /productores/produccion/{id}/geocerca): dónde estaba
+         *     el agricultor respecto de su chacra al sembrar y al cosechar. Nunca coordenadas ni el polígono.
+         */
+        GeocercaRegistro: {
+            /**
+             * Registro Id
+             * Format: uuid
+             */
+            registro_id: string;
+            /** Estado */
+            estado: string;
+            /** Chacra Codigo */
+            chacra_codigo?: string | null;
+            /** Chacra Nombre */
+            chacra_nombre?: string | null;
+            /** Radio Km */
+            radio_km: number;
+            /** Tolerancia Borde M */
+            tolerancia_borde_m: number;
+            /** Precision Maxima M */
+            precision_maxima_m: number;
+            siembra: components["schemas"]["GeocercaMomento"];
+            cosecha: components["schemas"]["GeocercaMomento"];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -209,6 +278,8 @@ export interface components {
             latitud?: number | null;
             /** Longitud */
             longitud?: number | null;
+            /** Precision M */
+            precision_m?: number | null;
             /**
              * Chacra Id
              * Format: uuid

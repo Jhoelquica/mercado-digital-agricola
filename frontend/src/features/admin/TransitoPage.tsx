@@ -1,13 +1,15 @@
 // /admin/transito: productos publicados que todavía no llegan al almacén. Cómo llega cada uno (lo trae el agricultor, un
 // repartidor o un transporte contratado por el admin cuando ningún vehículo registrado la carga) y la confirmación de la
 // llegada con lo que pesó el almacén: desde ahí se puede comprar.
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState, type FormEvent } from 'react';
+import { productores } from '../../api/productores';
 import { productos, type ProductoCatalogo } from '../../api/productos';
 import { recojos, type Recojo } from '../../api/recojos';
 import { SkeletonFilas } from '../../components/SkeletonFilas';
 import { manejarError, toast } from '../../components/Toast';
 import { formatearMoneda } from '../../lib/formato';
+import { etiquetaDeGeocercaDelAlmacen } from '../../lib/geocerca';
 import { CODIGOS_UNIDADES, infoUnidad, nombreCategoria } from '../../lib/productos';
 import { datosTransporteContratado, evaluarCantidadLlegada, fechaHoraLegible, type CamposTransporteContratado } from '../../lib/reglas';
 import { formatearTelefono } from '../pedidos/estadoPedido';
@@ -191,6 +193,23 @@ function FormLlegada({ p, declarada, unidad }: { p: ProductoCatalogo; declarada:
   );
 }
 
+// Dónde estaba el agricultor respecto de su chacra al registrar esta cosecha: una sola etiqueta, con ícono y texto. El
+// servidor manda el resultado de la geocerca, nunca coordenadas. Si falla o el registro no tiene nada, no se muestra.
+function EtiquetaGeocerca({ registroId }: { registroId: string }) {
+  const { data } = useQuery({
+    queryKey: ['admin', 'geocerca', registroId],
+    queryFn: () => productores.produccion.geocerca(registroId).catch(() => null),
+    staleTime: 5 * 60_000,
+  });
+  const etiqueta = data ? etiquetaDeGeocercaDelAlmacen(data.cosecha, data.radio_km) : null;
+  if (!etiqueta) return null;
+  return (
+    <p className={`alm-admin-geocerca${etiqueta.advertencia ? ' es-advertencia' : ''}`} data-resultado={etiqueta.resultado}>
+      <i className={`ti ti-${etiqueta.icono}`} aria-hidden="true" /> <span>{etiqueta.texto}</span>
+    </p>
+  );
+}
+
 function TarjetaProductoTransito({ p, reservas, recojo, indice }: { p: ProductoCatalogo; reservas: number; recojo: Recojo | null; indice: number }) {
   const unidad = p.unidad_medida && CODIGOS_UNIDADES.includes(p.unidad_medida) ? infoUnidad(p.unidad_medida).etiqueta : (p.unidad_medida || 'kg');
   const declarada = Math.max(Number(p.stock) || 0, 0);
@@ -209,6 +228,7 @@ function TarjetaProductoTransito({ p, reservas, recojo, indice }: { p: ProductoC
         {dato('Reservas', reservas)}
       </div>
       <LlegadaEsperada r={recojo} />
+      {p.registro_produccion_id && <EtiquetaGeocerca registroId={p.registro_produccion_id} />}
       <FormLlegada p={p} declarada={declarada} unidad={unidad} />
     </div>
   );

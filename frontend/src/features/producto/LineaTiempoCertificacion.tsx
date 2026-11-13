@@ -1,6 +1,7 @@
 import { normalizarUrlImagen } from '../../api/imagenes';
 import type { Bloque } from '../../api/certificacion';
 import { formatearFechaServidor, hashCorto } from '../../lib/formato';
+import { textoPublicoDeGeocerca } from '../../lib/geocerca';
 
 const EVENTOS_CERTIFICACION: Record<string, { icono: string; texto: string }> = {
   cosecha_registrada: { icono: 'wheat', texto: 'Cosecha registrada' },
@@ -15,12 +16,32 @@ function labelEvento(evento: string) {
 
 // El texto de un bloque de cosecha trae varias oraciones (cantidad y chacra; dónde estaba el agricultor al sembrar y al
 // cosechar; la huella de la foto): se muestran una por línea y las advertencias con su ícono, no solo con color.
+// La frase de la geocerca ("Geocerca siembra: metodo=...") se muestra como "Ubicación confirmada en la chacra" solo si
+// lo sellado es dentro o cerca; con cualquier otro resultado va tal como está en la cadena, sin decir "confirmada".
 export function DatosDeBloque({ datos }: { datos: string }) {
   const frases = String(datos).split(/(?<=\.)\s+(?=[A-ZÁÉÍÓÚÑ])/);
   if (frases.length < 2) return <p className="timeline-datos">{datos}</p>;
   return (
     <ul className="timeline-datos timeline-datos-lista">
       {frases.map((frase) => {
+        const geocerca = textoPublicoDeGeocerca(frase);
+        if (geocerca?.confirmada) {
+          return (
+            <li key={frase} className="es-confirmada" data-geocerca={geocerca.resultado} title={frase}>
+              <i className="ti ti-map-pin-check" aria-hidden="true" />
+              <span>{geocerca.texto} <small>({geocerca.momento === 'siembra' ? 'al sembrar' : 'al cosechar'})</small></span>
+            </li>
+          );
+        }
+        if (geocerca) {
+          // Sin contorno (método del radio) es un dato más; fuera, con poca precisión o sin GPS, una advertencia.
+          const aviso = geocerca.resultado !== 'radio';
+          return (
+            <li key={frase} className={`es-geocerca${aviso ? ' es-advertencia' : ''}`} data-geocerca={geocerca.resultado}>
+              <i className={`ti ti-${aviso ? 'alert-triangle' : 'map-pin'}`} aria-hidden="true" /><span>{geocerca.texto}</span>
+            </li>
+          );
+        }
         const advertencia = frase.includes('(advertencia)');
         const icono = advertencia ? 'alert-triangle'
           : /^Al (registrar|completar)/.test(frase) ? 'map-pin'

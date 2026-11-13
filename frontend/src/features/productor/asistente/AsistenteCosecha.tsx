@@ -232,7 +232,7 @@ export function AsistenteCosecha({ registro, chacras, catalogo, alCerrar }: { re
             cantidad_cosechada: Number(estado.cantidad),
             fecha_cosecha_real: estado.fecha,
             ...(registro.plantilla ? { gastos: gastosParaEnviar(estado.gastosFinal) } : { costo_mano_obra: Number(estado.manoObra || 0) }),
-            ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng } : {}),
+            ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng, precision_m: estado.ubicacion.precision ?? null } : {}),
           });
         } catch (err) {
           console.error('completar la cosecha', err);

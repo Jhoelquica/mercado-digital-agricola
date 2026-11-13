@@ -6,6 +6,7 @@ import { productores, type CatalogoPlantillas, type DetalleGastos, type Registro
 import { manejarError, toast } from '../../components/Toast';
 import { Texto } from '../../idioma/IdiomaContext';
 import { formatearMoneda } from '../../lib/formato';
+import { textoDeGeocerca } from '../../lib/geocerca';
 import { manoDeObra } from '../../lib/reglas';
 import { abrirAsistenteCosecha, abrirAsistenteSiembra, puedeHablar } from './asistente/abrir';
 import { textoTotalJornales } from './asistente/piezas';
@@ -22,6 +23,8 @@ function MensajeDeFormulario({ mensaje }: { mensaje: string }) {
     : <p className="form-entrega-mensaje hidden" role="alert" />;
 }
 
+// Con el contorno de la chacra, lo que vale es el resultado de la geocerca; sin él (o en un registro de antes), la
+// distancia al punto de la chacra.
 function textoDistancia(km: number | null, radio: number) {
   if (km == null) return { texto: 'sin ubicación', advertencia: true };
   return km <= radio ? { texto: `a ${formatearDistancia(km)} de tu chacra`, advertencia: false } : { texto: `a ${formatearDistancia(km)} de tu chacra (lejos)`, advertencia: true };
@@ -32,8 +35,8 @@ function EvidenciaRegistro({ r }: { r: RegistroProduccion }) {
   if (r.estado !== 'cosechado') return null;
   const radio = r.radio_chacra_km || RADIO_CHACRA_KM;
   const foto = r.foto_cosecha_url ? normalizarUrlImagen(r.foto_cosecha_url) : null;
-  const linea = (momento: string, km: number | null) => {
-    const d = textoDistancia(km, radio);
+  const linea = (momento: string, km: number | null, resultado: string | null, distanciaBordeM: number | null, precisionM: number | null) => {
+    const d = textoDeGeocerca(resultado, { distanciaBordeM, precisionM }) ?? textoDistancia(km, radio);
     return (
       <li className={d.advertencia ? 'es-advertencia' : ''}><i className={`ti ti-${d.advertencia ? 'alert-triangle' : 'map-pin'}`} aria-hidden="true" />
         <span><strong>{momento}:</strong> {d.texto}{d.advertencia ? ' — quedó como advertencia' : ''}</span></li>
@@ -42,7 +45,10 @@ function EvidenciaRegistro({ r }: { r: RegistroProduccion }) {
   return (
     <div className="evidencia-resumen">
       {foto && <a className="evidencia-resumen-foto" href={foto} target="_blank" rel="noopener"><img src={foto} alt={`Foto de la cosecha de ${r.cultivo}`} loading="lazy" /></a>}
-      <ul className="evidencia-resumen-lista">{linea('Siembra', r.siembra_distancia_km)}{linea('Cosecha', r.cosecha_distancia_km)}</ul>
+      <ul className="evidencia-resumen-lista">
+        {linea('Siembra', r.siembra_distancia_km, r.siembra_resultado_geocerca, r.siembra_distancia_borde_m, r.siembra_precision_m)}
+        {linea('Cosecha', r.cosecha_distancia_km, r.cosecha_resultado_geocerca, r.cosecha_distancia_borde_m, r.cosecha_precision_m)}
+      </ul>
     </div>
   );
 }

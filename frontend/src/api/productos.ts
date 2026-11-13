@@ -40,6 +40,8 @@ interface ProductoBase {
 
 export interface ProductoCatalogo extends ProductoBase {
   equivalencia_kg: number | null;
+  // La siembra de la que nació (null en los creados a mano); una respuesta en caché de antes puede no traerlo.
+  registro_produccion_id?: string | null;
   imagen_principal: string | null;
   calificacion_promedio: number | null;
   total_resenas: number;

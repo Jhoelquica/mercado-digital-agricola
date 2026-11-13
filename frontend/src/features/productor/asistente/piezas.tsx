@@ -1,7 +1,9 @@
 // Piezas que comparten los dos asistentes del agricultor: el paso "¿Estás en tu chacra?" (GPS) y los gastos por etapa.
+import type { Polygon } from 'geojson';
 import { useEffect, useRef, useState } from 'react';
 import type { CatalogoPlantillas, Etapa } from '../../../api/productores';
 import { formatearMoneda } from '../../../lib/formato';
+import { evaluarGeocerca, type PuntoGps } from '../../../lib/geocerca';
 import { manoDeObra } from '../../../lib/reglas';
 import { distanciaKm, formatearDistancia, nombreRubro, RADIO_CHACRA_KM, textoPeonesDias } from '../comun';
 import type { Paso, PropsPaso, ResumenPaso } from './Asistente';
@@ -9,9 +11,11 @@ import { Voz } from './voz';
 
 // ---------------------------------------------------------------- ubicación (evidencia de origen)
 // Una chacra registrada o la parcela del perfil ofrecida como chacra (se crea de verdad al registrar la siembra).
-export interface Lugar { id: string; codigo: string; nombre?: string | null; ubicacion_latitud: number; ubicacion_longitud: number }
-export interface ConUbicacion { chacraId: string | null; ubicacion?: { lat: number; lng: number } | null; sinUbicacion?: string }
-type EstadoGps = 'espera' | 'buscando' | 'tomada' | 'dentro' | 'fuera' | 'sin-gps';
+// Con el contorno dibujado, la geocerca se mide contra él; sin contorno, contra el punto y el radio de siempre.
+export interface Lugar { id: string; codigo: string; nombre?: string | null; ubicacion_latitud: number; ubicacion_longitud: number; contorno?: Polygon | null }
+// La ubicación va con la precisión que dio el GPS (coords.accuracy, en metros): el servidor la guarda con el registro.
+export interface ConUbicacion { chacraId: string | null; ubicacion?: PuntoGps | null; sinUbicacion?: string }
+type EstadoGps = 'espera' | 'buscando' | 'tomada' | 'dentro' | 'fuera' | 'imprecisa' | 'sin-gps';
 
 const ESTADOS_UBICACION: Record<EstadoGps, { icono: string; etiqueta: string }> = {
   espera: { icono: 'map-pin', etiqueta: 'Sin tomar' },
@@ -19,16 +23,19 @@ const ESTADOS_UBICACION: Record<EstadoGps, { icono: string; etiqueta: string }> 
   tomada: { icono: 'circle-check', etiqueta: 'Ubicación tomada' },
   dentro: { icono: 'circle-check', etiqueta: 'En tu chacra' },
   fuera: { icono: 'alert-triangle', etiqueta: 'Lejos de tu chacra' },
+  imprecisa: { icono: 'alert-triangle', etiqueta: 'Poca precisión' },
   'sin-gps': { icono: 'map-pin-off', etiqueta: 'Sin ubicación' },
 };
 
-function pedirUbicacionGps(): Promise<{ lat: number; lng: number }> {
+// Lectura fresca (maximumAge 0: no vale la posición que el teléfono guardó hace un rato) y de alta precisión, con
+// tiempo para que el GPS se asiente al aire libre. Devuelve también la precisión que declara el teléfono.
+function pedirUbicacionGps(): Promise<PuntoGps> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation || !window.isSecureContext) { reject({ code: 'sin-soporte' }); return; }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, precision: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : null }),
       reject,
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 },
     );
   });
 }
@@ -43,9 +50,21 @@ function mensajeSinUbicacion(err: { code?: number | string } | null): string {
     + 'Puedes intentarlo otra vez.';
 }
 
-// Con la ubicación ya tomada, dice si el agricultor está dentro de su chacra.
-function evaluarUbicacion(ubicacion: { lat: number; lng: number }, chacra: Lugar | null): [EstadoGps, string] {
+// Con la ubicación ya tomada, dice si el agricultor está dentro de su chacra: contra su contorno si lo dibujó (la
+// misma regla que el servidor, ver lib/geocerca.ts) y, si no, contra el punto y el radio de siempre.
+function evaluarUbicacion(ubicacion: PuntoGps, chacra: Lugar | null): [EstadoGps, string] {
   if (!chacra) return ['tomada', 'Ubicación tomada. Elige tu chacra para ver si estás dentro de ella.'];
+  if (chacra.contorno) {
+    const { resultado, distanciaBordeM } = evaluarGeocerca(chacra.contorno, ubicacion);
+    if (resultado === 'precision_baja') {
+      return ['imprecisa', `Tu teléfono dio una ubicación poco precisa (±${Math.round(ubicacion.precision ?? 0)} m). Se registrará igual, `
+        + 'pero quedará como advertencia en el certificado. Si puedes, sal a un lugar abierto y toca «Volver a tomar».'];
+    }
+    if (resultado === 'dentro') return ['dentro', `Estás dentro de tu chacra ${chacra.codigo} (dentro del contorno que dibujaste).`];
+    if (resultado === 'cerca') return ['dentro', `Estás a ${distanciaBordeM} m del borde de tu chacra ${chacra.codigo}: cuenta como dentro.`];
+    return ['fuera', `Estás a ${formatearDistancia((distanciaBordeM ?? 0) / 1000)} del borde de tu chacra ${chacra.codigo}. Se registrará igual, `
+      + 'pero quedará como advertencia en el certificado. Si puedes, hazlo desde tu chacra.'];
+  }
   const km = distanciaKm(ubicacion.lat, ubicacion.lng, chacra.ubicacion_latitud, chacra.ubicacion_longitud);
   if (km <= RADIO_CHACRA_KM) return ['dentro', `Estás dentro de tu chacra ${chacra.codigo} (a ${formatearDistancia(km)} del punto que registraste).`];
   return ['fuera', `Estás a ${formatearDistancia(km)} de tu chacra ${chacra.codigo}. Se registrará igual, `
@@ -127,6 +146,13 @@ function PasoUbicacion<E extends ConUbicacion>({ estado, cambiar, momento, tipoA
 export function pasoUbicacion<E extends ConUbicacion>(momento: string, tipoAviso: 'siembra' | 'cosecha', chacraPorId: (id: string | null) => Lugar | null): Paso<E> {
   const resumen = (estado: E): ResumenPaso => {
     const chacra = chacraPorId(estado.chacraId);
+    if (estado.ubicacion && chacra?.contorno) {
+      const { resultado, distanciaBordeM } = evaluarGeocerca(chacra.contorno, estado.ubicacion);
+      if (resultado === 'dentro') return { etiqueta: 'Tu ubicación', valor: 'En tu chacra (dentro de su contorno)', icono: 'map-pin' };
+      if (resultado === 'cerca') return { etiqueta: 'Tu ubicación', valor: `En tu chacra (a ${distanciaBordeM} m del borde)`, icono: 'map-pin' };
+      if (resultado === 'precision_baja') return { etiqueta: 'Tu ubicación', valor: 'Ubicación poco precisa (queda como advertencia)', icono: 'alert-triangle', advertencia: true };
+      return { etiqueta: 'Tu ubicación', valor: `A ${formatearDistancia((distanciaBordeM ?? 0) / 1000)} del borde de tu chacra (queda como advertencia)`, icono: 'alert-triangle', advertencia: true };
+    }
     const km = estado.ubicacion && chacra ? distanciaKm(estado.ubicacion.lat, estado.ubicacion.lng, chacra.ubicacion_latitud, chacra.ubicacion_longitud) : null;
     if (km == null) return { etiqueta: 'Tu ubicación', valor: 'Sin ubicación (queda como advertencia)', icono: 'map-pin-off', advertencia: true };
     if (km <= RADIO_CHACRA_KM) return { etiqueta: 'Tu ubicación', valor: `En tu chacra (a ${formatearDistancia(km)})`, icono: 'map-pin' };

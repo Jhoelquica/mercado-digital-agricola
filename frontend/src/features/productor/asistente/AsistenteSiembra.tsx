@@ -432,7 +432,7 @@ export function AsistenteSiembra({ chacras, chacraDelPerfil, catalogo, alCerrar 
           equivalencia_kg: unidad !== 'kg' ? Number(estado.equivalencia) : null,
           fecha_siembra: estado.fechaSiembra,
           fecha_cosecha_estimada: estado.fechaCosecha,
-          ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng } : {}),
+          ...(estado.ubicacion ? { latitud: estado.ubicacion.lat, longitud: estado.ubicacion.lng, precision_m: estado.ubicacion.precision ?? null } : {}),
         });
       } catch (err) {
         console.error('registrar la siembra', err);
