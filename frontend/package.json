@@ -20,7 +20,8 @@
     "e2e:reclamo-pagos": "node e2e/admin-reclamo-pagos.mjs",
     "e2e:camion-saldo": "node e2e/camion-saldo-entrega.mjs",
     "e2e:notificaciones": "node e2e/notificaciones.mjs",
-    "e2e:contorno": "node e2e/productor-contorno.mjs"
+    "e2e:contorno": "node e2e/productor-contorno.mjs",
+    "e2e:geocerca": "node e2e/geocerca.mjs"
   },
   "dependencies": {
     "@geoman-io/leaflet-geoman-free": "^2.20.6",

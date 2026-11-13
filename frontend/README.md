@@ -53,6 +53,12 @@ el detalle de un producto de esa chacra: debe decir su nombre, sus hectáreas y 
 zona aproximada y sin que ninguna respuesta de la red traiga el polígono ni coordenadas. `ANCHO=390` lo corre con el
 ancho de un celular. Necesita internet (teselas de Esri) y deja capturas en `e2e/capturas/`, que no se versionan.
 
+`e2e:geocerca` recorre la geocerca por contorno de punta a punta. Por la API le pone un contorno a la chacra CH-02 del
+agricultor QA, registra una siembra fuera y una cosecha dentro, y publica el producto. Después comprueba la frase sellada
+en la cadena, la página del QR ("Ubicación confirmada en la chacra" solo en la cosecha), Mis siembras y la etiqueta de la
+llegada al almacén del admin. **Escribe datos reales y los borra al final** con los DELETE de limpieza QA, llamados
+dentro de cada pod con `kubectl exec`. Queda un bloque en la cadena de certificación, que no se borra.
+
 ## Tipos de la API
 
 - `src/api/esquemas/` son los cuerpos que acepta cada servicio, generados de su OpenAPI. Con el clúster arriba, se
