@@ -1989,3 +1989,34 @@ def test_la_geocerca_del_registro_la_ve_el_admin_y_no_trae_coordenadas():
     _auth(str(uuid.uuid4()), "admin")
     de_antes = client.get(f"/productores/produccion/{viejo}/geocerca").json()
     assert de_antes["cosecha"]["resultado"] is None and de_antes["siembra"]["metodo"] == "radio"
+
+
+def test_la_limpieza_de_pruebas_borra_una_siembra_con_sus_gastos(monkeypatch):
+    """DELETE /productores/produccion/{id} (secreto de limpieza QA; el agricultor no borra siembras, las anula): con
+    gastos anotados daba un 500 por la clave foránea."""
+    monkeypatch.setattr(main, "QA_LIMPIEZA_SECRETO", "secreto-de-prueba")
+    registro = _crear_con_etapas(gastos=[
+        {"etapa": "siembra", "rubro": "semilla", "monto": 600},
+        {"etapa": "siembra", "rubro": "mano_obra", "cantidad": 4, "precio_unitario": 50, "unidad": "jornal"},
+    ])
+    db = main.SessionLocal()
+    try:
+        db.add(main.models.HistorialVerificacionCosecha(registro_produccion_id=registro["id"], verificador_id=uuid.uuid4(), accion="rechazado", motivo="de antes"))
+        db.commit()
+        assert db.query(main.models.GastoProduccion).filter(main.models.GastoProduccion.registro_id == registro["id"]).count() == 2
+    finally:
+        db.close()
+
+    sin_secreto = client.delete(f"/productores/produccion/{registro['id']}")
+    resp = client.delete(f"/productores/produccion/{registro['id']}", headers={"X-Servicio-Secreto": "secreto-de-prueba"})
+
+    assert sin_secreto.status_code == 403
+    assert resp.status_code == 200, resp.text
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro["id"]).count() == 0
+        assert db.query(main.models.GastoProduccion).filter(main.models.GastoProduccion.registro_id == registro["id"]).count() == 0
+        assert db.query(main.models.HistorialVerificacionCosecha).filter(
+            main.models.HistorialVerificacionCosecha.registro_produccion_id == registro["id"]).count() == 0
+    finally:
+        db.close()

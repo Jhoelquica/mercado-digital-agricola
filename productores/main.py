@@ -1324,6 +1324,12 @@ def eliminar_registro_produccion(
     if not registro:
         raise HTTPException(status_code=404, detail="Registro de producción no encontrado")
 
+    # Solo para limpiar datos de prueba (el agricultor no borra siembras: las anula). Lo que cuelga del registro va
+    # primero: sin esto, una siembra con gastos anotados hacía fallar el borrado con un 500 por la clave foránea.
+    db.query(models.GastoProduccion).filter(models.GastoProduccion.registro_id == registro.id).delete()
+    db.query(models.HistorialVerificacionCosecha).filter(
+        models.HistorialVerificacionCosecha.registro_produccion_id == registro.id
+    ).delete()
     db.delete(registro)
     db.commit()
     return {"mensaje": "Registro de producción eliminado"}
