@@ -53,6 +53,11 @@ el detalle de un producto de esa chacra: debe decir su nombre, sus hectáreas y 
 zona aproximada y sin que ninguna respuesta de la red traiga el polígono ni coordenadas. `ANCHO=390` lo corre con el
 ancho de un celular. Necesita internet (teselas de Esri) y deja capturas en `e2e/capturas/`, que no se versionan.
 
+`e2e:siembra` (asistente real del agricultor, con voz y GPS simulados) corre el flujo dos veces: con CH-01 sin
+contorno, donde la cadena sella la frase de los km de siempre, y con un contorno temporal en CH-01, donde sella la frase
+de la geocerca por polígono y no la de los km. Quita el contorno temporal al terminar, también si falla. Deja una
+siembra cosechada y un borrador por cada caso. `ANCHO=390` lo corre con el ancho de un celular.
+
 `e2e:geocerca` recorre la geocerca por contorno de punta a punta. Por la API le pone un contorno a la chacra CH-02 del
 agricultor QA, registra una siembra fuera y una cosecha dentro, y publica el producto. Después comprueba la frase sellada
 en la cadena, la página del QR ("Ubicación confirmada en la chacra" solo en la cosecha), Mis siembras y la etiqueta de la

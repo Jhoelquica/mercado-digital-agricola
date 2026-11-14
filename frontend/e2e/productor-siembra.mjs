@@ -6,9 +6,16 @@
 //   MODO=solo-voz: abre el asistente, prueba la lectura y el dictado y lo cierra sin guardar.
 //   MODO=resto SIEMBRA_ID=…: desde una siembra ya registrada (gastos y cosecha).
 //   CANAL=msedge | chrome.      npm run e2e:siembra
+// MODO=voz recorre ese flujo DOS veces, cada una en su propio proceso (CASO), para cubrir las dos geocercas:
+//   sin-contorno: CH-01 como está → geocerca por el radio; en la cadena queda la frase de los km de siempre.
+//   con-contorno: con un contorno temporal de 120 m en CH-01 → geocerca por el polígono; en la cadena queda la frase
+//     "Geocerca ...: metodo=poligono; resultado=dentro; ..." y NO la de los km.
+// El contorno temporal se quita al terminar, también si el caso falla. ANCHO=390 lo corre con el ancho de un celular.
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import {
-  BASE, contiene, empiezaCon, entrarPorPantalla, esIgual, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, texto, textos, vigilarErrores,
+  API, BASE, contiene, empiezaCon, entrarPorPantalla, esIgual, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, texto, textos, vigilarErrores,
 } from './comun.mjs';
 
 const MODO = process.env.MODO || 'voz';
@@ -21,14 +28,55 @@ const { api } = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_
 const chacras = await api('/productores/chacras/me');
 const ch01 = chacras.find((c) => c.codigo === 'CH-01');
 const ch02 = chacras.find((c) => c.codigo === 'CH-02') || ch01;
+const CASO = process.env.CASO || '';
+const CON_CONTORNO = CASO === 'con-contorno';
+const ANCHO = Number(process.env.ANCHO) || 1280;
+
+// Sin CASO, MODO=voz solo reparte: corre los dos casos (este mismo archivo, con CASO puesto) y entre uno y otro le pone
+// a CH-01 el contorno temporal. El finally lo quita aunque el caso falle o se corte a la mitad.
+if (MODO === 'voz' && !CASO) {
+  if (ch01.contorno) {
+    console.log('MAL la chacra CH-01 ya tiene un contorno: esta prueba no lo cambia');
+    process.exit(1);
+  }
+  const correr = (caso) => {
+    console.log(`\n===== ${caso} =====`);
+    return spawnSync(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit', env: { ...process.env, CASO: caso } }).status === 0;
+  };
+  // Cuadrado de 120 m de lado centrado en el punto de la chacra: el GPS simulado (a unos 33 m) cae dentro.
+  const lat = Number(ch01.ubicacion_latitud);
+  const lng = Number(ch01.ubicacion_longitud);
+  const alEste = (m) => lng + m / (111_320 * Math.cos((lat * Math.PI) / 180));
+  const d = 60 / 111_320;
+  const contorno = { type: 'Polygon', coordinates: [[[alEste(-60), lat - d], [alEste(60), lat - d], [alEste(60), lat + d], [alEste(-60), lat + d], [alEste(-60), lat - d]]] };
+  let bien = correr('sin-contorno');
+  try {
+    const puesto = await api(`/productores/chacras/${ch01.id}/contorno`, { method: 'PUT', body: JSON.stringify({ contorno }), conEstado: true });
+    if (puesto.estado === 200) bien = correr('con-contorno') && bien;
+    else {
+      console.log('MAL no se pudo poner el contorno temporal en CH-01', JSON.stringify(puesto));
+      bien = false;
+    }
+  } finally {
+    // Con una sesión nueva: la de arriba dura una hora y los dos casos pueden tardar.
+    const limpieza = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_PASSWORD);
+    const quitado = await limpieza.api(`/productores/chacras/${ch01.id}/contorno`, { method: 'DELETE', conEstado: true });
+    const sinContorno = quitado.estado === 200 && quitado.datos?.contorno === null;
+    console.log(`\n${sinContorno ? 'OK ' : 'MAL'} contorno temporal de CH-01 quitado`);
+    bien = bien && sinContorno;
+  }
+  console.log(bien ? 'Los dos casos pasaron (sin contorno y con contorno).' : 'Algún caso falló.');
+  process.exit(bien ? 0 : 1);
+}
 const antes = new Set((await api('/productores/productores/produccion/me')).map((r) => r.id));
 const productosAntes = new Set((await api('/productos/productos/mios')).map((p) => p.id));
 
 const b = await chromium.launch({ channel: CANAL, headless: true });
 const conVoz = MODO !== 'sin-voz';
 const ctx = await b.newContext({
-  viewport: { width: 1280, height: 900 }, locale: 'es-PE', timezoneId: 'America/Lima',
-  ...(conVoz ? { permissions: ['geolocation'], geolocation: { latitude: Number(ch01.ubicacion_latitud) + 0.0003, longitude: Number(ch01.ubicacion_longitud) } } : {}),
+  viewport: { width: ANCHO, height: 900 }, locale: 'es-PE', timezoneId: 'America/Lima',
+  // A unos 33 m del punto de CH-01, con la precisión que diría el teléfono: la interfaz la manda y el servidor la guarda.
+  ...(conVoz ? { permissions: ['geolocation'], geolocation: { latitude: Number(ch01.ubicacion_latitud) + 0.0003, longitude: Number(ch01.ubicacion_longitud), accuracy: 12 } } : {}),
 });
 if (conVoz) {
   // La lectura se espía (sin sonido) y el dictado se simula: el navegador sin interfaz no tiene micrófono.
@@ -99,6 +147,8 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
     await esperarPregunta('¿Estás en tu chacra?');
     await p.waitForSelector('.evidencia-gps[data-estado="dentro"]', { timeout: 20000 });
     ok('GPS: dentro de la chacra', await empiezaCon(p.locator('.evidencia-gps-texto'), 'Estás dentro de tu chacra CH-01'));
+    ok(CON_CONTORNO ? 'GPS: medido contra el contorno de la chacra' : 'GPS: sin contorno, medido contra el punto de la chacra',
+      await contiene(p.locator('.evidencia-gps-texto'), CON_CONTORNO ? 'dentro del contorno que dibujaste' : 'del punto que registraste'), await texto(p.locator('.evidencia-gps-texto')));
     await p.waitForTimeout(200);
     ok('lee el resultado del GPS', (await habla()).some((h) => h.startsWith('Estás dentro de tu chacra CH-01')));
     await siguiente();
@@ -200,6 +250,10 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
       siembra = nuevos.find((r) => r.cultivo === 'Papa amarilla');
       ok('la siembra quedó en la base', Boolean(siembra), nuevos.map((r) => r.cultivo));
       console.log('   DATO: siembra', siembra?.id, siembra?.cultivo, siembra?.estado, 'plantilla', siembra?.plantilla, 'distancia', siembra?.siembra_distancia_km);
+      ok(CON_CONTORNO ? 'la siembra guardó la geocerca por el contorno (dentro), su huella y la precisión del GPS' : 'la siembra guardó la geocerca por el radio y la precisión del GPS',
+        siembra?.siembra_metodo_geocerca === (CON_CONTORNO ? 'poligono' : 'radio') && siembra?.siembra_resultado_geocerca === (CON_CONTORNO ? 'dentro' : 'radio')
+        && Boolean(siembra?.siembra_contorno_hash) === CON_CONTORNO && siembra?.siembra_precision_m === 12,
+        { metodo: siembra?.siembra_metodo_geocerca, resultado: siembra?.siembra_resultado_geocerca, huella: siembra?.siembra_contorno_hash, precision: siembra?.siembra_precision_m });
     }
     const tarjeta = p.locator('.produccion-card', { has: p.locator('h4', { hasText: /^Papa amarilla$/ }) }).filter({ has: p.locator('.btn-completar-cosecha') }).first();
     await tarjeta.waitFor();
@@ -287,9 +341,31 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
     const productosNuevos = (await api('/productos/productos/mios')).filter((x) => !productosAntes.has(x.id));
     console.log('   DATO: productos nuevos', JSON.stringify(productosNuevos.map((x) => ({ id: x.id, nombre: x.nombre, estado: x.estado, stock: x.stock }))));
     ok('el borrador del producto quedó en "Mis productos"', productosNuevos.length >= 1);
+    if (MODO === 'voz') {
+      // Lo que quedó sellado en la cadena de certificación del producto nuevo: una frase u otra según el caso.
+      const borrador = productosNuevos.find((x) => x.nombre === 'Papa amarilla') || productosNuevos[0];
+      const historial = borrador ? await (await fetch(`${API}/certificacion/certificacion/${borrador.id}/historial`)).json() : [];
+      const sellado = historial.find((bloque) => bloque.evento === 'cosecha_registrada')?.datos || '';
+      console.log('   DATO: sellado en la cadena:', sellado);
+      if (CON_CONTORNO) {
+        const huella = final?.cosecha_contorno_hash;
+        ok('cadena, con contorno: la frase de la geocerca de la siembra y de la cosecha (polígono, dentro, con la huella)',
+          Boolean(huella) && sellado.includes(`Geocerca siembra: metodo=poligono; resultado=dentro; distancia_borde_m=0; precision_m=12; contorno_sha256=${huella}.`)
+          && sellado.includes(`Geocerca cosecha: metodo=poligono; resultado=dentro; distancia_borde_m=0; precision_m=12; contorno_sha256=${huella}.`), sellado);
+        ok('cadena, con contorno: no va la frase de los km', !/km de la chacra/.test(sellado) && !/radio de/.test(sellado), sellado);
+      } else {
+        ok('cadena, sin contorno: la frase de los km de la siembra y de la cosecha, como siempre',
+          /Al registrar la siembra: a 0,0\d km de la chacra \(dentro del radio de 1,5 km\)\./.test(sellado)
+          && /Al completar la cosecha: a 0,0\d km de la chacra \(dentro del radio de 1,5 km\)\./.test(sellado), sellado);
+        ok('cadena, sin contorno: la geocerca queda por el radio y sin huella de contorno',
+          sellado.includes('Geocerca siembra: metodo=radio; resultado=radio; precision_m=12.')
+          && sellado.includes('Geocerca cosecha: metodo=radio; resultado=radio; precision_m=12.') && !sellado.includes('contorno_sha256'), sellado);
+      }
+    }
     const cosechada = p.locator('.produccion-card', { has: p.locator('h4', { hasText: /^Papa amarilla$/ }) }).filter({ has: p.locator('.evidencia-resumen') }).first();
     await cosechada.waitFor({ timeout: 10000 });
-    ok('la tarjeta muestra la foto y dónde estaba', (await cosechada.locator('.evidencia-resumen img').count()) === 1 && await contiene(cosechada.locator('.evidencia-resumen-lista'), 'Cosecha: a'));
+    ok('la tarjeta muestra la foto y dónde estaba', (await cosechada.locator('.evidencia-resumen img').count()) === 1 && await contiene(cosechada.locator('.evidencia-resumen-lista'), CON_CONTORNO ? 'Cosecha: dentro de tu chacra' : 'Cosecha: a'),
+      await texto(cosechada.locator('.evidencia-resumen-lista')));
   }
 } else {
   // ---- sin voz ni GPS: solo tocando y escribiendo; quechua; Escape; anular.
@@ -368,5 +444,5 @@ if (MODO === 'voz' || MODO === 'solo-voz' || MODO === 'resto') {
 }
 
 ok('sin errores de página', !errores.length, errores);
-cerrar(`${CANAL}, ${MODO}`);
+cerrar([CANAL, MODO, CASO, process.env.ANCHO ? `${ANCHO} px` : ''].filter(Boolean).join(', '));
 await b.close();
