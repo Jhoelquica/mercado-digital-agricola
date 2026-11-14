@@ -299,8 +299,11 @@ def _validar_rol_de_registro(rol: str) -> None:
 def _rechazar_cuenta_desactivada(usuario) -> None:
     """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en auth.py: hoy, "verificador") está desactivada: no se borra, pero
     no vuelve a iniciar sesión, ni con contraseña ni con Google, así que no recibe tokens nuevos; los que tuviera
-    dejan de valer en todos los servicios (verificar_token). Se responde antes de mirar la contraseña y sin contar
-    el intento: lo único que revela es que ese correo es de una cuenta que ya no se puede usar."""
+    dejan de valer en todos los servicios (verificar_token).
+
+    Solo se le dice a quien ya demostró que la cuenta es suya (contraseña correcta, o Google). Con la contraseña
+    incorrecta el login responde exactamente lo mismo que con un correo que no existe (ver login): así nadie puede
+    averiguar, probando correos, cuáles son de cuentas desactivadas."""
     if usuario is not None and usuario.rol in ROLES_RETIRADOS:
         raise HTTPException(status_code=403, detail=MENSAJE_CUENTA_DESACTIVADA)
 
@@ -336,7 +339,6 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
     acceso.comprobar_que_no_esta_bloqueado(db, datos.email)
 
     usuario = db.query(models.Usuario).filter(models.Usuario.email == datos.email).first()
-    _rechazar_cuenta_desactivada(usuario)
     # Siempre se compara UNA contraseña con bcrypt, exista o no la cuenta (o si es solo de Google), para que el
     # tiempo de respuesta no delate qué correos están registrados.
     hash_real = usuario.password_hash if usuario else None
@@ -348,6 +350,9 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
             detalle += f". Te quedan {restantes} intento{'s' if restantes != 1 else ''} antes de un bloqueo temporal."
         raise HTTPException(status_code=401, detail=detalle)
 
+    # Recién acá, con la contraseña correcta: una cuenta desactivada (rol retirado) se entera de que lo está y no
+    # recibe token. Con la contraseña incorrecta ya salió arriba, igual que cualquier correo.
+    _rechazar_cuenta_desactivada(usuario)
     acceso.limpiar_fallos(db, datos.email)
     token = crear_token(str(usuario.id), usuario.rol)
     return {"access_token": token, "token_type": "bearer"}

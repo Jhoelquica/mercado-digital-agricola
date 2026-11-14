@@ -1197,17 +1197,31 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
 
 # ============ Cuentas desactivadas: el rol verificador se retiró del todo ============
 
-def test_una_cuenta_con_rol_retirado_no_inicia_sesion_ni_con_la_contrasena_correcta():
+def test_el_login_no_delata_a_una_cuenta_con_rol_retirado():
+    """Con la contraseña incorrecta responde lo MISMO (código y cuerpo) que con un correo que no existe: probando
+    correos no se puede saber cuáles son de cuentas desactivadas."""
+    email = _usuario_con_password("Clave-correcta-2026", rol="verificador")
+
+    de_la_desactivada = _login(email, "otra-clave-cualquiera")
+    de_nadie = _login(_email(), "otra-clave-cualquiera")
+
+    assert de_la_desactivada.status_code == de_nadie.status_code == 401
+    assert de_la_desactivada.json() == de_nadie.json() == {"detail": "Email o contraseña incorrectos"}
+    assert "desactivada" not in de_la_desactivada.text
+    # y el fallo se cuenta como el de cualquier cuenta (mismo bloqueo por insistir)
+    assert _fila_de_intentos(email).fallos == 1
+
+
+def test_una_cuenta_con_rol_retirado_no_inicia_sesion_con_la_contrasena_correcta():
     clave = "Clave-correcta-2026"
     email = _usuario_con_password(clave, rol="verificador")
 
-    for intento in (clave, "otra-clave-cualquiera"):
-        resp = _login(email, intento)
-        assert resp.status_code == 403 and "desactivada" in resp.json()["detail"], resp.text
-        assert "access_token" not in resp.text
-    # no cuenta como intento fallido (no se bloquea por insistir) y la cuenta sigue en la base: no se borra
-    assert _fila_de_intentos(email) is None
-    assert _existe_usuario(email)
+    resp = _login(email, clave)
+
+    # a quien demostró que la cuenta es suya sí se le dice, y no recibe token
+    assert resp.status_code == 403 and "desactivada" in resp.json()["detail"], resp.text
+    assert "access_token" not in resp.text
+    assert _existe_usuario(email)   # la cuenta sigue en la base: no se borra
     # una cuenta con un rol vigente entra como siempre
     assert _login(_usuario_con_password(clave, rol="productor"), clave).status_code == 200
 
