@@ -10,12 +10,15 @@
 //   sin-contorno: CH-01 como está → geocerca por el radio; en la cadena queda la frase de los km de siempre.
 //   con-contorno: con un contorno temporal de 120 m en CH-01 → geocerca por el polígono; en la cadena queda la frase
 //     "Geocerca ...: metodo=poligono; resultado=dentro; ..." y NO la de los km.
-// El contorno temporal se quita al terminar, también si el caso falla. ANCHO=390 lo corre con el ancho de un celular.
+// Al terminar, también si un caso falla, se quita el contorno temporal y se BORRAN los borradores que creó la corrida
+// (con el DELETE de limpieza QA, llamado dentro del pod de Productos). Las siembras cosechadas se quedan. Para dejar
+// los borradores (p. ej. antes de e2e:borrador, que publica uno): CONSERVAR_BORRADORES=1. ANCHO=390 lo corre con el
+// ancho de un celular.
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import {
-  API, BASE, contiene, empiezaCon, entrarPorPantalla, esIgual, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, texto, textos, vigilarErrores,
+  API, BASE, borrarEnElPod, contiene, empiezaCon, entrarPorPantalla, esIgual, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, texto, textos, vigilarErrores,
 } from './comun.mjs';
 
 const MODO = process.env.MODO || 'voz';
@@ -32,10 +35,12 @@ const CASO = process.env.CASO || '';
 const CON_CONTORNO = CASO === 'con-contorno';
 const ANCHO = Number(process.env.ANCHO) || 1280;
 
-// Sin CASO, MODO=voz solo reparte: corre los dos casos (este mismo archivo, con CASO puesto) y entre uno y otro le pone
-// a CH-01 el contorno temporal. El finally lo quita aunque el caso falle o se corte a la mitad.
-if (MODO === 'voz' && !CASO) {
-  if (ch01.contorno) {
+// Sin CASO, este proceso solo reparte y limpia. Corre cada caso (este mismo archivo, con CASO puesto): los dos de MODO=voz,
+// con el contorno temporal en CH-01 entre uno y otro, o el único de los demás modos. Y al final, también si un caso
+// falla o se corta a la mitad, quita el contorno temporal y borra los borradores que dejaron los casos. Las siembras
+// cosechadas se quedan: son datos de QA del clúster local, con su cadena de certificación sellada.
+if (!CASO) {
+  if (MODO === 'voz' && ch01.contorno) {
     console.log('MAL la chacra CH-01 ya tiene un contorno: esta prueba no lo cambia');
     process.exit(1);
   }
@@ -49,23 +54,43 @@ if (MODO === 'voz' && !CASO) {
   const alEste = (m) => lng + m / (111_320 * Math.cos((lat * Math.PI) / 180));
   const d = 60 / 111_320;
   const contorno = { type: 'Polygon', coordinates: [[[alEste(-60), lat - d], [alEste(60), lat - d], [alEste(60), lat + d], [alEste(-60), lat + d], [alEste(-60), lat - d]]] };
-  let bien = correr('sin-contorno');
+  const productosAlEmpezar = new Set((await api('/productos/productos/mios')).map((x) => x.id));
+  let bien = true;
+  let contornoPuesto = false;
   try {
-    const puesto = await api(`/productores/chacras/${ch01.id}/contorno`, { method: 'PUT', body: JSON.stringify({ contorno }), conEstado: true });
-    if (puesto.estado === 200) bien = correr('con-contorno') && bien;
-    else {
-      console.log('MAL no se pudo poner el contorno temporal en CH-01', JSON.stringify(puesto));
-      bien = false;
+    for (const caso of MODO === 'voz' ? ['sin-contorno', 'con-contorno'] : ['unico']) {
+      if (caso === 'con-contorno') {
+        const puesto = await api(`/productores/chacras/${ch01.id}/contorno`, { method: 'PUT', body: JSON.stringify({ contorno }), conEstado: true });
+        contornoPuesto = puesto.estado === 200;
+        if (!contornoPuesto) {
+          console.log('MAL no se pudo poner el contorno temporal en CH-01', JSON.stringify(puesto));
+          bien = false;
+          continue;
+        }
+      }
+      bien = correr(caso) && bien;
     }
   } finally {
-    // Con una sesión nueva: la de arriba dura una hora y los dos casos pueden tardar.
+    // Con una sesión nueva: la de arriba dura una hora y los casos pueden tardar.
     const limpieza = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_PASSWORD);
-    const quitado = await limpieza.api(`/productores/chacras/${ch01.id}/contorno`, { method: 'DELETE', conEstado: true });
-    const sinContorno = quitado.estado === 200 && quitado.datos?.contorno === null;
-    console.log(`\n${sinContorno ? 'OK ' : 'MAL'} contorno temporal de CH-01 quitado`);
-    bien = bien && sinContorno;
+    console.log('');
+    if (contornoPuesto) {
+      const quitado = await limpieza.api(`/productores/chacras/${ch01.id}/contorno`, { method: 'DELETE', conEstado: true });
+      const sinContorno = quitado.estado === 200 && quitado.datos?.contorno === null;
+      console.log(`${sinContorno ? 'OK ' : 'MAL'} contorno temporal de CH-01 quitado`);
+      bien = bien && sinContorno;
+    }
+    const borradores = (await limpieza.api('/productos/productos/mios')).filter((x) => !productosAlEmpezar.has(x.id) && x.estado === 'borrador');
+    if (process.env.CONSERVAR_BORRADORES === '1') {
+      console.log(`   se conservan ${borradores.length} borradores (CONSERVAR_BORRADORES=1): ${borradores.map((x) => x.id).join(', ') || '—'}`);
+    } else {
+      const sinBorrar = borradores.filter((x) => !borrarEnElPod('productos', 8002, `/productos/${x.id}`));
+      console.log(`${sinBorrar.length ? 'MAL' : 'OK '} borradores de esta corrida borrados: ${borradores.length - sinBorrar.length} de ${borradores.length}`);
+      for (const x of sinBorrar) console.log(`   DATO: quedó el borrador ${x.id} (${x.nombre})`);
+      bien = bien && sinBorrar.length === 0;
+    }
   }
-  console.log(bien ? 'Los dos casos pasaron (sin contorno y con contorno).' : 'Algún caso falló.');
+  console.log(bien ? 'Todo pasó.' : 'Algo falló.');
   process.exit(bien ? 0 : 1);
 }
 const antes = new Set((await api('/productores/productores/produccion/me')).map((r) => r.id));

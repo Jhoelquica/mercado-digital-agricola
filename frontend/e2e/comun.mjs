@@ -3,6 +3,7 @@
 //
 // Los textos se comparan NORMALIZADOS: textContent (no innerText, que depende del CSS: un text-transform: uppercase o un
 // salto de línea entre bloques cambian lo que devuelve), sin distinguir mayúsculas y con los espacios colapsados.
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -59,6 +60,27 @@ export function marcador() {
     if (mal) process.exitCode = 1;
   };
   return { ok, cerrar };
+}
+
+// ---- limpieza de lo que crea una prueba
+// El DELETE de limpieza de pruebas de un servicio (p. ej. `/productos/<id>` en productos, puerto 8002). Lo protege
+// QA_LIMPIEZA_SECRETO y el gateway no lo deja pasar desde fuera: se llama DENTRO del pod con kubectl exec, así el
+// secreto no sale del clúster. Devuelve si lo borró.
+export function borrarEnElPod(servicio, puerto, ruta, contexto = process.env.CONTEXTO || 'docker-desktop') {
+  const programa = [
+    'import os, urllib.request',
+    `peticion = urllib.request.Request('http://127.0.0.1:${puerto}${ruta}', method='DELETE', headers={'X-Servicio-Secreto': os.environ.get('QA_LIMPIEZA_SECRETO', '')})`,
+    'try:',
+    '    urllib.request.urlopen(peticion, timeout=10)',
+    "    print('ok')",
+    'except Exception as error:',
+    "    print('no', error)",
+  ].join('\n');
+  try {
+    return execFileSync('kubectl', ['--context', contexto, 'exec', `deploy/${servicio}`, '--', 'python', '-c', programa], { encoding: 'utf8' }).trim() === 'ok';
+  } catch {
+    return false;
+  }
 }
 
 // ---- sesión y API

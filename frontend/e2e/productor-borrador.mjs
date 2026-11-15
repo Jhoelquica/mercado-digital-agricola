@@ -1,5 +1,5 @@
 // Fase 5b: flujo real del agricultor (agricultor01) por React sobre un borrador (BORRADOR=…, o el primer borrador
-// "Papa amarilla" que tenga; lo deja e2e:siembra): editar → subir 2 fotos → reordenarlas → unidades (agregar, editar,
+// "Papa amarilla" que tenga; lo deja CONSERVAR_BORRADORES=1 npm run e2e:siembra): editar → subir 2 fotos → reordenarlas → unidades (agregar, editar,
 // borrar) → publicar → catálogo público → pedir un recojo y anularlo. Además: Mis Productos (reseñas, fotos,
 // certificación, unidades), Ganancias (solo la validación de la cuenta: no guarda nada), Economía y quechua.
 //   npm run e2e:borrador
@@ -13,7 +13,7 @@ const { ok, cerrar } = marcador();
 const { api } = await iniciarSesionApi(env.QA_PRODUCTOR_EMAIL, env.QA_PRODUCTOR_PASSWORD);
 const publicoApi = async (ruta) => (await fetch(`${API}${ruta}`)).json(); // sin sesión, como un visitante
 const BORRADOR = process.env.BORRADOR || (await api('/productos/productos/mios')).find((x) => x.estado === 'borrador' && x.nombre === 'Papa amarilla')?.id;
-if (!BORRADOR) { console.log('No hay un borrador "Papa amarilla": corre antes npm run e2e:siembra.'); process.exit(1); }
+if (!BORRADOR) { console.log('No hay un borrador "Papa amarilla": corre antes CONSERVAR_BORRADORES=1 npm run e2e:siembra (sin esa variable borra los que crea).'); process.exit(1); }
 console.log('   borrador:', BORRADOR);
 const chacras = await api('/productores/chacras/me');
 const ch01 = chacras.find((c) => c.codigo === 'CH-01');

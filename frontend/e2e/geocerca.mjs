@@ -11,13 +11,11 @@
 // secreto no sale del clúster), y le quita el contorno a la chacra. Queda un bloque en la cadena de certificación (los
 // bloques no se borran) y las versiones del contorno. Capturas en e2e/capturas/geocerca-*.png (no se versionan).
 //   BASE=http://localhost:8000 npm run e2e:geocerca        (ANCHO=390 para el ancho de un celular)
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
-import { API, BASE, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, sesionDelFrontend, vigilarErrores } from './comun.mjs';
+import { API, BASE, borrarEnElPod, iniciarSesionApi, leerEnvQa, marcador, rutaDelRepo, sesionDelFrontend, vigilarErrores } from './comun.mjs';
 
 const CANAL = process.env.CANAL || 'msedge';
-const CONTEXTO = process.env.CONTEXTO || 'docker-desktop';
 const ANCHO = Number(process.env.ANCHO) || 1280;
 const FOTO = rutaDelRepo('frontend/public/static/hero-valle-andino-1600.jpg');
 const CAPTURAS = rutaDelRepo('frontend/e2e/capturas');
@@ -45,24 +43,6 @@ const alEste = (m) => lng + m / (METROS_POR_GRADO * Math.cos((lat * Math.PI) / 1
 const d = 60 / METROS_POR_GRADO;   // cuadrado de 120 m de lado: el borde queda a 60 m del punto de la chacra
 const contorno = { type: 'Polygon', coordinates: [[[alEste(-60), lat - d], [alEste(60), lat - d], [alEste(60), lat + d], [alEste(-60), lat + d], [alEste(-60), lat - d]]] };
 const dia = (desdeHoy) => new Date(Date.now() + desdeHoy * 864e5).toISOString().slice(0, 10);
-
-// El DELETE de limpieza QA de un servicio, llamado dentro de su pod.
-function borrarEnElPod(servicio, puerto, ruta) {
-  const programa = [
-    'import os, urllib.request',
-    `peticion = urllib.request.Request('http://127.0.0.1:${puerto}${ruta}', method='DELETE', headers={'X-Servicio-Secreto': os.environ.get('QA_LIMPIEZA_SECRETO', '')})`,
-    'try:',
-    '    urllib.request.urlopen(peticion, timeout=10)',
-    "    print('ok')",
-    'except Exception as error:',
-    "    print('no', error)",
-  ].join('\n');
-  try {
-    return execFileSync('kubectl', ['--context', CONTEXTO, 'exec', `deploy/${servicio}`, '--', 'python', '-c', programa], { encoding: 'utf8' }).trim() === 'ok';
-  } catch {
-    return false;
-  }
-}
 
 let registroId = null;
 let productoId = null;
