@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_CERTIFICACION
             - name: PGCONNECT_TIMEOUT
               value: "3"
       containers:
@@ -101,7 +101,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_CERTIFICACION
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -113,7 +113,7 @@ spec:
               value: http://localhost:8000
             - name: PRODUCTORES_URL
               value: http://productores:8001
-            # Reemplaza SERVICIO_SECRETO: Certificación valida la clave del par
+            # Certificación valida la clave del par
             # Transporte→Certificación (recibe, no envía) más la de limpieza QA.
             - name: TRANSPORTE_A_CERTIFICACION_SECRETO
               valueFrom:

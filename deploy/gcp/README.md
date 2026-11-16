@@ -170,9 +170,10 @@ kubectl apply -f deploy/gcp/salida/manifiestos.yaml
 ## Riesgos conocidos (aceptados para una demo)
 - **Las bases y MinIO viven en volúmenes del clúster**, sin copias de seguridad automáticas: si se borra el clúster o el volumen, se pierden.
   Para algo más serio: Cloud SQL para Postgres y un bucket de Cloud Storage.
-- **RabbitMQ usa `admin/admin123`** (5 manifiestos, dentro del clúster: no sale a Internet) y no hay `NetworkPolicy`.
+- **No hay `NetworkPolicy`**: dentro del clúster cualquier pod puede hablar con cualquier otro. Las credenciales sí van
+  todas en el Secret (cada base, RabbitMQ y MinIO con su propia contraseña, generadas por `crear_secretos.py`).
 - **Una réplica por servicio**: sin alta disponibilidad. `--replicas 2` en `generar_manifiestos.py` las sube (Traefik se queda en 1: guarda el certificado en un volumen).
-- **Sin monitoreo** (Prometheus/Grafana traen `admin/admin123`). Si lo quieres, ponle contraseña y déjalo en ClusterIP.
+- **Sin monitoreo** (Prometheus y Grafana no se despliegan). Si lo quieres, agrega GRAFANA_ADMIN_USER/PASSWORD al Secret y déjalo en ClusterIP.
 - Los endpoints internos entre servicios (con `X-Servicio-Secreto`) son alcanzables por el gateway y solo los protege ese secreto de 64 caracteres al azar.
 - **Culqi en modo de prueba** salvo que pases las llaves reales.
 - **Las dependencias de los servicios quedan fijas en cada `requirements.txt`** (salida de `pip freeze`, con las versiones que se probaron):

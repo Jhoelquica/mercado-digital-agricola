@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_PRODUCTOS
             - name: PGCONNECT_TIMEOUT
               value: "3"
       containers:
@@ -103,7 +103,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_PRODUCTOS
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -116,9 +116,15 @@ spec:
             - name: RABBITMQ_HOST
               value: rabbitmq
             - name: RABBITMQ_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_USER
             - name: RABBITMQ_PASSWORD
-              value: admin123
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_PASSWORD
 
             - name: MINIO_ENDPOINT
               value: minio:9000
@@ -128,13 +134,13 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_USER
+                  key: MINIO_ROOT_USER
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                    name: credenciales-app
-                   key: DB_PASSWORD
-            # 3 claves dedicadas (una por llamador) en vez del SERVICIO_SECRETO compartido de antes.
+                   key: MINIO_ROOT_PASSWORD
+            # 3 claves dedicadas: una por cada servicio que llama a Productos.
             - name: PAGOS_A_PRODUCTOS_SECRETO
               valueFrom:
                 secretKeyRef:

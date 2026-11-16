@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_USUARIOS
             - name: PGCONNECT_TIMEOUT
               value: "3"
       containers:
@@ -101,7 +101,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_USUARIOS
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -114,8 +114,7 @@ spec:
               value: "8"
             - name: BLOQUEO_LOGIN_MINUTOS
               value: "10"
-            # Antes dependía del fallback hardcodeado "clave-interna-servicios" en el código
-            # (nunca estuvo wireada acá) — ahora requerida explícitamente, sin fallback.
+            # Requerida explícitamente: el código no tiene valor por defecto.
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:
@@ -154,12 +153,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_USER
+                  key: MINIO_ROOT_USER
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: MINIO_ROOT_PASSWORD
 ---
 apiVersion: v1
 kind: Service

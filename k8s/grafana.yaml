@@ -20,9 +20,15 @@ spec:
             - containerPort: 3000
           env:
             - name: GF_SECURITY_ADMIN_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: GRAFANA_ADMIN_USER
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: admin123
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: GRAFANA_ADMIN_PASSWORD
             # El tablero se puede mirar sin iniciar sesión (solo lectura); editar sigue pidiendo la cuenta admin.
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: "true"

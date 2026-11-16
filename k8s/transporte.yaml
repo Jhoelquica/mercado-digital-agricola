@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_TRANSPORTE
             - name: PGCONNECT_TIMEOUT
               value: "3"
       containers:
@@ -95,9 +95,15 @@ spec:
             - name: RABBITMQ_HOST
               value: rabbitmq
             - name: RABBITMQ_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_USER
             - name: RABBITMQ_PASSWORD
-              value: admin123
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_PASSWORD
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
@@ -107,27 +113,27 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_TRANSPORTE
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
             # MinIO (foto de entrega, bucket privado transporte-entregas): las mismas credenciales de raíz con las que
-            # arranca MinIO (ver k8s/minio.yaml). Sin esto el servicio caía en sus valores por defecto (admin/admin123),
-            # que solo coinciden por casualidad con el Secret de desarrollo: con una contraseña real la foto no se subiría.
+            # arranca MinIO (ver k8s/minio.yaml), con sus propias claves en el Secret. El código no tiene valores por
+            # defecto: sin estas variables el servicio no arranca.
             - name: MINIO_ENDPOINT
               value: minio:9000
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_USER
+                  key: MINIO_ROOT_USER
             - name: MINIO_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: MINIO_ROOT_PASSWORD
             - name: PEDIDOS_URL
               value: http://pedidos:8003
             - name: CERTIFICACION_URL
@@ -141,7 +147,7 @@ spec:
               value: http://productos:8002
             - name: PRODUCTORES_URL
               value: http://productores:8001
-            # Reemplaza SERVICIO_SECRETO: Transporte necesita la clave de cada par donde ES quien
+            # Transporte necesita la clave de cada par donde ES quien
             # llama (Transporte→Certificación, Transporte→Pagos) más la de limpieza QA.
             - name: TRANSPORTE_A_CERTIFICACION_SECRETO
               valueFrom:

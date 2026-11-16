@@ -2,7 +2,9 @@
 """Crea el Secret `credenciales-app` del despliegue en Google Cloud con valores NUEVOS y aleatorios.
 
 Las claves salen de k8s/secret.yaml (el de desarrollo, ignorado por git) para que no se desactualice cuando se agrega una:
-  - DB_USER / DB_PASSWORD: usuario y contraseña de Postgres y de MinIO.
+  - DB_USER y DB_PASSWORD_<SERVICIO>: el usuario de Postgres y una contraseña distinta para cada una de las 8 bases.
+  - RABBITMQ_USER / RABBITMQ_PASSWORD y MINIO_ROOT_USER / MINIO_ROOT_PASSWORD: cada uno con su propia contraseña.
+  - GRAFANA_*: no se crean (Grafana no se despliega en Google Cloud).
   - JWT_SECRET y todas las *_SECRETO (las que se mandan los servicios entre sí): 64 caracteres al azar.
   - QA_LIMPIEZA_SECRETO: también al azar y nadie lo conoce, así que los DELETE de limpieza de pruebas quedan cerrados.
   - CULQI_*: las que pases con --culqi-public/--culqi-secret; si no, se copian las de PRUEBA del Secret de desarrollo.
@@ -15,7 +17,7 @@ Ningún valor se imprime. Lo único que necesitas saber (el correo y la contrase
 deploy/gcp/salida/credenciales-generadas.txt (ignorado por git): guárdalo en tu gestor de contraseñas y bórralo.
 
 Seguridad: se niega a tocar el clúster local (docker-desktop) y a reemplazar un Secret que ya existe, porque cambiar
-DB_PASSWORD con las bases ya creadas las dejaría inaccesibles.
+las DB_PASSWORD_* con las bases ya creadas las dejaría inaccesibles.
 
 Uso:  python deploy/gcp/crear_secretos.py --email-admin tu@correo.com [--culqi-public pk_... --culqi-secret sk_...]
 """
@@ -63,17 +65,19 @@ def main():
         sys.exit(f"El contexto de kubectl es {contexto!r}: es el clúster LOCAL. Conéctate al de Google Cloud primero "
                  "(gcloud container clusters get-credentials ...). No lo toco para no pisar tu Secret de desarrollo.")
     if not args.dry_run and kubectl("get", "secret", NOMBRE).returncode == 0:
-        sys.exit(f"En {contexto} ya existe el Secret {NOMBRE}. No lo reemplazo: cambiar DB_PASSWORD con las bases ya "
+        sys.exit(f"En {contexto} ya existe el Secret {NOMBRE}. No lo reemplazo: cambiar las DB_PASSWORD_* con las bases ya "
                  f"creadas las dejaría inaccesibles. Si de verdad quieres empezar de cero (esto borra los datos): "
                  f"kubectl delete secret {NOMBRE} y borra también los volúmenes.")
 
     locales = claves_y_valores_locales()
     valores, password_admin, culqi_de_prueba = {}, secrets.token_urlsafe(14), False
     for clave in locales:
-        if clave == "DB_USER":
+        if clave in ("DB_USER", "RABBITMQ_USER", "MINIO_ROOT_USER"):
             valores[clave] = DB_USER
-        elif clave == "DB_PASSWORD":
+        elif clave.startswith("DB_PASSWORD_") or clave in ("RABBITMQ_PASSWORD", "MINIO_ROOT_PASSWORD"):
             valores[clave] = secrets.token_urlsafe(24)  # solo A-Za-z0-9-_: sirve tal cual dentro de una URL de conexión
+        elif clave.startswith("GRAFANA_"):
+            continue  # Grafana no se despliega en Google Cloud (ver EXCLUIDOS en generar_manifiestos.py)
         elif clave == "JWT_SECRET" or clave.endswith("_SECRETO"):
             valores[clave] = secrets.token_hex(32)
         elif clave == "CULQI_PUBLIC_KEY":

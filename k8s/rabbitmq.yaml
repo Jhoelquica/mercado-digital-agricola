@@ -46,9 +46,15 @@ spec:
             failureThreshold: 6
           env:
             - name: RABBITMQ_DEFAULT_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_USER
             - name: RABBITMQ_DEFAULT_PASS
-              value: admin123
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_PASSWORD
             # Por defecto el nodo se llama rabbit@<hostname del pod>, y RabbitMQ guarda sus datos en
             # un directorio con ese nombre: como el hostname cambia cada vez que el Deployment
             # recrea el pod, el pod nuevo ignoraría las colas y mensajes guardados. Con nombre fijo

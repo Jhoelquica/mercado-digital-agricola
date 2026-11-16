@@ -50,7 +50,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_NOTIFICACIONES
             - name: PGCONNECT_TIMEOUT
               value: "3"
       containers:
@@ -95,9 +95,15 @@ spec:
             - name: RABBITMQ_HOST
               value: rabbitmq
             - name: RABBITMQ_USER
-              value: admin
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_USER
             - name: RABBITMQ_PASSWORD
-              value: admin123
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: RABBITMQ_PASSWORD
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
@@ -107,14 +113,13 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_NOTIFICACIONES
             - name: JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
                   key: JWT_SECRET
-            # Antes dependía del fallback hardcodeado "clave-interna-servicios" en el código
-            # (nunca estuvo wireada acá) — ahora requerida explícitamente, sin fallback.
+            # Requerida explícitamente: el código no tiene valor por defecto.
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:

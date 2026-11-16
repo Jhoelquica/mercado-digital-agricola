@@ -52,7 +52,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: credenciales-app
-                  key: DB_PASSWORD
+                  key: DB_PASSWORD_PRODUCTOS
             - name: POSTGRES_DB
               value: productos
           volumeMounts:

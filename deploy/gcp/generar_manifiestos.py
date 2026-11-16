@@ -13,7 +13,7 @@ Qué cambia respecto al clúster local:
   - FRONTEND_URL (a dónde apunta el QR) y MINIO_PUBLIC_URL (las fotos) con tu dominio.
   - RENIEC de verdad (RENIEC_MODO=real): en local se simula con DNIs de prueba.
   - CORS del gateway restringido a tu dominio (la app y la API comparten origen, así que basta).
-  - Sin Prometheus ni Grafana (traen admin/admin123 y no hacen falta para desplegar).
+  - Sin Prometheus ni Grafana (no hacen falta para desplegar).
 
 Uso:
     python deploy/gcp/generar_manifiestos.py --registro us-central1-docker.pkg.dev/MI-PROYECTO/chakrashop \\
