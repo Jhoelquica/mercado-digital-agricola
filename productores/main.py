@@ -1,6 +1,7 @@
 import hashlib
 import math
 import os
+import sys
 import uuid
 import logging
 import httpx
@@ -322,14 +323,14 @@ PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por los DELETE de limpieza QA de este servicio (eliminar_productor, eliminar_registro_
 # produccion) — ningún otro servicio llama a estos endpoints.
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")
 # Sin fallback hardcodeado a propósito (mismo criterio). La envía completar_cosecha al crear el
 # producto en el catálogo — Productos valida este mismo valor en crear_producto_desde_cosecha.
-PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")
+PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTORES_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")
 CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://localhost:8008")
 # Sin fallback hardcodeado a propósito (mismo criterio). La envía completar_cosecha a Certificación
 # para dejar registrada la cosecha (con su evidencia en origen) del producto recién creado.
-PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")
+PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTORES_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")
 
 # Solo unidades chicas/granulares como unidad_medida de una cosecha — una unidad de empaque
 # grande (saco, arroba) como base generaría, en cualquier unidad de venta alternativa que se

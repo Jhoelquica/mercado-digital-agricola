@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -45,7 +46,7 @@ def get_db():
 
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por el DELETE de limpieza QA de este servicio — ningún otro servicio lo llama.
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")
 
 @app.get("/salud")
 def salud():

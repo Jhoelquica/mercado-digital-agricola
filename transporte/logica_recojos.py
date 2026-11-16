@@ -19,6 +19,7 @@ pesarse se completa. El flete se le descuenta al agricultor como cualquier recoj
 import logging
 import math
 import os
+import sys
 from datetime import datetime
 
 import httpx
@@ -32,7 +33,7 @@ from logica_repartidores import PLAZO_RESPUESTA_MINUTOS, SIN_RESPUESTA, tiene_ot
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PAGOS_URL = os.getenv("PAGOS_URL", "http://localhost:8007")
-TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO")
+TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PAGOS_SECRETO: el servicio no arranca sin ella.")
 
 # Los que todavía están en curso: un producto no puede tener dos a la vez.
 ESTADOS_EN_CURSO = ("pendiente_asignacion", "propuesto", "asignado", "recogido", "en_almacen", "en_camino")

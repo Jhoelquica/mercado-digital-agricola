@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import threading
@@ -11,8 +12,8 @@ from mensajes import (mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido
                       mensaje_recojo_anulado_contratado, mensaje_recojo_sin_vehiculo)
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 
 def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, producto_id: str = None, usuario_id: str = None,

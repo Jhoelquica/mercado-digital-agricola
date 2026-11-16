@@ -18,6 +18,7 @@ crear_bloque en Certificación tolere esa repetición sin problema; no se verifi
 tipo de límite aceptado que el cargo de Culqi no reversible en Pagos.
 """
 import os
+import sys
 import httpx
 from pedidos_interno import cabecera_pedidos
 from sqlalchemy.orm import Session
@@ -27,7 +28,7 @@ import models
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://certificacion:8008")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")
+TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")
 
 
 def notificar_entrega_a_certificacion(db: Session, envio: models.Envio):

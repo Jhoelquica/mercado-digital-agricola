@@ -1,3 +1,4 @@
+import sys
 import os
 import re
 import psycopg2
@@ -8,7 +9,9 @@ import uuid
 
 CARPETA_RAIZ = r"C:\Users\AMD Ryzen\OneDrive\Documentos\Proyectos\imagenes-productos"  # <-- CAMBIA ESTO a tu carpeta real
 
-MINIO_CLIENT = Minio("localhost:9000", access_key="admin", secret_key="admin123", secure=False)
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY") or sys.exit("Falta la variable de entorno MINIO_ACCESS_KEY: el script no corre sin ella.")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY") or sys.exit("Falta la variable de entorno MINIO_SECRET_KEY: el script no corre sin ella.")
+MINIO_CLIENT = Minio("localhost:9000", access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=False)
 BUCKET = "productos-imagenes"
 
 conn = psycopg2.connect(host="localhost", port=15432, dbname="productos", user="admin", password="admin123")

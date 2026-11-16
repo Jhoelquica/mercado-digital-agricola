@@ -1,7 +1,8 @@
 import os
+import sys
 import httpx
 
-CULQI_SECRET_KEY = os.getenv("CULQI_SECRET_KEY")
+CULQI_SECRET_KEY = os.getenv("CULQI_SECRET_KEY") or sys.exit("Falta la variable de entorno CULQI_SECRET_KEY: el servicio no arranca sin ella.")
 CULQI_API_URL = "https://api.culqi.com/v2/charges"
 CULQI_DEVOLUCIONES_URL = "https://api.culqi.com/v2/refunds"
 

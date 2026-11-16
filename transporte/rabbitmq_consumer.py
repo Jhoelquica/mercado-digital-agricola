@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 import threading
@@ -14,8 +15,8 @@ from database import SessionLocal
 import models
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 COLA = "transporte_pagos"
 # Cola de antes de este arreglo, ligada a eventos_pedidos: si se deja, RabbitMQ la sigue llenando con cada

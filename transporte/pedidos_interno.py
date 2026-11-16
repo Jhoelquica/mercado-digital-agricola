@@ -7,8 +7,8 @@ un pedido antes de mostrar un envío, así que usa GET /pedidos/interno/{id}, qu
 secreto TRANSPORTE_A_PEDIDOS_SECRETO (mismo patrón que los demás pares de servicios).
 """
 import os
-
-TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO")
+import sys
+TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PEDIDOS_SECRETO: el servicio no arranca sin ella.")
 
 
 def cabecera_pedidos() -> dict:

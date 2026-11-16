@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime
 
@@ -280,7 +281,7 @@ ROLES_DE_REGISTRO_ABIERTO = frozenset({"comprador", "productor", "repartidor"})
 # endpoint queda inutilizable (rechaza todo) en vez de aceptar en silencio un valor conocido.
 # Usada SOLO por los DELETE de limpieza QA (ningún otro servicio llama a este endpoint) — ver
 # inventario completo de X-Servicio-Secreto en el resumen de esta tarea.
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")
 
 @app.get("/salud")
 def salud():

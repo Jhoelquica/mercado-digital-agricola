@@ -8,6 +8,7 @@ reintento_liquidacion_repartidor.py (mismo problema, y misma solución, que ya r
 pagos/logica_liquidaciones.py).
 """
 import os
+import sys
 import httpx
 from pedidos_interno import cabecera_pedidos
 from sqlalchemy.orm import Session
@@ -17,7 +18,7 @@ import models
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PAGOS_URL = os.getenv("PAGOS_URL", "http://localhost:8007")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO")
+TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PAGOS_SECRETO: el servicio no arranca sin ella.")
 
 
 def notificar_liquidacion_repartidor(db: Session, envio: models.Envio):

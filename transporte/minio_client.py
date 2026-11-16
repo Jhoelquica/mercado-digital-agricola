@@ -1,10 +1,11 @@
 import os
+import sys
 import uuid
 from minio import Minio
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
-MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "admin")
-MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "admin123")
+MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY") or sys.exit("Falta la variable de entorno MINIO_ACCESS_KEY: el servicio no arranca sin ella.")
+MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY") or sys.exit("Falta la variable de entorno MINIO_SECRET_KEY: el servicio no arranca sin ella.")
 MINIO_BUCKET = "transporte-entregas"
 MINIO_PUBLIC_URL = os.getenv("MINIO_PUBLIC_URL", "http://localhost:9000")
 

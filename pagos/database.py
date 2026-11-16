@@ -1,12 +1,13 @@
 import os
+import sys
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
 
-DB_USER = os.getenv("DB_USER")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_USER = os.getenv("DB_USER") or sys.exit("Falta la variable de entorno DB_USER: el servicio no arranca sin ella.")
+DB_PASSWORD = os.getenv("DB_PASSWORD") or sys.exit("Falta la variable de entorno DB_PASSWORD: el servicio no arranca sin ella.")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:5432/pagos"
 

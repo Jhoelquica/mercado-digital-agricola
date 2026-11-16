@@ -3,6 +3,7 @@ import io
 import logging
 import math
 import os
+import sys
 import unicodedata
 import uuid
 import httpx
@@ -454,12 +455,12 @@ def crear_resena(
 # 3 claves dedicadas (sin fallback hardcodeado a propósito — ver el mismo comentario en
 # usuarios/main.py) en vez del SERVICIO_SECRETO único de antes: cada endpoint interno valida
 # contra la clave de SU llamador específico, no una compartida por los tres.
-PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # reponer_stock (Pagos llama tras un pago rechazado)
-PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # descontar_stock (Pedidos llama al crear un pedido)
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_producto (DELETE de limpieza QA)
+PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PAGOS_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # reponer_stock (Pagos llama tras un pago rechazado)
+PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PEDIDOS_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # descontar_stock (Pedidos llama al crear un pedido)
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")  # eliminar_producto (DELETE de limpieza QA)
 CERTIFICACION_URL = os.getenv("CERTIFICACION_URL", "http://localhost:8008")
-PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO")  # registrar la llegada al almacén en la cadena (Productos llama a Certificación)
-PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO")  # crear_producto_desde_cosecha (Productores llama al aprobar una cosecha — sub-entrega 3, todavía no conectado)
+PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTOS_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")  # registrar la llegada al almacén en la cadena (Productos llama a Certificación)
+PRODUCTORES_A_PRODUCTOS_SECRETO = os.getenv("PRODUCTORES_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTORES_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # crear_producto_desde_cosecha (Productores llama al aprobar una cosecha — sub-entrega 3, todavía no conectado)
 
 @app.post("/productos/{producto_id}/stock/reponer")
 def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str = Header(None), db: Session = Depends(get_db)):

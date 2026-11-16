@@ -1,10 +1,11 @@
 import os
+import sys
 import json
 import pika
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "admin123")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 def publicar_evento(datos: dict):
     credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)

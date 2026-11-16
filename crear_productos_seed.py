@@ -1,7 +1,7 @@
 import httpx
 import os
-
-TOKEN = os.getenv("SEED_TOKEN", "PEGA_AQUI_TU_TOKEN_ANTES_DE_CORRER")
+import sys
+TOKEN = os.getenv("SEED_TOKEN") or sys.exit("Falta la variable de entorno SEED_TOKEN: el script no corre sin ella.")
 productos = [
     {"nombre": "chirimoya", "categoria": "fruta", "precio": 6.0, "stock": 20, "unidad_medida": "kg"},
     {"nombre": "fresa", "categoria": "fruta", "precio": 8.0, "stock": 20, "unidad_medida": "kg"},

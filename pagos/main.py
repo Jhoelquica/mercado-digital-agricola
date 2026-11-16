@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 import os
+import sys
 import re
 import json
 import math
@@ -52,9 +53,9 @@ PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 TRANSPORTE_URL = os.getenv("TRANSPORTE_URL", "http://localhost:8004")
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO")  # para llamar a reponer_stock en Productos
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pago (DELETE de limpieza QA)
-TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO")  # para /pagos/interno/liquidar-repartidor
+PAGOS_A_PRODUCTOS_SECRETO = os.getenv("PAGOS_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PAGOS_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # para llamar a reponer_stock en Productos
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")  # eliminar_pago (DELETE de limpieza QA)
+TRANSPORTE_A_PAGOS_SECRETO = os.getenv("TRANSPORTE_A_PAGOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PAGOS_SECRETO: el servicio no arranca sin ella.")  # para /pagos/interno/liquidar-repartidor
 
 # Cuenta a la que el comprador transfiere. En el clúster local y en docker-compose van los datos de una cuenta de
 # EJEMPLO (lo dice el propio nombre del banco); en un despliegue real, los de la cuenta del negocio. Si falta alguno,

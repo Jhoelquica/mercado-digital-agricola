@@ -2,6 +2,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 import json
 import logging
 import os
+import sys
 import random
 import re
 import math
@@ -169,9 +170,9 @@ PAGOS_URL = os.getenv("PAGOS_URL", "http://localhost:8007")
 # "Mis ventas": quién es el agricultor con sesión.
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO")  # para llamar a descontar_stock en Productos
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_pedido (DELETE de limpieza QA)
-TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO")  # obtener_pedido_interno (lo llama Transporte)
+PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PEDIDOS_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # para llamar a descontar_stock en Productos
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")  # eliminar_pedido (DELETE de limpieza QA)
+TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PEDIDOS_SECRETO: el servicio no arranca sin ella.")  # obtener_pedido_interno (lo llama Transporte)
 
 # Rango aproximado del departamento de Ayacucho — el pedido solo se acepta si el destino de
 # entrega cae dentro de esta caja (no es el polígono real del departamento, es un rectángulo que

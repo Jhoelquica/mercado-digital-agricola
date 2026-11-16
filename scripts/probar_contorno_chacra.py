@@ -168,7 +168,7 @@ def borrar_siembras_de_prueba(contexto, ids):
         "borradas = 0\n"
         "for registro in sys.argv[1:]:\n"
         "    peticion = urllib.request.Request('http://127.0.0.1:8001/productores/produccion/' + registro, method='DELETE',\n"
-        "                                      headers={'X-Servicio-Secreto': os.environ.get('QA_LIMPIEZA_SECRETO', '')})\n"
+        "                                      headers={'X-Servicio-Secreto': os.environ['QA_LIMPIEZA_SECRETO']})\n"
         "    try:\n"
         "        urllib.request.urlopen(peticion, timeout=10)\n"
         "        borradas += 1\n"

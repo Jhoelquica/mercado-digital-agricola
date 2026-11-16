@@ -1,6 +1,7 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import io
 import os
+import sys
 import hmac
 import uuid
 import logging
@@ -266,7 +267,7 @@ def mis_propuestas(db: Session = Depends(get_db), usuario: dict = Depends(requie
 
 PEDIDOS_URL = os.getenv("PEDIDOS_URL", "http://localhost:8003")
 PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
-QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
+QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")  # eliminar_envio, eliminar_repartidor (DELETE de limpieza QA)
 
 MAX_INTENTOS_PIN = 5        # códigos incorrectos seguidos antes de bloquear la confirmación
 BLOQUEO_PIN_MINUTOS = 15    # con 5 intentos cada 15 minutos, probar los 10.000 códigos toma semanas

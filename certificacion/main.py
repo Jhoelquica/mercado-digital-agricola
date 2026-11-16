@@ -1,5 +1,6 @@
 from prometheus_fastapi_instrumentator import Instrumentator
 import os
+import sys
 import uuid
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -43,9 +44,9 @@ def get_db():
 
 
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
-TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
-PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO")  # registrar_cosecha_aprobada (lo llama Productores)
-PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO")  # registrar_llegada_almacen (lo llama Productos)
+TRANSPORTE_A_CERTIFICACION_SECRETO = os.getenv("TRANSPORTE_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")  # crear_certificado_pedido, registrar_evento_interno (los llama Transporte)
+PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTORES_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")  # registrar_cosecha_aprobada (lo llama Productores)
+PRODUCTOS_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTOS_A_CERTIFICACION_SECRETO") or sys.exit("Falta la variable de entorno PRODUCTOS_A_CERTIFICACION_SECRETO: el servicio no arranca sin ella.")  # registrar_llegada_almacen (lo llama Productos)
 
 class EventoInterno(BaseModel):
     evento: str

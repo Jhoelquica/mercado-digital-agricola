@@ -1,9 +1,10 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from passlib.context import CryptContext
 from jose import jwt
 
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_SECRET = os.getenv("JWT_SECRET") or sys.exit("Falta la variable de entorno JWT_SECRET: el servicio no arranca sin ella.")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRACION_MINUTOS = 60
 

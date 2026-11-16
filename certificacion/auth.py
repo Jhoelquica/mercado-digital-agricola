@@ -1,10 +1,11 @@
 import hmac
 import os
+import sys
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_SECRET = os.getenv("JWT_SECRET") or sys.exit("Falta la variable de entorno JWT_SECRET: el servicio no arranca sin ella.")
 JWT_ALGORITHM = "HS256"
 
 security = HTTPBearer()
