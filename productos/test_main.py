@@ -2067,3 +2067,74 @@ def test_precio_referencia_incluye_el_producto_agotado():
     _crear_producto_directo(nombre=nombre, productor_id=beto, precio=7.0, stock=0)  # agotado: su precio fue real
     datos = _referencia(nombre)
     assert datos["precio_promedio"] == 4.0 and (datos["productos_usados"], datos["productores_usados"]) == (3, 2)
+
+
+# ============ fecha_creacion y fecha_publicacion separadas (2026-11-16) ============
+
+def _fechas_de(producto_id):
+    db = main.SessionLocal()
+    try:
+        p = db.query(main.models.Producto).filter(main.models.Producto.id == producto_id).one()
+        return p.fecha_creacion, p.fecha_publicacion
+    finally:
+        db.close()
+
+
+def test_un_borrador_sin_publicar_no_tiene_fecha_de_publicacion(monkeypatch):
+    monkeypatch.setattr(main, "PRODUCTORES_A_PRODUCTOS_SECRETO", "secreto-de-prueba-productores")
+    resp = _borrador_desde_cosecha(nombre=_nombre_unico("Mashua QA"))
+    assert resp.status_code == 200, resp.text
+    creado, publicado = _fechas_de(resp.json()["id"])
+    assert creado is not None and publicado is None
+    assert _crear_producto_directo(estado="borrador").fecha_publicacion is None
+    # Uno que se inserta ya a la venta (semillas, pruebas) se publica al insertarse.
+    assert _crear_producto_directo(estado="disponible").fecha_publicacion is not None
+
+
+def test_un_borrador_de_hace_100_dias_publicado_hoy_entra_en_la_ventana(monkeypatch):
+    from datetime import datetime, timedelta
+    nombre, ana, beto = _nombre_unico(), str(uuid.uuid4()), uuid.uuid4()
+    hace_100 = datetime.utcnow() - timedelta(days=100)
+    borrador = _crear_producto_directo(nombre=nombre, productor_id=ana, estado="borrador", precio=6.0, categoria="tuberculo",
+                                       fecha_creacion=hace_100)
+    _agregar_imagen(borrador.id)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=2.0)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=4.0)
+    assert _referencia(nombre)["productos_usados"] == 2  # el borrador todavía no cuenta
+
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, ana)
+    assert client.patch(f"/productos/{borrador.id}/publicar", headers=HEADERS_AUTH).status_code == 200
+    creado, publicado = _fechas_de(borrador.id)
+    assert abs((creado - hace_100).total_seconds()) < 1  # publicar no cambia cuándo nació
+    assert datetime.utcnow() - publicado < timedelta(minutes=1)
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] == 4.0 and (datos["productos_usados"], datos["productores_usados"]) == (3, 2)
+
+
+def test_la_migracion_copia_la_fecha_de_creacion_y_vacia_la_de_los_borradores():
+    from datetime import datetime
+    from sqlalchemy import text
+    import migraciones
+    antes = datetime(2026, 9, 19, 10, 30)
+    borrador = _crear_producto_directo(estado="borrador")
+    publicado = _crear_producto_directo(estado="disponible")
+    with main.engine.begin() as conexion:  # como estaban las filas de antes: solo fecha_publicacion, la de su creación
+        conexion.execute(text("UPDATE productos SET fecha_creacion = NULL, fecha_publicacion = :f WHERE id IN (:a, :b)"),
+                         {"f": antes, "a": str(borrador.id), "b": str(publicado.id)})
+    assert migraciones.separar_fecha_de_creacion(main.engine)["fecha_creacion"] >= 2
+    assert _fechas_de(borrador.id) == (antes, None)
+    assert _fechas_de(publicado.id) == (antes, antes)  # sin un dato mejor, se queda con la que tenía
+    assert migraciones.separar_fecha_de_creacion(main.engine) == {"fecha_creacion": 0, "borradores": 0}  # idempotente
+
+
+def test_mis_productos_salen_por_fecha_de_creacion(monkeypatch):
+    from datetime import datetime, timedelta
+    productor_id = str(uuid.uuid4())
+    viejo = _crear_producto_directo(productor_id=productor_id, fecha_creacion=datetime.utcnow() - timedelta(days=5))
+    nuevo = _crear_producto_directo(productor_id=productor_id, estado="borrador")
+    _auth(str(uuid.uuid4()))
+    _mockear_productores_me(monkeypatch, productor_id)
+    mios = client.get("/productos/mios", headers=HEADERS_AUTH).json()
+    assert [p["id"] for p in mios] == [str(nuevo.id), str(viejo.id)]
+    assert mios[0]["fecha_publicacion"] is None and mios[0]["fecha_creacion"]

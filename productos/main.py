@@ -19,7 +19,7 @@ from auth import verificar_token, requiere_rol, security, security_opcional, usu
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from database import Base, engine, SessionLocal
-from migraciones import agregar_columnas_faltantes
+from migraciones import agregar_columnas_faltantes, separar_fecha_de_creacion
 import models
 from sqlalchemy import func
 from fastapi import FastAPI, Depends, HTTPException, Header
@@ -35,6 +35,7 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas a una tabla que ya existe (p. ej. productos.descripcion).
 agregar_columnas_faltantes(engine, Base)
+separar_fecha_de_creacion(engine)
 
 
 def _asegurar_una_resena_por_comprador():
@@ -598,8 +599,8 @@ def precio_referencia(nombre_producto: str, db: Session = Depends(get_db)):
     Qué productos entran (2026-11-15; antes entraban todos, también los borradores y los de un solo productor):
     - solo los que están a la venta: "en_transito" o "disponible" (un "disponible" con stock 0 —agotado— cuenta: su
       precio fue real). Los borradores no: su precio todavía no lo vio ningún comprador;
-    - solo los de los últimos REFERENCIA_DIAS días según fecha_publicacion (la única fecha del modelo: se pone al
-      crearse el producto, es decir cuando nace el borrador, y publicar no la cambia);
+    - solo los publicados en los últimos REFERENCIA_DIAS días (fecha_publicacion: cuando salió a la venta, no cuando
+      nació el borrador, que es fecha_creacion);
     - muestra mínima: REFERENCIA_MIN_PRODUCTOS productos de REFERENCIA_MIN_PRODUCTORES productores distintos. Con
       menos, precio_promedio es None ("Sin precio de referencia suficiente"): el precio de un solo productor no es un
       precio de mercado.
@@ -737,7 +738,7 @@ def listar_mis_productos(
 
     productos = db.query(models.Producto).filter(
         models.Producto.productor_id == productor_id
-    ).order_by(models.Producto.fecha_publicacion.desc()).all()
+    ).order_by(models.Producto.fecha_creacion.desc()).all()  # los borradores no tienen fecha_publicacion
 
     imagenes = db.query(models.ProductoImagen).filter(
         models.ProductoImagen.producto_id.in_([p.id for p in productos])
@@ -759,6 +760,7 @@ def listar_mis_productos(
             "stock": p.stock,
             "unidad_medida": p.unidad_medida,
             "imagen_url": p.imagen_url,
+            "fecha_creacion": p.fecha_creacion,
             "fecha_publicacion": p.fecha_publicacion,
             "imagen_principal": primera_imagen_por_producto.get(str(p.id)),
             "estado": p.estado,
@@ -1189,6 +1191,7 @@ def publicar_producto(
     # central. Queda "en_transito" — visible en el catálogo y reservable — hasta que un Admin
     # confirme la llegada (PATCH /productos/{id}/confirmar-llegada-almacen).
     producto.estado = "en_transito"
+    producto.fecha_publicacion = datetime.utcnow()  # recién ahora sale a la venta (fecha_creacion no cambia)
     db.commit()
     db.refresh(producto)
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))

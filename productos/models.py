@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import Column, String, Numeric, Integer, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
-from sqlalchemy import Column, String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, Numeric, Integer, DateTime, ForeignKey, UniqueConstraint, event
 from sqlalchemy.orm import relationship
 
 class Producto(Base):
@@ -32,7 +32,12 @@ class Producto(Base):
     precio = Column(Numeric(10, 2), nullable=True)
     stock = Column(Integer, default=0)
     unidad_medida = Column(String, default="kg")
-    fecha_publicacion = Column(DateTime, default=datetime.utcnow)
+    # Dos fechas (2026-11-16; antes solo fecha_publicacion, que se ponía al crear el borrador):
+    # - fecha_creacion: cuando nace el producto (el borrador), a mano o desde una cosecha.
+    # - fecha_publicacion: cuando sale a la venta (PATCH /productos/{id}/publicar). Nula mientras es borrador. Un
+    #   producto que se inserta ya a la venta (semillas, pruebas) la recibe al insertarse: ver el evento de abajo.
+    fecha_creacion = Column(DateTime, default=datetime.utcnow)
+    fecha_publicacion = Column(DateTime, nullable=True)
     # borrador: recién creado (a mano vía POST /productos, o automático vía
     # /productos/interno/crear-desde-cosecha), no aparece en GET /productos hasta que el
     # productor lo complete y publique (PATCH /productos/{id}/publicar). en_transito: publicado
@@ -53,6 +58,13 @@ class Producto(Base):
     # crear_producto_desde_cosecha) para que Pedidos pueda calcular un peso real (ver
     # crear_pedido en pedidos/main.py) sin tener que ir a buscarlo a otro servicio.
     equivalencia_kg = Column(Numeric(10, 4), nullable=True)
+
+@event.listens_for(Producto, "before_insert")
+def _fecha_de_publicacion_al_insertar_a_la_venta(_mapper, _conexion, producto):
+    """Un producto que se inserta directamente a la venta (no como borrador) se publica en ese momento."""
+    if producto.estado not in (None, "borrador") and producto.fecha_publicacion is None:
+        producto.fecha_publicacion = producto.fecha_creacion or datetime.utcnow()
+
 
 class ProductoImagen(Base):
     __tablename__ = "producto_imagenes"

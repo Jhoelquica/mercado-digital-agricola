@@ -33,6 +33,7 @@ interface ProductoBase {
   stock: number | null;
   unidad_medida: string | null;
   imagen_url: string | null;
+  // Cuándo salió a la venta: null en los borradores (cuándo nació el producto es fecha_creacion, solo en /productos/mios).
   fecha_publicacion: string | null;
   estado: string;
   unidades_permitidas: string[] | null;
@@ -49,6 +50,7 @@ export interface ProductoCatalogo extends ProductoBase {
 }
 
 export interface ProductoMio extends ProductoBase {
+  fecha_creacion: string | null;
   imagen_principal: string | null;
   registro_produccion_id: string | null;
   descripcion: string | null;
@@ -78,6 +80,7 @@ export interface ProductoFila {
   precio: number | null;
   stock: number | null;
   unidad_medida: string | null;
+  fecha_creacion: string | null;
   fecha_publicacion: string | null;
   estado: string;
   registro_produccion_id: string | null;
