@@ -123,9 +123,18 @@ sus commits: `git fetch <bundle> "refs/huerfanos/*:refs/huerfanos/*"`.
 ## Arranque sin Kubernetes (Docker Compose)
 
 `docker compose up -d --build` levanta los 8 servicios, sus bases, Redis, RabbitMQ, MinIO y el frontend
-(<http://localhost:8090>). Necesita un archivo `.env`: la cabecera de `docker-compose.yml` dice qué variables lleva y qué
-cambia respecto de Kubernetes. **No incluye el gateway Traefik, Prometheus ni Grafana.** Comprobación:
-`python scripts/verificar_despliegue.py --directo --compose`.
+(<http://localhost:8090>). **No incluye el gateway Traefik, Prometheus ni Grafana.**
+
+```bash
+cp .env.example .env      # y cambiar TODOS los valores: los de la plantilla son de ejemplo
+docker compose up -d --build
+python scripts/verificar_despliegue.py --directo --compose
+```
+
+- **Credenciales:** todas salen de `.env` (ignorado por git); `docker-compose.yml` no lleva ninguna escrita. Si falta una
+  obligatoria, `docker compose` se niega a arrancar y dice cuál. La cabecera de `docker-compose.yml` explica qué cambia
+  respecto de Kubernetes.
+- **Puertos:** todos los publicados escuchan solo en `127.0.0.1`; no se ven desde otras máquinas de la red.
 
 ## Pruebas automáticas
 
@@ -162,11 +171,15 @@ docker-compose.yml     entorno sin Kubernetes
 ```
 
 No se suben (`.gitignore`): `k8s/secret.yaml`, `.env`, `.mcp.json`, `.claude/settings.local.json`, `backups/`, `docs/` y `deploy/gcp/salida/`.
+Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local/secret.ejemplo.yaml` y `.env.example`.
 
 ## Limitaciones conocidas
 
 **Seguridad y configuración**
-- RabbitMQ y Grafana usan credenciales fijas de desarrollo (`admin/admin123`) en `k8s/`.
+- Las credenciales salen del Secret `credenciales-app` (Kubernetes) o de `.env` (Docker Compose); ningún archivo versionado
+  lleva una. Cada base, RabbitMQ, MinIO y Grafana tienen su propia contraseña, y el código no trae valores por defecto: si
+  falta una variable, el servicio no arranca. El historial de git es público y conserva las contraseñas de desarrollo de
+  antes del 2026-11-16: ya no sirven (se cambiaron todas).
 - CORS abierto (`*`).
 - El JWT es simétrico (HS256) y todos los servicios comparten la misma clave.
 

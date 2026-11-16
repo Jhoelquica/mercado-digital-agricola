@@ -4,17 +4,20 @@
 #        Sitio: http://localhost:8090      APIs: http://localhost:8001..8008      MinIO (consola): http://localhost:9001
 #        Comprobación: python scripts/verificar_despliegue.py --directo --compose
 #
-# .env (no se sube a git) debe definir: DB_USER, DB_PASSWORD (mínimo 8 caracteres: también son las de MinIO), JWT_SECRET y
-# CULQI_SECRET_KEY (la de PRUEBA, sk_test_...).
+# .env (no se sube a git; cópialo de .env.example y cambia TODOS los valores) define todas las credenciales: DB_USER y
+# DB_PASSWORD (mínimo 8 caracteres: también son las de MinIO), JWT_SECRET, CULQI_SECRET_KEY (la de PRUEBA, sk_test_...),
+# RABBITMQ_USER/RABBITMQ_PASSWORD, ADMIN_BOOTSTRAP_PASSWORD, QA_LIMPIEZA_SECRETO y las 7 claves entre servicios
+# (*_A_*_SECRETO). Si falta una, docker compose se niega a arrancar y dice cuál.
 #
 # Qué es igual que en Kubernetes (k8s/): las mismas imágenes, variables de entorno, URLs entre servicios y bases.
 # Qué cambia a propósito:
 #   - NO hay Traefik, Prometheus ni Grafana: existen solo en Kubernetes. En su lugar, el nginx del frontend reparte /api/<servicio>
 #     y /media con las mismas rutas (deploy/compose/frontend-gateway.conf), sin validación de JWT previa, límite de peticiones ni
 #     rutas bloqueadas. Los puertos 8001..8008 siguen publicados para probar cada API directo.
+#   - Todos los puertos publicados escuchan solo en 127.0.0.1: no se ven desde otras máquinas de la red.
 #   - Una sola instancia de cada cosa (en k8s/ los microservicios van con 3 réplicas).
-#   - Los secretos entre servicios son valores de desarrollo escritos aquí (dev-...); en Kubernetes salen del Secret
-#     credenciales-app y, en Google Cloud, son aleatorios.
+#   - Ninguna credencial va escrita aquí: salen de .env. En Kubernetes salen del Secret credenciales-app y, en Google
+#     Cloud, son aleatorias.
 #   - Las imágenes se construyen desde el código (build:) en vez de bajarse de un registro.
 #   - Los healthcheck de abajo hacen el papel de las sondas de Kubernetes (GET /salud en cada servicio).
 
@@ -25,7 +28,7 @@ services:
     container_name: redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -42,11 +45,11 @@ services:
     hostname: rabbitmq
     restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     environment:
-      RABBITMQ_DEFAULT_USER: admin
-      RABBITMQ_DEFAULT_PASS: admin123
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -64,11 +67,11 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
-      MINIO_ROOT_USER: ${DB_USER}
-      MINIO_ROOT_PASSWORD: ${DB_PASSWORD}
+      MINIO_ROOT_USER: ${DB_USER:?falta DB_USER en .env}
+      MINIO_ROOT_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
     volumes:
       - minio_data:/data
     healthcheck:
@@ -83,11 +86,11 @@ services:
     container_name: db-productores
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: productores
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - productores_data:/var/lib/postgresql/data
     healthcheck: &salud-postgres
@@ -101,21 +104,21 @@ services:
     container_name: productores
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-productores
       PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
-      PRODUCTORES_A_PRODUCTOS_SECRETO: dev-productores-a-productos-secreto
-      PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      PRODUCTORES_A_PRODUCTOS_SECRETO: "${PRODUCTORES_A_PRODUCTOS_SECRETO:?falta PRODUCTORES_A_PRODUCTOS_SECRETO en .env}"
+      PRODUCTORES_A_CERTIFICACION_SECRETO: "${PRODUCTORES_A_CERTIFICACION_SECRETO:?falta PRODUCTORES_A_CERTIFICACION_SECRETO en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${DB_USER}
-      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
+      MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       MINIO_PUBLIC_URL: http://localhost:9000
       # Opcional (en .env): sin ella, la sugerencia de la fecha de cosecha sale de la tabla de ciclos típicos.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -136,11 +139,11 @@ services:
     container_name: db-productos
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: productos
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - productos_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -150,30 +153,30 @@ services:
     container_name: productos
     restart: unless-stopped
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-productos
       PRODUCTORES_URL: http://productores:8001
       USUARIOS_URL: http://usuarios:8006
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${DB_USER}
-      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
+      MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       MINIO_PUBLIC_URL: http://localhost:9000
-      PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
-      PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
-      PRODUCTORES_A_PRODUCTOS_SECRETO: dev-productores-a-productos-secreto
-      PRODUCTOS_A_CERTIFICACION_SECRETO: dev-productos-a-certificacion-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      PAGOS_A_PRODUCTOS_SECRETO: "${PAGOS_A_PRODUCTOS_SECRETO:?falta PAGOS_A_PRODUCTOS_SECRETO en .env}"
+      PEDIDOS_A_PRODUCTOS_SECRETO: "${PEDIDOS_A_PRODUCTOS_SECRETO:?falta PEDIDOS_A_PRODUCTOS_SECRETO en .env}"
+      PRODUCTORES_A_PRODUCTOS_SECRETO: "${PRODUCTORES_A_PRODUCTOS_SECRETO:?falta PRODUCTORES_A_PRODUCTOS_SECRETO en .env}"
+      PRODUCTOS_A_CERTIFICACION_SECRETO: "${PRODUCTOS_A_CERTIFICACION_SECRETO:?falta PRODUCTOS_A_CERTIFICACION_SECRETO en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       REDIS_HOST: redis
       REDIS_CACHE_PORT: "6379"
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
     depends_on:
       db-productos:
         condition: service_healthy
@@ -197,11 +200,11 @@ services:
     container_name: db-pedidos
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: pedidos
     ports:
-      - "5435:5432"
+      - "127.0.0.1:5435:5432"
     volumes:
       - pedidos_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -211,22 +214,22 @@ services:
     container_name: pedidos
     restart: unless-stopped
     ports:
-      - "8003:8003"
+      - "127.0.0.1:8003:8003"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-pedidos
       PRODUCTOS_URL: http://productos:8002
       TRANSPORTE_URL: http://transporte:8004
       PAGOS_URL: http://pagos:8007
       PRODUCTORES_URL: http://productores:8001
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: admin123
-      PEDIDOS_A_PRODUCTOS_SECRETO: dev-pedidos-a-productos-secreto
-      TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
+      PEDIDOS_A_PRODUCTOS_SECRETO: "${PEDIDOS_A_PRODUCTOS_SECRETO:?falta PEDIDOS_A_PRODUCTOS_SECRETO en .env}"
+      TRANSPORTE_A_PEDIDOS_SECRETO: "${TRANSPORTE_A_PEDIDOS_SECRETO:?falta TRANSPORTE_A_PEDIDOS_SECRETO en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # RENIEC simulado con los DNIs de prueba de pedidos/reniec.py (solo para desarrollo local).
       RENIEC_MODO: simulado
     depends_on:
@@ -248,11 +251,11 @@ services:
     container_name: db-transporte
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: transporte
     ports:
-      - "5436:5432"
+      - "127.0.0.1:5436:5432"
     volumes:
       - transporte_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -262,27 +265,27 @@ services:
     container_name: transporte
     restart: unless-stopped
     ports:
-      - "8004:8004"
+      - "127.0.0.1:8004:8004"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-transporte
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: admin123
+      RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
       PRODUCTORES_URL: http://productores:8001
       PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
       PAGOS_URL: http://pagos:8007
-      TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
-      TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
-      TRANSPORTE_A_PEDIDOS_SECRETO: dev-transporte-a-pedidos-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      TRANSPORTE_A_CERTIFICACION_SECRETO: "${TRANSPORTE_A_CERTIFICACION_SECRETO:?falta TRANSPORTE_A_CERTIFICACION_SECRETO en .env}"
+      TRANSPORTE_A_PAGOS_SECRETO: "${TRANSPORTE_A_PAGOS_SECRETO:?falta TRANSPORTE_A_PAGOS_SECRETO en .env}"
+      TRANSPORTE_A_PEDIDOS_SECRETO: "${TRANSPORTE_A_PEDIDOS_SECRETO:?falta TRANSPORTE_A_PEDIDOS_SECRETO en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${DB_USER}
-      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
+      MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       MINIO_PUBLIC_URL: http://localhost:9000
     depends_on:
       db-transporte:
@@ -303,11 +306,11 @@ services:
     container_name: db-notificaciones
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: notificaciones
     ports:
-      - "5437:5432"
+      - "127.0.0.1:5437:5432"
     volumes:
       - notificaciones_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -317,16 +320,16 @@ services:
     container_name: notificaciones
     restart: unless-stopped
     ports:
-      - "8005:8005"
+      - "127.0.0.1:8005:8005"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-notificaciones
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: admin123
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # H6: avisos al celular y por correo; vacías = apagados (ver notificaciones/avisos_externos.py).
       USUARIOS_URL: http://usuarios:8006
       VAPID_CLAVE_PUBLICA: ${VAPID_CLAVE_PUBLICA:-}
@@ -354,11 +357,11 @@ services:
     container_name: db-usuarios
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: usuarios
     ports:
-      - "5438:5432"
+      - "127.0.0.1:5438:5432"
     volumes:
       - usuarios_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -368,28 +371,28 @@ services:
     container_name: usuarios
     restart: unless-stopped
     ports:
-      - "8006:8006"
+      - "127.0.0.1:8006:8006"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-usuarios
-      JWT_SECRET: ${JWT_SECRET}
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
       MAX_INTENTOS_LOGIN: "8"
       BLOQUEO_LOGIN_MINUTOS: "10"
       # Bootstrap del primer admin (ver sembrar_admin_inicial() en usuarios/main.py). Solo corre si la BD todavía no tiene
       # ningún admin. Valores de DESARROLLO.
       ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
-      ADMIN_BOOTSTRAP_PASSWORD: dev-admin-12345
+      ADMIN_BOOTSTRAP_PASSWORD: "${ADMIN_BOOTSTRAP_PASSWORD:?falta ADMIN_BOOTSTRAP_PASSWORD en .env}"
       GOOGLE_CLIENT_ID: 546858204347-n72ku2ohsq88er0p297hrd9n2rirsc86.apps.googleusercontent.com
       # Verificación del RUC en SUNAT (ver k8s/usuarios.yaml). El token es opcional (en .env).
       SUNAT_RUC_URL: https://api.apis.net.pe/v2/sunat/ruc
       SUNAT_RUC_TOKEN: ${SUNAT_RUC_TOKEN:-}
       # Documentos de los reclamos de RUC (bucket privado usuarios-reclamos-ruc)
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${DB_USER}
-      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
+      MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
     depends_on:
       db-usuarios:
         condition: service_healthy
@@ -407,11 +410,11 @@ services:
     container_name: db-pagos
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: pagos
     ports:
-      - "5439:5432"
+      - "127.0.0.1:5439:5432"
     volumes:
       - pagos_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -421,26 +424,26 @@ services:
     container_name: pagos
     restart: unless-stopped
     ports:
-      - "8007:8007"
+      - "127.0.0.1:8007:8007"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-pagos
       RABBITMQ_HOST: rabbitmq
-      RABBITMQ_USER: admin
-      RABBITMQ_PASSWORD: admin123
-      JWT_SECRET: ${JWT_SECRET}
-      CULQI_SECRET_KEY: ${CULQI_SECRET_KEY}
-      PAGOS_A_PRODUCTOS_SECRETO: dev-pagos-a-productos-secreto
-      TRANSPORTE_A_PAGOS_SECRETO: dev-transporte-a-pagos-secreto
-      QA_LIMPIEZA_SECRETO: dev-qa-limpieza-secreto
+      RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      CULQI_SECRET_KEY: ${CULQI_SECRET_KEY:?falta CULQI_SECRET_KEY en .env}
+      PAGOS_A_PRODUCTOS_SECRETO: "${PAGOS_A_PRODUCTOS_SECRETO:?falta PAGOS_A_PRODUCTOS_SECRETO en .env}"
+      TRANSPORTE_A_PAGOS_SECRETO: "${TRANSPORTE_A_PAGOS_SECRETO:?falta TRANSPORTE_A_PAGOS_SECRETO en .env}"
+      QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
       PRODUCTORES_URL: http://productores:8001
       TRANSPORTE_URL: http://transporte:8004
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${DB_USER}
-      MINIO_SECRET_KEY: ${DB_PASSWORD}
+      MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
+      MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       # Cuenta DE EJEMPLO para la transferencia bancaria (ver k8s/pagos.yaml).
       TRANSFERENCIA_BANCO: "BCP (cuenta de ejemplo)"
       TRANSFERENCIA_TITULAR: "Chakra Shop S.A.C."
@@ -465,11 +468,11 @@ services:
     container_name: db-certificacion
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       POSTGRES_DB: certificacion
     ports:
-      - "5440:5432"
+      - "127.0.0.1:5440:5432"
     volumes:
       - certificacion_data:/var/lib/postgresql/data
     healthcheck: *salud-postgres
@@ -479,18 +482,18 @@ services:
     container_name: certificacion
     restart: unless-stopped
     ports:
-      - "8008:8008"
+      - "127.0.0.1:8008:8008"
     environment:
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USER: ${DB_USER:?falta DB_USER en .env}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-certificacion
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       # A dónde apunta el QR de cada producto (/verificar lo sirve el contenedor frontend de abajo).
       FRONTEND_URL: http://localhost:8090
       PRODUCTORES_URL: http://productores:8001
-      TRANSPORTE_A_CERTIFICACION_SECRETO: dev-transporte-a-certificacion-secreto
-      PRODUCTORES_A_CERTIFICACION_SECRETO: dev-productores-a-certificacion-secreto
-      PRODUCTOS_A_CERTIFICACION_SECRETO: dev-productos-a-certificacion-secreto
+      TRANSPORTE_A_CERTIFICACION_SECRETO: "${TRANSPORTE_A_CERTIFICACION_SECRETO:?falta TRANSPORTE_A_CERTIFICACION_SECRETO en .env}"
+      PRODUCTORES_A_CERTIFICACION_SECRETO: "${PRODUCTORES_A_CERTIFICACION_SECRETO:?falta PRODUCTORES_A_CERTIFICACION_SECRETO en .env}"
+      PRODUCTOS_A_CERTIFICACION_SECRETO: "${PRODUCTOS_A_CERTIFICACION_SECRETO:?falta PRODUCTOS_A_CERTIFICACION_SECRETO en .env}"
     depends_on:
       db-certificacion:
         condition: service_healthy
@@ -508,7 +511,7 @@ services:
     container_name: frontend
     restart: unless-stopped
     ports:
-      - "8090:8080"
+      - "127.0.0.1:8090:8080"
     volumes:
       - ./deploy/compose/frontend-gateway.conf:/etc/nginx/extra/gateway.conf:ro
     # nginx resuelve los nombres de los servicios al arrancar.
