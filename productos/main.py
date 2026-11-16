@@ -575,6 +575,12 @@ def eliminar_producto(producto_id: str, db: Session = Depends(get_db), x_servici
     cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return {"mensaje": "Producto eliminado"}
 
+# Precio de referencia: qué tan reciente y con cuántos productos de cuántos productores vale como precio de mercado.
+REFERENCIA_DIAS = 90
+REFERENCIA_MIN_PRODUCTOS = 3
+REFERENCIA_MIN_PRODUCTORES = 2
+
+
 @app.get("/productos/precio-referencia/{nombre_producto}")
 def precio_referencia(nombre_producto: str, db: Session = Depends(get_db)):
     """Precio de mercado de referencia para un nombre de cultivo/producto: promedio (AVG) del
@@ -588,23 +594,40 @@ def precio_referencia(nombre_producto: str, db: Session = Depends(get_db)):
     mezcla unidades distintas y deja de ser un precio-por-kg real. Aceptado así para este primer
     módulo (así se especificó); si se vuelve un problema real, la forma correcta sería promediar
     solo dentro de una misma unidad_medida, o normalizar todo a precio-por-kg antes de promediar.
+
+    Qué productos entran (2026-11-15; antes entraban todos, también los borradores y los de un solo productor):
+    - solo los que están a la venta: "en_transito" o "disponible" (un "disponible" con stock 0 —agotado— cuenta: su
+      precio fue real). Los borradores no: su precio todavía no lo vio ningún comprador;
+    - solo los de los últimos REFERENCIA_DIAS días según fecha_publicacion (la única fecha del modelo: se pone al
+      crearse el producto, es decir cuando nace el borrador, y publicar no la cambia);
+    - muestra mínima: REFERENCIA_MIN_PRODUCTOS productos de REFERENCIA_MIN_PRODUCTORES productores distintos. Con
+      menos, precio_promedio es None ("Sin precio de referencia suficiente"): el precio de un solo productor no es un
+      precio de mercado.
+    Siempre devuelve con cuántos productos y productores contó, para mostrar "basado en N productos de M productores".
     """
     nombre_normalizado = nombre_producto.strip()
-    promedio = db.query(func.avg(models.Producto.precio)).filter(
-        func.lower(models.Producto.nombre) == nombre_normalizado.lower()
-    ).scalar()
-
-    if promedio is None:
-        return {
-            "nombre_producto": nombre_normalizado,
-            "precio_promedio": None,
-            "mensaje": "No hay productos activos con ese nombre en el catálogo",
-        }
-
-    return {
+    filas = db.query(models.Producto.precio, models.Producto.productor_id).filter(
+        func.lower(models.Producto.nombre) == nombre_normalizado.lower(),
+        models.Producto.estado.in_(["en_transito", "disponible"]),
+        models.Producto.precio.isnot(None),
+        models.Producto.precio > 0,
+        models.Producto.fecha_publicacion >= datetime.utcnow() - timedelta(days=REFERENCIA_DIAS),
+    ).all()
+    productores = {str(productor_id) for _precio, productor_id in filas}
+    respuesta = {
         "nombre_producto": nombre_normalizado,
-        "precio_promedio": round(float(promedio), 2),
+        "precio_promedio": None,
+        "productos_usados": len(filas),
+        "productores_usados": len(productores),
+        "minimo_productos": REFERENCIA_MIN_PRODUCTOS,
+        "minimo_productores": REFERENCIA_MIN_PRODUCTORES,
+        "dias": REFERENCIA_DIAS,
     }
+    if len(filas) < REFERENCIA_MIN_PRODUCTOS or len(productores) < REFERENCIA_MIN_PRODUCTORES:
+        return {**respuesta, "mensaje": "Sin precio de referencia suficiente"}
+
+    promedio = sum(float(precio) for precio, _productor_id in filas) / len(filas)
+    return {**respuesta, "precio_promedio": round(promedio, 2)}
 
 @app.get("/productos")
 def listar_productos(db: Session = Depends(get_db)):

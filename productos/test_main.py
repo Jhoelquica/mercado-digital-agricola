@@ -1992,3 +1992,78 @@ def test_el_catalogo_tambien_dice_de_que_siembra_salio_cada_producto():
     del_catalogo = next(p for p in client.get("/productos").json() if p["id"] == str(producto.id))
 
     assert del_catalogo["registro_produccion_id"] == str(registro_id)
+
+
+# ============ Precio de referencia: solo a la venta, últimos 90 días y con muestra mínima (2026-11-15) ============
+
+def _referencia(nombre):
+    resp = client.get(f"/productos/precio-referencia/{nombre}")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _nombre_unico(base="Olluco QA"):
+    return f"{base} {uuid.uuid4().hex[:8]}"
+
+
+def test_precio_referencia_dos_productores_con_tres_productos_dan_precio():
+    nombre, ana, beto = _nombre_unico(), uuid.uuid4(), uuid.uuid4()
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=2.0)
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=3.0, estado="en_transito")
+    _crear_producto_directo(nombre=nombre.upper(), productor_id=beto, precio=4.0)  # sin distinguir mayúsculas
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] == 3.0
+    assert (datos["productos_usados"], datos["productores_usados"]) == (3, 2)
+    assert (datos["minimo_productos"], datos["minimo_productores"], datos["dias"]) == (3, 2, 90)
+    assert "mensaje" not in datos
+
+
+def test_precio_referencia_un_solo_productor_da_null():
+    nombre, ana = _nombre_unico(), uuid.uuid4()
+    for precio in (3.8, 3.8, 3.8, 3.8):  # como la "Papa amarilla" del clúster: cuatro productos, un productor
+        _crear_producto_directo(nombre=nombre, productor_id=ana, precio=precio)
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] is None and datos["mensaje"] == "Sin precio de referencia suficiente"
+    assert (datos["productos_usados"], datos["productores_usados"]) == (4, 1)
+    # Dos productores pero solo dos productos: tampoco alcanza.
+    otro = _nombre_unico()
+    _crear_producto_directo(nombre=otro, productor_id=uuid.uuid4(), precio=5.0)
+    _crear_producto_directo(nombre=otro, productor_id=uuid.uuid4(), precio=6.0)
+    assert _referencia(otro)["precio_promedio"] is None
+    # Y un nombre que no existe en el catálogo.
+    nada = _referencia(_nombre_unico())
+    assert nada["precio_promedio"] is None and (nada["productos_usados"], nada["productores_usados"]) == (0, 0)
+
+
+def test_precio_referencia_excluye_los_borradores():
+    nombre, ana, beto = _nombre_unico(), uuid.uuid4(), uuid.uuid4()
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=2.0)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=4.0)
+    # El tercero es un borrador (con precio puesto y sin él): no cuenta para la muestra ni para el promedio.
+    _crear_producto_directo(nombre=nombre, productor_id=uuid.uuid4(), precio=90.0, estado="borrador")
+    _crear_producto_directo(nombre=nombre, productor_id=uuid.uuid4(), precio=None, estado="borrador")
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] is None and (datos["productos_usados"], datos["productores_usados"]) == (2, 2)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=6.0)
+    assert _referencia(nombre)["precio_promedio"] == 4.0  # (2 + 4 + 6) / 3: el borrador de S/ 90 sigue fuera
+
+
+def test_precio_referencia_excluye_lo_publicado_hace_mas_de_90_dias():
+    from datetime import datetime, timedelta
+    nombre, ana, beto = _nombre_unico(), uuid.uuid4(), uuid.uuid4()
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=2.0)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=4.0, fecha_publicacion=datetime.utcnow() - timedelta(days=89))
+    _crear_producto_directo(nombre=nombre, productor_id=uuid.uuid4(), precio=60.0, fecha_publicacion=datetime.utcnow() - timedelta(days=91))
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] is None and (datos["productos_usados"], datos["productores_usados"]) == (2, 2)
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=3.0)
+    assert _referencia(nombre)["precio_promedio"] == 3.0  # el de hace 91 días (S/ 60) no entra
+
+
+def test_precio_referencia_incluye_el_producto_agotado():
+    nombre, ana, beto = _nombre_unico(), uuid.uuid4(), uuid.uuid4()
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=2.0)
+    _crear_producto_directo(nombre=nombre, productor_id=ana, precio=3.0)
+    _crear_producto_directo(nombre=nombre, productor_id=beto, precio=7.0, stock=0)  # agotado: su precio fue real
+    datos = _referencia(nombre)
+    assert datos["precio_promedio"] == 4.0 and (datos["productos_usados"], datos["productores_usados"]) == (3, 2)
