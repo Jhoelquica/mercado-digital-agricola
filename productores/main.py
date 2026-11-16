@@ -870,8 +870,13 @@ def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: s
     return True
 
 
+SIN_REFERENCIA_SUFICIENTE = "Sin precio de referencia suficiente"
+
+
 def _consultar_precio_referencia(cultivo: str):
-    """Devuelve (precio_por_kg_o_None, motivo_de_fallo_o_None)."""
+    """Devuelve (precio_por_kg_o_None, motivo_de_fallo_o_None, muestra_o_None). La muestra es con cuántos productos de
+    cuántos productores contó Productos ({"productos", "productores"}); None si Productos no respondió. Sin precio y
+    con muestra = no alcanza la muestra mínima (ver precio_referencia en productos/main.py)."""
     try:
         resp = breaker_productos.call(_pedir_precio_referencia, cultivo)
     except (pybreaker.CircuitBreakerError, httpx.RequestError):
@@ -879,15 +884,17 @@ def _consultar_precio_referencia(cultivo: str):
         # RequestError = sí se intentó (circuito cerrado/medio-abierto) y falló de verdad.
         # Mismo motivo para el usuario en ambos casos — la diferencia es interna (qué tan rápido
         # se rindió), no algo que le sirva ver a quien consulta su Gestión Económica.
-        return None, "No se pudo consultar el precio de mercado (servicio de Productos no disponible)"
+        return None, "No se pudo consultar el precio de mercado (servicio de Productos no disponible)", None
 
     if resp.status_code != 200:
-        return None, "No se pudo consultar el precio de mercado"
+        return None, "No se pudo consultar el precio de mercado", None
 
-    precio = resp.json().get("precio_promedio")
+    datos = resp.json()
+    muestra = {"productos": int(datos.get("productos_usados") or 0), "productores": int(datos.get("productores_usados") or 0)}
+    precio = datos.get("precio_promedio")
     if precio is None:
-        return None, "Producto no encontrado en el catálogo (sin precio de referencia)"
-    return float(precio), None
+        return None, SIN_REFERENCIA_SUFICIENTE, muestra
+    return float(precio), None, muestra
 
 
 def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict) -> dict:
@@ -906,6 +913,12 @@ def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict)
         "ganancia_estimada": None,
         "margen_porcentaje": None,
         "motivo_sin_calculo": None,
+        # Con cuántos productos de cuántos productores se sacó (o se intentó sacar) el precio de referencia, y si no
+        # alcanzó la muestra mínima: la pantalla dice "basado en N productos de M productores" o "Sin precio de
+        # referencia suficiente" en vez de una ganancia.
+        "referencia_productos": None,
+        "referencia_productores": None,
+        "sin_referencia_suficiente": False,
     }
 
     # Aún no cosechado: no es un "fallo", simplemente no hay nada que calcular todavía.
@@ -919,10 +932,13 @@ def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict)
     clave = registro.cultivo.strip().lower()
     if clave not in cache_precios:
         cache_precios[clave] = _consultar_precio_referencia(registro.cultivo)
-    precio_kg, motivo = cache_precios[clave]
+    precio_kg, motivo, muestra = cache_precios[clave]
+    if muestra:
+        base["referencia_productos"], base["referencia_productores"] = muestra["productos"], muestra["productores"]
 
     if precio_kg is None:
         base["motivo_sin_calculo"] = motivo
+        base["sin_referencia_suficiente"] = muestra is not None
         return base
 
     cantidad_kg = (
@@ -1591,18 +1607,40 @@ def _kg_cosechados(r) -> float | None:
     return float(r.cantidad_cosechada) * float(r.equivalencia_kg) if r.equivalencia_kg else None
 
 
-def _costos_por_kg(registros) -> dict:
-    """{clave: S/ por kg} de cosechas con gastos anotados (suma de costos / suma de kilos)."""
+def _sumas_de_costos(registros) -> dict:
+    """{clave: [soles, kilos, cosechas, {productores}]} de las cosechas con gastos anotados."""
     sumas = {}
     for r in registros:
         clave, kg = _clave_de(r), _kg_cosechados(r)
         costo = float(r.costo_semillas or 0) + float(r.costo_insumos or 0) + float(r.costo_mano_obra or 0)
         if not clave or not kg or costo <= 0:
             continue
-        s = sumas.setdefault(clave, [0.0, 0.0])
+        s = sumas.setdefault(clave, [0.0, 0.0, 0, set()])
         s[0] += costo
         s[1] += kg
-    return {k: v[0] / v[1] for k, v in sumas.items() if v[1]}
+        s[2] += 1
+        s[3].add(str(r.productor_id))
+    return sumas
+
+
+def _costos_por_kg(registros) -> dict:
+    """{clave: S/ por kg} de cosechas con gastos anotados (suma de costos / suma de kilos). Sin muestra mínima: es para
+    las cosechas del propio agricultor, que son sus gastos y no una muestra del mercado."""
+    return {k: v[0] / v[1] for k, v in _sumas_de_costos(registros).items() if v[1]}
+
+
+def _costos_de_otros(registros) -> tuple[dict, dict]:
+    """El costo por kg de las cosechas de OTROS agricultores, solo con muestra suficiente (ver recomendacion_siembra):
+    ({clave: S/ por kg}, {clave: {"cosechas", "productores"}} de los que no alcanzan)."""
+    suficientes, escasos = {}, {}
+    for clave, (soles, kilos, cosechas, productores) in _sumas_de_costos(registros).items():
+        if not kilos:
+            continue
+        if recomendacion_siembra.muestra_suficiente(cosechas, len(productores)):
+            suficientes[clave] = soles / kilos
+        else:
+            escasos[clave] = {"cosechas": cosechas, "productores": len(productores)}
+    return suficientes, escasos
 
 
 def _mercado(token: str) -> tuple[dict, bool]:
@@ -1617,11 +1655,18 @@ def _mercado(token: str) -> tuple[dict, bool]:
         clave = _clave_de(p["nombre"])
         if not clave:
             continue
-        m = salida.setdefault(clave, {"kg": 0.0, "soles": 0.0, "soles_con_kg": 0.0, "kg_por_mes": [0.0] * len(p["kg_por_mes"])})
+        m = salida.setdefault(clave, {"kg": 0.0, "soles": 0.0, "soles_con_kg": 0.0, "kg_por_mes": [0.0] * len(p["kg_por_mes"]),
+                                      "ventas": 0, "vendedores": set()})
         m["kg"] += p["kg"]
         m["soles"] += p["soles"]
         m["soles_con_kg"] += p.get("soles_con_kg", p["soles"])
         m["kg_por_mes"] = [a + b for a, b in zip(m["kg_por_mes"], p["kg_por_mes"])]
+        # La muestra: los pedidos en que se vendió cada nombre (un pedido con dos variedades cuenta por las dos) y los
+        # productores distintos entre todos los nombres del alimento (números anónimos de Pedidos, no ids).
+        m["ventas"] += p.get("pedidos", 0)
+        m["vendedores"] |= set(p.get("vendedores", []))
+    for m in salida.values():
+        m["productores"] = len(m.pop("vendedores"))
     return salida, True
 
 
@@ -1632,15 +1677,28 @@ def _catalogo_por_alimento() -> dict:
     except Exception:
         logger.warning("Qué sembrar: Productos no respondió el catálogo", exc_info=True)
         return {}
+    # El precio, como el precio de referencia de Productos: solo con los productos de los últimos días (el stock sí
+    # cuenta entero: es lo que hay hoy en el catálogo). Si alcanza la muestra mínima lo decide recomendar().
+    desde = datetime.utcnow() - timedelta(days=recomendacion_siembra.DIAS_CATALOGO)
+
+    def reciente(fecha) -> bool:
+        try:
+            return datetime.fromisoformat(str(fecha)[:19]) >= desde
+        except ValueError:
+            return False  # sin fecha legible no se puede decir que sea reciente
+
     grupos = {}
     for p in resp.json():
         clave = _clave_de(p.get("nombre") or "")
         if not clave or p.get("unidad_medida") != "kg" or not p.get("precio"):
             continue
-        g = grupos.setdefault(clave, {"precios": [], "stock_kg": 0.0})
-        g["precios"].append(float(p["precio"]))
+        g = grupos.setdefault(clave, {"precios": [], "stock_kg": 0.0, "productores": set()})
         g["stock_kg"] += float(p.get("stock") or 0)
-    return {k: {"precio_kg": sum(g["precios"]) / len(g["precios"]), "stock_kg": g["stock_kg"]} for k, g in grupos.items()}
+        if reciente(p.get("fecha_publicacion")):
+            g["precios"].append(float(p["precio"]))
+            g["productores"].add(str(p.get("productor_id")))
+    return {k: {"precio_kg": sum(g["precios"]) / len(g["precios"]) if g["precios"] else None, "stock_kg": g["stock_kg"],
+                "productos": len(g["precios"]), "productores": len(g["productores"])} for k, g in grupos.items()}
 
 
 @app.get("/que-sembrar")
@@ -1660,10 +1718,11 @@ def que_me_conviene_sembrar(db: Session = Depends(get_db), usuario: dict = Depen
             planificadas.setdefault(clave, []).append(r.fecha_cosecha_estimada)
     cosechados = (db.query(models.RegistroProduccion)
                   .filter(models.RegistroProduccion.estado.in_(("cosechado", "aprobado"))).all())
+    costos_de_otros, costos_escasos = _costos_de_otros([r for r in cosechados if str(r.productor_id) != str(productor.id)])
     resultado = recomendacion_siembra.recomendar(
         mercado, _catalogo_por_alimento(), planificadas,
         _costos_por_kg([r for r in cosechados if str(r.productor_id) == str(productor.id)]),
-        _costos_por_kg([r for r in cosechados if str(r.productor_id) != str(productor.id)]), hoy)
+        costos_de_otros, hoy, costos_escasos)
     return {**resultado, "generado": hoy, "ventas_disponibles": ventas_ok,
             "consejo": recomendacion_siembra.consejo(resultado["recomendaciones"], str(productor.id)),
             "referencias": [{"cultivo": plantillas.ALIMENTOS[k][0], "fuente": v["fuente"]} for k, v in recomendacion_siembra.REFERENCIAS.items()]}

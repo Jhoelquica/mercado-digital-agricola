@@ -77,7 +77,7 @@ def _catalogo_y_almacen_simulados(monkeypatch):
         lambda payload: _RespuestaFalsaProductos(200, {"id": str(uuid.uuid4())}),
     )
     monkeypatch.setattr(main, "subir_foto_cosecha", MagicMock(return_value=FOTO_URL_FALSA))
-    monkeypatch.setattr(main, "_consultar_precio_referencia", lambda cultivo: (10.0, None))
+    monkeypatch.setattr(main, "_consultar_precio_referencia", lambda cultivo: (10.0, None, {"productos": 3, "productores": 2}))
 
 
 def _auth(sub: str, rol: str = "productor"):
@@ -1140,8 +1140,20 @@ def test_que_sembrar_junta_ventas_catalogo_y_siembras_de_otros(monkeypatch):
         if url.endswith("/ventas/mercado"):
             assert kwargs["headers"]["Authorization"].startswith("Bearer ")
             return Respuesta({"meses": ["2026-05", "2026-06", "2026-07", "2026-08", "2026-09", "2026-10"],
-                              "productos": [{"nombre": "Papa amarilla", "kg": 500, "soles": 1750, "pedidos": 9, "kg_por_mes": [50, 60, 80, 90, 100, 120]}]})
-        return Respuesta([{"nombre": "Quinua roja", "unidad_medida": "kg", "precio": 9.5, "stock": 40}])
+                              "productos": [
+                                  {"nombre": "Papa amarilla", "kg": 300, "soles": 1050, "pedidos": 5, "productores": 1, "vendedores": [0], "kg_por_mes": [30, 40, 50, 50, 60, 70]},
+                                  {"nombre": "Papa blanca", "kg": 200, "soles": 700, "pedidos": 4, "productores": 1, "vendedores": [1], "kg_por_mes": [20, 20, 30, 40, 40, 50]},
+                                  # Un solo vendedor: no alcanza la muestra mínima aunque tenga muchos pedidos.
+                                  {"nombre": "Oca", "kg": 900, "soles": 2700, "pedidos": 12, "productores": 1, "vendedores": [0], "kg_por_mes": [150] * 6}]})
+        reciente, vieja = datetime.utcnow().isoformat(), (datetime.utcnow() - timedelta(days=120)).isoformat()
+        return Respuesta([
+            {"nombre": "Quinua roja", "unidad_medida": "kg", "precio": 9.0, "stock": 40, "productor_id": "a", "fecha_publicacion": reciente},
+            {"nombre": "Quinua roja", "unidad_medida": "kg", "precio": 10.0, "stock": 10, "productor_id": "a", "fecha_publicacion": reciente},
+            {"nombre": "Quinua blanca", "unidad_medida": "kg", "precio": 9.5, "stock": 0, "productor_id": "b", "fecha_publicacion": reciente},
+            # Fuera de la ventana de 90 días: su precio no entra (su stock sí).
+            {"nombre": "Quinua negra", "unidad_medida": "kg", "precio": 30.0, "stock": 5, "productor_id": "c", "fecha_publicacion": vieja},
+            # Cuatro productos, un solo productor: sin precio de referencia suficiente.
+            *[{"nombre": "Arveja", "unidad_medida": "kg", "precio": 3.8, "stock": 300, "productor_id": "a", "fecha_publicacion": reciente}] * 4])
 
     monkeypatch.setattr(main.httpx, "get", get_falso)
     monkeypatch.setattr(main.recomendacion_siembra, "consejo", lambda ranking, clave: "Siembra papa.")
@@ -1154,8 +1166,14 @@ def test_que_sembrar_junta_ventas_catalogo_y_siembras_de_otros(monkeypatch):
     datos = resp.json()
     papa = next(f for f in datos["recomendaciones"] if f["clave"] == "papa")
     quinua = next(f for f in datos["recomendaciones"] if f["clave"] == "quinua")
+    # Dos nombres del mismo alimento, cada uno de un vendedor distinto: juntos son 9 ventas de 2 productores.
     assert (papa["precio_kg"], papa["demanda_kg"], papa["tendencia"]) == (3.5, 500, "sube")
+    assert any("basado en 9 ventas de 2 productores" in f for f in papa["frases"])
     assert quinua["fuente_precio"] == "precio del catálogo" and quinua["competencia"] >= 1
+    assert (quinua["precio_kg"], quinua["stock_catalogo_kg"]) == (9.5, 55)  # 3 productos de 2 productores; stock, todo
+    # Muestra mínima: ni la oca (un vendedor) ni la arveja (un productor en el catálogo) se calculan, y se dice.
+    assert not any(f["clave"] in ("oca", "arveja") for f in datos["recomendaciones"])
+    assert {"Oca", "Arveja"} <= set(datos["datos_insuficientes"]) and datos["muestra_minima"] == {"cantidad": 3, "productores": 2}
     assert datos["consejo"] == "Siembra papa." and datos["ventas_disponibles"] is True and datos["referencias"]
     _auth(str(uuid.uuid4()), rol="comprador")
     assert client.get("/que-sembrar", headers={"Authorization": "Bearer token"}).status_code == 403
@@ -2020,3 +2038,57 @@ def test_la_limpieza_de_pruebas_borra_una_siembra_con_sus_gastos(monkeypatch):
             main.models.HistorialVerificacionCosecha.registro_produccion_id == registro["id"]).count() == 0
     finally:
         db.close()
+
+
+# ============ Muestra mínima del precio de referencia (2026-11-15) ============
+# El fixture de arriba reemplaza _consultar_precio_referencia en cada test: esta es la de verdad.
+_consultar_precio_referencia_real = main._consultar_precio_referencia
+
+
+def test_sin_muestra_minima_no_hay_precio_de_referencia_ni_ganancia(monkeypatch):
+    registro_id = _crear_registro_con_foto()
+    assert _completar_cosecha(registro_id).status_code == 200
+    con = _mi_registro(registro_id)
+    assert (con["precio_referencia_kg"], con["referencia_productos"], con["referencia_productores"]) == (10.0, 3, 2)
+    assert con["sin_referencia_suficiente"] is False and con["ganancia_estimada"] is not None
+
+    monkeypatch.setattr(main, "_consultar_precio_referencia",
+                        lambda cultivo: (None, main.SIN_REFERENCIA_SUFICIENTE, {"productos": 4, "productores": 1}))
+    sin = _mi_registro(registro_id)
+    assert (sin["precio_referencia_kg"], sin["ingreso_estimado"], sin["ganancia_estimada"], sin["margen_porcentaje"]) == (None,) * 4
+    assert sin["motivo_sin_calculo"] == "Sin precio de referencia suficiente" and sin["sin_referencia_suficiente"] is True
+    assert (sin["referencia_productos"], sin["referencia_productores"]) == (4, 1)
+
+    # Productos caído no es "falta muestra": es que no se pudo consultar.
+    monkeypatch.setattr(main, "_consultar_precio_referencia",
+                        lambda cultivo: (None, "No se pudo consultar el precio de mercado", None))
+    caido = _mi_registro(registro_id)
+    assert caido["sin_referencia_suficiente"] is False and caido["ganancia_estimada"] is None
+    assert caido["referencia_productos"] is None
+
+
+def test_consultar_precio_referencia_trae_la_muestra_que_conto_productos(monkeypatch):
+    main.breaker_productos.close()
+    respuestas = {
+        "Papa blanca": {"precio_promedio": 2.43, "productos_usados": 3, "productores_usados": 2},
+        "Papa amarilla": {"precio_promedio": None, "productos_usados": 4, "productores_usados": 1},
+    }
+    monkeypatch.setattr(main, "_pedir_precio_referencia", lambda cultivo: _RespuestaFalsaProductos(200, respuestas[cultivo]))
+    assert _consultar_precio_referencia_real("Papa blanca") == (2.43, None, {"productos": 3, "productores": 2})
+    assert _consultar_precio_referencia_real("Papa amarilla") == (
+        None, "Sin precio de referencia suficiente", {"productos": 4, "productores": 1})
+
+
+def test_el_costo_de_otros_agricultores_pide_tres_cosechas_de_dos_productores():
+    def cosecha(cultivo, productor, costo=100.0, kg=50.0):
+        return SimpleNamespace(plantilla=None, cultivo=cultivo, cantidad_cosechada=kg, unidad_medida="kg", equivalencia_kg=None,
+                               costo_semillas=costo, costo_insumos=0, costo_mano_obra=0, productor_id=productor)
+
+    registros = [cosecha("Papa amarilla", "a"), cosecha("Papa blanca", "a"), cosecha("Papa nativa", "b", costo=250.0),
+                 cosecha("Oca", "a"), cosecha("Oca", "a"), cosecha("Oca", "a"),   # tres cosechas, un solo productor
+                 cosecha("Quinua", "a"), cosecha("Quinua", "b")]                  # dos productores, solo dos cosechas
+    suficientes, escasos = main._costos_de_otros(registros)
+    assert suficientes == {"papa": 3.0}  # (100 + 100 + 250) / 150 kg
+    assert escasos == {"oca": {"cosechas": 3, "productores": 1}, "quinua": {"cosechas": 2, "productores": 2}}
+    # Las propias no llevan mínimo: son los gastos del agricultor, no una muestra del mercado.
+    assert main._costos_por_kg(registros[3:4]) == {"oca": 2.0}

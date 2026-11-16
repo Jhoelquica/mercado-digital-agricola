@@ -10,6 +10,12 @@ sembrar"). Un ranking de los cultivos de temporada que combina, con lo que haya:
   catálogo frente a lo que se vende.
 
 Los números salen solo de los datos; la IA (opcional) solo los cuenta en palabras sencillas.
+
+Muestra mínima (2026-11-15), la misma del precio de referencia de Productos: las ventas, el precio del catálogo y el
+costo de las cosechas de OTROS agricultores solo se usan si salen de al menos MIN_MUESTRA datos de al menos
+MIN_PRODUCTORES productores distintos. Con menos no se calcula nada con ellos y la tarjeta lo dice. Lo que no es una
+muestra de mercado no lleva mínimo: el costo de las cosechas del propio agricultor (son sus gastos), las referencias
+investigadas, el stock del catálogo y las siembras planificadas (son conteos, no promedios).
 """
 import hashlib
 import json
@@ -34,8 +40,24 @@ REFERENCIAS = {
     "trigo": {"rendimiento_kg_ha": 1800, "costo_ha": None, "fuente": "agraria.pe: promedio nacional 1,8 t/ha"},
     "kiwicha": {"rendimiento_kg_ha": 1885, "costo_ha": None, "fuente": "UNASAM: promedio nacional 1 885 kg/ha"},
 }
+MIN_MUESTRA = 3       # ventas, productos del catálogo o cosechas con gastos...
+MIN_PRODUCTORES = 2   # ...de al menos tantos productores distintos
+DIAS_CATALOGO = 90    # el precio del catálogo, solo con productos de los últimos días (como el precio de referencia)
 DIAS_COMPETENCIA = 30  # otra cosecha a ±30 días de la tuya compite por los mismos compradores
 RIESGOS = ("bajo", "medio", "alto")
+
+
+def muestra_suficiente(cantidad, productores) -> bool:
+    return (cantidad or 0) >= MIN_MUESTRA and (productores or 0) >= MIN_PRODUCTORES
+
+
+def _de_cuantos(cantidad, productores, uno: str, varios: str) -> str:
+    """"1 venta de 1 productor", "4 productos de 1 productor"."""
+    cantidad, productores = cantidad or 0, productores or 0
+    return f"{cantidad} {uno if cantidad == 1 else varios} de {productores} productor{'' if productores == 1 else 'es'}"
+
+
+FALTA_MUESTRA = f"hacen falta al menos {MIN_MUESTRA} de {MIN_PRODUCTORES} productores distintos"
 
 
 def candidatos() -> list[str]:
@@ -85,22 +107,30 @@ def _cuando_cosecharia(desde: datetime, hasta: datetime) -> str:
 
 
 def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios: dict, costos_plataforma: dict,
-               hoy: datetime) -> dict:
-    """mercado[clave] = {"kg", "soles", "kg_por_mes"}; catalogo[clave] = {"precio_kg", "stock_kg"};
-    planificadas[clave] = [fechas de cosecha estimadas de OTROS]; costos_*[clave] = S/ por kg. Devuelve el ranking
-    (los que tienen datos para comparar) y los que no tienen datos todavía."""
-    maximo_kg = max((m["kg"] for m in mercado.values()), default=0) or 1
-    filas, sin_datos = [], []
+               hoy: datetime, costos_escasos: dict | None = None) -> dict:
+    """mercado[clave] = {"kg", "soles", "kg_por_mes", "ventas", "productores"}; catalogo[clave] = {"precio_kg",
+    "stock_kg", "productos", "productores"} (los dos últimos, de los productos que entran en precio_kg);
+    planificadas[clave] = [fechas de cosecha estimadas de OTROS]; costos_*[clave] = S/ por kg (costos_plataforma, ya
+    solo los que alcanzan la muestra mínima); costos_escasos[clave] = {"cosechas", "productores"} de los que no la
+    alcanzan. Devuelve el ranking (los que tienen datos para comparar), los que no tienen datos todavía y los que tienen
+    algún dato pero no los suficientes para calcular."""
+    costos_escasos = costos_escasos or {}
+    con_ventas = {k: m for k, m in mercado.items() if muestra_suficiente(m.get("ventas"), m.get("productores"))}
+    maximo_kg = max((m["kg"] for m in con_ventas.values()), default=0) or 1
+    filas, sin_datos, insuficientes = [], [], []
     for clave in candidatos():
         nombre = plantillas.ALIMENTOS[clave][0]
-        m, c, ref = mercado.get(clave), catalogo.get(clave), REFERENCIAS.get(clave)
+        m, c, ref = con_ventas.get(clave), catalogo.get(clave), REFERENCIAS.get(clave)
+        # Hay ventas o precios en el catálogo, pero de muy pocos: no se calcula con ellos y se dice.
+        pocas_ventas = mercado[clave] if clave in mercado and clave not in con_ventas and mercado[clave].get("kg") else None
+        poco_catalogo = bool(c and c.get("precio_kg")) and not muestra_suficiente(c.get("productos"), c.get("productores"))
         ciclo = sugerencia_cosecha.ciclo_de_la_tabla(nombre)
         dias = ciclo[2] if ciclo else None
         cosecha = hoy + timedelta(days=dias) if dias else None
 
         if m and m["kg"] > 0:
             precio, fuente_precio = m.get("soles_con_kg", m["soles"]) / m["kg"], "ventas en ChakraShop"
-        elif c and c.get("precio_kg"):
+        elif c and c.get("precio_kg") and not poco_catalogo:
             precio, fuente_precio = c["precio_kg"], "precio del catálogo"
         else:
             precio, fuente_precio = None, None
@@ -131,7 +161,9 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
             nivel = max(nivel, 1)  # hay en el catálogo y no se vende: algo de riesgo
 
         if precio is None and not demanda_kg and not otras:
-            if ref or clave in costos_plataforma:
+            if pocas_ventas or poco_catalogo:
+                insuficientes.append(nombre)  # hay algo, pero no alcanza: se dice, no se calcula
+            elif ref or clave in costos_plataforma or clave in costos_escasos:
                 sin_datos.append(nombre)
             continue
         margen = precio - costo if precio is not None and costo is not None else None
@@ -151,13 +183,28 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         if demanda_kg:
             frases.append(f"Se vendieron {_miles(demanda_kg)} kg en ChakraShop en los últimos {len(m['kg_por_mes'])} meses"
                           + {"sube": " y va subiendo", "baja": " y va bajando", "estable": " y se mantiene"}.get(tendencia, "") + ".")
+        elif pocas_ventas:
+            frases.append("Hay muy pocas ventas en ChakraShop para medir la demanda y el precio: "
+                          f"{_de_cuantos(pocas_ventas.get('ventas'), pocas_ventas.get('productores'), 'venta', 'ventas')} "
+                          f"({FALTA_MUESTRA}).")
         else:
             frases.append("Todavía no se vende en ChakraShop: no hay demanda comprobada.")
         if precio is not None:
-            frases.append(f"Precio promedio: S/ {precio:.2f} el kg ({fuente_precio}).")
+            base = (_de_cuantos(m.get("ventas"), m.get("productores"), "venta", "ventas") if m and m["kg"] > 0
+                    else _de_cuantos(c.get("productos"), c.get("productores"), "producto", "productos"))
+            frases.append(f"Precio promedio: S/ {precio:.2f} el kg ({fuente_precio}, basado en {base}).")
+        elif poco_catalogo:
+            frases.append("Sin precio de referencia suficiente: en el catálogo hay "
+                          f"{_de_cuantos(c.get('productos'), c.get('productores'), 'producto', 'productos')} "
+                          f"({FALTA_MUESTRA}).")
         if margen is not None:
             frases.append(f"Te costaría unos S/ {costo:.2f} el kg ({fuente_costo}): ganarías unos S/ {margen:.2f} por kg "
                           f"({margen_pct:.0%}).".replace("%", " %"))
+        elif costo is None and clave in costos_escasos:
+            e = costos_escasos[clave]
+            frases.append("Todavía no se puede decir cuánto cuesta producirlo: solo hay "
+                          f"{_de_cuantos(e.get('cosechas'), e.get('productores'), 'cosecha con gastos', 'cosechas con gastos')} "
+                          f"({FALTA_MUESTRA}). Anota tus gastos por etapa al sembrar y usaremos los tuyos.")
         elif precio is not None:
             frases.append("Falta saber cuánto cuesta producirlo: anota tus gastos por etapa al sembrar y lo calcularemos.")
         if cosecha:
@@ -176,7 +223,8 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
         elif meses_de_stock and meses_de_stock > 3:
             frases.append(f"Ya hay {_miles(stock)} kg en el catálogo: unos {round(meses_de_stock)} meses de lo que se vende.")
         elif stock and not demanda_kg:
-            frases.append(f"Hay {_miles(stock)} kg en el catálogo y todavía no se venden.")
+            frases.append(f"Hay {_miles(stock)} kg en el catálogo y "
+                          + ("casi no se venden todavía." if pocas_ventas else "todavía no se venden."))
         if ref:
             frases.append(f"Rinde unos {_miles(ref['rendimiento_kg_ha'])} kg por hectárea ({ref['fuente']}).")
 
@@ -192,9 +240,11 @@ def recomendar(mercado: dict, catalogo: dict, planificadas: dict, costos_propios
             "stock_catalogo_kg": round(c["stock_kg"], 1) if c and c.get("stock_kg") else 0,
             "rendimiento_kg_ha": ref["rendimiento_kg_ha"] if ref else None, "frases": frases,
             "completo": precio is not None and margen is not None and demanda_kg > 0,
+            "pocas_ventas": bool(pocas_ventas),
         })
     filas.sort(key=lambda f: -f["puntaje"])
-    return {"recomendaciones": filas, "sin_datos": sorted(sin_datos)}
+    return {"recomendaciones": filas, "sin_datos": sorted(sin_datos), "datos_insuficientes": sorted(insuficientes),
+            "muestra_minima": {"cantidad": MIN_MUESTRA, "productores": MIN_PRODUCTORES}}
 
 
 # ---- Consejo en palabras sencillas (opcional, con la misma IA de la fecha de cosecha) ----
@@ -203,7 +253,8 @@ SISTEMA_CONSEJO = (
     "ranking que te paso (ya calculado con datos reales de la plataforma), escribe un consejo corto: 2 o 3 oraciones en "
     "español sencillo, recomendando 1 o 2 cultivos y diciendo por qué con los datos que ves. Trátalo de usted, sin apodos "
     "ni saludos. 'ventas_tendencia' es si los KILOS vendidos suben o bajan (no habla del precio). Si un cultivo tiene 0 "
-    "kg vendidos, di que todavía no se vende en la plataforma. Si todos los puntajes son menores a 50, di con naturalidad "
+    "kg vendidos, di que todavía no se vende en la plataforma; pero si 'muy_pocas_ventas' es true, di que hay muy pocas "
+    "ventas para medir la demanda (no que no se vende). Si todos los puntajes son menores a 50, di con naturalidad "
     "que todavía hay pocos datos y que ninguno destaca claramente (sin mencionar puntajes ni esta regla). No recomiendes "
     "un cultivo cuyo riesgo_de_que_sobre sea 'alto'; si es el primero, explica que conviene esperar por eso. No inventes "
     "números ni datos que no estén en el ranking. Nada de listas."
@@ -222,7 +273,8 @@ def consejo(ranking: list[dict], clave_productor: str) -> str | None:
     resumen = [{"nombre": f["nombre"], "puntaje": f["puntaje"], "precio_kg": f["precio_kg"], "costo_kg": f["costo_kg"],
                 "margen_kg": f["margen_kg"], "kg_vendidos_6_meses": f["demanda_kg"], "ventas_tendencia": f["tendencia"],
                 "cosecha_estimada": f["cosecha_estimada"], "otros_agricultores_cosechan_cerca": f["competencia"],
-                "kg_ya_en_catalogo": f["stock_catalogo_kg"], "riesgo_de_que_sobre": f["riesgo"]} for f in ranking[:5]]
+                "kg_ya_en_catalogo": f["stock_catalogo_kg"], "riesgo_de_que_sobre": f["riesgo"],
+                "muy_pocas_ventas": f.get("pocas_ventas", False)} for f in ranking[:5]]
     clave = hashlib.sha256(json.dumps(resumen, sort_keys=True).encode()).hexdigest()
     with _candado:
         guardado = _cache_consejos.get(clave)

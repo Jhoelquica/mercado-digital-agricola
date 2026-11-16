@@ -1692,6 +1692,9 @@ def test_las_ventas_del_mercado_van_por_producto_sin_decir_quien_vende():
     oca = next(p for p in datos["productos"] if p["nombre"] == nombre)
     assert (oca["kg"], oca["soles"], oca["pedidos"], oca["kg_por_mes"][-1]) == (25.0, 75.0, 2, 25.0)
     assert "productor_id" not in oca and len(datos["meses"]) == 6
+    # Cuántos productores distintos lo vendieron (para la muestra mínima de "¿qué sembrar?"), con números anónimos.
+    assert oca["productores"] == 2 and len(set(oca["vendedores"])) == 2
+    assert all(isinstance(v, int) and 0 <= v < 1000 for v in oca["vendedores"])
 
 
 def test_la_oficina_de_recojo_de_la_agencia_la_pone_el_admin_y_la_ve_el_comprador():
