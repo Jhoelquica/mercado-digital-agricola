@@ -12,6 +12,47 @@ spec:
       labels:
         app: productores
     spec:
+      # Antes de arrancar, espera a que SU base responda. Sin esto, al encender Docker Desktop (o al reiniciar la base) el
+      # servicio arrancaba antes de que el DNS resolviera db-productores, se caía 2 o 3 veces y Kubernetes lo reiniciaba.
+      # Se comprueba con psql contra SU base de datos y no con pg_isready: tras un reinicio de Docker Desktop el Service sigue
+      # unos segundos con la IP vieja de la base, que el nodo puede haber dado a OTRO Postgres, y pg_isready da por buena
+      # cualquier respuesta (visto el 2026-11-16: db-transporte llevaba al Postgres de db-certificacion).
+      # El nombre de la base y el puerto son los fijos de database.py (no hay variable para ellos). La contraseña va en
+      # PGPASSWORD desde el Secret, nunca en el comando. Misma imagen que las bases (postgres:16, ya está en el nodo).
+      initContainers:
+        - name: esperar-base
+          image: postgres:16
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              intento=1
+              until error=$(psql -w -h "$DB_HOST" -p 5432 -U "$DB_USER" -d productores -c "select 1" 2>&1 >/dev/null); do
+                echo "Esperando a la base productores en $DB_HOST:5432 (intento $intento; otro en 2 s): $(echo "$error" | head -n 1)"
+                intento=$((intento + 1))
+                sleep 2
+              done
+              echo "La base productores en $DB_HOST:5432 responde (intento $intento)"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999  # el usuario postgres de la imagen
+            allowPrivilegeEscalation: false
+          env:
+            - name: DB_HOST
+              value: db-productores
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: DB_PASSWORD
+            - name: PGCONNECT_TIMEOUT
+              value: "3"
       containers:
         - name: productores
           image: localhost:5000/productores:latest
@@ -20,7 +61,7 @@ spec:
             - containerPort: 8001
           # Sin sondas Kubernetes manda tráfico al pod en cuanto arranca el contenedor (antes de que uvicorn escuche) y da
           # 502/504 en cada arranque o actualización. /salud responde sin tocar la base de datos. startupProbe: hasta 3 min
-          # para arrancar (esperando a su base); después, readiness saca al pod del reparto si deja de responder y liveness
+          # para arrancar (a su base ya la esperó el initContainer); después, readiness saca al pod del reparto si deja de responder y liveness
           # lo reinicia solo si lleva ~100 s sin responder.
           # Al apagarse (una actualización) espera 5 s antes de parar: da tiempo a que el gateway deje de mandarle peticiones
           # (se saca de los destinos a la vez que se le pide terminar) y así no se cortan las que van en camino.
