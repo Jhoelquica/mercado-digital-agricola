@@ -9,7 +9,7 @@ import { manejarError, toast } from '../../components/Toast';
 import { Texto } from '../../idioma/IdiomaContext';
 import { formatearMoneda } from '../../lib/formato';
 import { CATEGORIAS_PRODUCTO, ICONOS_CATEGORIA, NOMBRE_CATEGORIA } from '../../lib/productos';
-import { descripcionSugerida, precioSugerido } from '../../lib/reglas';
+import { baseDeReferencia, descripcionSugerida, precioSugerido, SIN_REFERENCIA_SUFICIENTE } from '../../lib/reglas';
 import { useChacras, useMisProductos, useRegistros } from './comun';
 import { GestorFotos, useImagenesProducto } from './productos/GestorFotos';
 import { GestorUnidades } from './productos/GestorUnidades';
@@ -18,16 +18,18 @@ import { TarjetaProductoVistaPrevia } from './productos/VistaPrevia';
 // Mismo tope que el servidor (DESCRIPCION_MAXIMA en productos/main.py).
 const DESCRIPCION_MAXIMA = 600;
 
-interface Sugerencias { precio: number | null; referenciaKg: number | null; descripcion: string | null }
+// `base`: "basado en N productos de M productores" (de dónde salió el precio de referencia); vacío si no hay.
+interface Sugerencias { precio: number | null; referenciaKg: number | null; base: string; descripcion: string | null }
 
 // H6 (validación con usuarios del 2026-10-14): el precio y la descripción sugeridos salen de la siembra de la que nació el
 // borrador. Vienen escritos en los campos si el agricultor todavía no puso nada, y los puede cambiar antes de publicar.
 function sugerenciasDeBorrador(p: ProductoMio, registros: RegistroProduccion[], chacras: Chacra[]): Sugerencias {
   const registro = registros.find((r) => String(r.id) === String(p.registro_produccion_id));
-  if (!registro) return { precio: null, referenciaKg: null, descripcion: null };
+  if (!registro) return { precio: null, referenciaKg: null, base: '', descripcion: null };
   const chacra = chacras.find((c) => String(c.id) === String(registro.chacra_id));
   return {
     referenciaKg: registro.precio_referencia_kg,
+    base: baseDeReferencia(registro.referencia_productos, registro.referencia_productores),
     precio: precioSugerido({ precioReferenciaKg: registro.precio_referencia_kg, unidad: p.unidad_medida, equivalenciaKg: registro.equivalencia_kg }),
     descripcion: descripcionSugerida({
       cultivo: registro.cultivo, chacra: chacra?.nombre || chacra?.codigo, fechaSiembra: registro.fecha_siembra,
@@ -38,10 +40,11 @@ function sugerenciasDeBorrador(p: ProductoMio, registros: RegistroProduccion[], 
 
 function TextoPrecioSugerido({ p, sug }: { p: ProductoMio; sug: Sugerencias }) {
   if (sug.precio == null) {
-    return <><i className="ti ti-info-circle" aria-hidden="true" /><span>Todavía no hay «{p.nombre}» con precio en la tienda para comparar: pon el precio que te parezca justo.</span></>;
+    // Sin la muestra mínima (3 productos de 2 productores) no se sugiere nada: el campo del precio queda vacío.
+    return <><i className="ti ti-info-circle" aria-hidden="true" /><span><strong>{SIN_REFERENCIA_SUFICIENTE}</strong> para «{p.nombre}»: todavía no hay en la tienda al menos 3 productos de 2 productores para comparar. Pon el precio que te parezca justo.</span></>;
   }
   const porKg = p.unidad_medida !== 'kg' ? ` (${formatearMoneda(sug.referenciaKg)} el kg)` : '';
-  return <><i className="ti ti-bulb" aria-hidden="true" /><span><strong>Sugerido: {formatearMoneda(sug.precio)} por {p.unidad_medida}</strong>, el precio de referencia de «{p.nombre}» en la tienda{porKg}. Puedes cambiarlo.</span></>;
+  return <><i className="ti ti-bulb" aria-hidden="true" /><span><strong>Sugerido: {formatearMoneda(sug.precio)} por {p.unidad_medida}</strong>, el precio de referencia de «{p.nombre}» en la tienda{porKg}{sug.base && `, ${sug.base}`}. Puedes cambiarlo.</span></>;
 }
 
 function TarjetaBorrador({ p, indice, sug }: { p: ProductoMio; indice: number; sug: Sugerencias }) {

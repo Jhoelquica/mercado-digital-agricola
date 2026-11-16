@@ -3,7 +3,7 @@
 import { expect, test } from 'vitest';
 import {
   atajosDeCosecha, cantidadDeReserva, claveVapidABytes, datosTransporteContratado, descripcionSugerida, estadoAvisosCelular, fechaHoraLegible,
-  fraseResumenSiembra, gastosYaRegistrados, manoDeObra, mismaClaveVapid, opcionesPermitidas, precioSugerido, siguienteEstadoEnvio, unidadDeCosecha,
+  baseDeReferencia, fraseResumenSiembra, gastosYaRegistrados, manoDeObra, mismaClaveVapid, opcionesPermitidas, precioSugerido, siguienteEstadoEnvio, unidadDeCosecha,
   unidadesParaAgregar,
 } from './reglas';
 
@@ -138,6 +138,13 @@ test('Los atajos de la cosecha salen del rango del cultivo, no de meses fijos (v
     ['Lo más pronto', '2027-03-03'], ['Lo más probable', '2027-03-23'], ['Lo más tarde', '2027-04-12']]);
   expect(atajosDeCosecha({ ...kiwicha, fecha_desde: '2027-03-23' })).toHaveLength(2); // sin repetir la fecha
   expect(atajosDeCosecha(null)).toEqual([]);
+});
+
+test('el precio de referencia dice de cuántos productos y productores salió', () => {
+  expect(baseDeReferencia(3, 2)).toBe('basado en 3 productos de 2 productores');
+  expect(baseDeReferencia(1, 1)).toBe('basado en 1 producto de 1 productor');
+  expect(baseDeReferencia(null, null)).toBe(''); // el servidor no lo dijo
+  expect(baseDeReferencia(0, 0)).toBe('');
 });
 
 test('H6: el precio sugerido sale del precio de referencia por kg, en la unidad del producto', () => {

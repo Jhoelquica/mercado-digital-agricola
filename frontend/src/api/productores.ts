@@ -99,6 +99,9 @@ export interface CultivoRecomendado {
 export interface QueSembrar {
   recomendaciones: CultivoRecomendado[];
   sin_datos: string[];
+  // Con algún dato (ventas o precios del catálogo) pero sin la muestra mínima: no se calcula con ellos.
+  datos_insuficientes: string[];
+  muestra_minima: { cantidad: number; productores: number };
   generado: string;
   ventas_disponibles: boolean;
   consejo: string | null;
@@ -159,6 +162,11 @@ export interface RegistroProduccion {
   ganancia_estimada: number | null;
   margen_porcentaje: number | null;
   motivo_sin_calculo: string | null;
+  // Con cuántos productos de cuántos productores se sacó el precio de referencia; sin_referencia_suficiente = no
+  // alcanzó la muestra mínima y por eso no hay precio ni ganancia estimada.
+  referencia_productos: number | null;
+  referencia_productores: number | null;
+  sin_referencia_suficiente: boolean;
 }
 
 export interface CosechaCompletada extends RegistroProduccion {

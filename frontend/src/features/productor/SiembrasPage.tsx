@@ -7,7 +7,7 @@ import { manejarError, toast } from '../../components/Toast';
 import { Texto } from '../../idioma/IdiomaContext';
 import { formatearMoneda } from '../../lib/formato';
 import { textoDeGeocerca } from '../../lib/geocerca';
-import { manoDeObra } from '../../lib/reglas';
+import { baseDeReferencia, manoDeObra, SIN_REFERENCIA_SUFICIENTE } from '../../lib/reglas';
 import { abrirAsistenteCosecha, abrirAsistenteSiembra, puedeHablar } from './asistente/abrir';
 import { textoTotalJornales } from './asistente/piezas';
 import {
@@ -346,6 +346,21 @@ function TarjetaRegistro({ r, indice, catalogo }: { r: RegistroProduccion; indic
           {dato('Ingreso estimado', formatearMoneda(r.ingreso_estimado))}
           <div className="perfil-dato"><span className="perfil-dato-label">Ganancia</span><span className={`perfil-dato-valor ${Number(r.ganancia_estimada) >= 0 ? 'ganancia-positiva' : 'ganancia-negativa'}`}>{formatearMoneda(r.ganancia_estimada)} ({r.margen_porcentaje}%)</span></div>
         </div>
+        {baseDeReferencia(r.referencia_productos, r.referencia_productores) && (
+          <p className="produccion-base-referencia"><i className="ti ti-info-circle" aria-hidden="true" /> Precio de referencia {baseDeReferencia(r.referencia_productos, r.referencia_productores)} de la tienda (últimos 90 días).</p>
+        )}
+        <EvidenciaRegistro r={r} />
+      </>
+    );
+  } else if (r.sin_referencia_suficiente) {
+    // Menos de 3 productos de 2 productores con este nombre en la tienda: no se estima la ganancia con tan poco.
+    bloqueEstado = (
+      <>
+        <div className="perfil-datos-grid">
+          {dato(palabras.listo, `${Number(r.cantidad_cosechada).toFixed(2)} ${r.unidad_medida}`)}
+          {dato('Ganancia estimada', SIN_REFERENCIA_SUFICIENTE)}
+        </div>
+        <p className="produccion-sin-calculo"><i className="ti ti-info-circle" /> Para estimar tu ganancia hacen falta al menos 3 productos de 2 productores distintos con el nombre «{r.cultivo}» en la tienda (últimos 90 días). Hoy hay {r.referencia_productos ?? 0} de {r.referencia_productores ?? 0}.</p>
         <EvidenciaRegistro r={r} />
       </>
     );

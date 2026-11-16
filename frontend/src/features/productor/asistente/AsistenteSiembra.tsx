@@ -6,7 +6,7 @@ import { productores, type CatalogoPlantillas, type Plantilla, type SugerenciaCo
 import { productos } from '../../../api/productos';
 import { toast } from '../../../components/Toast';
 import { formatearMoneda } from '../../../lib/formato';
-import { atajosDeCosecha, opcionesPermitidas, unidadDeCosecha } from '../../../lib/reglas';
+import { atajosDeCosecha, baseDeReferencia, opcionesPermitidas, SIN_REFERENCIA_SUFICIENTE, unidadDeCosecha } from '../../../lib/reglas';
 import { alimentoPorNombre, fechaIso, fechaLegible, palabrasDe, sumarDias } from '../comun';
 import { Asistente, CampoFecha, CampoNumero, CampoOpciones, CampoTexto, type AtajoFecha, type ConfigAsistente, type Paso, type PropsPaso } from './Asistente';
 import { CamposGastos, gastosParaEnviar, pasoUbicacion, recogerGastos, resumenGastos, validarGastos, type ConUbicacion, type GastoAsistente, type Lugar } from './piezas';
@@ -142,7 +142,12 @@ function PasoCultivo({ estado, cambiar }: PropsPaso<EstadoSiembra>) {
     let vigente = true;
     const espera = setTimeout(() => {
       productos.precioReferencia(nombre)
-        .then((d) => { if (vigente) setPrecio(d.precio_promedio != null ? `En la tienda, "${nombre}" se vende a ${formatearMoneda(d.precio_promedio)} el kilo (promedio).` : ''); })
+        .then((d) => {
+          if (!vigente) return;
+          setPrecio(d.precio_promedio != null
+            ? `En la tienda, "${nombre}" se vende a ${formatearMoneda(d.precio_promedio)} el kilo (${['promedio', baseDeReferencia(d.productos_usados, d.productores_usados)].filter(Boolean).join(', ')}).`
+            : `${SIN_REFERENCIA_SUFICIENTE} para "${nombre}".`);
+        })
         .catch(() => { if (vigente) setPrecio(''); });
     }, 500);
     return () => { vigente = false; clearTimeout(espera); };

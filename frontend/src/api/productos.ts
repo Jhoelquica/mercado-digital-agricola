@@ -110,7 +110,13 @@ export interface MisReservas {
 
 export interface PrecioReferencia {
   nombre_producto: string;
+  // null = no alcanza la muestra mínima (minimo_productos de minimo_productores, en los últimos `dias` días).
   precio_promedio: number | null;
+  productos_usados: number;
+  productores_usados: number;
+  minimo_productos: number;
+  minimo_productores: number;
+  dias: number;
   mensaje?: string;
 }
 

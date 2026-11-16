@@ -83,9 +83,11 @@ function ContenidoQueSembrar({ d }: { d: QueSembrar }) {
             <p><strong>Todavía no hay datos suficientes</strong></p>
             <p className="muted">Cuando se vendan productos en ChakraShop o los agricultores registren sus cosechas con sus gastos, aquí verás qué conviene sembrar.</p></div>
         )}
+      {d.datos_insuficientes?.length > 0 && <p className="qs-sin-datos"><i className="ti ti-alert-triangle" aria-hidden="true" /> Sin datos suficientes para calcular (hacen falta al menos {d.muestra_minima.cantidad} ventas o productos de {d.muestra_minima.productores} productores distintos): {d.datos_insuficientes.join(', ')}.</p>}
       {d.sin_datos.length > 0 && <p className="qs-sin-datos"><i className="ti ti-info-circle" aria-hidden="true" /> Aún sin datos de venta en ChakraShop: {d.sin_datos.join(', ')}.</p>}
       <details className="qs-fuentes"><summary>¿De dónde salen los números?</summary>
         <p>Las ventas, los precios y las siembras son de ChakraShop. El costo por kg sale de tus cosechas con gastos; si no tienes, de las de otros agricultores; si tampoco hay, de estas referencias:</p>
+        {d.muestra_minima && <p>Las ventas, los precios del catálogo (últimos 90 días) y los costos de otros agricultores solo se usan si salen de al menos {d.muestra_minima.cantidad} datos de {d.muestra_minima.productores} productores distintos. Con menos no se calcula y la tarjeta lo dice.</p>}
         <ul>{d.referencias.map((r) => <li key={r.cultivo}><strong>{r.cultivo}:</strong> {r.fuente}</li>)}</ul>
         <p>Es una guía para decidir, no una promesa: el clima, las plagas y el precio del día también cuentan.</p>
       </details>

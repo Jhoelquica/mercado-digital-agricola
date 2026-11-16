@@ -2263,6 +2263,9 @@ input, select { font-family: inherit; }
   margin: 0;
 }
 
+/* De dónde sale el precio de referencia ("basado en N productos de M productores"): nota neutra, no un aviso. */
+.produccion-base-referencia { margin: 0; font-size: 0.85rem; color: var(--texto-suave); }
+
 .produccion-card .btn-completar-cosecha { min-height: 48px; font-size: 1rem; align-self: flex-start; }
 .produccion-card .produccion-sin-calculo + .btn-completar-cosecha { margin-top: 12px; }
 

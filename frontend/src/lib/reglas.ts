@@ -122,6 +122,16 @@ export function unidadesParaAgregar(todas: string[], permitidas: string[] | null
   return posibles.filter((u) => u !== base && !yaAgregadas.includes(u));
 }
 
+// El precio de referencia solo existe con una muestra mínima (3 productos de 2 productores, últimos 90 días: ver
+// precio_referencia en productos/main.py). Cuando no la hay, las pantallas dicen esto en vez de un precio o una ganancia.
+export const SIN_REFERENCIA_SUFICIENTE = 'Sin precio de referencia suficiente';
+
+// "basado en 3 productos de 2 productores": de dónde salió el precio de referencia. Vacío si no se sabe.
+export function baseDeReferencia(productos?: number | null, productores?: number | null): string {
+  if (!productos || !productores) return '';
+  return `basado en ${productos} producto${productos === 1 ? '' : 's'} de ${productores} productor${productores === 1 ? '' : 'es'}`;
+}
+
 // H6 (validación con usuarios del 2026-10-14): el precio sugerido al publicar es el precio de referencia por kg de la
 // tienda, llevado a la unidad del producto con su equivalencia (1 unidad = X kg). Sin referencia, o sin equivalencia para
 // otra unidad, no se sugiere nada.
