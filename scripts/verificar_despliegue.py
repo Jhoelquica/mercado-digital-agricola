@@ -14,7 +14,9 @@ Qué comprueba:
   - Seguridad (gateway): una ruta protegida sin sesión da 401; /docs, /openapi.json y /metrics dan 403.
   - HTTPS (si --base es https): certificado válido (avisa si es el de PRUEBA o vence pronto), http redirige a https, y los
     puertos internos (9000, 8006, 8080, 5432) NO responden desde fuera.
-  - Kubernetes (con --contexto): todos los pods listos, réplicas deseadas = listas, y los consumidores de RabbitMQ conectados.
+  - Kubernetes (con --contexto): todos los pods listos y ninguno en CrashLoopBackOff (FALLA), ningún contenedor que se
+    haya reiniciado después de estar listo (AVISO), réplicas deseadas = listas y los consumidores de RabbitMQ conectados.
+    Los reinicios acumulados desde que se creó cada pod se muestran solo como dato ([INFO]).
   - Compose (con --compose): todos los contenedores en marcha y sanos, y los consumidores de RabbitMQ conectados.
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
@@ -45,7 +47,7 @@ resultados = []  # (nivel, nombre, detalle)
 
 def registrar(nivel, nombre, detalle=""):
     resultados.append((nivel, nombre, detalle))
-    etiqueta = {"OK": "[ OK ]", "FALLA": "[FALLA]", "AVISO": "[AVISO]"}[nivel]
+    etiqueta = {"OK": "[ OK ]", "FALLA": "[FALLA]", "AVISO": "[AVISO]", "INFO": "[INFO]"}[nivel]
     print(f"{etiqueta} {nombre}" + (f"  -  {detalle}" if detalle else ""), flush=True)
 
 
@@ -102,6 +104,64 @@ def kubectl(argumentos, contexto, timeout=60):
     if r.returncode != 0:
         return None, (r.stderr.strip().splitlines() or ["error de kubectl"])[0][:200]
     return r.stdout, ""
+
+
+MARGEN_LISTO_S = 30  # holgura por el ritmo de las sondas (startupProbe cada 5 s, readinessProbe cada 10 s)
+TERMINACIONES_DEL_NODO = ("Unknown", "ContainerStatusUnknown")  # el nodo (Docker Desktop) se apagó con el contenedor en marcha
+
+
+def _fecha(texto):
+    """'2026-11-16T17:11:25Z' → datetime con zona; None si no hay."""
+    return datetime.fromisoformat(texto.replace("Z", "+00:00")) if texto else None
+
+
+def _duracion(segundos):
+    if segundos < 120:
+        return f"{round(segundos)} s"
+    if segundos < 7200:
+        return f"{round(segundos / 60)} min"
+    return f"{round(segundos / 3600)} h" if segundos < 172800 else f"{round(segundos / 86400)} d"
+
+
+def revisar_pods(pods):
+    """La sección 6 sobre `kubectl get pods -o json`:
+    - no_listos: no están Running o algún contenedor no está listo (FALLA);
+    - en_crashloop: algún contenedor esperando en CrashLoopBackOff (FALLA);
+    - tras_listo: contenedores cuya instancia anterior se cayó DESPUÉS de haber estado lista (AVISO);
+    - total: reinicios acumulados desde que se creó cada pod. Es solo un dato: cada reinicio de Docker Desktop suma uno
+      por contenedor, y los arranques de antes también cuentan.
+
+    Si la instancia que se cayó había estado lista no se puede leer directamente: Kubernetes guarda solo la ÚLTIMA
+    terminación de cada contenedor (lastState.terminated) y solo el ÚLTIMO cambio de la condición Ready. Comparar la caída
+    con la condición Ready no sirve: si el contenedor se cayó y volvió, Ready se puso de nuevo después de la caída. Se
+    compara entonces cuánto vivió la instancia que se cayó con lo que tardó la actual en quedar lista: si vivió más (con
+    MARGEN_LISTO_S de holgura por el ritmo de las sondas), llegó a estar lista. Una caída al arrancar (p. ej. sin la base
+    todavía) vive unos segundos y no cuenta. Tampoco cuentan las terminaciones por un reinicio del nodo."""
+    no_listos, en_crashloop, tras_listo, total = [], [], [], 0
+    for p in pods:
+        nombre = p["metadata"]["name"]
+        estado_pod = p.get("status", {})
+        estados = estado_pod.get("containerStatuses", [])
+        total += sum(c.get("restartCount", 0) for c in estados)
+        if estado_pod.get("phase") != "Running" or not estados or not all(c.get("ready") for c in estados):
+            no_listos.append(nombre)
+        listo_desde = next((_fecha(c.get("lastTransitionTime")) for c in estado_pod.get("conditions", [])
+                            if c.get("type") == "ContainersReady" and c.get("status") == "True"), None)
+        for c in estados:
+            if ((c.get("state") or {}).get("waiting") or {}).get("reason") == "CrashLoopBackOff":
+                en_crashloop.append(f"{nombre}/{c.get('name')}")
+            anterior = (c.get("lastState") or {}).get("terminated")
+            arranco = _fecha(((c.get("state") or {}).get("running") or {}).get("startedAt"))
+            if not anterior or anterior.get("reason") in TERMINACIONES_DEL_NODO or not (listo_desde and arranco and c.get("ready")):
+                continue
+            inicio, fin = _fecha(anterior.get("startedAt")), _fecha(anterior.get("finishedAt"))
+            if not (inicio and fin):
+                continue
+            vivio = (fin - inicio).total_seconds()
+            if vivio > max(0.0, (listo_desde - arranco).total_seconds()) + MARGEN_LISTO_S:
+                tras_listo.append(f"{nombre}: {anterior.get('reason') or 'terminó'} (código {anterior.get('exitCode')}) el "
+                                  f"{fin:%d/%m %H:%M} UTC, después de {_duracion(vivio)} en marcha")
+    return {"no_listos": no_listos, "en_crashloop": en_crashloop, "tras_listo": tras_listo, "total": total}
 
 
 def contar_consumidores(salida):
@@ -274,15 +334,15 @@ def main():
             registrar("FALLA", "Kubernetes: leer los pods", error)
         else:
             pods = json.loads(salida)["items"]
-            no_listos, reinicios = [], 0
-            for p in pods:
-                estados = p["status"].get("containerStatuses", [])
-                reinicios += sum(c.get("restartCount", 0) for c in estados)
-                if p["status"].get("phase") != "Running" or not estados or not all(c.get("ready") for c in estados):
-                    no_listos.append(p["metadata"]["name"])
-            comprobar("Kubernetes: todos los pods están listos", pods and not no_listos, f"{len(pods)} pods Running y listos",
-                      f"no listos: {', '.join(no_listos[:6])}")
-            registrar("OK" if reinicios <= 20 else "AVISO", "Kubernetes: reinicios acumulados de los contenedores", str(reinicios))
+            r = revisar_pods(pods)
+            comprobar("Kubernetes: todos los pods están listos", pods and not r["no_listos"], f"{len(pods)} pods Running y listos",
+                      f"no listos ({len(r['no_listos'])}): {', '.join(r['no_listos'][:6])}")
+            comprobar("Kubernetes: ningún contenedor en CrashLoopBackOff", not r["en_crashloop"], "",
+                      f"en CrashLoopBackOff ({len(r['en_crashloop'])}): {', '.join(r['en_crashloop'][:6])}")
+            comprobar("Kubernetes: ningún contenedor se reinició después de estar listo", not r["tras_listo"],
+                      "sin contar los arranques ni los reinicios del nodo", "; ".join(r["tras_listo"][:6]), "AVISO")
+            registrar("INFO", "Kubernetes: reinicios acumulados desde que se creó cada pod",
+                      f"{r['total']} (solo un dato: cada reinicio de Docker Desktop suma uno por contenedor)")
         salida, error = kubectl(["get", "deploy", "-o", "json"], contexto_k)
         if salida is not None:
             malos = [f"{d['metadata']['name']} {d['status'].get('readyReplicas', 0)}/{d['spec']['replicas']}"
@@ -317,7 +377,8 @@ def main():
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")
     avisos = sum(1 for n, *_ in resultados if n == "AVISO")
-    print(f"\n{len(resultados) - fallas - avisos} bien, {avisos} avisos, {fallas} fallos")
+    bien = sum(1 for n, *_ in resultados if n == "OK")  # los [INFO] son datos, no comprobaciones
+    print(f"\n{bien} bien, {avisos} avisos, {fallas} fallos")
     sys.exit(1 if fallas else 0)
 
 
