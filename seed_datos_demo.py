@@ -25,9 +25,12 @@ Windows), en PowerShell se le pasa por variable de entorno, sin que quede en el 
     python seed_datos_demo.py
     Remove-Item Env:SEED_ADMIN_PASSWORD
 
-Contra un despliegue (Google Cloud, etc.): SEED_HOST=https://mi-dominio SEED_PASSWORD_DEMO=<clave privada> (llama por
-el gateway, en /api/<servicio>; exige SEED_PASSWORD_DEMO porque la clave por defecto es pública). Las imágenes se suben
-por la API, así que quedan con la URL pública de MinIO del despliegue.
+Solo corre contra el clúster LOCAL: se niega si el contexto de kubectl no es docker-desktop o si SEED_HOST no es
+local. La contraseña de las cuentas demo sale de SEED_PASSWORD_DEMO, obligatoria y sin valor por defecto (en
+PowerShell, igual que la del admin):
+    $env:SEED_PASSWORD_DEMO = [System.Net.NetworkCredential]::new('', (Read-Host 'Contrasena demo' -AsSecureString)).Password
+    python seed_datos_demo.py
+    Remove-Item Env:SEED_PASSWORD_DEMO
 
 Uso (desde la carpeta del proyecto, con los servicios corriendo):
     python seed_datos_demo.py                     # completo
@@ -43,6 +46,7 @@ import getpass
 import io
 import os
 import random
+import subprocess
 import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -56,7 +60,7 @@ except ImportError:  # las fotos originales pesan ~2-4 MB; sin Pillow se suben t
 
 HOST = os.getenv("SEED_HOST", "http://localhost")
 PUERTOS = {"usuarios": 8006, "productores": 8001, "productos": 8002, "certificacion": 8008}
-PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO", "Demo12345!")
+PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO")  # obligatoria y sin valor por defecto (ver main)
 # En local se llama a cada servicio por su puerto; contra un despliegue (cualquier otro host) se llama por el gateway del
 # mismo origen, en /api/<servicio> (SEED_HOST=https://mi-dominio). SEED_GATEWAY=1 lo fuerza también en local
 # (SEED_HOST=http://localhost:8000).
@@ -374,6 +378,21 @@ def plan(limite):
     return problemas == 0
 
 
+def comprobar_que_es_el_cluster_local():
+    """El seed crea cuentas demo con una contraseña conocida por quien lo corre: solo se permite en el clúster local.
+    Se niega si el contexto de kubectl no es docker-desktop (o no se puede leer) y si SEED_HOST no es local."""
+    try:
+        contexto = subprocess.run(["kubectl", "config", "current-context"], capture_output=True, text=True,
+                                  timeout=20).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        contexto = ""
+    if contexto != "docker-desktop":
+        sys.exit(f"El contexto de kubectl es {contexto or '(ninguno o kubectl no responde)'!r}, no 'docker-desktop': "
+                 "este script solo corre contra el clúster local.")
+    if not ES_LOCAL:
+        sys.exit("SEED_HOST no es local (localhost o 127.0.0.1): este script solo corre contra el clúster local.")
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
@@ -383,9 +402,10 @@ def main():
     ap.add_argument("--limite", type=int, default=len(AGRICULTORES), help="cantidad de agricultores a procesar")
     args = ap.parse_args()
 
-    if not ES_LOCAL and "SEED_PASSWORD_DEMO" not in os.environ and not args.dry_run:
-        sys.exit("Contra un despliegue real define SEED_PASSWORD_DEMO: la clave por defecto está en el repositorio y "
-                 "cualquiera podría entrar a las cuentas demo.")
+    comprobar_que_es_el_cluster_local()
+    if not PASSWORD_DEMO:
+        sys.exit("Falta la variable de entorno SEED_PASSWORD_DEMO (la contraseña de las cuentas demo): el script no corre "
+                 "sin ella. No tiene valor por defecto a propósito.")
     if args.dry_run:
         sys.exit(0 if plan(args.limite) else 1)
     if not IMAGENES_DIR.exists():
@@ -451,7 +471,7 @@ def main():
     confirmar_llegadas(api, token_admin, ids_productores)
 
     verificar_certificados(api, ids_productores)
-    log("\nCuentas demo (todas con la misma contrasena): " + PASSWORD_DEMO)
+    log("\nCuentas demo: todas con la contraseña de SEED_PASSWORD_DEMO (no se muestra).")
     for i, ag in agricultores:
         log(f"   agricultor{i:02d}@{DOMINIO}  - {ag['razon']}")
     sys.exit(1 if fallos else 0)
