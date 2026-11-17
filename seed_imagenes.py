@@ -14,7 +14,8 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY") or sys.exit("Falta la variable 
 MINIO_CLIENT = Minio("localhost:9000", access_key=MINIO_ACCESS_KEY, secret_key=MINIO_SECRET_KEY, secure=False)
 BUCKET = "productos-imagenes"
 
-# La base de Productos (por un port-forward en el 15432), con el usuario y la contraseña de esa base en el Secret.
+# La base de Productos en 127.0.0.1:15432: ábrela antes con scripts/abrir-puertos.ps1 -Solo base-productos (y
+# ciérrala con -Cerrar). El usuario y la contraseña son los de esa base en el Secret (DB_USER, DB_PASSWORD_PRODUCTOS).
 DB_USER = os.getenv("DB_USER") or sys.exit("Falta la variable de entorno DB_USER: el script no corre sin ella.")
 DB_PASSWORD_PRODUCTOS = os.getenv("DB_PASSWORD_PRODUCTOS") or sys.exit("Falta la variable de entorno DB_PASSWORD_PRODUCTOS: el script no corre sin ella.")
 conn = psycopg2.connect(host="localhost", port=15432, dbname="productos", user=DB_USER, password=DB_PASSWORD_PRODUCTOS)

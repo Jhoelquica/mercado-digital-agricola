@@ -38,6 +38,9 @@ Uso (desde la carpeta del proyecto, con los servicios corriendo):
     python seed_datos_demo.py --fases agricultores  # solo pasos 1-3
     python seed_datos_demo.py --limite 2          # solo los 2 primeros agricultores (prueba)
 
+Llama a los servicios por el gateway (http://localhost:8000/api/<servicio>), la única entrada publicada. Para usar sus
+puertos directos: scripts/abrir-puertos.ps1 -Solo servicios y SEED_PUERTOS_DIRECTOS=1.
+
 Solo toca cuentas @chakrashop-demo.pe y solo confirma llegadas de productos de esos agricultores.
 Requiere: pip install httpx pillow   (pillow es opcional: reduce las fotos antes de subirlas)
 """
@@ -58,14 +61,14 @@ try:
 except ImportError:  # las fotos originales pesan ~2-4 MB; sin Pillow se suben tal cual
     Image = None
 
-HOST = os.getenv("SEED_HOST", "http://localhost")
+# Por el gateway del clúster local (la única entrada publicada en el host), en /api/<servicio>. Con
+# SEED_PUERTOS_DIRECTOS=1 llama a cada servicio por su puerto en 127.0.0.1; antes hay que abrirlos con
+# scripts/abrir-puertos.ps1 -Solo servicios (kubectl port-forward).
+HOST = os.getenv("SEED_HOST", "http://localhost:8000")
 PUERTOS = {"usuarios": 8006, "productores": 8001, "productos": 8002, "certificacion": 8008}
 PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO")  # obligatoria y sin valor por defecto (ver main)
-# En local se llama a cada servicio por su puerto; contra un despliegue (cualquier otro host) se llama por el gateway del
-# mismo origen, en /api/<servicio> (SEED_HOST=https://mi-dominio). SEED_GATEWAY=1 lo fuerza también en local
-# (SEED_HOST=http://localhost:8000).
 ES_LOCAL = any(h in HOST for h in ("localhost", "127.0.0.1"))
-USA_GATEWAY = os.getenv("SEED_GATEWAY", "").lower() in ("1", "true", "si") or not ES_LOCAL
+PUERTOS_DIRECTOS = os.getenv("SEED_PUERTOS_DIRECTOS", "").lower() in ("1", "true", "si")
 DOMINIO = "chakrashop-demo.pe"
 # Una siembra en estos estados todavia no tiene su producto: "planificado", o a medio camino con el Verificador que se
 # retiro. Se completa con su foto, igual que en la app.
@@ -148,9 +151,9 @@ class Api:
         self.cliente = httpx.Client(timeout=60)
 
     def url(self, servicio, ruta):
-        if USA_GATEWAY:
-            return f"{HOST}/api/{servicio}{ruta}"
-        return f"{HOST}:{PUERTOS[servicio]}{ruta}"
+        if PUERTOS_DIRECTOS:
+            return f"http://127.0.0.1:{PUERTOS[servicio]}{ruta}"
+        return f"{HOST}/api/{servicio}{ruta}"
 
     def pedir(self, metodo, servicio, ruta, token=None, **kwargs):
         headers = kwargs.pop("headers", {})
@@ -357,7 +360,7 @@ def verificar_certificados(api, ids_productores):
 # ---------------------------------------------------------------- dry run
 def plan(limite):
     log("== PLAN (dry-run, no se envia nada)")
-    log(f"   Servicios: {HOST} puertos {PUERTOS}")
+    log("   Servicios: " + (f"puertos directos en 127.0.0.1 {PUERTOS}" if PUERTOS_DIRECTOS else f"gateway {HOST}/api/<servicio>"))
     log(f"   Imagenes:  {IMAGENES_DIR}  (Pillow: {'si' if Image else 'NO - se subiran las fotos originales'})")
     total = 0
     problemas = 0

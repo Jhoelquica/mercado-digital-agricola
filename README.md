@@ -21,7 +21,8 @@ RabbitMQ.
 | `certificacion` | 8008 | Cadena de certificación por producto, QR y certificado Merkle por pedido | `db-certificacion` |
 
 Además corren: `frontend` (nginx), `traefik-gateway` (8000), RabbitMQ, Redis, MinIO (9000 y consola 9001), Prometheus
-(9090) y Grafana (3000).
+(9090) y Grafana (3000). En el host solo se publican el gateway (8000) y la API de MinIO (9000); los puertos de la tabla
+son los de dentro del clúster.
 
 ## Requisitos
 
@@ -59,10 +60,22 @@ python scripts/verificar_despliegue.py --base http://localhost:8000 --contexto d
 
 **Dónde entrar:**
 - **Sitio:** <http://localhost:8000>
-- **APIs:** `http://localhost:8000/api/<servicio>/...`
-- **Grafana:** <http://localhost:3000>. Abre directo el tablero "ChakraShop — Microservicios" (tráfico, latencia p95 y errores 5xx de los 8 servicios); mirarlo no pide sesión.
-- **Prometheus:** <http://localhost:9090>
-- **Consola de MinIO:** <http://localhost:9001>
+- **APIs:** `http://localhost:8000/api/<servicio>/...`. El gateway es la única entrada: valida el JWT y limita las
+  peticiones. Los servicios no se publican en el host (son ClusterIP), así que no se le puede dar la vuelta.
+- **Grafana, Prometheus y la consola de MinIO:** tampoco se publican. Para desarrollo se abren solo en `127.0.0.1` con
+  `kubectl port-forward`:
+
+  ```powershell
+  .\scripts\abrir-puertos.ps1                    # Grafana http://127.0.0.1:3000, Prometheus :9090 y consola de MinIO :9001
+  .\scripts\abrir-puertos.ps1 -Solo servicios    # los 8 servicios en 127.0.0.1:8001..8008 (para depurar)
+  .\scripts\abrir-puertos.ps1 -Estado            # qué está abierto
+  .\scripts\abrir-puertos.ps1 -Cerrar            # cerrarlos
+  ```
+
+  Otros grupos: `base-productos` (127.0.0.1:15432, para `seed_imagenes.py`), `traefik` (panel en :18080) y `todo`. Grafana
+  abre directo el tablero "ChakraShop — Microservicios" (tráfico, latencia p95 y errores 5xx de los 8 servicios).
+  `seed_datos_demo.py` va por el gateway, y `frontend/scripts/generar-esquemas.mjs` lee dentro de cada pod: ninguno
+  necesita abrir puertos.
 
 > Tras encender Docker Desktop, el clúster tarda 1–2 minutos. Si el sitio muestra "404 page not found" (texto plano de
 > Traefik), el frontend todavía está arrancando: espera al `kubectl wait` del paso 5.
@@ -165,7 +178,8 @@ k8s/                   manifiestos del clúster local (servicios, bases con volu
                        Prometheus, Grafana con su tablero)
 deploy/gcp/            guía y scripts para Google Kubernetes Engine
 deploy/local/          plantilla del Secret del clúster local
-scripts/               pruebas, verificación del despliegue, tablero de Grafana, respaldo y restauración completos
+scripts/               pruebas, verificación del despliegue, tablero de Grafana, respaldo y restauración completos,
+                       y abrir-puertos.ps1 (port-forward en 127.0.0.1 para desarrollo)
 seed_datos_demo.py     semilla de demostración (y crear_productos_seed.py, seed_imagenes.py)
 docker-compose.yml     entorno sin Kubernetes
 ```

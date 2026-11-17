@@ -1,3 +1,5 @@
+# OBSOLETO: POST /productos ya no existe (responde 405): hoy un producto solo nace de una cosecha. Se conserva como
+# referencia. Si se usa, va por el gateway, la única entrada publicada del clúster local.
 import httpx
 import os
 import sys
@@ -36,7 +38,7 @@ productos = [
 headers = {"Authorization": f"Bearer {TOKEN}"}
 
 for p in productos:
-    resp = httpx.post("http://localhost:8002/productos", json=p, headers=headers)
+    resp = httpx.post("http://localhost:8000/api/productos/productos", json=p, headers=headers)
     if resp.status_code == 200:
         print(f"  ✔ creado: {p['nombre']}")
     else:
