@@ -148,6 +148,10 @@ python scripts/verificar_despliegue.py --directo --compose
   obligatoria, `docker compose` se niega a arrancar y dice cuál. La cabecera de `docker-compose.yml` explica qué cambia
   respecto de Kubernetes.
 - **Puertos:** todos los publicados escuchan solo en `127.0.0.1`; no se ven desde otras máquinas de la red.
+- **Ojo con un `.env` de antes del 2026-11-16:** su `DB_PASSWORD` es la contraseña de desarrollo vieja, que está en el
+  historial público de git, y los volúmenes de las bases de compose la tienen guardada. Antes de volver a levantar compose,
+  rótala: cámbiala en `.env` y en cada base (`ALTER ROLE <usuario> PASSWORD '<nueva>'`, con las bases arriba), o borra los
+  volúmenes de las bases para que se creen de nuevo con la nueva (se pierden los datos de compose).
 
 ## Pruebas automáticas
 
