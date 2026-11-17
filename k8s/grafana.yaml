@@ -60,7 +60,8 @@ kind: Service
 metadata:
   name: grafana
 spec:
-  type: LoadBalancer
+  # ClusterIP: no se publica en el host. Para mirarlo: scripts/abrir-puertos.ps1 (kubectl port-forward, solo 127.0.0.1).
+  type: ClusterIP
   selector:
     app: grafana
   ports:

@@ -75,6 +75,8 @@ kind: Service
 metadata:
   name: minio
 spec:
+  # Publicado solo para la API (9000): el navegador carga de ahí las fotos de los productos. La consola (9001)
+  # no se publica: scripts/abrir-puertos.ps1 la abre en 127.0.0.1 con kubectl port-forward al pod.
   type: LoadBalancer
   selector:
     app: minio
@@ -82,6 +84,3 @@ spec:
     - name: api
       port: 9000
       targetPort: 9000
-    - name: console
-      port: 9001
-      targetPort: 9001

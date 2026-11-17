@@ -140,7 +140,9 @@ metadata:
   labels:
     app: certificacion
 spec:
-  type: LoadBalancer
+  # ClusterIP: no se publica en el host. La única entrada es el gateway (Traefik: valida el JWT y limita las
+  # peticiones); para desarrollo, scripts/abrir-puertos.ps1 lo abre en 127.0.0.1 con kubectl port-forward.
+  type: ClusterIP
   selector:
     app: certificacion
   ports:
