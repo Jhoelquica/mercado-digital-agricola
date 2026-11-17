@@ -158,7 +158,11 @@ def test_un_certificado_de_antes_sigue_mostrando_a_su_verificador():
         db.add(verificador)
         db.commit()
         main.crear_bloque(db, producto_id, "cosecha_registrada", "45 kg de papa")
-        main.crear_bloque(db, producto_id, "certificado_productor", "Cosecha revisada y aprobada.", verificador.id)
+        # Histórico: rol verificador retirado el 2026-10-01. crear_bloque ya no recibe verificador_id (los bloques nuevos
+        # lo dejan nulo); un certificado de antes se arma como quedó en la base, con la columna puesta.
+        certificado = main.crear_bloque(db, producto_id, "certificado_productor", "Cosecha revisada y aprobada.")
+        certificado.verificador_id = verificador.id
+        db.commit()
     finally:
         db.close()
 
@@ -166,7 +170,9 @@ def test_un_certificado_de_antes_sigue_mostrando_a_su_verificador():
 
     assert historial[1]["verificador_nombre"] == "Ana Verificadora"
     assert historial[1]["verificador_credencial"] == "COL-1"
-    assert historial[0]["verificador_nombre"] is None and historial[0]["foto_url"] is None
+    assert historial[0]["verificador_id"] is None and historial[0]["verificador_nombre"] is None
+    assert historial[0]["foto_url"] is None and historial[1]["foto_url"] is None
+    assert client.get(f"/certificacion/{producto_id}/verificar").json()["valido"] is True  # la cadena sigue íntegra
 
 
 def test_es_idempotente_no_duplica_bloques(monkeypatch):

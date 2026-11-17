@@ -179,11 +179,9 @@ def iso(d):
     return datetime.combine(d, time(0, 0)).isoformat()
 
 
-def asegurar_sesion(api, nombre, email, rol, codigo_invitacion=None):
+def asegurar_sesion(api, nombre, email, rol):
     """Registra al usuario si no existe y devuelve su token (login)."""
     cuerpo = {"nombre": nombre, "email": email, "password": PASSWORD_DEMO, "rol": rol}
-    if codigo_invitacion:
-        cuerpo["codigo_invitacion"] = codigo_invitacion
     r = api.pedir("POST", "usuarios", "/usuarios/registro", json=cuerpo)
     if r.status_code not in (200, 409):  # 409 = ya existia
         raise RuntimeError(f"registro de {email}: HTTP {r.status_code} - {detalle(r)}")

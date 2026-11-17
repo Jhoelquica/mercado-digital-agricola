@@ -111,8 +111,6 @@ spec:
             # deploy/gcp/generar_manifiestos.py la cambia por https://<dominio>.
             - name: FRONTEND_URL
               value: http://localhost:8000
-            - name: PRODUCTORES_URL
-              value: http://productores:8001
             # Certificación valida la clave del par
             # Transporte→Certificación (recibe, no envía) más la de limpieza QA.
             - name: TRANSPORTE_A_CERTIFICACION_SECRETO

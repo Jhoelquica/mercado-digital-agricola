@@ -184,7 +184,7 @@ deploy/gcp/            guía y scripts para Google Kubernetes Engine
 deploy/local/          plantilla del Secret del clúster local
 scripts/               pruebas, verificación del despliegue, tablero de Grafana, respaldo y restauración completos,
                        y abrir-puertos.ps1 (port-forward en 127.0.0.1 para desarrollo)
-seed_datos_demo.py     semilla de demostración (y crear_productos_seed.py, seed_imagenes.py)
+seed_datos_demo.py     semilla de demostración (y seed_imagenes.py)
 docker-compose.yml     entorno sin Kubernetes
 ```
 

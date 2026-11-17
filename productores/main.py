@@ -343,8 +343,8 @@ PRODUCTORES_A_CERTIFICACION_SECRETO = os.getenv("PRODUCTORES_A_CERTIFICACION_SEC
 UNIDADES_COSECHA_VALIDAS = ["kg", "unidad", "litro"]
 
 # Radio alrededor de la chacra dentro del cual se considera que el agricultor está en ella al registrar la siembra o la
-# cosecha. Mismo valor que RADIO_GEOFENCING_KM en certificacion/logica_cadena.py. Fuera de él se permite igual (el GPS
-# falla seguido en el campo) pero queda como advertencia en la cadena.
+# cosecha (cuando la chacra no tiene contorno). Fuera de él se permite igual (el GPS falla seguido en el campo) pero queda
+# como advertencia en la cadena.
 RADIO_CHACRA_KM = 1.5
 
 
