@@ -160,9 +160,9 @@ def registrar_cosecha_aprobada(
 ):
     """Llamado por Productores al completar una cosecha (completar_cosecha): registra el primer evento de la cadena
     del producto recién creado, cosecha_registrada, con la evidencia en origen (distancia a la chacra al sembrar y al
-    cosechar, y la huella de la foto) y la foto. Antes, además, un certificado_productor firmado por el Verificador:
-    ese rol se retiró (presentación del 2026-10-01) y los bloques que ya existen se conservan tal cual. La ruta
-    conserva su nombre para no cambiar el contrato entre servicios.
+    cosechar, y la huella de la foto) y la foto. Antes también se agregaba un certificado_productor firmado por el
+    verificador (histórico: rol verificador retirado el 2026-10-01); esos bloques se conservan tal cual. La ruta conserva su nombre
+    para no cambiar el contrato entre servicios.
 
     Idempotente: un reintento no duplica el bloque. Falla cerrado: si el secreto no está configurado en este
     servicio, rechaza todo (a diferencia de comparar None == None)."""
@@ -211,18 +211,14 @@ def registrar_llegada_almacen(
 def salud():
     return {"estado": "ok", "servicio": "certificacion"}
 
-# POST /certificacion/{producto_id}/eventos se eliminó: dejaba a cualquier productor o verificador (rol ya retirado)
-# agregar bloques a la cadena de CUALQUIER producto (no comprobaba que existiera ni que fuera suyo),
-# con texto libre, y dos escrituras simultáneas bifurcaban la cadena. Ningún flujo lo usaba: los
-# eventos de la cadena solo entran por los endpoints internos con secreto de servicio
-# (/cosecha-aprobada desde Productores y /eventos-internos desde Transporte).
-
 @app.get("/certificacion/{producto_id}/historial")
 def historial(producto_id: str, db: Session = Depends(get_db)):
     bloques = db.query(models.Bloque).filter(
         models.Bloque.producto_id == producto_id
     ).order_by(models.Bloque.indice).all()
 
+    # Histórico: rol verificador retirado el 2026-10-01. Los bloques certificado_productor de antes muestran quién los
+    # certificó (nombre y credencial); los bloques nuevos no tienen verificador_id.
     verificador_ids = {b.verificador_id for b in bloques if b.verificador_id}
     nombres_por_id = {}
     credenciales_por_id = {}

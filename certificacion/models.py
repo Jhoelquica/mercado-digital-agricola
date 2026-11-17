@@ -12,10 +12,10 @@ class Bloque(Base):
     __table_args__ = (UniqueConstraint("producto_id", "indice", name="uq_bloque_producto_indice"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    verificador_id = Column(UUID(as_uuid=True), nullable=True)
+    verificador_id = Column(UUID(as_uuid=True), nullable=True)  # histórico: rol verificador retirado el 2026-10-01; nula en los bloques nuevos
     producto_id = Column(UUID(as_uuid=True), nullable=False)
     indice = Column(Integer, nullable=False)  # posición dentro de la cadena de ESE producto
-    evento = Column(String, nullable=False)   # cosecha_registrada, certificado_productor, llegada_almacen, verificado_punto_venta
+    evento = Column(String, nullable=False)   # cosecha_registrada, llegada_almacen, verificado_punto_venta (y el histórico certificado_productor)
     datos = Column(String, nullable=True)     # descripción libre del evento
     fecha = Column(DateTime, default=datetime.utcnow)
     hash_anterior = Column(String, nullable=False)
@@ -26,7 +26,7 @@ class Bloque(Base):
     foto_url = Column(String, nullable=True)
 
 class Verificador(Base):
-    # Ya no se crean perfiles nuevos (el rol se retiró en la presentación del 2026-10-01): queda para que los bloques
+    # Histórico: rol verificador retirado el 2026-10-01. Ya no se crean perfiles nuevos: queda para que los bloques
     # certificado_productor de antes sigan mostrando quién los certificó.
     __tablename__ = "verificadores"
 

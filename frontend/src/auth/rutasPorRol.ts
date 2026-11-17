@@ -1,5 +1,5 @@
-// Los roles que existen hoy. Una cuenta antigua puede traer otro ("verificador", retirado en la presentación del
-// 2026-10-01): por eso el rol de la sesión es un texto, y sin panel propio aterriza en "/".
+// Los roles que existen hoy. Una cuenta antigua puede traer otro ("verificador"; histórico: rol verificador retirado el 2026-10-01):
+// por eso el rol de la sesión es un texto, y sin panel propio aterriza en "/".
 export type Rol = 'comprador' | 'productor' | 'repartidor' | 'admin';
 
 export const ROLES_CON_SESION: Rol[] = ['comprador', 'productor', 'repartidor', 'admin'];

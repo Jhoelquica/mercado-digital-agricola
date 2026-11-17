@@ -8,8 +8,8 @@ cada producto quede con su certificado de trazabilidad (lo que se ve al escanear
   2. siembra (registro de produccion "planificado"), con la ubicacion GPS del agricultor en su chacra
   3. foto de la cosecha + cosecha completada (otra vez desde la chacra) -> "cosechado": nace el
      producto en "borrador" y se registra en la cadena de Certificacion cosecha_registrada, con la
-     evidencia en origen (distancias a la chacra y huella SHA-256 de la foto). Sin Verificador: ese
-     rol se retiro (presentacion del 2026-10-01).
+     evidencia en origen (distancias a la chacra y huella SHA-256 de la foto). Sin paso de verificacion
+     (historico: rol verificador retirado el 2026-10-01).
   4. el productor completa el borrador: categoria, precio e imagenes (de la carpeta local de
      imagenes-productos) y lo publica -> "en_transito"
   5. el Admin confirma la llegada al almacen -> "disponible" (ya comprable)

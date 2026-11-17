@@ -159,24 +159,17 @@ def _ningun_registro_pasa_a_un_estado_historico(_registro, nuevo, anterior, _ini
 
 
 class HistorialVerificacionCosecha(Base):
-    """Historial de decisiones del Verificador sobre una cosecha — calcado de EnvioRechazo en
-    Transporte (transporte/models.py): guarda CADA decisión (no solo la última), así que un
-    reenvío tras un rechazo no borra el rastro de por qué se rechazó la primera vez.
-
-    verificador_id NO es un ForeignKey real a pesar del nombre: Verificador vive en la base de
-    datos del servicio Certificación, una BD completamente distinta a la de este servicio — no
-    hay integridad referencial posible entre bases de datos separadas. Mismo caso que
-    Bloque.verificador_id en Certificación (certificacion/models.py) o Envio.pedido_id acá mismo
-    (referencia a Pedidos). Se guarda el usuario_id del verificador autenticado (claim `sub` del
-    JWT), no se busca su fila real de Verificador — requiere_rol("verificador") ya garantiza que
-    ese usuario tiene el rol, sin necesidad de otra llamada a Certificación para confirmarlo."""
+    """Histórico: rol verificador retirado el 2026-10-01. Las decisiones que tomaba el verificador sobre cada cosecha
+    (aprobada o rechazada, con su motivo). Ya no se escriben filas nuevas: quedan las de antes, y la limpieza QA borra
+    las de una siembra cuando la borra. verificador_id es el usuario_id de quien decidió; no es un ForeignKey porque los
+    perfiles de verificador viven en la base de Certificación."""
     __tablename__ = "historial_verificacion_cosecha"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     registro_produccion_id = Column(UUID(as_uuid=True), ForeignKey("registros_produccion.id"), nullable=False)
     verificador_id = Column(UUID(as_uuid=True), nullable=False)
     accion = Column(String, nullable=False)  # aprobado | rechazado
-    motivo = Column(String, nullable=True)  # obligatorio en la práctica solo para "rechazado" (validado en main.py)
+    motivo = Column(String, nullable=True)  # el motivo de un "rechazado"
     fecha = Column(DateTime, default=datetime.utcnow)
 
 

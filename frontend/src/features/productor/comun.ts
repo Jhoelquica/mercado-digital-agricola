@@ -143,7 +143,7 @@ export function textoPeonesDias(peones: number | string, dias: number | string):
 // Cálculo de "Gestión económica": lo usan Mi perfil y la pestaña del panel del productor (mismos números).
 export function calcularResumenEconomico(registros: RegistroProduccion[]) {
   const totalInvertido = registros.reduce((suma, r) => suma + (Number(r.costo_total) || 0), 0);
-  // "cosechado" es donde termina hoy una cosecha; "aprobado" es su equivalente de antes de retirar al Verificador.
+  // "cosechado" es donde termina hoy una cosecha; "aprobado" es su equivalente (histórico: rol verificador retirado el 2026-10-01).
   const cosechados = registros.filter((r) => r.estado === 'aprobado' || r.estado === 'cosechado');
   const totalCosechadoKg = cosechados.reduce((suma, r) => {
     if (r.cantidad_cosechada == null) return suma;

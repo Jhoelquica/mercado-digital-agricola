@@ -15,6 +15,7 @@ export interface Bloque {
   fecha: string | null;
   hash_anterior: string;
   hash_actual: string;
+  // Histórico: rol verificador retirado el 2026-10-01. Solo los traen los bloques certificado_productor de antes.
   verificador_id: string | null;
   verificador_nombre: string | null;
   verificador_credencial: string | null;

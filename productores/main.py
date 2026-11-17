@@ -1259,8 +1259,8 @@ def completar_cosecha(
     db: Session = Depends(get_db),
     usuario: dict = Depends(requiere_rol("productor")),
 ):
-    """Cierra la cosecha y la publica como borrador en el catálogo, sin pasar por nadie: el rol Verificador se retiró
-    (presentación del 2026-10-01). Lo que respalda a la cosecha es la evidencia en origen (la foto obligatoria y dónde
+    """Cierra la cosecha y la publica como borrador en el catálogo, sin pasar por nadie (histórico: rol verificador retirado el 2026-10-01).
+    Lo que respalda a la cosecha es la evidencia en origen (la foto obligatoria y dónde
     estaba el agricultor, sellados en la cadena) y, después, la pesada del administrador al recibirla en el almacén."""
     productor = _obtener_productor_del_token(usuario, db)
     registro = _registro_propio_por_completar(registro_id, productor, db)

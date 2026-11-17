@@ -62,8 +62,8 @@ export function FotoDeBloque({ url }: { url: string }) {
   );
 }
 
-// Solo aplica al evento certificado_productor; el backend ya resuelve el nombre en /historial (puede venir null si el
-// verificador fue borrado, ahí caemos al id truncado).
+// Histórico: rol verificador retirado el 2026-10-01. Solo aplica a los bloques certificado_productor de antes; el
+// backend resuelve el nombre en /historial (si no lo encuentra, se muestra el id truncado).
 function LineaVerificador({ bloque }: { bloque: Bloque }) {
   if (bloque.evento !== 'certificado_productor' || !bloque.verificador_id) return null;
   const nombre = bloque.verificador_nombre || `verificador ${String(bloque.verificador_id).slice(0, 8)}`;

@@ -2270,7 +2270,8 @@ input, select { font-family: inherit; }
 .produccion-card .produccion-sin-calculo + .btn-completar-cosecha { margin-top: 12px; }
 
 /* ---------- Evidencia en origen: siembra y cosecha desde la chacra ----------
-   Reemplaza al Verificador. Dos piezas: el aviso dorado ("hazlo dentro de tu chacra", lo primero que se lee en el
+   Lo que respalda la cosecha (histórico: rol verificador retirado el 2026-10-01).
+   Dos piezas: el aviso dorado ("hazlo dentro de tu chacra", lo primero que se lee en el
    formulario) y el bloque de ubicación, con una píldora de estado que dice con ícono y palabras dónde está el
    agricultor respecto de su chacra (no solo con color) y un botón de 44px. Fuera del radio o sin GPS se permite igual:
    el estado lo dice como advertencia, no como error. */
@@ -3330,6 +3331,7 @@ input, select { font-family: inherit; }
 .timeline-datos { font-size: 0.85rem; margin-top: 6px; color: var(--texto); }
 .timeline-hash { display: flex; align-items: center; gap: 5px; font-size: 0.74rem; color: var(--color-secundario); margin-top: 6px; }
 .timeline-hash code { background: var(--color-superficie); padding: 2px 6px; border-radius: 6px; font-family: monospace; word-break: break-all; }
+/* Histórico: rol verificador retirado el 2026-10-01. "Certificado por …" en los bloques certificado_productor de antes. */
 .timeline-verificador { display: flex; align-items: center; gap: 5px; font-size: 0.82rem; color: var(--color-secundario); margin: 4px 0 0; }
 
 .pedido-certificado-cta { margin-top: 10px; }

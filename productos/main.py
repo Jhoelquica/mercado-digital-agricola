@@ -480,7 +480,7 @@ def reponer_stock(producto_id: str, datos: ReponerStock, x_servicio_secreto: str
 # POST /productos se eliminó: dejaba a cualquier productor publicar un producto "disponible" con
 # nombre, precio, stock y unidad libres, sin cosecha, sin verificación y sin certificación. Un
 # producto solo nace cuando el agricultor completa su cosecha con la foto tomada en la chacra
-# (crear_producto_desde_cosecha, más abajo; antes la aprobaba un Verificador, rol retirado el 2026-10-01),
+# (crear_producto_desde_cosecha, más abajo),
 # pasa por borrador -> en_transito -> disponible y su cadena de certificación se registra en ese mismo flujo.
 
 @app.post("/productos/{producto_id}/imagenes/subir")

@@ -272,7 +272,7 @@ class UsuarioOAuthGoogle(BaseModel):
     rol: str | None = None  # solo aplica si el resultado es un registro nuevo (ver el endpoint)
 
 # Los únicos roles con los que alguien puede crearse una cuenta. Deny-by-default: cualquier otro (admin, un rol
-# inventado o "verificador", que se retiró en la presentación del 2026-10-01) se rechaza, así que agregar un rol
+# inventado o "verificador"; histórico: rol verificador retirado el 2026-10-01) se rechaza, así que agregar un rol
 # sensible sin acordarse de esta lista NO abre un agujero. El admin lo crea el bootstrap de arriba.
 ROLES_DE_REGISTRO_ABIERTO = frozenset({"comprador", "productor", "repartidor"})
 
@@ -297,7 +297,7 @@ def _validar_rol_de_registro(rol: str) -> None:
 
 
 def _rechazar_cuenta_desactivada(usuario) -> None:
-    """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en auth.py: hoy, "verificador") está desactivada: no se borra, pero
+    """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en auth.py; histórico: rol verificador retirado el 2026-10-01) está desactivada: no se borra, pero
     no vuelve a iniciar sesión, ni con contraseña ni con Google, así que no recibe tokens nuevos; los que tuviera
     dejan de valer en todos los servicios (verificar_token).
 

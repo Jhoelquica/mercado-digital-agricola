@@ -36,7 +36,7 @@ function CtaSiembra({ registros, chacras }: { registros: RegistroProduccion[]; c
 }
 
 function Resumen({ registros, chacras, disponibles, entregas, alVerEntregas }: { registros: RegistroProduccion[]; chacras: Chacra[]; disponibles: number; entregas: number; alVerEntregas: () => void }) {
-  // "En curso" es todo lo que aún no terminó; "aprobado" equivale a "cosechado" (de antes de retirar al Verificador).
+  // "En curso" es todo lo que aún no terminó; "aprobado" equivale a "cosechado" (histórico: rol verificador retirado el 2026-10-01).
   const enCurso = registros.filter((r) => r.estado !== 'aprobado' && r.estado !== 'cosechado').length;
   // La próxima cosecha solo puede ser de una siembra que todavía no se cosechó.
   const proxima = registros

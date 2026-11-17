@@ -1,4 +1,4 @@
-"""Fotos de las cosechas: la evidencia en origen que reemplazó al Verificador (ver completar_cosecha en main.py).
+"""Fotos de las cosechas: la evidencia en origen (histórico: rol verificador retirado el 2026-10-01; ver completar_cosecha en main.py).
 
 Bucket propio y de lectura pública, como el de las fotos de productos: la foto se muestra en la página del QR. Lo que
 la protege no es ocultarla sino su huella SHA-256, que queda sellada en la cadena de Certificación: si alguien cambiara
