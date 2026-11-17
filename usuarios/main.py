@@ -273,8 +273,7 @@ class UsuarioOAuthGoogle(BaseModel):
 
 # Los únicos roles con los que alguien puede crearse una cuenta. Deny-by-default: cualquier otro (admin, un rol
 # inventado o "verificador", que se retiró en la presentación del 2026-10-01) se rechaza, así que agregar un rol
-# sensible sin acordarse de esta lista NO abre un agujero. El admin lo crea el bootstrap de arriba. Antes había
-# invitaciones por código para los roles restringidos; su único uso era el Verificador y se quitaron con él.
+# sensible sin acordarse de esta lista NO abre un agujero. El admin lo crea el bootstrap de arriba.
 ROLES_DE_REGISTRO_ABIERTO = frozenset({"comprador", "productor", "repartidor"})
 
 # Sin fallback hardcodeado a propósito: si el Deployment se olvida de wirear esta env var, el

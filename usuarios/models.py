@@ -38,11 +38,6 @@ class Usuario(Base):
     ruc_verificado_en = Column(DateTime, nullable=True)
 
 
-# La tabla "invitaciones" (códigos de un solo uso para registrarse con un rol restringido) se quitó con el rol
-# Verificador, su único uso: el modelo ya no existe, pero en una base ya creada la tabla se deja como estaba (es
-# historial y nada la lee). Ver ROLES_DE_REGISTRO_ABIERTO en main.py.
-
-
 class IntentoLogin(Base):
     """Fallos seguidos de login por correo (exista o no la cuenta) y, si se agotó el tope, hasta cuándo está
     bloqueado — ver acceso.py. Tabla nueva: la crea Base.metadata.create_all() al arrancar."""

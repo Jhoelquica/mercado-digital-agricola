@@ -1262,3 +1262,9 @@ def test_el_gateway_rechaza_el_token_vigente_de_una_cuenta_desactivada():
 
     assert rechazado.status_code == 401 and "desactivada" in rechazado.json()["detail"]
     assert aceptado.status_code == 200
+
+
+def test_ningun_modelo_mapea_la_tabla_invitaciones():
+    """La tabla "invitaciones" (códigos para registrarse con un rol restringido; su único uso era el rol verificador) se
+    borró el 2026-11-17, con respaldo. Como ningún modelo la mapea, create_all no la vuelve a crear."""
+    assert "invitaciones" not in main.models.Base.metadata.tables
