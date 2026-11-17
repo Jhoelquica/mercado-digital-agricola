@@ -91,16 +91,14 @@ const PALABRAS_TIPO: Record<string, Palabras> = {
 
 export const palabrasDe = (tipo: string | null | undefined): Palabras => PALABRAS_TIPO[tipo || ''] ?? (PALABRAS_TIPO.temporada as Palabras);
 
-// ---- Estados de un registro (productores/models.py): planificado -> cosechado. "aprobado" equivale a cosechado y
-// "pendiente_verificacion"/"rechazado" quedaron a medio camino de cuando existía el Verificador: se completan con su foto.
-export const ESTADOS_POR_COMPLETAR = ['planificado', 'pendiente_verificacion', 'rechazado'];
+// ---- Estados de un registro (productores/models.py): planificado -> cosechado. "aprobado" es histórico (rol
+// verificador retirado el 2026-10-01) y equivale a cosechado.
+export const ESTADOS_POR_COMPLETAR = ['planificado'];
 const BADGE_PLANIFICADO = { clase: 'pill-pendiente', icono: 'seedling', etiqueta: 'Planificado' };
 export const BADGES_ESTADO_REGISTRO: Record<string, { clase: string; icono: string; etiqueta: string }> = {
   planificado: BADGE_PLANIFICADO,
   cosechado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
   aprobado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
-  pendiente_verificacion: { clase: 'pill-pendiente', icono: 'camera', etiqueta: 'Falta la foto' },
-  rechazado: { clase: 'pill-pendiente', icono: 'camera', etiqueta: 'Falta la foto' },
 };
 export const badgeDeEstado = (estado: string) => BADGES_ESTADO_REGISTRO[estado] ?? BADGE_PLANIFICADO;
 

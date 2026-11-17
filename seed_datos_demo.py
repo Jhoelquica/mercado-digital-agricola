@@ -70,9 +70,8 @@ PASSWORD_DEMO = os.getenv("SEED_PASSWORD_DEMO")  # obligatoria y sin valor por d
 ES_LOCAL = any(h in HOST for h in ("localhost", "127.0.0.1"))
 PUERTOS_DIRECTOS = os.getenv("SEED_PUERTOS_DIRECTOS", "").lower() in ("1", "true", "si")
 DOMINIO = "chakrashop-demo.pe"
-# Una siembra en estos estados todavia no tiene su producto: "planificado", o a medio camino con el Verificador que se
-# retiro. Se completa con su foto, igual que en la app.
-ESTADOS_POR_COMPLETAR = ("planificado", "pendiente_verificacion", "rechazado")
+# Una siembra "planificado" todavia no tiene su producto: se completa con su foto, igual que en la app.
+ESTADOS_POR_COMPLETAR = ("planificado",)
 IMAGENES_DIR = Path(os.getenv("SEED_IMAGENES_DIR", Path(__file__).resolve().parent.parent / "imagenes-productos"))
 MAX_IMAGENES = 3   # por producto (el limite del backend es 5)
 LADO_MAX = 1400    # px, lado mayor tras reducir

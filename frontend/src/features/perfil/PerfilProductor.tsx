@@ -31,14 +31,12 @@ function EstadisticasProductor({ registros }: { registros: RegistroProduccion[] 
   );
 }
 
-// Los cinco estados que puede tener un registro (productores/models.py): "planificado" y "cosechado" son los de hoy;
-// "pendiente_verificacion", "aprobado" y "rechazado" quedaron de cuando existía el Verificador.
+// Los estados de un registro (productores/models.py). "aprobado" es histórico (rol verificador retirado el 2026-10-01):
+// cosechas de antes, que se muestran como "cosechado".
 const ESTADOS_REGISTRO: Record<string, { clase: string; icono: string; etiqueta: string }> = {
   planificado: { clase: 'pill-pendiente', icono: 'seedling', etiqueta: 'Planificado' },
   cosechado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
-  pendiente_verificacion: { clase: 'pill-pendiente', icono: 'hourglass', etiqueta: 'Pendiente de verificación' },
-  aprobado: { clase: 'pill-aprobado', icono: 'rosette-discount-check', etiqueta: 'Aprobado' },
-  rechazado: { clase: 'pill-rechazado', icono: 'circle-x', etiqueta: 'Rechazado' },
+  aprobado: { clase: 'pill-aprobado', icono: 'circle-check', etiqueta: 'Cosechado' },
 };
 
 function fechaCorta(fecha: string | null | undefined): string {
@@ -65,9 +63,6 @@ function TarjetaRegistro({ r, chacras }: { r: RegistroProduccion; chacras: Chacr
         {dato('Costo total', formatearMoneda(r.costo_total))}
         {r.cantidad_cosechada != null && dato('Cosechado', `${Number(r.cantidad_cosechada).toFixed(2)} ${r.unidad_medida}`)}
       </div>
-      {r.estado === 'rechazado' && (
-        <p className="produccion-sin-calculo"><i className="ti ti-alert-circle" /> Motivo del rechazo: {r.motivo_rechazo || 'no se registró el motivo'}.</p>
-      )}
     </div>
   );
 }

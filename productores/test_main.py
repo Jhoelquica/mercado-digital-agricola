@@ -276,13 +276,11 @@ def _fila(registro_id):
 
 
 def _poner_estado(registro_id, estado):
-    db = main.SessionLocal()
-    try:
-        fila = db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro_id).one()
-        fila.estado = estado
-        db.commit()
-    finally:
-        db.close()
+    """Escribe el estado directo en la base, como quedaron los registros de antes (el modelo no deja escribir uno
+    histórico como "aprobado")."""
+    from sqlalchemy import text
+    with main.engine.begin() as conexion:
+        conexion.execute(text("UPDATE registros_produccion SET estado = :e WHERE id = :i"), {"e": estado, "i": str(registro_id)})
 
 
 def _mi_registro(registro_id):
@@ -635,23 +633,40 @@ def test_un_409_de_productos_es_un_reintento_idempotente_y_no_se_certifica_sin_i
     mock_cert.assert_not_called()
 
 
-def test_una_cosecha_que_quedo_con_el_verificador_se_completa_con_su_foto():
+def test_aprobado_es_un_estado_historico_de_solo_lectura():
+    """Histórico: rol verificador retirado el 2026-10-01. Ningún endpoint ni transición lleva un registro a "aprobado" (el
+    modelo lo impide); los que ya lo tienen se leen, no se vuelven a completar y cuentan como "cosechado"."""
+    registro_id = _crear_registro_planificado()
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.RegistroProduccion).filter(main.models.RegistroProduccion.id == registro_id).one()
+        with pytest.raises(ValueError, match="histórico"):
+            fila.estado = "aprobado"
+        db.rollback()
+        with pytest.raises(ValueError, match="histórico"):
+            main.models.RegistroProduccion(estado="aprobado")
+    finally:
+        db.close()
+    assert _mi_registro(registro_id)["estado"] == "planificado"
+
+    # Uno de antes, como quedó en la base: se lee, ya tiene su producto y no se completa otra vez.
+    _poner_estado(registro_id, "aprobado")
+    registro = _mi_registro(registro_id)
+    assert registro["estado"] == "aprobado" and "motivo_rechazo" not in registro
+    assert _subir_foto(registro_id).status_code == 409
+    assert _completar_cosecha(registro_id).status_code == 409
+
+    # Completar una siembra la deja "cosechado", nunca "aprobado".
+    otro = _crear_registro_con_foto()
+    assert _completar_cosecha(otro).json()["estado"] == "cosechado"
+
+
+def test_pendiente_verificacion_y_rechazado_ya_no_se_completan():
+    """Se quitaron con el rol verificador (no quedaba ningún registro así): si apareciera uno, no se completa."""
     for estado in ("pendiente_verificacion", "rechazado"):
-        registro_id = _crear_registro_planificado()
+        registro_id = _crear_registro_con_foto()
         _poner_estado(registro_id, estado)
-
-        assert _completar_cosecha(registro_id).status_code == 422, estado  # también necesita la foto
-        assert _subir_foto(registro_id).status_code == 200, estado
-        resp = _completar_cosecha(registro_id)
-
-        assert resp.status_code == 200, (estado, resp.text)
-        assert resp.json()["estado"] == "cosechado"
-        assert resp.json()["motivo_rechazo"] is None
-
-    aprobado_id = _crear_registro_planificado()
-    _poner_estado(aprobado_id, "aprobado")  # ya tiene su producto
-    assert _subir_foto(aprobado_id).status_code == 409
-    assert _completar_cosecha(aprobado_id).status_code == 409
+        assert _completar_cosecha(registro_id).status_code == 409, estado
 
 
 def test_las_rutas_del_verificador_ya_no_existen():

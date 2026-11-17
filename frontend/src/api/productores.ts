@@ -135,7 +135,6 @@ export interface RegistroProduccion {
   fecha_cosecha_real: string | null;
   estado: string;
   fecha_registro: string | null;
-  motivo_rechazo: string | null;
   siembra_distancia_km: number | null;
   cosecha_distancia_km: number | null;
   radio_chacra_km: number;

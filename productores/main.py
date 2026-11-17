@@ -960,16 +960,6 @@ def _calcular_metricas(registro: models.RegistroProduccion, cache_precios: dict)
     return base
 
 
-def _motivo_ultimo_rechazo(registro: models.RegistroProduccion, db: Session) -> str | None:
-    if registro.estado != "rechazado":
-        return None
-    ultimo = db.query(models.HistorialVerificacionCosecha).filter(
-        models.HistorialVerificacionCosecha.registro_produccion_id == registro.id,
-        models.HistorialVerificacionCosecha.accion == "rechazado",
-    ).order_by(models.HistorialVerificacionCosecha.fecha.desc()).first()
-    return ultimo.motivo if ultimo else None
-
-
 def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dict, db: Session) -> dict:
     return {
         "id": registro.id,
@@ -989,7 +979,6 @@ def _serializar_registro(registro: models.RegistroProduccion, cache_precios: dic
         "fecha_cosecha_real": registro.fecha_cosecha_real,
         "estado": registro.estado,
         "fecha_registro": registro.fecha_registro,
-        "motivo_rechazo": _motivo_ultimo_rechazo(registro, db),
         # Evidencia en origen (ver models.RegistroProduccion): la distancia sirve para avisarle al agricultor si quedó
         # lejos de su chacra; las coordenadas no se devuelven.
         "siembra_distancia_km": registro.siembra_distancia_km,
@@ -1176,9 +1165,8 @@ def sugerir_fecha_de_cosecha(
     return sugerencia
 
 
-# "planificado": la primera vez. "pendiente_verificacion" y "rechazado" son de antes de retirar al Verificador (ver
-# models.RegistroProduccion): esas cosechas quedaron a medio camino y el agricultor las completa igual, con su foto.
-ESTADOS_QUE_SE_PUEDEN_COMPLETAR = ("planificado", "pendiente_verificacion", "rechazado")
+# Solo una siembra "planificado" se completa, y una sola vez (después queda "cosechado").
+ESTADOS_QUE_SE_PUEDEN_COMPLETAR = ("planificado",)
 
 
 def _registro_propio_por_completar(registro_id, productor, db: Session) -> models.RegistroProduccion:

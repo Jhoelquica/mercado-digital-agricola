@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Numeric, Float, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, String, DateTime, Integer, Numeric, Float, ForeignKey, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from database import Base
 
@@ -101,12 +101,10 @@ class RegistroProduccion(Base):
     fecha_cosecha_estimada = Column(DateTime, nullable=False)
     fecha_cosecha_real = Column(DateTime, nullable=True)
 
-    # Máquina de estados: planificado -> cosechado. Al completar la cosecha (con su foto) el producto nace como
-    # borrador en el catálogo, sin pasar por nadie: el rol Verificador se retiró (presentación del 2026-10-01) y su
-    # lugar lo ocupan la evidencia en origen de abajo y la pesada en el almacén. "pendiente_verificacion", "aprobado"
-    # y "rechazado" quedan solo en registros de antes: uno "aprobado" ya tiene su producto, y uno
-    # "pendiente_verificacion" o "rechazado" el agricultor lo completa con foto, igual que uno planificado.
-    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado | (antes: pendiente_verificacion | aprobado | rechazado)
+    # Máquina de estados: planificado -> cosechado (o -> anulado). Al completar la cosecha (con su foto) el producto nace
+    # como borrador en el catálogo. "aprobado" es histórico (rol verificador retirado el 2026-10-01): lo tienen cosechas
+    # de antes, que ya tienen su producto y se tratan como "cosechado"; es de solo lectura (ver el guardián de abajo).
+    estado = Column(String, nullable=False, default="planificado")  # planificado | cosechado | anulado | (histórico: aprobado)
     fecha_registro = Column(DateTime, default=datetime.utcnow)
 
     # Evidencia en origen. Dónde estaba el agricultor (GPS del navegador) al registrar la siembra y al completar la
@@ -146,6 +144,18 @@ class RegistroProduccion(Base):
     # costo_insumos y costo_mano_obra son la suma de sus gastos (GastoProduccion) por rubro.
     plantilla = Column(String, nullable=True)
     tipo_produccion = Column(String, nullable=True)
+
+
+# Estados que solo quedan en registros de antes: se leen, pero nada puede escribirlos.
+ESTADOS_HISTORICOS = frozenset({"aprobado"})
+
+
+@event.listens_for(RegistroProduccion.estado, "set", active_history=True)
+def _ningun_registro_pasa_a_un_estado_historico(_registro, nuevo, anterior, _iniciador):
+    """"aprobado" es histórico (rol verificador retirado el 2026-10-01): ningún endpoint ni transición puede llevar un
+    registro ahí, ni crearlo así. Los que ya lo tienen se cargan sin pasar por aquí (leer no dispara el evento)."""
+    if nuevo in ESTADOS_HISTORICOS and nuevo != anterior:
+        raise ValueError(f'"{nuevo}" es un estado histórico de solo lectura: ningún registro puede pasar a él.')
 
 
 class HistorialVerificacionCosecha(Base):
