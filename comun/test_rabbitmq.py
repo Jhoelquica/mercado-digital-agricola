@@ -1,5 +1,4 @@
 """Pruebas de comun/rabbitmq.py sin un RabbitMQ real: se sustituyen la conexión, el canal y la API de gestión."""
-import base64
 import json
 import uuid
 from unittest.mock import MagicMock
@@ -140,31 +139,6 @@ def test_una_cabecera_de_intentos_rara_cuenta_como_ninguno(pausas):
     procesar.assert_called_once()
 
 
-# ---- Policies ----
-
-def test_la_policy_manda_lo_rechazado_a_su_cola_de_fallidos(monkeypatch):
-    peticiones = []
-
-    class Respuesta:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return False
-
-    monkeypatch.setattr(rabbitmq.urllib.request, "urlopen", lambda peticion, timeout: peticiones.append(peticion) or Respuesta())
-    rabbitmq.asegurar_politicas(["pedidos_pagos"])
-    peticion = peticiones[0]
-    assert peticion.get_method() == "PUT"
-    assert peticion.full_url == f"{rabbitmq.RABBITMQ_GESTION_URL}/api/policies/%2F/fallidos-pedidos_pagos"
-    assert json.loads(peticion.data) == {
-        "pattern": "^pedidos_pagos$", "apply-to": "queues", "priority": 0,
-        "definition": {"dead-letter-exchange": "", "dead-letter-routing-key": "pedidos_pagos.fallidos"},
-    }
-    esperado = base64.b64encode(f"{rabbitmq.RABBITMQ_USER}:{rabbitmq.RABBITMQ_PASSWORD}".encode()).decode()
-    assert peticion.get_header("Authorization") == f"Basic {esperado}"
-
-
 # ---- El bucle del consumidor ----
 
 def test_cierra_la_conexion_vieja_antes_de_abrir_otra(monkeypatch):
@@ -186,7 +160,6 @@ def test_cierra_la_conexion_vieja_antes_de_abrir_otra(monkeypatch):
 
     numeros = iter(range(1, 10))
     monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: Conexion(next(numeros)))
-    monkeypatch.setattr(rabbitmq, "asegurar_politicas", lambda colas: None)
     esperas = []
 
     def esperar(segundos):
@@ -201,24 +174,19 @@ def test_cierra_la_conexion_vieja_antes_de_abrir_otra(monkeypatch):
     assert esperas == [rabbitmq.ESPERA_PARA_RECONECTAR] * 2
 
 
-def test_declara_la_cola_de_fallidos_y_no_consume_sin_las_policies(monkeypatch):
+def test_cada_cola_tiene_su_cola_de_fallidos_ligada_con_su_nombre(monkeypatch):
     canal = MagicMock()
     canal.start_consuming.side_effect = Salir
-    conexiones = []
-    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexiones.append(1) or _conexion_falsa(canal))
-    politicas = []
-
-    def asegurar(colas):
-        politicas.append(list(colas))
-        if len(politicas) == 1:
-            raise OSError("la API de gestión no responde")
-
-    monkeypatch.setattr(rabbitmq, "asegurar_politicas", asegurar)
-    monkeypatch.setattr(rabbitmq.time, "sleep", lambda segundos: None)
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: _conexion_falsa(canal))
     with pytest.raises(Salir):
         rabbitmq.consumir("Prueba", [("eventos_a", "cola_a", MagicMock()), ("eventos_b", "cola_b", MagicMock())])
-    # El primer intento no llegó a conectarse: sin policies no se consume.
-    assert politicas == [["cola_a", "cola_b"], ["cola_a", "cola_b"]] and len(conexiones) == 1
+    canal.exchange_declare.assert_any_call(exchange="fallidos", exchange_type="direct", durable=True)
     declaradas = [llamada.kwargs["queue"] for llamada in canal.queue_declare.call_args_list]
     assert declaradas == ["cola_a", "cola_a.fallidos", "cola_b", "cola_b.fallidos"]
+    ligaduras = [(llamada.kwargs["exchange"], llamada.kwargs["queue"], llamada.kwargs.get("routing_key"))
+                 for llamada in canal.queue_bind.call_args_list]
+    # Lo que la policy rechaza en cola_a llega al exchange "fallidos" con routing key cola_a (la de la copia que
+    # vuelve con el motivo): por eso cola_a.fallidos se liga con ese nombre.
+    assert ligaduras == [("eventos_a", "cola_a", None), ("fallidos", "cola_a.fallidos", "cola_a"),
+                         ("eventos_b", "cola_b", None), ("fallidos", "cola_b.fallidos", "cola_b")]
     assert [llamada.kwargs["queue"] for llamada in canal.basic_consume.call_args_list] == ["cola_a", "cola_b"]

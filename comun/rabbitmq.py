@@ -6,19 +6,17 @@ siempre, también si la publicación falla.
 Consumir: lanzar_consumidor_en_hilo(servicio, suscripciones) abre un hilo que se conecta, se suscribe y, si la conexión
 se cae, cierra la vieja y vuelve a conectarse a los ESPERA_PARA_RECONECTAR segundos. Cada mensaje se procesa hasta
 INTENTOS veces; si fallan todas, va a <cola>.fallidos con el motivo en la cabecera x-motivo, y queda un log de error.
-La ruta a <cola>.fallidos es una policy de RabbitMQ (fallidos-<cola>, dead-letter) y no un argumento de la cola: así no
-hay que borrar ni redeclarar las colas que ya existen. La pone el consumidor al conectarse, por la API de gestión.
+
+La ruta a fallidos es configuración de RabbitMQ, no de las colas (así no hay que borrar ni redeclarar las que existen):
+la policy "fallidos" de deploy/rabbitmq/definiciones.json, que RabbitMQ importa al arrancar, manda lo que se rechaza en
+cualquier cola de trabajo al exchange "fallidos"; cada consumidor liga ahí su <cola>.fallidos con el nombre de su cola.
 """
-import base64
 import json
 import logging
 import os
-import re
 import sys
 import threading
 import time
-import urllib.parse
-import urllib.request
 import uuid
 
 import pika
@@ -27,8 +25,9 @@ from sqlalchemy import exc as errores_de_la_base
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
 RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
-# La API de gestión (la del panel): con ella el consumidor pone sus policies de dead-letter.
-RABBITMQ_GESTION_URL = (os.getenv("RABBITMQ_GESTION_URL") or f"http://{RABBITMQ_HOST}:15672").rstrip("/")
+
+# El dead-letter exchange de la policy "fallidos" (deploy/rabbitmq/definiciones.json).
+EXCHANGE_FALLIDOS = "fallidos"
 
 INTENTOS = 3
 PAUSAS_ENTRE_INTENTOS = (1, 2)  # segundos antes del 2.º y del 3.er intento
@@ -81,34 +80,11 @@ def publicar_evento(exchange: str, datos: dict) -> str:
     return evento_id
 
 
-def politica_de_fallidos(cola: str) -> tuple[str, dict]:
-    """El nombre y la definición de la policy que manda a <cola>.fallidos lo que se rechaza en <cola>."""
-    return f"fallidos-{cola}", {
-        "pattern": f"^{re.escape(cola)}$",
-        "definition": {"dead-letter-exchange": "", "dead-letter-routing-key": f"{cola}.fallidos"},
-        "apply-to": "queues",
-        "priority": 0,
-    }
-
-
-def asegurar_politicas(colas) -> None:
-    """Crea o deja igual (PUT idempotente) la policy de fallidos de cada cola. Lanza si la API de gestión no responde."""
-    credenciales = base64.b64encode(f"{RABBITMQ_USER}:{RABBITMQ_PASSWORD}".encode()).decode()
-    for cola in colas:
-        nombre, cuerpo = politica_de_fallidos(cola)
-        peticion = urllib.request.Request(
-            f"{RABBITMQ_GESTION_URL}/api/policies/%2F/{urllib.parse.quote(nombre, safe='')}",
-            data=json.dumps(cuerpo).encode(), method="PUT",
-            headers={"Content-Type": "application/json", "Authorization": f"Basic {credenciales}"},
-        )
-        with urllib.request.urlopen(peticion, timeout=5):
-            pass
-
-
 def _apartar(canal, cola, metodo, propiedades, cuerpo, motivo) -> None:
     """Devuelve el mensaje a su cola con el motivo y los intentos en la cabecera, y confirma el original. Al llegar de
     nuevo se rechaza, y la policy lo lleva a <cola>.fallidos: así llega con el motivo (un rechazo no puede agregar
-    cabeceras) y la ruta a fallidos sigue siendo la de RabbitMQ."""
+    cabeceras) y la ruta a fallidos sigue siendo la de RabbitMQ. Se publica con el nombre de la cola como routing key:
+    el exchange "fallidos" lo usa para elegir la cola de fallidos."""
     cabeceras = dict(getattr(propiedades, "headers", None) or {})
     cabeceras.update({CABECERA_MOTIVO: motivo, CABECERA_INTENTOS: INTENTOS})
     copia = pika.BasicProperties(delivery_mode=2, headers=cabeceras,
@@ -134,7 +110,7 @@ def con_reintentos(cola: str, procesar):
 
     def al_recibir(canal, metodo, propiedades, cuerpo):
         if _intentos_previos(propiedades) >= INTENTOS:
-            # Ya falló INTENTOS veces: rechazado, la policy fallidos-<cola> lo lleva a <cola>.fallidos.
+            # Ya falló INTENTOS veces: rechazado, la policy "fallidos" lo lleva a <cola>.fallidos.
             canal.basic_reject(delivery_tag=metodo.delivery_tag, requeue=False)
             return
         for intento in range(1, INTENTOS + 1):
@@ -163,22 +139,25 @@ def con_reintentos(cola: str, procesar):
 
 
 def consumir(servicio: str, suscripciones, antes_de_consumir=None) -> None:
-    """El bucle del hilo consumidor; no termina nunca. `suscripciones` son (exchange, cola, procesar). Antes de consumir
-    se aseguran las policies de fallidos: sin ellas un mensaje rechazado se perdería."""
+    """El bucle del hilo consumidor; no termina nunca. `suscripciones` son (exchange, cola, procesar). Cada cola tiene su
+    <cola>.fallidos, ligada al exchange "fallidos" con el nombre de la cola (lo que la policy rechaza llega ahí)."""
     colas = [cola for _, cola, _ in suscripciones]
     while True:
         conexion = None
         try:
-            asegurar_politicas(colas)
             conexion = pika.BlockingConnection(_parametros())
             if antes_de_consumir:
                 antes_de_consumir(conexion)
             canal = conexion.channel()
+            # Lo crea RabbitMQ con sus definiciones; declararlo igual (con lo mismo, es idempotente) evita que la ligadura de
+            # abajo falle si el consumidor llega antes de que termine la importación.
+            canal.exchange_declare(exchange=EXCHANGE_FALLIDOS, exchange_type="direct", durable=True)
             for exchange, cola, procesar in suscripciones:
                 canal.exchange_declare(exchange=exchange, exchange_type="fanout", durable=True)
                 canal.queue_declare(queue=cola, durable=True)
                 canal.queue_bind(exchange=exchange, queue=cola)
                 canal.queue_declare(queue=f"{cola}.fallidos", durable=True)
+                canal.queue_bind(exchange=EXCHANGE_FALLIDOS, queue=f"{cola}.fallidos", routing_key=cola)
                 canal.basic_consume(queue=cola, on_message_callback=con_reintentos(cola, procesar))
             logger.info("%s: escuchando %s", servicio, ", ".join(colas))
             canal.start_consuming()

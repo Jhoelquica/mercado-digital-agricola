@@ -52,8 +52,12 @@ services:
       RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      # La policy y el exchange de fallidos (en k8s es la ConfigMap rabbitmq-definiciones, copia de este archivo).
+      - ./deploy/rabbitmq/definiciones.json:/etc/rabbitmq/definiciones/definiciones.json:ro
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      # Sano cuando responde y ya tiene la policy "fallidos". Si le falta, la importa y espera al chequeo siguiente: los
+      # servicios esperan a que esté sano (depends_on), así ninguno consume sin ella.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && { rabbitmqctl -q list_policies --formatter json | grep -q '\"name\":\"fallidos\"' || { rabbitmqctl -q import_definitions /etc/rabbitmq/definiciones/definiciones.json; exit 1; }; }"]
       interval: 15s
       timeout: 10s
       retries: 8

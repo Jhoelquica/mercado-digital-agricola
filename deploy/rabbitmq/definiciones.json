@@ -1,0 +1,25 @@
+{
+  "exchanges": [
+    {
+      "vhost": "/",
+      "name": "fallidos",
+      "type": "direct",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "fallidos",
+      "pattern": "^[^.]+$",
+      "apply-to": "queues",
+      "priority": 10,
+      "definition": {
+        "dead-letter-exchange": "fallidos"
+      }
+    }
+  ]
+}

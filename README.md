@@ -229,8 +229,11 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
 **Consistencia**
 - Un evento de RabbitMQ que falla 3 veces al procesarse va a `<cola>.fallidos`, con el motivo en la cabecera
   `x-motivo` y un log de error: se revisa en el panel de RabbitMQ y se reenvía a mano. Si la base no responde, el
-  evento espera en su cola sin gastar intentos. La ruta a fallidos es una policy de RabbitMQ (`fallidos-<cola>`) que
-  pone cada consumidor al conectarse (comun/rabbitmq.py).
+  evento espera en su cola sin gastar intentos. La ruta a fallidos es la policy `fallidos` de
+  `deploy/rabbitmq/definiciones.json`, que RabbitMQ importa al arrancar (en Kubernetes, desde la ConfigMap
+  `rabbitmq-definiciones`, copia que mantiene `scripts/sincronizar_comun.py`).
+- Los consumidores son idempotentes: Pedidos y Notificaciones anotan cada `evento_id` en `eventos_procesados` junto
+  con su efecto, y Transporte y Pagos tienen un índice único por pedido (un envío y un pago).
 - Si Productos no responde al devolver el stock de un pago rechazado, la compensación queda solo en el log: no se
   reintenta.
 

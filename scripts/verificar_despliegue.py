@@ -167,17 +167,22 @@ def revisar_pods(pods):
 
 
 LISTAR_COLAS = ["rabbitmqctl", "list_queues", "-q", "--formatter", "json", "name", "consumers", "messages", "policy"]
+LISTAR_LIGADURAS = ["rabbitmqctl", "list_bindings", "-q", "--formatter", "json", "source_name", "destination_name",
+                    "routing_key"]
 
 
-def leer_colas(salida):
-    """Parsea `rabbitmqctl list_queues ... --formatter json` → {cola: {consumers, messages, policy}}."""
+def leer_json(salida):
+    """La salida de `rabbitmqctl ... --formatter json` como lista, o [] si no se pudo leer."""
     try:
-        return {c["name"]: c for c in json.loads(salida or "[]")}
-    except (ValueError, KeyError, TypeError):
-        return {}
+        datos = json.loads(salida or "[]")
+    except ValueError:
+        return []
+    return datos if isinstance(datos, list) else []
 
 
-def comprobar_colas(colas):
+def comprobar_colas(colas, ligaduras):
+    """colas: list_queues (name, consumers, messages, policy); ligaduras: list_bindings (source, destination, key)."""
+    colas = {c["name"]: c for c in colas if isinstance(c, dict) and "name" in c}
     if not colas:
         return registrar("FALLA", "RabbitMQ: colas con consumidores", "no se pudieron leer las colas")
     # <cola>.fallidos guarda lo que falló 3 veces (comun/rabbitmq.py): nadie la consume, se revisa a mano.
@@ -186,9 +191,15 @@ def comprobar_colas(colas):
     comprobar("RabbitMQ: cada cola tiene consumidores conectados", len(de_trabajo) >= COLAS_ESPERADAS and not sin,
               f"{len(de_trabajo)} colas, consumidores por cola: {sorted({c.get('consumers') for c in de_trabajo.values()})}",
               f"colas sin consumidores: {sin}" if sin else f"solo {len(de_trabajo)} colas (se esperaban {COLAS_ESPERADAS})")
-    sin_ruta = sorted(n for n, c in de_trabajo.items() if c.get("policy") != f"fallidos-{n}" or f"{n}.fallidos" not in colas)
-    comprobar("RabbitMQ: cada cola manda lo que falla a <cola>.fallidos (policy fallidos-<cola>)", not sin_ruta,
-              f"{len(de_trabajo)} colas con su policy y su cola de fallidos", f"sin policy o sin cola de fallidos: {sin_ruta}")
+    # La policy "fallidos" (deploy/rabbitmq/definiciones.json) manda lo rechazado al exchange "fallidos", y este lo
+    # reparte por el nombre de la cola: cada <cola>.fallidos tiene que estar ligada con ese nombre.
+    ligadas = {(l.get("source_name"), l.get("destination_name"), l.get("routing_key")) for l in ligaduras
+               if isinstance(l, dict)}
+    sin_ruta = sorted(n for n, c in de_trabajo.items()
+                      if c.get("policy") != "fallidos" or ("fallidos", f"{n}.fallidos", n) not in ligadas)
+    comprobar("RabbitMQ: cada cola manda lo que falla a <cola>.fallidos (policy fallidos)", not sin_ruta,
+              f"{len(de_trabajo)} colas con la policy y su cola de fallidos ligada",
+              f"sin la policy o sin su cola de fallidos ligada: {sin_ruta}")
     con_mensajes = sorted(f"{n}: {c.get('messages')}" for n, c in colas.items() if n.endswith(".fallidos") and c.get("messages"))
     comprobar("RabbitMQ: las colas de fallidos están vacías", not con_mensajes, "",
               f"mensajes por revisar en el panel de RabbitMQ: {', '.join(con_mensajes)}", "AVISO")
@@ -360,10 +371,11 @@ def main():
                      for d in json.loads(salida)["items"] if d["status"].get("readyReplicas", 0) != d["spec"]["replicas"]]
             comprobar("Kubernetes: réplicas listas = réplicas deseadas en todos los Deployment", not malos, "", ", ".join(malos))
         salida, error = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_COLAS, contexto_k)
+        ligaduras, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_LIGADURAS, contexto_k)
         if salida is None:
             registrar("FALLA", "RabbitMQ: leer las colas", error)
         else:
-            comprobar_colas(leer_colas(salida))
+            comprobar_colas(leer_json(salida), leer_json(ligaduras))
 
     # ---- 7. Compose
     if args.compose:
@@ -380,10 +392,13 @@ def main():
                 malos = [f"{f['Service']}({f['State']}/{f.get('Health') or 'sin healthcheck'})" for f in filas
                          if f["State"] != "running" or f.get("Health") in ("unhealthy", "starting")]
                 comprobar("Compose: todos los contenedores en marcha y sanos", not malos, f"{len(filas)} contenedores", ", ".join(malos))
-                comando = ["docker", "compose", "exec", "-T", "rabbitmq"] + LISTAR_COLAS
-                r = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
-                                   cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-                comprobar_colas(leer_colas(r.stdout) if r.returncode == 0 else {})
+                salidas = []
+                for listar in (LISTAR_COLAS, LISTAR_LIGADURAS):
+                    r = subprocess.run(["docker", "compose", "exec", "-T", "rabbitmq"] + listar, capture_output=True,
+                                       text=True, encoding="utf-8", errors="replace", timeout=60,
+                                       cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+                    salidas.append(leer_json(r.stdout) if r.returncode == 0 else [])
+                comprobar_colas(*salidas)
 
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")

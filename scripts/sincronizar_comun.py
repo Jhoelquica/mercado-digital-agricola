@@ -5,6 +5,9 @@ Cada imagen se construye solo con la carpeta de su servicio (README, docker-comp
 deploy/gcp/construir_imagenes.py), así que ningún servicio puede importar comun/ desde la raíz: cada uno lleva una copia,
 generada desde comun/ con un encabezado que lo dice. Edita siempre comun/ y corre este script.
 
+También mantiene la copia de deploy/rabbitmq/definiciones.json (lo que RabbitMQ importa al arrancar) dentro de la
+ConfigMap rabbitmq-definiciones de k8s/rabbitmq.yaml: compose monta el archivo y Kubernetes la ConfigMap.
+
 Uso (desde la raíz del repositorio):
     python scripts/sincronizar_comun.py               # copia comun/ a los servicios
     python scripts/sincronizar_comun.py --verificar   # solo comprueba: sale con error si algo no coincide
@@ -42,10 +45,32 @@ NO_SON_MODULOS = {"__init__.py", "conftest.py"}
 
 ENCABEZADO = "# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py\n"
 
+DEFINICIONES_RABBITMQ = RAIZ / "deploy" / "rabbitmq" / "definiciones.json"
+MANIFIESTO_RABBITMQ = RAIZ / "k8s" / "rabbitmq.yaml"
+CLAVE_DE_LAS_DEFINICIONES = "  definiciones.json: |\n"  # la clave de la ConfigMap; el JSON va debajo, con 4 espacios
+SANGRIA = " " * 4
+
 
 def _texto(ruta: Path) -> str:
     # Sin distinguir fin de línea: git en Windows puede dejar CRLF en la copia de trabajo (core.autocrlf).
     return ruta.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def _bloque_de_definiciones(manifiesto: str):
+    """Dónde empieza y termina el JSON de definiciones.json dentro de k8s/rabbitmq.yaml, o None si no está la clave."""
+    if CLAVE_DE_LAS_DEFINICIONES not in manifiesto:
+        return None
+    inicio = fin = manifiesto.index(CLAVE_DE_LAS_DEFINICIONES) + len(CLAVE_DE_LAS_DEFINICIONES)
+    for linea in manifiesto[inicio:].splitlines(keepends=True):
+        if linea.strip() and not linea.startswith(SANGRIA):
+            break
+        fin += len(linea)
+    return inicio, fin
+
+
+def _definiciones_esperadas() -> str:
+    return "".join(SANGRIA + linea if linea.strip() else linea
+                   for linea in _texto(DEFINICIONES_RABBITMQ).splitlines(keepends=True))
 
 
 def _esperado(archivo: str) -> str:
@@ -82,6 +107,12 @@ def problemas() -> list:
         for archivo in sorted(deberian - NO_SON_MODULOS):
             if (RAIZ / servicio / archivo).exists():
                 encontrados.append(f"{servicio}/{archivo} existe además de {servicio}/comun/{archivo}: bórralo")
+    manifiesto = _texto(MANIFIESTO_RABBITMQ)
+    bloque = _bloque_de_definiciones(manifiesto)
+    if bloque is None:
+        encontrados.append("k8s/rabbitmq.yaml no tiene la ConfigMap rabbitmq-definiciones (definiciones.json: |)")
+    elif manifiesto[bloque[0]:bloque[1]] != _definiciones_esperadas():
+        encontrados.append("k8s/rabbitmq.yaml: su definiciones.json no coincide con deploy/rabbitmq/definiciones.json")
     return encontrados
 
 
@@ -104,6 +135,13 @@ def sincronizar() -> int:
                 sobrante.unlink()
                 print(f"  borrado  {servicio}/comun/{sobrante.name}")
                 cambios += 1
+    manifiesto = _texto(MANIFIESTO_RABBITMQ)
+    bloque = _bloque_de_definiciones(manifiesto)
+    if bloque and manifiesto[bloque[0]:bloque[1]] != _definiciones_esperadas():
+        MANIFIESTO_RABBITMQ.write_text(manifiesto[:bloque[0]] + _definiciones_esperadas() + manifiesto[bloque[1]:],
+                                       encoding="utf-8", newline="\n")
+        print("  escrito  k8s/rabbitmq.yaml (definiciones.json)")
+        cambios += 1
     return cambios
 
 
@@ -123,10 +161,12 @@ def main():
         for problema in encontrados:
             print(f"  - {problema}", file=sys.stderr)
         if args.verificar:
-            print("Edita comun/ (no las copias) y corre: python scripts/sincronizar_comun.py", file=sys.stderr)
+            print("Edita la fuente (comun/ o deploy/rabbitmq/definiciones.json), no las copias, y corre: "
+                  "python scripts/sincronizar_comun.py", file=sys.stderr)
         sys.exit(1)
     copias = sum(len(_destinos_de(s)) for s in TODOS)
-    print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios).")
+    print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), y las "
+          "definiciones de RabbitMQ en k8s/rabbitmq.yaml.")
 
 
 if __name__ == "__main__":
