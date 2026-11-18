@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text
@@ -17,6 +18,13 @@ class EventoSaliente(Base):
     fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     fecha_envio = Column(DateTime, nullable=True)  # NULL = todavía no llegó a RabbitMQ
     intentos = Column(Integer, nullable=False, default=0)
+
+    def mensaje(self) -> dict:
+        """El evento tal cual se publica, con el id de esta fila como evento_id: si se publica dos veces (al crear el
+        pedido y en un reenvío de reintento_eventos.py) llega con el mismo y el consumidor reconoce el repetido."""
+        datos = json.loads(self.cuerpo)
+        datos.setdefault("evento_id", str(self.id))
+        return datos
 
 
 class Pedido(Base):

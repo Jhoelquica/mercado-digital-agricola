@@ -1,6 +1,7 @@
 """Pruebas de comun/rabbitmq.py sin un RabbitMQ real: se sustituyen la conexión, el canal y la API de gestión."""
 import base64
 import json
+import uuid
 from unittest.mock import MagicMock
 
 import pika
@@ -41,12 +42,31 @@ def test_publica_persistente_en_el_exchange_dado_y_cierra(monkeypatch):
     canal = MagicMock()
     conexion = _conexion_falsa(canal)
     monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
-    rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "id": 1})
+    evento_id = rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "id": 1})
     datos = canal.basic_publish.call_args.kwargs
     assert (datos["exchange"], datos["routing_key"], datos["properties"].delivery_mode) == ("eventos_prueba", "", 2)
-    assert json.loads(datos["body"]) == {"evento": "algo", "id": 1}
+    assert json.loads(datos["body"]) == {"evento": "algo", "id": 1, "evento_id": evento_id}
+    assert str(uuid.UUID(evento_id)) == evento_id == datos["properties"].message_id
     canal.exchange_declare.assert_called_once_with(exchange="eventos_prueba", exchange_type="fanout", durable=True)
     conexion.close.assert_called_once()
+
+
+def test_respeta_el_evento_id_que_trae_y_genera_uno_distinto_cada_vez(monkeypatch):
+    canal = MagicMock()
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: _conexion_falsa(canal))
+    propio = str(uuid.uuid4())
+    assert rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "evento_id": propio}) == propio
+    assert json.loads(canal.basic_publish.call_args.kwargs["body"])["evento_id"] == propio
+    generados = {rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo"}) for _ in range(3)}
+    assert len(generados) == 3
+
+
+def test_un_evento_id_que_no_es_uuid_no_se_publica(monkeypatch):
+    conexiones = []
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexiones.append(1))
+    with pytest.raises(ValueError):
+        rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "evento_id": "pedido-123"})
+    assert conexiones == []
 
 
 def test_cierra_la_conexion_aunque_la_publicacion_falle(monkeypatch):

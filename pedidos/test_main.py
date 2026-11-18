@@ -1417,12 +1417,14 @@ def test_si_rabbitmq_no_responde_el_pedido_se_crea_y_el_evento_se_reenvia_despue
     from datetime import datetime, timedelta
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento", side_effect=ConnectionError("RabbitMQ caído")):
+         patch("main.publicar_evento", side_effect=ConnectionError("RabbitMQ caído")) as primer_intento:
         resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
     assert resp.status_code == 200, resp.text
     pedido_id = resp.json()["id"]
     [pendiente] = _eventos_salientes_del(pedido_id)
     assert pendiente.fecha_envio is None and pendiente.tipo == "pedido_creado"
+    # El evento_id es el id de su fila en la bandeja: el primer intento y el reenvío llevan el mismo.
+    assert primer_intento.call_args.args[0]["evento_id"] == str(pendiente.id)
 
     db = main.SessionLocal()
     try:
@@ -1432,6 +1434,7 @@ def test_si_rabbitmq_no_responde_el_pedido_se_crea_y_el_evento_se_reenvia_despue
         db.close()
     reenviados = [llamada.args[0] for llamada in publicar.call_args_list if llamada.args[0]["pedido_id"] == pedido_id]
     assert len(reenviados) == 1 and reenviados[0]["evento"] == "pedido_creado" and reenviados[0]["items"]
+    assert reenviados[0]["evento_id"] == str(pendiente.id)
     [enviado] = _eventos_salientes_del(pedido_id)
     assert enviado.fecha_envio is not None and enviado.intentos == 1
 

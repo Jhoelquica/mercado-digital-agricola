@@ -6,7 +6,6 @@ que se crearon. Solo toma los que tienen más de ESPERA_ANTES_DE_REENVIAR (el pr
 con SKIP LOCKED, así dos réplicas no mandan el mismo. RabbitMQ entrega "al menos una vez": los que lo consumen (Pagos)
 ya ignoran un pedido_creado repetido.
 """
-import json
 import logging
 import threading
 import time
@@ -40,7 +39,7 @@ def reenviar_eventos_pendientes(db, ahora=None) -> int:
     enviados = 0
     for evento in pendientes:
         try:
-            publicar_evento(json.loads(evento.cuerpo))
+            publicar_evento(evento.mensaje())
         except Exception:
             logger.warning("RabbitMQ sigue sin responder: %d evento(s) esperan el próximo ciclo", len(pendientes) - enviados)
             break

@@ -19,6 +19,8 @@ TODOS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notif
 # Los que usan RabbitMQ (y tienen pika): Productos publica; Pedidos, Transporte y Pagos publican y consumen;
 # Notificaciones consume.
 CON_RABBITMQ = ("productos", "pedidos", "transporte", "notificaciones", "pagos")
+# Los consumidores que se protegen de los mensajes repetidos con la tabla eventos_procesados (comun/inbox.py).
+CON_INBOX = ("pedidos", "notificaciones")
 
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
@@ -26,9 +28,11 @@ DESTINOS = {
     "auth.py": TODOS,
     "conftest.py": TODOS,
     "database.py": TODOS,
+    "inbox.py": CON_INBOX,
     "logging.py": TODOS,
     "rabbitmq.py": CON_RABBITMQ,
     "test_database.py": TODOS,
+    "test_inbox.py": CON_INBOX,
     "test_logging.py": TODOS,
     "test_rabbitmq.py": CON_RABBITMQ,
 }

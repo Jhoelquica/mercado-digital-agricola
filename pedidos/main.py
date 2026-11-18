@@ -828,7 +828,7 @@ def _publicar_saliente(db: Session, saliente) -> None:
     """Publica un evento de la bandeja de salida y lo marca enviado. Si RabbitMQ no responde, el pedido ya está creado
     igual: el evento sigue en la bandeja y reintento_eventos.py lo reenvía."""
     try:
-        publicar_evento(json.loads(saliente.cuerpo))
+        publicar_evento(saliente.mensaje())
     except Exception:
         logger.warning("RabbitMQ no respondió al publicar %s: queda en la bandeja de salida", saliente.tipo, exc_info=True)
         return

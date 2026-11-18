@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import uuid
 
 import pika
 from sqlalchemy import exc as errores_de_la_base
@@ -60,17 +61,24 @@ def _cerrar(conexion) -> None:
         logger.warning("No se pudo cerrar una conexión con RabbitMQ", exc_info=True)
 
 
-def publicar_evento(exchange: str, datos: dict) -> None:
+def publicar_evento(exchange: str, datos: dict) -> str:
+    """Publica el evento y devuelve su evento_id. Todo mensaje lleva uno (un UUID): con él los consumidores reconocen un
+    repetido (comun/inbox.py). Si `datos` ya trae uno se respeta (la bandeja de salida de Pedidos usa el id de su fila,
+    así un reenvío llega con el mismo); si no, se genera. Uno que no es un UUID no se publica (ValueError)."""
+    mensaje = dict(datos)
+    evento_id = str(uuid.UUID(str(mensaje.get("evento_id") or uuid.uuid4())))
+    mensaje["evento_id"] = evento_id
     conexion = pika.BlockingConnection(_parametros())
     try:
         canal = conexion.channel()
         canal.exchange_declare(exchange=exchange, exchange_type="fanout", durable=True)
         # delivery_mode=2 (persistente): sin esto el mensaje se pierde si RabbitMQ se reinicia antes de que lo consuman,
-        # aunque el exchange y las colas sean durables.
-        canal.basic_publish(exchange=exchange, routing_key="", body=json.dumps(datos, default=str),
-                            properties=pika.BasicProperties(delivery_mode=2))
+        # aunque el exchange y las colas sean durables. message_id: el mismo evento_id, a la vista en el panel.
+        canal.basic_publish(exchange=exchange, routing_key="", body=json.dumps(mensaje, default=str),
+                            properties=pika.BasicProperties(delivery_mode=2, message_id=evento_id))
     finally:
         _cerrar(conexion)
+    return evento_id
 
 
 def politica_de_fallidos(cola: str) -> tuple[str, dict]:
