@@ -1737,3 +1737,78 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+# ============ Consumidor de pagos idempotente (pedidos_pagos) ============
+
+def _pedido_en(estado, motivo_cancelacion=None):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+    pedido_id = resp.json()["id"]
+    db = main.SessionLocal()
+    try:
+        pedido = db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).first()
+        pedido.estado, pedido.motivo_cancelacion = estado, motivo_cancelacion
+        db.commit()
+    finally:
+        db.close()
+    return pedido_id
+
+
+def _estado(pedido_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pedido.estado).filter(main.models.Pedido.id == pedido_id).scalar()
+    finally:
+        db.close()
+
+
+def _evento_de_pago(pedido_id, evento, evento_id=None):
+    import rabbitmq_consumer
+    canal = MagicMock()
+    cuerpo = {"evento": evento, "pedido_id": pedido_id, "evento_id": str(evento_id or uuid.uuid4())}
+    rabbitmq_consumer._procesar_mensaje_pago(canal, MagicMock(delivery_tag=1), None, json.dumps(cuerpo).encode())
+    canal.basic_ack.assert_called_once_with(delivery_tag=1)
+
+
+def test_un_pago_confirmado_repetido_sobre_un_pedido_entregado_no_lo_cambia(caplog):
+    pedido_id = _pedido_en("entregado")
+    evento_id = uuid.uuid4()
+    with caplog.at_level("WARNING", logger="pedidos.rabbitmq_consumer"):
+        _evento_de_pago(pedido_id, "pago_confirmado", evento_id)
+        _evento_de_pago(pedido_id, "pago_confirmado", evento_id)
+    assert _estado(pedido_id) == "entregado"
+    assert "se ignora" in caplog.text
+
+
+def test_el_mismo_pago_confirmado_dos_veces_se_procesa_una():
+    pedido_id = _pedido_en("pendiente")
+    evento_id = uuid.uuid4()
+    _evento_de_pago(pedido_id, "pago_confirmado", evento_id)
+    assert _estado(pedido_id) == "confirmado"
+    # Para que se note si el efecto se repite, el pedido vuelve a "pendiente" a mano antes de la segunda entrega.
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).update(
+            {"estado": "pendiente"}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+    _evento_de_pago(pedido_id, "pago_confirmado", evento_id)
+    assert _estado(pedido_id) == "pendiente"  # ya estaba procesado: no se repite el efecto
+
+
+def test_un_pago_rechazado_y_un_reintento_que_sale_bien_confirman_el_pedido():
+    pedido_id = _pedido_en("pendiente")
+    _evento_de_pago(pedido_id, "pago_rechazado")
+    assert _estado(pedido_id) == "cancelado"
+    _evento_de_pago(pedido_id, "pago_confirmado")  # el comprador volvió a pagar sobre el mismo pago
+    assert _estado(pedido_id) == "confirmado"
+    _evento_de_pago(pedido_id, "pago_rechazado")  # un rechazo tardío no deshace el pago confirmado
+    assert _estado(pedido_id) == "confirmado"
+
+
+def test_un_pago_confirmado_no_revive_un_pedido_que_el_admin_cancelo():
+    pedido_id = _pedido_en("cancelado", motivo_cancelacion="Sin stock: se devolvió el dinero")
+    _evento_de_pago(pedido_id, "pago_confirmado")
+    assert _estado(pedido_id) == "cancelado"
