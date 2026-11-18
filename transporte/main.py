@@ -26,7 +26,7 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
-from migraciones import agregar_columnas_faltantes
+from migraciones import agregar_columnas_faltantes, asegurar_indice_unico_de_envios
 from minio_client import subir_foto_entrega, subir_documento_transportista, leer_documento_transportista
 from documentos import leer_documento_validado, LIMITE_CUERPO_DOCUMENTOS_BYTES
 from fastapi import Response
@@ -50,6 +50,7 @@ Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas nuevas a tablas que ya existen: sin esto, una base creada antes de
 # una columna nueva en models.py falla en cada consulta (ver migraciones.py).
 agregar_columnas_faltantes(engine, Base)
+asegurar_indice_unico_de_envios(engine)
 
 app = FastAPI()
 

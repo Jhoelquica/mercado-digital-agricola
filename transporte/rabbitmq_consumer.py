@@ -1,6 +1,7 @@
 import json
 import secrets
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
@@ -25,37 +26,51 @@ def _generar_pin_entrega():
 
 def crear_envio_si_falta(pedido_id, adelanto=False):
     """Crea el envío del pedido y lo propone a un repartidor (o, si va en camión, lo sube a un viaje compartido a su
-    ciudad). Idempotente: si el envío ya existe (el mismo pago_confirmado entregado dos veces, o un pedido de antes de
-    este arreglo, cuyo envío nació con pedido_creado) no hace nada. Devuelve el envío nuevo, o None si ya existía."""
+    ciudad). Idempotente:
+      - si el envío ya existe y pasó de "pendiente" (el mismo pago_confirmado entregado dos veces, o un pedido de antes
+        de este arreglo, cuyo envío nació con pedido_creado) no hace nada;
+      - si quedó en "pendiente" (un intento anterior se cortó después de crearlo y antes de asignarlo) sigue desde ahí,
+        así nunca queda atascado: el job de huérfanos solo mira "pendiente_asignacion";
+      - el índice único de envios.pedido_id impide que dos entregas a la vez creen dos: la segunda cede.
+    Devuelve el envío que creó o retomó, o None si no hizo nada."""
     db = SessionLocal()
     try:
-        if db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).first():
+        envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).first()
+        if envio and envio.estado != "pendiente":
             print(f"[Transporte] El pedido {pedido_id} ya tiene envío, no se crea otro")
             return None
         pedido = _obtener_pedido(pedido_id)
-        # Solo un pedido en camión se paga con adelanto: si Pedidos no responde, eso basta para no proponérselo a un
-        # repartidor local (el job lo sube a un viaje cuando Pedidos vuelva).
-        modalidad = (pedido or {}).get("modalidad_envio") or ("camion" if adelanto else "local")
-        nuevo_envio = models.Envio(
-            pedido_id=pedido_id,
-            estado="pendiente",
-            pin_entrega=_generar_pin_entrega(),
-            modalidad_envio=modalidad,
-            destino_ciudad=(pedido or {}).get("destino_ciudad"),
-            saldo_pagado=False if modalidad == "camion" else None,
-        )
-        db.add(nuevo_envio)
-        db.commit()
-        if modalidad == "camion":
-            nuevo_envio.estado = "esperando_camion"
+        if envio:
+            print(f"[Transporte] El envío del pedido {pedido_id} había quedado en pendiente: se retoma su asignación")
+        else:
+            # Solo un pedido en camión se paga con adelanto: si Pedidos no responde, eso basta para no proponérselo a un
+            # repartidor local (el job lo sube a un viaje cuando Pedidos vuelva).
+            modalidad = (pedido or {}).get("modalidad_envio") or ("camion" if adelanto else "local")
+            envio = models.Envio(
+                pedido_id=pedido_id,
+                estado="pendiente",
+                pin_entrega=_generar_pin_entrega(),
+                modalidad_envio=modalidad,
+                destino_ciudad=(pedido or {}).get("destino_ciudad"),
+                saldo_pagado=False if modalidad == "camion" else None,
+            )
+            db.add(envio)
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                print(f"[Transporte] Otra entrega del mismo pago creó el envío del pedido {pedido_id} a la vez: lo sigue ella")
+                return None
+        if envio.modalidad_envio == "camion":
+            envio.estado = "esperando_camion"
             if pedido:
-                logica_viajes.sumar_a_viaje(db, nuevo_envio, pedido)
+                logica_viajes.sumar_a_viaje(db, envio, pedido)
             db.commit()
             print(f"[Transporte] Envío del pedido {pedido_id} subido a un viaje en camión")
-            return nuevo_envio
-        proponer_envio_a_repartidor(nuevo_envio.id, db)
+            return envio
+        proponer_envio_a_repartidor(envio.id, db)
         print(f"[Transporte] Envío creado para el pedido pagado {pedido_id}")
-        return nuevo_envio
+        return envio
     finally:
         db.close()
 

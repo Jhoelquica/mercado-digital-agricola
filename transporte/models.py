@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric, Integer, Float
+from sqlalchemy import Column, String, DateTime, ForeignKey, Boolean, Numeric, Integer, Float, Index
 from sqlalchemy.dialects.postgresql import UUID
 from comun.database import Base
 
 class Envio(Base):
     __tablename__ = "envios"
+    # Un envío por pedido: dos entregas a la vez del mismo pago_confirmado no crean dos. En una base de antes lo agrega
+    # migraciones.asegurar_indice_unico_de_envios (create_all no agrega índices a una tabla que ya existe).
+    __table_args__ = (Index("uq_envios_pedido_id", "pedido_id", unique=True),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     repartidor_id = Column(UUID(as_uuid=True), nullable=True)
