@@ -183,7 +183,7 @@ def _envio_recargado(envio_id):
 
 
 # Los primeros bytes de un JPEG de verdad: la entrega ahora comprueba el contenido real de la foto, no solo
-# el content-type que declara el cliente (ver imagenes.py).
+# el content-type que declara el cliente (ver comun/imagenes.py).
 FOTO_JPEG_VALIDA = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(40)
 
 
@@ -1270,7 +1270,7 @@ def test_cada_codigo_incorrecto_dice_cuantos_intentos_quedan(monkeypatch):
 
 # ============ POST /envios/{id}/entregar: la foto se valida por su contenido y su tamaño ============
 
-import imagenes
+from comun import imagenes
 
 FOTO_PNG_VALIDA = b"\x89PNG\r\n\x1a\n" + bytes(64)
 

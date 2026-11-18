@@ -26,6 +26,9 @@ CON_RABBITMQ = ("productos", "pedidos", "transporte", "notificaciones", "pagos")
 CON_INBOX = ("pedidos", "notificaciones")
 # Los que agregan solas las columnas nuevas de sus tablas (comun/migraciones.py): todos menos Certificación.
 CON_MIGRACION_DE_COLUMNAS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notificaciones", "pagos")
+# Los que reciben fotos (comun/imagenes.py) y los que reciben documentos en foto o PDF (comun/documentos.py).
+CON_IMAGENES = ("productores", "productos", "transporte", "pagos")
+CON_DOCUMENTOS = ("usuarios", "transporte")
 
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
@@ -33,11 +36,14 @@ DESTINOS = {
     "auth.py": TODOS,
     "conftest.py": TODOS,
     "database.py": TODOS,
+    "documentos.py": CON_DOCUMENTOS,
+    "imagenes.py": CON_IMAGENES,
     "inbox.py": CON_INBOX,
     "logging.py": TODOS,
     "migraciones.py": CON_MIGRACION_DE_COLUMNAS,
     "rabbitmq.py": CON_RABBITMQ,
     "test_database.py": TODOS,
+    "test_documentos.py": CON_DOCUMENTOS,
     "test_inbox.py": CON_INBOX,
     "test_logging.py": TODOS,
     "test_migraciones.py": CON_MIGRACION_DE_COLUMNAS,

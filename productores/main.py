@@ -29,7 +29,7 @@ from validaciones import (
     UnidadMedida, CICLO_MAXIMO_DIAS, COSECHA_FUTURA_TOLERANCIA_DIAS, FECHA_SIEMBRA_MINIMA,
     SIEMBRA_FUTURA_MAXIMA_DIAS,
 )
-from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from comun.imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
 from comun.migraciones import agregar_columnas_faltantes
 from migraciones import pasar_entero_a_decimal
@@ -1235,7 +1235,7 @@ def subir_foto_de_cosecha(
     productor = _obtener_productor_del_token(usuario, db)
     registro = _registro_propio_por_completar(registro_id, productor, db)
 
-    # Tamaño y contenido reales (ver imagenes.py): el content-type de arriba solo lo declara el cliente.
+    # Tamaño y contenido reales (ver comun/imagenes.py): el content-type de arriba solo lo declara el cliente.
     datos_foto, tipo_foto = leer_imagen_validada(archivo)
     try:
         url = subir_foto_cosecha(datos_foto, tipo_foto)

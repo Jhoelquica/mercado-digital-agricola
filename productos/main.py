@@ -35,7 +35,7 @@ from minio_client import subir_imagen, asegurar_bucket_publico
 import pybreaker
 import cache
 from rabbitmq_publisher import publicar_evento
-from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from comun.imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
 
 Base.metadata.create_all(bind=engine)
@@ -512,7 +512,7 @@ def subir_imagen_producto(
     if total_imagenes >= 5:
         raise HTTPException(status_code=409, detail="Este producto ya tiene el máximo de 5 imágenes")
 
-    # Tamaño y contenido reales (ver imagenes.py): el content-type de arriba solo lo declara el cliente.
+    # Tamaño y contenido reales (ver comun/imagenes.py): el content-type de arriba solo lo declara el cliente.
     datos_imagen, tipo_imagen = leer_imagen_validada(archivo)
     try:
         url_publica = subir_imagen(io.BytesIO(datos_imagen), tipo_imagen)

@@ -22,14 +22,14 @@ from comun.auth import verificar_token, requiere_rol, security
 from comun.auth import secreto_de_servicio_valido
 from pedidos_interno import cabecera_pedidos
 from fastapi.responses import JSONResponse
-from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from comun.imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
 from comun.migraciones import agregar_columnas_faltantes
 from migraciones import asegurar_indice_unico_de_envios
 from minio_client import subir_foto_entrega, subir_documento_transportista, leer_documento_transportista
-from documentos import leer_documento_validado, LIMITE_CUERPO_DOCUMENTOS_BYTES
+from comun.documentos import leer_documento_validado, limite_del_cuerpo
 from fastapi import Response
 import re
 import logica_viajes
@@ -52,6 +52,9 @@ Base.metadata.create_all(bind=engine)
 # una columna nueva en models.py falla en cada consulta (ver migraciones.py).
 agregar_columnas_faltantes(engine, Base)
 asegurar_indice_unico_de_envios(engine)
+
+# Un transportista de carga sube tres documentos: licencia, tarjeta de propiedad y SOAT.
+LIMITE_CUERPO_DOCUMENTOS_BYTES = limite_del_cuerpo(3)
 
 app = FastAPI()
 
@@ -620,7 +623,7 @@ def confirmar_entrega(
     copiada a entrega_latitud/longitud ANTES de que siga cambiando con el siguiente envío."""
     if foto.content_type not in ["image/jpeg", "image/png", "image/webp"]:
         raise HTTPException(status_code=422, detail="Solo se permiten imágenes JPEG, PNG o WEBP")
-    # Tamaño y contenido reales (ver imagenes.py), antes de tocar la base: una foto inválida no gasta un intento
+    # Tamaño y contenido reales (ver comun/imagenes.py), antes de tocar la base: una foto inválida no gasta un intento
     # del código ni cambia nada.
     datos_foto, tipo_foto = leer_imagen_validada(foto)
 

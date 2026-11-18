@@ -1,16 +1,16 @@
-"""Validación de las imágenes que suben los usuarios (foto de un producto, de entrega, de la cosecha, constancia de pago).
+"""Validación de las imágenes que suben los usuarios: la foto de un producto, de la cosecha o de una entrega, y la
+constancia de un pago.
 
 Antes solo se miraba el content-type que DECLARA el cliente y no había tope de tamaño: cualquiera con sesión de
 productor o repartidor podía subir un archivo cualquiera (un HTML, un SVG con scripts, un vídeo de gigas) con
 solo ponerle "image/png". Ahora se limita el tamaño y se comprueba el contenido real por su firma; lo que se
-guarda lleva el tipo que se detectó, no el que dijo el cliente. Cada microservicio es autosuficiente (no hay
-librería común): el mismo módulo vive en productos/, transporte/, productores/ y pagos/.
+guarda lleva el tipo que se detectó, no el que dijo el cliente.
 """
 from fastapi import HTTPException, UploadFile
 
 TAMANO_MAXIMO_BYTES = 5 * 1024 * 1024
 # Lo máximo que se acepta del cuerpo completo de la petición: la imagen más el "sobre" multipart (nombres de
-# campo y cabeceras). Se comprueba por Content-Length antes de leer nada (ver el middleware de main.py).
+# campo y cabeceras). Se comprueba por Content-Length antes de leer nada (ver el middleware de cada main.py).
 LIMITE_CUERPO_BYTES = TAMANO_MAXIMO_BYTES + 512 * 1024
 MENSAJE_MUY_GRANDE = "La imagen no puede pesar más de 5 MB."
 MENSAJE_NO_ES_IMAGEN = "El archivo no es una imagen JPEG, PNG o WEBP válida."

@@ -29,7 +29,7 @@ import models
 from comun.migraciones import agregar_columnas_faltantes
 from migraciones import crear_indices_faltantes
 import sunat
-from documentos import leer_documento_validado, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
+from comun.documentos import leer_documento_validado, limite_del_cuerpo, MENSAJE_MUY_GRANDE
 from minio_client import subir_documento_reclamo, leer_documento_reclamo
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
@@ -42,6 +42,9 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
 crear_indices_faltantes(engine, Base)
+
+# El reclamo de un RUC sube dos documentos: la Ficha RUC y el DNI.
+LIMITE_CUERPO_BYTES = limite_del_cuerpo(2)
 
 app = FastAPI()
 

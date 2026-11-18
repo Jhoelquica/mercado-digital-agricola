@@ -37,7 +37,7 @@ def _asegurar_bucket() -> None:
 
 
 def subir_constancia(datos: bytes, content_type: str) -> str:
-    """Guarda la constancia (ya validada, ver imagenes.py) y devuelve el nombre del objeto en el bucket."""
+    """Guarda la constancia (ya validada, ver comun/imagenes.py) y devuelve el nombre del objeto en el bucket."""
     _asegurar_bucket()
     nombre = f"{uuid.uuid4()}{EXTENSIONES.get(content_type, '.jpg')}"
     client.put_object(MINIO_BUCKET, nombre, io.BytesIO(datos), length=len(datos), content_type=content_type)

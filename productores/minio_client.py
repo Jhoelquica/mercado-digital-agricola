@@ -54,7 +54,7 @@ def asegurar_bucket_publico() -> None:
 
 
 def subir_foto_cosecha(datos: bytes, content_type: str) -> str:
-    """Guarda la foto (ya validada, ver imagenes.py) y devuelve su URL pública."""
+    """Guarda la foto (ya validada, ver comun/imagenes.py) y devuelve su URL pública."""
     nombre_archivo = f"{uuid.uuid4()}{EXTENSIONES.get(content_type, '.jpg')}"
 
     def _subir():

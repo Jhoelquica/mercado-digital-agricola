@@ -1546,7 +1546,7 @@ def test_las_unidades_alternativas_de_un_borrador_solo_las_ve_su_productor(monke
 
 # ============ POST /productos/{id}/imagenes/subir: tamaño y contenido reales ============
 
-import imagenes
+from comun import imagenes
 
 PNG_VALIDO = b"\x89PNG\r\n\x1a\n" + bytes(64)
 JPEG_VALIDO = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + bytes(64)

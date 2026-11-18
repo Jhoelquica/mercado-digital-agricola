@@ -37,7 +37,7 @@ def _asegurar_bucket() -> None:
 
 
 def subir_documento_reclamo(datos: bytes, content_type: str) -> str:
-    """Guarda el documento (ya validado, ver documentos.py) y devuelve el nombre del objeto en el bucket."""
+    """Guarda el documento (ya validado, ver comun/documentos.py) y devuelve el nombre del objeto en el bucket."""
     _asegurar_bucket()
     nombre = f"{uuid.uuid4()}{EXTENSIONES.get(content_type, '.bin')}"
     client.put_object(MINIO_BUCKET, nombre, io.BytesIO(datos), length=len(datos), content_type=content_type)
