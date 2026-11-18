@@ -75,8 +75,9 @@ spec:
             - containerPort: 15672
           # Al arrancar importa las definiciones (la policy y el exchange de fallidos). No van con load_definitions a
           # propósito: con definiciones al arrancar RabbitMQ no crea el usuario por defecto, y en un nodo nuevo los
-          # servicios no podrían conectarse. Hasta que el postStart termina el pod no está listo: nadie consume sin la
-          # policy, y si no queda puesta el contenedor se reinicia.
+          # servicios no podrían conectarse. Hasta que el postStart termina el pod no está listo, así que nadie consume
+          # sin la policy. El script nunca falla: si fallara, Kubernetes mataría el contenedor y RabbitMQ entero quedaría
+          # caído (pasó el 2026-11-18). Si la policy no queda puesta, verificar_despliegue.py da FALLA.
           lifecycle:
             postStart:
               exec:
@@ -84,18 +85,18 @@ spec:
                   - sh
                   - -c
                   - |
-                    set -e
                     # Primero, que el servidor cree su cookie de Erlang: si rabbitmqctl corriera antes, la crearía él como
                     # root y el servidor no podría leerla (pasa con un volumen nuevo).
                     for _ in $(seq 1 120); do [ -s /var/lib/rabbitmq/.erlang.cookie ] && break; sleep 1; done
-                    rabbitmqctl -q await_startup
-                    rabbitmqctl -q import_definitions /etc/rabbitmq/definiciones/definiciones.json
+                    # Hasta que el nodo arranca, rabbitmqctl ni siquiera puede conectarse: se reintenta (a lo más 3 min).
+                    for _ in $(seq 1 180); do rabbitmqctl -q await_startup >/dev/null 2>&1 && break; sleep 1; done
+                    rabbitmqctl -q import_definitions /etc/rabbitmq/definiciones/definiciones.json >/dev/null 2>&1 || exit 0
                     # La importación es asíncrona: se espera a ver la policy (a lo más 60 s).
                     for _ in $(seq 1 60); do
                       rabbitmqctl -q list_policies --formatter json | grep -q '"name":"fallidos"' && exit 0
                       sleep 1
                     done
-                    exit 1
+                    exit 0
           readinessProbe:
             exec:
               command: ["rabbitmq-diagnostics", "-q", "ping"]
