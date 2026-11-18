@@ -1,3 +1,7 @@
+from comun.logging import configurar_logging
+
+configurar_logging()  # lo primero: lo que se registre al importar lo demás ya sale con hora, nivel y nombre del logger
+
 import logging
 import os
 import sys

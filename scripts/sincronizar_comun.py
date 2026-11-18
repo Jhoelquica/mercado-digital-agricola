@@ -23,7 +23,9 @@ DESTINOS = {
     "auth.py": TODOS,
     "conftest.py": TODOS,
     "database.py": TODOS,
+    "logging.py": TODOS,
     "test_database.py": TODOS,
+    "test_logging.py": TODOS,
 }
 # Las pruebas y sus ayudas viajan con el código, pero un servicio no debe tener su propio módulo con el mismo nombre que
 # uno común: el de comun/ dejaría de ser el único (y un logging.py suelto taparía al de Python).

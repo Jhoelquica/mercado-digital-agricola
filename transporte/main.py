@@ -1,3 +1,7 @@
+from comun.logging import configurar_logging
+
+configurar_logging()  # lo primero: lo que se registre al importar lo demás ya sale con hora, nivel y nombre del logger
+
 from prometheus_fastapi_instrumentator import Instrumentator
 import io
 import os
@@ -5,13 +9,6 @@ import sys
 import hmac
 import uuid
 import logging
-
-# Sin esto, el proceso nunca queda con un handler configurado y Python cae al "handler de
-# último recurso": solo WARNING y superior salen por stderr — cualquier logger.info()/error() de
-# acá o de reintento_liquidacion_repartidor.py (cuyo hilo corre en este mismo proceso) queda mudo
-# sin ningún aviso, simplemente no aparece en `kubectl logs`. Mismo problema que ya resolvimos en
-# pagos/main.py — va antes de crear cualquier logger o importar cualquier módulo del proyecto.
-logging.basicConfig(level=logging.INFO)
 
 import httpx
 from datetime import datetime, timedelta

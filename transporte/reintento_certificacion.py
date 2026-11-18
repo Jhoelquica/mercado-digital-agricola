@@ -7,11 +7,8 @@ Dominio propio a propósito — no extiende reintento_huerfanos.py (asignación 
 reintento_liquidacion_repartidor.py (liquidación hacia Pagos): mismo criterio de separación por
 dominio que ya establecimos con ese archivo.
 
-Usa el módulo logging, no print — mismo motivo ya documentado en pagos/main.py y
-transporte/main.py: sin logging.basicConfig() configurado en algún punto del proceso, un
-logger.info() no aparece en absoluto en `kubectl logs`. basicConfig se llama una sola vez en
-main.py, no acá — alcanza con que corra antes de que este hilo emita su primer log, y ambos viven
-en el mismo proceso.
+Usa el módulo logging, no print: el formato y el nivel los pone configurar_logging() (comun/logging.py), que
+main.py llama una sola vez al arrancar. Este hilo vive en el mismo proceso, así que sus logs salen igual.
 """
 import time
 import threading

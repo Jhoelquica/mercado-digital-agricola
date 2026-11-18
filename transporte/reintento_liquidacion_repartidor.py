@@ -8,12 +8,9 @@ asignación envío↔repartidor (Envio.estado == "pendiente_asignacion"), esto r
 secundario cross-servicio hacia Pagos sobre envíos YA entregados. Mismo criterio por el que en
 Pagos crear_liquidaciones/reintento_liquidaciones quedaron separados del resto de ese servicio.
 
-A diferencia de reintento_huerfanos.py (que usa print), acá se usa el módulo logging — mismo
-motivo que ya documentamos en pagos/main.py: sin logging.basicConfig() configurado en algún
-punto del proceso, un logger.info() no aparece en absoluto en `kubectl logs` (Python cae al
-"handler de último recurso", que solo muestra WARNING o superior). basicConfig se llama una sola
-vez en main.py, no acá — alcanza con que corra antes de que este hilo emita su primer log, y
-ambos viven en el mismo proceso.
+A diferencia de reintento_huerfanos.py (que usa print), acá se usa el módulo logging: el formato y el nivel los
+pone configurar_logging() (comun/logging.py), que main.py llama una sola vez al arrancar. Este hilo vive en el
+mismo proceso, así que sus logs salen igual.
 """
 import time
 import threading

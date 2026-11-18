@@ -1,3 +1,7 @@
+from comun.logging import configurar_logging
+
+configurar_logging()  # lo primero: lo que se registre al importar lo demás ya sale con hora, nivel y nombre del logger
+
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form, Response
@@ -18,15 +22,6 @@ import threading
 import time
 import httpx
 import logging
-
-# Sin esto, el proceso nunca queda con un handler configurado y Python cae al "handler de
-# último recurso": solo WARNING y superior salen por stderr, cualquier logger.info() de acá o de
-# cualquier módulo que importemos (ej. reintento_liquidaciones, cuyo hilo corre en este mismo
-# proceso) queda mudo sin ningún aviso ni error — simplemente no aparece en `kubectl logs`. Va
-# antes de crear cualquier logger o importar cualquier módulo del proyecto a propósito: el nivel
-# efectivo de un logger se resuelve recién cuando se llama .info()/.error(), así que en principio
-# el orden no sería crítico, pero dejarlo primero evita tener que razonar sobre eso cada vez.
-logging.basicConfig(level=logging.INFO)
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
