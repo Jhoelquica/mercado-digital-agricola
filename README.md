@@ -106,6 +106,18 @@ kubectl rollout restart deployment/pedidos && kubectl rollout status deployment/
 El frontend se actualiza igual (`docker build -t localhost:5000/frontend:latest frontend` y el rollout): sus archivos llevan
 un hash en el nombre, así que el navegador nunca usa uno viejo.
 
+### Código común (`comun/`)
+
+`comun/` tiene el código que comparten los 8 servicios. Cada imagen se construye solo con la carpeta de su servicio, así
+que cada uno lleva una copia en `<servicio>/comun/`, con un encabezado que lo dice. Se edita solo `comun/`:
+
+```bash
+python scripts/sincronizar_comun.py               # copia comun/ a los servicios que lo usan
+python scripts/sincronizar_comun.py --verificar   # solo comprueba (scripts/correr_pruebas.sh lo hace antes de probar)
+```
+
+Un cambio en `comun/` cambia todos los servicios que lo llevan: se reconstruyen y despliegan todos.
+
 ### Respaldo y restauración
 
 Antes de algo que llene la plataforma de datos (por ejemplo, una validación con usuarios), se guarda el estado completo y
@@ -163,10 +175,12 @@ python scripts/probar_contorno_chacra.py        # contorno, geocerca y cadenas c
 ```
 
 - **Cómo corren:** cada suite usa `pytest` dentro de la imagen de su servicio, contra un PostgreSQL desechable
-  (`chakrashop-pg-pruebas`). Nunca toca las bases del clúster.
+  (`chakrashop-pg-pruebas`). Nunca toca las bases del clúster. Antes de empezar comprueba que las copias de `comun/`
+  coincidan con la fuente: si no, no prueba nada.
 - **Qué son:** la mayoría son pruebas de integración por servicio: la API real con una base real, y los demás servicios,
   RabbitMQ, Culqi y MinIO simulados.
-- **Dónde están:** en `<servicio>/test_*.py`.
+- **Dónde están:** en `<servicio>/test_*.py`, y las del código común en `comun/test_*.py` (corren en cada servicio, con
+  su copia).
 
 ## Despliegue en Google Cloud
 
@@ -177,6 +191,7 @@ dominio y HTTPS, y crean secretos aleatorios.
 
 ```
 <servicio>/            8 microservicios: main.py, models.py, auth.py, módulos de lógica, Dockerfile, requirements.txt y test_*.py
+comun/                 código común a los 8 servicios; cada uno lleva una copia generada en <servicio>/comun/
 frontend/              aplicación de React (src/), pruebas (Vitest en src/**/*.test.ts, E2E en e2e/), nginx.conf y Dockerfile
 k8s/                   manifiestos del clúster local (servicios, bases con volumen, RabbitMQ, Redis, MinIO, Traefik,
                        Prometheus, Grafana con su tablero)
@@ -198,6 +213,10 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
   lleva una. Cada base, RabbitMQ, MinIO y Grafana tienen su propia contraseña, y el código no trae valores por defecto: si
   falta una variable, el servicio no arranca. El historial de git es público y conserva las contraseñas de desarrollo de
   antes del 2026-11-16: ya no sirven (se cambiaron todas).
+- Cada servicio llega a su base con `DB_HOST`, `DB_PORT` y `DB_NAME` (obligatoria). En Kubernetes salen de la ConfigMap
+  `base-<servicio>` de `k8s/<servicio>.yaml`, la misma que leen el initContainer y la propia base; en compose, el nombre
+  se escribe una vez en `POSTGRES_DB` y el servicio lo toma de ahí. El pool se ajusta con `DB_POOL_SIZE` y
+  `DB_MAX_OVERFLOW` (por defecto 5 y 10 conexiones por proceso).
 - CORS abierto (`*`).
 - El JWT es simétrico (HS256) y todos los servicios comparten la misma clave.
 

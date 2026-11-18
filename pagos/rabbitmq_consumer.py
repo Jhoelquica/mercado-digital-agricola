@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 import pika
 from sqlalchemy.exc import IntegrityError
 
-from database import SessionLocal
+from comun.database import SessionLocal
 import models
 from logica_cobros import ESTADOS_CUMPLIDOS
 

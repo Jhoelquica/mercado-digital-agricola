@@ -20,7 +20,7 @@ from auth import verificar_token, requiere_rol
 from auth import ROLES_RETIRADOS, MENSAJE_CUENTA_DESACTIVADA
 from auth import secreto_de_servicio_valido
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 import models
 from migraciones import agregar_columnas_faltantes, crear_indices_faltantes
 import sunat
@@ -105,13 +105,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # ---- Tipo de comprador: persona o negocio ----
 NOMBRE_COMERCIAL_MAXIMO = 120

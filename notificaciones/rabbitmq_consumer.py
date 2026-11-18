@@ -5,7 +5,7 @@ import time
 import threading
 import pika
 
-from database import SessionLocal
+from comun.database import SessionLocal
 import avisos_externos
 import models
 from mensajes import (mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo,

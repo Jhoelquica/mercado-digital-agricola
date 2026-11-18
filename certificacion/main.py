@@ -11,7 +11,7 @@ import qrcode
 import io
 from fastapi.responses import StreamingResponse
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 import models
 from migraciones import asegurar_indice_unico_de_bloques, asegurar_columna_foto_url
 from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
@@ -34,13 +34,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).

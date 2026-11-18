@@ -16,7 +16,7 @@ import time
 import threading
 import logging
 
-from database import SessionLocal
+from comun.database import SessionLocal
 from logica_liquidaciones import crear_liquidaciones, pagos_sin_liquidaciones
 
 INTERVALO_SEGUNDOS = 120

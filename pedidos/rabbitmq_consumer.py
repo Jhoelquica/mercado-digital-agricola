@@ -5,7 +5,7 @@ import time
 import threading
 import pika
 
-from database import SessionLocal
+from comun.database import SessionLocal
 import models
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")

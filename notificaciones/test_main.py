@@ -6,7 +6,7 @@ guarda la Notificacion correcta?
 Cubre el evento nuevo producto_disponible (nace de una Reserva en Productos, no de un Pedido):
 crea la notificación con pedido_id=None y producto_id/usuario_id/mensaje correctos.
 
-Requiere una base de datos Postgres real accesible según database.py (tipos UUID de postgresql +
+Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar) — no se puede sustituir por SQLite, mismo criterio que el resto de los
 servicios de este proyecto.
 """
@@ -14,7 +14,7 @@ import json
 import uuid
 from unittest.mock import MagicMock
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal
 import models
 from rabbitmq_consumer import _procesar_mensaje
 from migraciones import agregar_columnas_faltantes

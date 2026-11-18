@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, Integer, Numeric, Float, ForeignKey, UniqueConstraint, event
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from database import Base
+from comun.database import Base
 
 class Productor(Base):
     __tablename__ = "productores"

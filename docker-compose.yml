@@ -88,7 +88,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: productores
+      POSTGRES_DB: &base-productores productores  # el único lugar con el nombre: productores lo toma de aquí
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
@@ -110,6 +110,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-productores
+      DB_PORT: "5432"
+      DB_NAME: *base-productores
       PRODUCTOS_URL: http://productos:8002
       PEDIDOS_URL: http://pedidos:8003
       CERTIFICACION_URL: http://certificacion:8008
@@ -141,7 +143,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: productos
+      POSTGRES_DB: &base-productos productos  # el único lugar con el nombre: productos lo toma de aquí
     ports:
       - "127.0.0.1:5434:5432"
     volumes:
@@ -159,6 +161,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-productos
+      DB_PORT: "5432"
+      DB_NAME: *base-productos
       PRODUCTORES_URL: http://productores:8001
       USUARIOS_URL: http://usuarios:8006
       PEDIDOS_URL: http://pedidos:8003
@@ -202,7 +206,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: pedidos
+      POSTGRES_DB: &base-pedidos pedidos  # el único lugar con el nombre: pedidos lo toma de aquí
     ports:
       - "127.0.0.1:5435:5432"
     volumes:
@@ -220,6 +224,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-pedidos
+      DB_PORT: "5432"
+      DB_NAME: *base-pedidos
       PRODUCTOS_URL: http://productos:8002
       TRANSPORTE_URL: http://transporte:8004
       PAGOS_URL: http://pagos:8007
@@ -253,7 +259,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: transporte
+      POSTGRES_DB: &base-transporte transporte  # el único lugar con el nombre: transporte lo toma de aquí
     ports:
       - "127.0.0.1:5436:5432"
     volumes:
@@ -271,6 +277,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-transporte
+      DB_PORT: "5432"
+      DB_NAME: *base-transporte
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
@@ -308,7 +316,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: notificaciones
+      POSTGRES_DB: &base-notificaciones notificaciones  # el único lugar con el nombre: notificaciones lo toma de aquí
     ports:
       - "127.0.0.1:5437:5432"
     volumes:
@@ -326,6 +334,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       DB_HOST: db-notificaciones
+      DB_PORT: "5432"
+      DB_NAME: *base-notificaciones
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
@@ -359,7 +369,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: usuarios
+      POSTGRES_DB: &base-usuarios usuarios  # el único lugar con el nombre: usuarios lo toma de aquí
     ports:
       - "127.0.0.1:5438:5432"
     volumes:
@@ -376,6 +386,8 @@ services:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-usuarios
+      DB_PORT: "5432"
+      DB_NAME: *base-usuarios
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
@@ -412,7 +424,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: pagos
+      POSTGRES_DB: &base-pagos pagos  # el único lugar con el nombre: pagos lo toma de aquí
     ports:
       - "127.0.0.1:5439:5432"
     volumes:
@@ -429,6 +441,8 @@ services:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-pagos
+      DB_PORT: "5432"
+      DB_NAME: *base-pagos
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
@@ -470,7 +484,7 @@ services:
     environment:
       POSTGRES_USER: ${DB_USER:?falta DB_USER en .env}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      POSTGRES_DB: certificacion
+      POSTGRES_DB: &base-certificacion certificacion  # el único lugar con el nombre: certificacion lo toma de aquí
     ports:
       - "127.0.0.1:5440:5432"
     volumes:
@@ -487,6 +501,8 @@ services:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       DB_HOST: db-certificacion
+      DB_PORT: "5432"
+      DB_NAME: *base-certificacion
       JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
       # A dónde apunta el QR de cada producto (/verificar lo sirve el contenedor frontend de abajo).
       FRONTEND_URL: http://localhost:8090

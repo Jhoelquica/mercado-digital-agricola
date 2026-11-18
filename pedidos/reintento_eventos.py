@@ -12,7 +12,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from database import SessionLocal
+from comun.database import SessionLocal
 import models
 from rabbitmq_publisher import publicar_evento
 

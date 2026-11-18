@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Numeric, DateTime, Integer, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from database import Base
+from comun.database import Base
 
 class Pago(Base):
     __tablename__ = "pagos"

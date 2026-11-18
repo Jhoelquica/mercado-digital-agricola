@@ -11,7 +11,7 @@ import pika
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
 import logica_viajes
 import logica_recojos
-from database import SessionLocal
+from comun.database import SessionLocal
 import models
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")

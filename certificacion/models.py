@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from database import Base
+from comun.database import Base
 
 class Bloque(Base):
     __tablename__ = "bloques"

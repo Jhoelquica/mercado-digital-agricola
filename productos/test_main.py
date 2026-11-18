@@ -21,7 +21,7 @@ Cubre:
   con el secreto correcto crea el borrador esperado (sin precio/categoría, no visible en el
   catálogo)
 
-Requiere una base de datos Postgres real accesible según database.py (tipos UUID de
+Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de
 postgresql + create_all() al importar main) — no se puede sustituir por SQLite. No requiere
 Redis real: cache.py se degrada a "sin caché" solo con que Redis no responda (ver su propio
 docstring), así que un Redis inalcanzable en el entorno de test no rompe nada, solo hace que

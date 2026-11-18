@@ -19,7 +19,7 @@ No se levantan Pedidos, Pagos, Certificación ni RabbitMQ reales:
   su propio `import httpx`, ver el docstring de logica_certificacion.py sobre por qué.
 - publicar_evento se mockea para no depender de RabbitMQ.
 
-Requiere una base de datos Postgres real accesible según database.py (tipos UUID de postgresql +
+Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar main) — no se puede sustituir por SQLite, mismo criterio que el resto de
 los servicios de este proyecto.
 """

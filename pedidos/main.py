@@ -25,7 +25,7 @@ from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from reintento_eventos import lanzar_reintento_eventos_en_hilo
 from auth import verificar_token, requiere_rol, security
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 from migraciones import agregar_columnas_faltantes
 import models
 import reniec
@@ -223,13 +223,6 @@ def calcular_recargo_por_peso(peso_total_kg, umbral_kg: float) -> float:
     if peso_total_kg is None or peso_total_kg <= umbral_kg:
         return 0.0
     return round((peso_total_kg - umbral_kg) * RECARGO_ENVIO_POR_KG_EXTRA, 2)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # Validación fail-fast: el destino de entrega debe caer dentro de la región de Ayacucho. La usan
 # crear_pedido y la cotización del envío, para que ambas rechacen exactamente lo mismo.

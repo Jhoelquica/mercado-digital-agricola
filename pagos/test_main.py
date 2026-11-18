@@ -17,7 +17,7 @@ httpx` — ver el docstring de ese archivo sobre por qué), el mock se aplica so
 logica_liquidaciones.httpx.Client, no sobre main.httpx.Client. publicar_evento también se mockea
 para no depender de RabbitMQ.
 
-Requiere una base de datos Postgres real accesible según database.py (tipos UUID de postgresql +
+Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar main) — no se puede sustituir por SQLite, mismo criterio que el resto de
 los servicios de este proyecto.
 """

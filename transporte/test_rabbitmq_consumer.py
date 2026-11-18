@@ -15,7 +15,7 @@ import pytest
 import main  # noqa: F401  -- crea las tablas (create_all) antes de usar la base
 import models
 import rabbitmq_consumer
-from database import SessionLocal
+from comun.database import SessionLocal
 
 
 @pytest.fixture

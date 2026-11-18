@@ -15,7 +15,7 @@ from pywebpush import WebPushException
 import avisos_externos
 import main
 import models
-from database import SessionLocal
+from comun.database import SessionLocal
 from test_main import _procesar
 
 

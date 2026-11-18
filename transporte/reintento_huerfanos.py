@@ -14,7 +14,7 @@ solo el bucle que decide CUÁNDO reintentar.
 import time
 import threading
 
-from database import SessionLocal
+from comun.database import SessionLocal
 import models
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido, pasar_propuestas_sin_respuesta, reofrecer_entregas_directas
 import logica_viajes

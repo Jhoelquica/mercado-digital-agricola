@@ -17,7 +17,7 @@ import time
 import threading
 import logging
 
-from database import SessionLocal
+from comun.database import SessionLocal
 from logica_certificacion import notificar_entrega_a_certificacion, envios_entregados_sin_certificar
 
 INTERVALO_SEGUNDOS = 120

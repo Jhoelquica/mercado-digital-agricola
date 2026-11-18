@@ -133,7 +133,7 @@ def chacra_ajena(contexto, productor_id):
     """El id de una chacra de OTRO productor, leído de la base del clúster (solo lectura)."""
     consulta = f"SELECT id FROM chacras WHERE productor_id <> '{productor_id}' LIMIT 1"
     return kubectl(contexto, "exec", "deploy/db-productores", "--", "sh", "-c",
-                   f'psql -U "$POSTGRES_USER" -d productores -tAc "{consulta}"') or None
+                   f'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "{consulta}"') or None
 
 
 def huella_del_contorno(contorno):

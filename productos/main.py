@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 from auth import verificar_token, requiere_rol, security, security_opcional, usuario_opcional
 from auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 from migraciones import agregar_columnas_faltantes, separar_fecha_de_creacion
 import models
 from sqlalchemy import func
@@ -170,13 +170,6 @@ def _texto_acotado(valor, maximo):
     if len(valor) > maximo:
         raise ValueError(f"no puede superar {maximo} caracteres")
     return valor
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class ProductoCrearDesdeCosecha(BaseModel):
     productor_id: str

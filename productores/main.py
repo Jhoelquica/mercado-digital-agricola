@@ -34,7 +34,7 @@ import sugerencia_cosecha
 import plantillas_produccion as plantillas
 import recomendacion_siembra
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 import models
 
 Base.metadata.create_all(bind=engine)
@@ -85,13 +85,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 class ProductorCrear(BaseModel):
     # Los tipos de validaciones.py exigen lo mismo que el formulario (largos, coordenadas numéricas)

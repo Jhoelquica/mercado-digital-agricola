@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-from database import Base
+from comun.database import Base
 
 class EventoSaliente(Base):
     """Bandeja de salida (patrón outbox): el evento pedido_creado se guarda en la MISMA transacción que el pedido y se

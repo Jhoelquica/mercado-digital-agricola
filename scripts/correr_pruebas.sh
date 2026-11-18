@@ -27,7 +27,10 @@ for arg in "$@"; do
 done
 [ ${#SERVICIOS[@]} -eq 0 ] && SERVICIOS=("${SERVICIOS_TODOS[@]}")
 
-ENVS=(-e DB_USER=admin -e DB_PASSWORD=pruebas -e DB_HOST="$PG" -e JWT_SECRET=secreto-jwt-de-pruebas
+# Cada servicio lleva una copia de comun/ (el código común): si alguna no coincide con comun/, no se prueba nada.
+python scripts/sincronizar_comun.py --verificar || exit 1
+
+ENVS=(-e DB_USER=admin -e DB_PASSWORD=pruebas -e DB_HOST="$PG" -e DB_PORT=5432 -e JWT_SECRET=secreto-jwt-de-pruebas
   -e PRODUCTORES_A_PRODUCTOS_SECRETO=secreto-prueba-1 -e PEDIDOS_A_PRODUCTOS_SECRETO=secreto-prueba-2
   -e PAGOS_A_PRODUCTOS_SECRETO=secreto-prueba-3 -e QA_LIMPIEZA_SECRETO=secreto-prueba-4
   -e PRODUCTORES_A_CERTIFICACION_SECRETO=secreto-prueba-5 -e TRANSPORTE_A_CERTIFICACION_SECRETO=secreto-prueba-6
@@ -36,6 +39,7 @@ ENVS=(-e DB_USER=admin -e DB_PASSWORD=pruebas -e DB_HOST="$PG" -e JWT_SECRET=sec
   -e RABBITMQ_USER=usuario-de-pruebas -e RABBITMQ_PASSWORD=clave-de-pruebas-rabbitmq
   -e MINIO_ACCESS_KEY=usuario-de-pruebas -e MINIO_SECRET_KEY=clave-de-pruebas-minio -e CULQI_SECRET_KEY=sk_test_de_pruebas)
 # El código no tiene valores por defecto de credenciales: si falta una de estas, el servicio ni siquiera se importa.
+# DB_NAME va aparte, en cada docker run: es el nombre del servicio, el mismo con que se crea su base aquí abajo.
 
 # Postgres desechable con las 8 bases (se reutiliza entre corridas).
 docker network create "$RED" >/dev/null 2>&1
@@ -56,9 +60,9 @@ for s in "${SERVICIOS[@]}"; do
   if [ "$COBERTURA" -eq 1 ]; then
     comando="pip install -q pytest-cov >/dev/null 2>&1; printf '[run]\nomit =\n    test_*.py\n    */site-packages/*\n    venv/*\n' > /tmp/covrc;
              python -m pytest -q -p no:cacheprovider -p no:warnings --cov=. --cov-config=/tmp/covrc --cov-report=term"
-    docker run --rm --user root --network "$RED" "${ENVS[@]}" "chakrashop-pruebas/$s" sh -c "$comando" || FALLARON+=("$s")
+    docker run --rm --user root --network "$RED" "${ENVS[@]}" -e DB_NAME="$s" "chakrashop-pruebas/$s" sh -c "$comando" || FALLARON+=("$s")
   else
-    docker run --rm --network "$RED" "${ENVS[@]}" "chakrashop-pruebas/$s" python -m pytest -q -p no:cacheprovider -p no:warnings || FALLARON+=("$s")
+    docker run --rm --network "$RED" "${ENVS[@]}" -e DB_NAME="$s" "chakrashop-pruebas/$s" python -m pytest -q -p no:cacheprovider -p no:warnings || FALLARON+=("$s")
   fi
 done
 

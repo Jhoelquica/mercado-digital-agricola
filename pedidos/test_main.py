@@ -9,7 +9,7 @@ Cubre además:
 - cambiar la ubicación del almacén afecta el costo de un pedido creado DESPUÉS del cambio,
   con el mismo destino — sin tocar código
 
-Requiere una base de datos Postgres real accesible según database.py (usa tipos
+Requiere una base de datos Postgres real accesible según comun/database.py (usa tipos
 UUID de postgresql y create_all() sobre esa conexión) — no se puede sustituir por SQLite.
 El servicio de Productos (httpx.Client) y la publicación de eventos (RabbitMQ) se simulan
 con mocks para no depender de esos servicios estando levantados. sembrar_configuracion_almacen()

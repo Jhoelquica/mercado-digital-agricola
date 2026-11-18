@@ -27,7 +27,7 @@ from pedidos_interno import cabecera_pedidos
 from fastapi.responses import JSONResponse
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 import models
 from migraciones import agregar_columnas_faltantes
 from minio_client import subir_foto_entrega, subir_documento_transportista, leer_documento_transportista
@@ -87,13 +87,6 @@ def iniciar():
     lanzar_reintento_huerfanos_en_hilo()
     lanzar_reintento_liquidacion_repartidor_en_hilo()
     lanzar_reintento_certificacion_en_hilo()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 def calcular_distancia_km(lat1, lon1, lat2, lon2):
     lat1, lon1, lat2, lon2 = map(float, [lat1, lon1, lat2, lon2])

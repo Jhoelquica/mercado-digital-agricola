@@ -8,7 +8,7 @@ antes), las rutas de invitaciones y de la credencial del verificador ya no exist
 abierto y el mismo filtro de rol que el registro normal, id_token inválido -> 401, y el login normal contra una cuenta
 sin contraseña -> 401 sin excepción).
 
-Requiere Postgres real según database.py (UUID de postgresql + create_all() al importar main). No se mockea nada
+Requiere Postgres real según comun/database.py (UUID de postgresql + create_all() al importar main). No se mockea nada
 salvo google_id_token.verify_oauth2_token (única llamada saliente real de este servicio) — nunca se golpea la red de
 Google de verdad. Los usuarios de un rol que no se registra (admin) se insertan directo por SessionLocal.
 """

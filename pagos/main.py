@@ -28,7 +28,7 @@ import logging
 # el orden no sería crítico, pero dejarlo primero evita tener que razonar sobre eso cada vez.
 logging.basicConfig(level=logging.INFO)
 
-from database import Base, engine, SessionLocal
+from comun.database import Base, engine, SessionLocal, get_db
 import models
 from auth import verificar_token, requiere_rol, security
 from auth import secreto_de_servicio_valido
@@ -103,13 +103,6 @@ def iniciar():
     lanzar_consumidor_en_hilo()
     lanzar_reintento_liquidaciones_en_hilo()
     threading.Thread(target=_bucle_vencimientos, daemon=True).start()
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 def _cantidades_base_por_producto(items_json) -> dict:
     """Cuánto stock (en la unidad base de cada producto) reserva un pedido: la suma de sus líneas por producto.

@@ -53,8 +53,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_NOTIFICACIONES
+            # El nombre sale de la ConfigMap base-notificaciones (k8s/notificaciones.yaml): el mismo que usa el servicio.
             - name: POSTGRES_DB
-              value: notificaciones
+              valueFrom:
+                configMapKeyRef:
+                  name: base-notificaciones
+                  key: DB_NAME
           volumeMounts:
             - name: datos
               mountPath: /var/lib/postgresql/data

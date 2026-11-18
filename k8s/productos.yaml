@@ -1,3 +1,14 @@
+# Cómo llega Productos a su base: host, puerto y nombre, escritos solo aquí. Los leen el initContainer y el
+# contenedor del servicio (envFrom, más abajo) y la propia base (POSTGRES_DB en db-productos.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: base-productos
+data:
+  DB_HOST: db-productos
+  DB_PORT: "5432"
+  DB_NAME: productos
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,8 +28,9 @@ spec:
       # Se comprueba con psql contra SU base de datos y no con pg_isready: tras un reinicio de Docker Desktop el Service sigue
       # unos segundos con la IP vieja de la base, que el nodo puede haber dado a OTRO Postgres, y pg_isready da por buena
       # cualquier respuesta (visto el 2026-11-16: db-transporte llevaba al Postgres de db-certificacion).
-      # El nombre de la base y el puerto son los fijos de database.py (no hay variable para ellos). La contraseña va en
-      # PGPASSWORD desde el Secret, nunca en el comando. Misma imagen que las bases (postgres:16, ya está en el nodo).
+      # El host, el puerto y el nombre de la base salen de la ConfigMap base-productos (arriba), la misma que usan el servicio
+      # y la propia base. La contraseña va en PGPASSWORD desde el Secret, nunca en el comando. Misma imagen que las bases
+      # (postgres:16, ya está en el nodo).
       initContainers:
         - name: esperar-base
           image: postgres:16
@@ -28,19 +40,20 @@ spec:
             - -c
             - |
               intento=1
-              until error=$(psql -w -h "$DB_HOST" -p 5432 -U "$DB_USER" -d productos -c "select 1" 2>&1 >/dev/null); do
-                echo "Esperando a la base productos en $DB_HOST:5432 (intento $intento; otro en 2 s): $(echo "$error" | head -n 1)"
+              until error=$(psql -w -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c "select 1" 2>&1 >/dev/null); do
+                echo "Esperando a la base $DB_NAME en $DB_HOST:$DB_PORT (intento $intento; otro en 2 s): $(echo "$error" | head -n 1)"
                 intento=$((intento + 1))
                 sleep 2
               done
-              echo "La base productos en $DB_HOST:5432 responde (intento $intento)"
+              echo "La base $DB_NAME en $DB_HOST:$DB_PORT responde (intento $intento)"
           securityContext:
             runAsNonRoot: true
             runAsUser: 999  # el usuario postgres de la imagen
             allowPrivilegeEscalation: false
+          envFrom:
+            - configMapRef:
+                name: base-productos
           env:
-            - name: DB_HOST
-              value: db-productos
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
@@ -89,9 +102,10 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
+          envFrom:
+            - configMapRef:
+                name: base-productos  # DB_HOST, DB_PORT y DB_NAME
           env:
-            - name: DB_HOST
-              value: db-productos
             - name: PRODUCTORES_URL
               value: http://productores:8001
             - name: DB_USER

@@ -19,7 +19,7 @@ import time
 import threading
 import logging
 
-from database import SessionLocal
+from comun.database import SessionLocal
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor, envios_entregados_sin_liquidar
 
 INTERVALO_SEGUNDOS = 120

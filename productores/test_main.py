@@ -21,7 +21,7 @@ Cubre:
   negativos, NaN ni Infinity), textos con largo máximo, coordenadas válidas y fechas coherentes
   (cosecha no anterior a la siembra ni en el futuro)
 
-Requiere una base de datos Postgres real accesible según database.py (tipos UUID de
+Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de
 postgresql + create_all() al importar main) — no se puede sustituir por SQLite.
 Este archivo no levanta Productos, Certificación ni MinIO: un fixture reemplaza las funciones puntuales que los llaman
 (no el circuit breaker ni httpx) para no depender de una red real ni de sus timeouts.

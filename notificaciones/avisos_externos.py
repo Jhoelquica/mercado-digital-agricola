@@ -29,7 +29,7 @@ import requests
 from pywebpush import WebPushException, webpush
 
 import models
-from database import SessionLocal
+from comun.database import SessionLocal
 
 logger = logging.getLogger("notificaciones.avisos")
 

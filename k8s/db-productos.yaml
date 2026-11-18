@@ -53,8 +53,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_PRODUCTOS
+            # El nombre sale de la ConfigMap base-productos (k8s/productos.yaml): el mismo que usa el servicio.
             - name: POSTGRES_DB
-              value: productos
+              valueFrom:
+                configMapKeyRef:
+                  name: base-productos
+                  key: DB_NAME
           volumeMounts:
             - name: datos
               mountPath: /var/lib/postgresql/data

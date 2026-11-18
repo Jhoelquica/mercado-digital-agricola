@@ -53,8 +53,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_PAGOS
+            # El nombre sale de la ConfigMap base-pagos (k8s/pagos.yaml): el mismo que usa el servicio.
             - name: POSTGRES_DB
-              value: pagos
+              valueFrom:
+                configMapKeyRef:
+                  name: base-pagos
+                  key: DB_NAME
           volumeMounts:
             - name: datos
               mountPath: /var/lib/postgresql/data
