@@ -70,14 +70,23 @@ spec:
       containers:
         - name: rabbitmq
           image: rabbitmq:3-management
+          # El de la imagen (docker-entrypoint.sh rabbitmq-server), con un relevo delante: lo que el postStart escribe en
+          # /tmp/log-poststart sale en el log del contenedor (un proceso aparte no puede escribir en su salida directo).
+          command: ["sh", "-c"]
+          args:
+            - |
+              rm -f /tmp/log-poststart && mkfifo -m 600 /tmp/log-poststart
+              (while :; do cat /tmp/log-poststart; done) &
+              exec docker-entrypoint.sh rabbitmq-server
           ports:
             - containerPort: 5672
             - containerPort: 15672
-          # Al arrancar importa las definiciones (la policy y el exchange de fallidos). No van con load_definitions a
+          # Al arrancar importa las definiciones (las policies y los exchanges de fallidos). No van con load_definitions a
           # propósito: con definiciones al arrancar RabbitMQ no crea el usuario por defecto, y en un nodo nuevo los
           # servicios no podrían conectarse. Hasta que el postStart termina el pod no está listo, así que nadie consume
-          # sin la policy. El script nunca falla: si fallara, Kubernetes mataría el contenedor y RabbitMQ entero quedaría
-          # caído (pasó el 2026-11-18). Si la policy no queda puesta, verificar_despliegue.py da FALLA.
+          # sin las policies. El script tiene un tope de 120 s y nunca falla: si fallara, Kubernetes mataría el contenedor
+          # y RabbitMQ entero quedaría caído (pasó el 2026-11-18). Lo que pasó queda en el log del contenedor, con
+          # "[definiciones]" delante, y si falta una policy verificar_despliegue.py da FALLA.
           lifecycle:
             postStart:
               exec:
@@ -85,17 +94,40 @@ spec:
                   - sh
                   - -c
                   - |
+                    fin=$(( $(date +%s) + 120 ))
+                    queda_tiempo() { [ "$(date +%s)" -lt "$fin" ]; }
+                    avisar() {  # al log del contenedor, por el relevo de su comando; nunca se queda esperando
+                      [ -p /tmp/log-poststart ] && echo "[definiciones] $*" | timeout 5 tee /tmp/log-poststart >/dev/null
+                      return 0
+                    }
                     # Primero, que el servidor cree su cookie de Erlang: si rabbitmqctl corriera antes, la crearía él como
                     # root y el servidor no podría leerla (pasa con un volumen nuevo).
-                    for _ in $(seq 1 120); do [ -s /var/lib/rabbitmq/.erlang.cookie ] && break; sleep 1; done
-                    # Hasta que el nodo arranca, rabbitmqctl ni siquiera puede conectarse: se reintenta (a lo más 3 min).
-                    for _ in $(seq 1 180); do rabbitmqctl -q await_startup >/dev/null 2>&1 && break; sleep 1; done
-                    rabbitmqctl -q import_definitions /etc/rabbitmq/definiciones/definiciones.json >/dev/null 2>&1 || exit 0
-                    # La importación es asíncrona: se espera a ver la policy (a lo más 60 s).
-                    for _ in $(seq 1 60); do
-                      rabbitmqctl -q list_policies --formatter json | grep -q '"name":"fallidos"' && exit 0
+                    while queda_tiempo && [ ! -s /var/lib/rabbitmq/.erlang.cookie ]; do sleep 1; done
+                    # Hasta que el nodo arranca, rabbitmqctl ni siquiera puede conectarse: se reintenta hasta el tope.
+                    arranco=no
+                    while queda_tiempo; do
+                      if timeout 15 rabbitmqctl -q await_startup >/dev/null 2>&1; then arranco=si; break; fi
+                      sleep 2
+                    done
+                    if [ "$arranco" != si ]; then
+                      avisar "RabbitMQ no respondió en 120 s: no se importaron las definiciones"
+                      exit 0
+                    fi
+                    if ! timeout 30 rabbitmqctl -q import_definitions /etc/rabbitmq/definiciones/definiciones.json >/dev/null 2>&1; then
+                      avisar "no se pudieron importar /etc/rabbitmq/definiciones/definiciones.json"
+                      exit 0
+                    fi
+                    # La importación es asíncrona: se espera a ver la policy, hasta el tope.
+                    while queda_tiempo; do
+                      politicas=$(timeout 15 rabbitmqctl -q list_policies --formatter json 2>/dev/null)
+                      case "$politicas" in
+                        *'"name":"fallidos"'*)
+                          avisar "importadas: policy fallidos lista"
+                          exit 0 ;;
+                      esac
                       sleep 1
                     done
+                    avisar "importadas, pero las policies no aparecieron en 120 s"
                     exit 0
           readinessProbe:
             exec:
