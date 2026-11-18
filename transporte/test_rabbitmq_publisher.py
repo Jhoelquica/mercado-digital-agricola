@@ -6,6 +6,8 @@ sustituye pika.BlockingConnection.
 """
 from unittest.mock import MagicMock
 
+import pika
+
 import rabbitmq_publisher
 
 
@@ -13,7 +15,7 @@ def test_publica_el_evento_como_mensaje_persistente(monkeypatch):
     canal = MagicMock()
     conexion = MagicMock()
     conexion.channel.return_value = canal
-    monkeypatch.setattr(rabbitmq_publisher.pika, "BlockingConnection", lambda *args, **kwargs: conexion)
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
 
     rabbitmq_publisher.publicar_evento({"evento": "envio_actualizado", "envio_id": "abc"})
 

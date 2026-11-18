@@ -227,6 +227,10 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
   alguien con acceso de escritura a la base la recalcule entera o borre el último bloque.
 
 **Consistencia**
+- Un evento de RabbitMQ que falla 3 veces al procesarse va a `<cola>.fallidos`, con el motivo en la cabecera
+  `x-motivo` y un log de error: se revisa en el panel de RabbitMQ y se reenvía a mano. Si la base no responde, el
+  evento espera en su cola sin gastar intentos. La ruta a fallidos es una policy de RabbitMQ (`fallidos-<cola>`) que
+  pone cada consumidor al conectarse (comun/rabbitmq.py).
 - Si Productos no responde al devolver el stock de un pago rechazado, la compensación queda solo en el log: no se
   reintenta.
 

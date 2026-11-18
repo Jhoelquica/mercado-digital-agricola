@@ -1,0 +1,205 @@
+# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py
+"""Pruebas de comun/rabbitmq.py sin un RabbitMQ real: se sustituyen la conexión, el canal y la API de gestión."""
+import base64
+import json
+from unittest.mock import MagicMock
+
+import pika
+import pytest
+from sqlalchemy.exc import OperationalError
+
+from comun import rabbitmq
+
+
+class Metodo:
+    delivery_tag = 7
+
+
+class Salir(BaseException):
+    """Corta el bucle del consumidor (que no termina nunca) en la prueba: no es Exception, así el bucle no la atrapa."""
+
+
+def _propiedades(**cabeceras):
+    return pika.BasicProperties(delivery_mode=2, headers=cabeceras or None)
+
+
+@pytest.fixture
+def pausas(monkeypatch):
+    hechas = []
+    monkeypatch.setattr(rabbitmq.time, "sleep", hechas.append)
+    return hechas
+
+
+def _conexion_falsa(canal):
+    conexion = MagicMock()
+    conexion.channel.return_value = canal
+    return conexion
+
+
+# ---- Publicar ----
+
+def test_publica_persistente_en_el_exchange_dado_y_cierra(monkeypatch):
+    canal = MagicMock()
+    conexion = _conexion_falsa(canal)
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
+    rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "id": 1})
+    datos = canal.basic_publish.call_args.kwargs
+    assert (datos["exchange"], datos["routing_key"], datos["properties"].delivery_mode) == ("eventos_prueba", "", 2)
+    assert json.loads(datos["body"]) == {"evento": "algo", "id": 1}
+    canal.exchange_declare.assert_called_once_with(exchange="eventos_prueba", exchange_type="fanout", durable=True)
+    conexion.close.assert_called_once()
+
+
+def test_cierra_la_conexion_aunque_la_publicacion_falle(monkeypatch):
+    canal = MagicMock()
+    canal.basic_publish.side_effect = pika.exceptions.ChannelClosedByBroker(406, "PRECONDITION_FAILED")
+    conexion = _conexion_falsa(canal)
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
+    with pytest.raises(pika.exceptions.ChannelClosedByBroker):
+        rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo"})
+    conexion.close.assert_called_once()
+
+
+# ---- Reintentos y fallidos ----
+
+def test_un_fallo_que_se_arregla_solo_no_llega_a_fallidos(pausas):
+    llamadas = []
+
+    def procesar(canal, metodo, propiedades, cuerpo):
+        llamadas.append(cuerpo)
+        if len(llamadas) < 3:
+            raise ValueError("todavía no")
+        canal.basic_ack(delivery_tag=metodo.delivery_tag)
+
+    canal = MagicMock()
+    rabbitmq.con_reintentos("cola_prueba", procesar)(canal, Metodo(), _propiedades(), b"{}")
+    assert len(llamadas) == 3 and pausas == [1, 2]
+    canal.basic_ack.assert_called_once_with(delivery_tag=7)
+    canal.basic_publish.assert_not_called()
+
+
+def test_tras_3_fallos_vuelve_con_el_motivo_y_al_llegar_se_rechaza(pausas):
+    def procesar(*_):
+        raise KeyError("pedido_id")
+
+    canal = MagicMock()
+    rabbitmq.con_reintentos("cola_prueba", procesar)(canal, Metodo(), _propiedades(origen="pagos"), b'{"evento": "x"}')
+    copia = canal.basic_publish.call_args.kwargs
+    assert (copia["exchange"], copia["routing_key"], copia["body"]) == ("", "cola_prueba", b'{"evento": "x"}')
+    assert copia["properties"].headers == {"origen": "pagos", "x-motivo": "KeyError: 'pedido_id'", "x-intentos": 3}
+    assert copia["properties"].delivery_mode == 2
+    canal.basic_ack.assert_called_once_with(delivery_tag=7)  # el original
+
+    # La copia vuelve a la cola: se rechaza sin procesarla y la policy fallidos-cola_prueba la lleva a cola_prueba.fallidos.
+    procesar_otra_vez = MagicMock()
+    canal_nuevo = MagicMock()
+    rabbitmq.con_reintentos("cola_prueba", procesar_otra_vez)(canal_nuevo, Metodo(), copia["properties"], copia["body"])
+    procesar_otra_vez.assert_not_called()
+    canal_nuevo.basic_reject.assert_called_once_with(delivery_tag=7, requeue=False)
+
+
+def test_si_la_base_no_responde_vuelve_a_la_cola_sin_gastar_intentos(pausas):
+    procesar = MagicMock(side_effect=OperationalError("SELECT 1", {}, Exception("connection refused")))
+    canal = MagicMock()
+    rabbitmq.con_reintentos("cola_prueba", procesar)(canal, Metodo(), _propiedades(), b"{}")
+    assert procesar.call_count == 1 and pausas == [rabbitmq.ESPERA_SI_LA_BASE_NO_RESPONDE]
+    canal.basic_nack.assert_called_once_with(delivery_tag=7, requeue=True)
+    canal.basic_publish.assert_not_called()
+    canal.basic_reject.assert_not_called()
+
+
+def test_un_error_de_rabbitmq_no_se_reintenta(pausas):
+    procesar = MagicMock(side_effect=pika.exceptions.StreamLostError("se cortó"))
+    with pytest.raises(pika.exceptions.StreamLostError):
+        rabbitmq.con_reintentos("cola_prueba", procesar)(MagicMock(), Metodo(), _propiedades(), b"{}")
+    assert procesar.call_count == 1
+
+
+def test_una_cabecera_de_intentos_rara_cuenta_como_ninguno(pausas):
+    procesar = MagicMock()
+    rabbitmq.con_reintentos("cola_prueba", procesar)(MagicMock(), Metodo(), _propiedades(**{"x-intentos": "tres"}), b"{}")
+    procesar.assert_called_once()
+
+
+# ---- Policies ----
+
+def test_la_policy_manda_lo_rechazado_a_su_cola_de_fallidos(monkeypatch):
+    peticiones = []
+
+    class Respuesta:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    monkeypatch.setattr(rabbitmq.urllib.request, "urlopen", lambda peticion, timeout: peticiones.append(peticion) or Respuesta())
+    rabbitmq.asegurar_politicas(["pedidos_pagos"])
+    peticion = peticiones[0]
+    assert peticion.get_method() == "PUT"
+    assert peticion.full_url == f"{rabbitmq.RABBITMQ_GESTION_URL}/api/policies/%2F/fallidos-pedidos_pagos"
+    assert json.loads(peticion.data) == {
+        "pattern": "^pedidos_pagos$", "apply-to": "queues", "priority": 0,
+        "definition": {"dead-letter-exchange": "", "dead-letter-routing-key": "pedidos_pagos.fallidos"},
+    }
+    esperado = base64.b64encode(f"{rabbitmq.RABBITMQ_USER}:{rabbitmq.RABBITMQ_PASSWORD}".encode()).decode()
+    assert peticion.get_header("Authorization") == f"Basic {esperado}"
+
+
+# ---- El bucle del consumidor ----
+
+def test_cierra_la_conexion_vieja_antes_de_abrir_otra(monkeypatch):
+    historia = []
+
+    class Conexion:
+        def __init__(self, numero):
+            self.numero, self.is_open = numero, True
+            historia.append(f"abre {numero}")
+
+        def channel(self):
+            canal = MagicMock()
+            canal.start_consuming.side_effect = pika.exceptions.ChannelClosedByBroker(406, "PRECONDITION_FAILED")
+            return canal
+
+        def close(self):
+            self.is_open = False
+            historia.append(f"cierra {self.numero}")
+
+    numeros = iter(range(1, 10))
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: Conexion(next(numeros)))
+    monkeypatch.setattr(rabbitmq, "asegurar_politicas", lambda colas: None)
+    esperas = []
+
+    def esperar(segundos):
+        esperas.append(segundos)
+        if len(esperas) == 2:
+            raise Salir
+
+    monkeypatch.setattr(rabbitmq.time, "sleep", esperar)
+    with pytest.raises(Salir):
+        rabbitmq.consumir("Prueba", [("eventos_prueba", "cola_prueba", MagicMock())])
+    assert historia == ["abre 1", "cierra 1", "abre 2", "cierra 2"]
+    assert esperas == [rabbitmq.ESPERA_PARA_RECONECTAR] * 2
+
+
+def test_declara_la_cola_de_fallidos_y_no_consume_sin_las_policies(monkeypatch):
+    canal = MagicMock()
+    canal.start_consuming.side_effect = Salir
+    conexiones = []
+    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexiones.append(1) or _conexion_falsa(canal))
+    politicas = []
+
+    def asegurar(colas):
+        politicas.append(list(colas))
+        if len(politicas) == 1:
+            raise OSError("la API de gestión no responde")
+
+    monkeypatch.setattr(rabbitmq, "asegurar_politicas", asegurar)
+    monkeypatch.setattr(rabbitmq.time, "sleep", lambda segundos: None)
+    with pytest.raises(Salir):
+        rabbitmq.consumir("Prueba", [("eventos_a", "cola_a", MagicMock()), ("eventos_b", "cola_b", MagicMock())])
+    # El primer intento no llegó a conectarse: sin policies no se consume.
+    assert politicas == [["cola_a", "cola_b"], ["cola_a", "cola_b"]] and len(conexiones) == 1
+    declaradas = [llamada.kwargs["queue"] for llamada in canal.queue_declare.call_args_list]
+    assert declaradas == ["cola_a", "cola_a.fallidos", "cola_b", "cola_b.fallidos"]
+    assert [llamada.kwargs["queue"] for llamada in canal.basic_consume.call_args_list] == ["cola_a", "cola_b"]

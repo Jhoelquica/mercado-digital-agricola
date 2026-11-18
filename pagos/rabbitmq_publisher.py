@@ -1,23 +1,7 @@
-import os
-import sys
-import json
-import pika
+"""Los eventos de Pagos salen por el exchange eventos_pagos. Cómo se publican está en comun/rabbitmq.py."""
+from functools import partial
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
+from comun.rabbitmq import publicar_evento as publicar_en
 
-def publicar_evento(datos: dict):
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials)
-    )
-    channel = connection.channel()
-    channel.exchange_declare(exchange="eventos_pagos", exchange_type="fanout", durable=True)
-    # delivery_mode=2 (persistente): sin esto el mensaje se pierde si RabbitMQ se reinicia antes de
-    # que lo consuman, aunque el exchange y las colas sean durables.
-    channel.basic_publish(
-        exchange="eventos_pagos", routing_key="", body=json.dumps(datos, default=str),
-        properties=pika.BasicProperties(delivery_mode=2),
-    )
-    connection.close()
+EXCHANGE = "eventos_pagos"
+publicar_evento = partial(publicar_en, EXCHANGE)

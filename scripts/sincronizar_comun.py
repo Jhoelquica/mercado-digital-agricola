@@ -16,6 +16,9 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parents[1]
 ORIGEN = RAIZ / "comun"
 TODOS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notificaciones", "pagos", "certificacion")
+# Los que usan RabbitMQ (y tienen pika): Productos publica; Pedidos, Transporte y Pagos publican y consumen;
+# Notificaciones consume.
+CON_RABBITMQ = ("productos", "pedidos", "transporte", "notificaciones", "pagos")
 
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
@@ -24,8 +27,10 @@ DESTINOS = {
     "conftest.py": TODOS,
     "database.py": TODOS,
     "logging.py": TODOS,
+    "rabbitmq.py": CON_RABBITMQ,
     "test_database.py": TODOS,
     "test_logging.py": TODOS,
+    "test_rabbitmq.py": CON_RABBITMQ,
 }
 # Las pruebas y sus ayudas viajan con el código, pero un servicio no debe tener su propio módulo con el mismo nombre que
 # uno común: el de comun/ dejaría de ser el único (y un logging.py suelto taparía al de Python).

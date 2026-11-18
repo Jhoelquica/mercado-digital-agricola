@@ -1,20 +1,14 @@
 import os
-import sys
 import json
-import time
-import threading
 from datetime import datetime, timedelta
 
-import pika
 from sqlalchemy.exc import IntegrityError
 
+from comun import rabbitmq
 from comun.database import SessionLocal
 import models
 from logica_cobros import ESTADOS_CUMPLIDOS
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 # Cuánto tiempo se guarda el stock de un pedido sin pagar (main.vencer_pagos_sin_pagar lo devuelve al vencer).
 PLAZO_PARA_PAGAR_MINUTOS = int(os.getenv("PLAZO_PARA_PAGAR_MINUTOS", "60"))
 
@@ -71,33 +65,13 @@ def _procesar_mensaje(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-def _iniciar_consumo():
-    while True:
-        try:
-            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials)
-            )
-            channel = connection.channel()
-
-            channel.exchange_declare(exchange="eventos_pedidos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="pagos_pedidos", durable=True)
-            channel.queue_bind(exchange="eventos_pedidos", queue="pagos_pedidos")
-
-            channel.basic_consume(queue="pagos_pedidos", on_message_callback=_procesar_mensaje)
-            # Las entregas: cuándo el agricultor ya puede cobrar lo vendido.
-            channel.exchange_declare(exchange="eventos_envios", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="pagos_envios", durable=True)
-            channel.queue_bind(exchange="eventos_envios", queue="pagos_envios")
-            channel.basic_consume(queue="pagos_envios", on_message_callback=_procesar_mensaje)
-            print("[Pagos] Escuchando eventos de pedidos y de envíos...")
-            channel.start_consuming()
-
-        except Exception as e:
-            print(f"[Pagos] RabbitMQ no disponible, reintentando en 5s... ({e})")
-            time.sleep(5)
+# (exchange, cola, manejador). La conexión, los reintentos y las colas de fallidos están en comun/rabbitmq.py.
+SUSCRIPCIONES = (
+    ("eventos_pedidos", "pagos_pedidos", _procesar_mensaje),
+    # Las entregas: cuándo el agricultor ya puede cobrar lo vendido.
+    ("eventos_envios", "pagos_envios", _procesar_mensaje),
+)
 
 
 def lanzar_consumidor_en_hilo():
-    hilo = threading.Thread(target=_iniciar_consumo, daemon=True)
-    hilo.start()
+    rabbitmq.lanzar_consumidor_en_hilo("Pagos", SUSCRIPCIONES)

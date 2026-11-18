@@ -1,19 +1,11 @@
-import os
-import sys
 import json
-import time
-import threading
-import pika
 
+from comun import rabbitmq
 from comun.database import SessionLocal
 import avisos_externos
 import models
 from mensajes import (mensaje_cobro, mensaje_envio, mensaje_pago, mensaje_pedido_creado, mensaje_recojo,
                       mensaje_recojo_anulado_contratado, mensaje_recojo_sin_vehiculo)
-
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 
 def _guardar_notificacion(tipo: str, mensaje: str, pedido_id: str = None, producto_id: str = None, usuario_id: str = None,
@@ -89,43 +81,14 @@ def _procesar_mensaje(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-def _iniciar_consumo():
-    while True:
-        try:
-            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials)
-            )
-            channel = connection.channel()
-
-            channel.exchange_declare(exchange="eventos_pedidos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="notificaciones_pedidos", durable=True)
-            channel.queue_bind(exchange="eventos_pedidos", queue="notificaciones_pedidos")
-            channel.basic_consume(queue="notificaciones_pedidos", on_message_callback=_procesar_mensaje)
-
-            channel.exchange_declare(exchange="eventos_envios", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="notificaciones_envios", durable=True)
-            channel.queue_bind(exchange="eventos_envios", queue="notificaciones_envios")
-            channel.basic_consume(queue="notificaciones_envios", on_message_callback=_procesar_mensaje)
-
-            channel.exchange_declare(exchange="eventos_productos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="notificaciones_productos", durable=True)
-            channel.queue_bind(exchange="eventos_productos", queue="notificaciones_productos")
-            channel.basic_consume(queue="notificaciones_productos", on_message_callback=_procesar_mensaje)
-
-            channel.exchange_declare(exchange="eventos_pagos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="notificaciones_pagos", durable=True)
-            channel.queue_bind(exchange="eventos_pagos", queue="notificaciones_pagos")
-            channel.basic_consume(queue="notificaciones_pagos", on_message_callback=_procesar_mensaje)
-
-            print("[Notificaciones] Escuchando eventos de pedidos, envíos, productos y pagos...")
-            channel.start_consuming()
-
-        except Exception as e:
-            print(f"[Notificaciones] RabbitMQ no disponible, reintentando en 5s... ({e})")
-            time.sleep(5)
+# (exchange, cola, manejador). La conexión, los reintentos y las colas de fallidos están en comun/rabbitmq.py.
+SUSCRIPCIONES = (
+    ("eventos_pedidos", "notificaciones_pedidos", _procesar_mensaje),
+    ("eventos_envios", "notificaciones_envios", _procesar_mensaje),
+    ("eventos_productos", "notificaciones_productos", _procesar_mensaje),
+    ("eventos_pagos", "notificaciones_pagos", _procesar_mensaje),
+)
 
 
 def lanzar_consumidor_en_hilo():
-    hilo = threading.Thread(target=_iniciar_consumo, daemon=True)
-    hilo.start()
+    rabbitmq.lanzar_consumidor_en_hilo("Notificaciones", SUSCRIPCIONES)

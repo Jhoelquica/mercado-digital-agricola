@@ -1,16 +1,8 @@
-import os
-import sys
 import json
-import time
-import threading
-import pika
 
+from comun import rabbitmq
 from comun.database import SessionLocal
 import models
-
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 
 def _procesar_mensaje_pago(ch, method, properties, body):
@@ -48,33 +40,12 @@ def _procesar_mensaje_envio(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-def _iniciar_consumo():
-    while True:
-        try:
-            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials)
-            )
-            channel = connection.channel()
-
-            channel.exchange_declare(exchange="eventos_pagos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="pedidos_pagos", durable=True)
-            channel.queue_bind(exchange="eventos_pagos", queue="pedidos_pagos")
-            channel.basic_consume(queue="pedidos_pagos", on_message_callback=_procesar_mensaje_pago)
-
-            channel.exchange_declare(exchange="eventos_envios", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="pedidos_envios", durable=True)
-            channel.queue_bind(exchange="eventos_envios", queue="pedidos_envios")
-            channel.basic_consume(queue="pedidos_envios", on_message_callback=_procesar_mensaje_envio)
-
-            print("[Pedidos] Escuchando eventos de pagos y envíos...")
-            channel.start_consuming()
-
-        except Exception as e:
-            print(f"[Pedidos] RabbitMQ no disponible, reintentando en 5s... ({e})")
-            time.sleep(5)
+# (exchange, cola, manejador). La conexión, los reintentos y las colas de fallidos están en comun/rabbitmq.py.
+SUSCRIPCIONES = (
+    ("eventos_pagos", "pedidos_pagos", _procesar_mensaje_pago),
+    ("eventos_envios", "pedidos_envios", _procesar_mensaje_envio),
+)
 
 
 def lanzar_consumidor_en_hilo():
-    hilo = threading.Thread(target=_iniciar_consumo, daemon=True)
-    hilo.start()
+    rabbitmq.lanzar_consumidor_en_hilo("Pedidos", SUSCRIPCIONES)

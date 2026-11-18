@@ -1,22 +1,15 @@
-import os
-import sys
 import json
-import time
-import threading
 import secrets
 
 from sqlalchemy.orm import Session
 
-import pika
 from logica_repartidores import proponer_envio_a_repartidor, _obtener_pedido
 import logica_viajes
 import logica_recojos
+from comun import rabbitmq
 from comun.database import SessionLocal
 import models
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
-RABBITMQ_USER = os.getenv("RABBITMQ_USER") or sys.exit("Falta la variable de entorno RABBITMQ_USER: el servicio no arranca sin ella.")
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD") or sys.exit("Falta la variable de entorno RABBITMQ_PASSWORD: el servicio no arranca sin ella.")
 
 COLA = "transporte_pagos"
 # Cola de antes de este arreglo, ligada a eventos_pedidos: si se deja, RabbitMQ la sigue llenando con cada
@@ -110,33 +103,12 @@ def _borrar_cola_anterior(connection):
         print(f"[Transporte] No se pudo borrar la cola anterior {COLA_ANTERIOR}: {e}")
 
 
-def _iniciar_consumo():
-    while True:
-        try:
-            credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBITMQ_HOST, credentials=credentials)
-            )
-            _borrar_cola_anterior(connection)
-            channel = connection.channel()
-
-            channel.exchange_declare(exchange="eventos_pagos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue=COLA, durable=True)
-            channel.queue_bind(exchange="eventos_pagos", queue=COLA)
-
-            channel.basic_consume(queue=COLA, on_message_callback=_procesar_mensaje)
-            channel.exchange_declare(exchange="eventos_productos", exchange_type="fanout", durable=True)
-            channel.queue_declare(queue="transporte_productos", durable=True)
-            channel.queue_bind(exchange="eventos_productos", queue="transporte_productos")
-            channel.basic_consume(queue="transporte_productos", on_message_callback=_procesar_mensaje)
-            print("[Transporte] Escuchando eventos de pagos y de productos...")
-            channel.start_consuming()
-
-        except Exception as e:
-            print(f"[Transporte] RabbitMQ no disponible, reintentando en 5s... ({e})")
-            time.sleep(5)
+# (exchange, cola, manejador). La conexión, los reintentos y las colas de fallidos están en comun/rabbitmq.py.
+SUSCRIPCIONES = (
+    ("eventos_pagos", COLA, _procesar_mensaje),
+    ("eventos_productos", "transporte_productos", _procesar_mensaje),
+)
 
 
 def lanzar_consumidor_en_hilo():
-    hilo = threading.Thread(target=_iniciar_consumo, daemon=True)
-    hilo.start()
+    rabbitmq.lanzar_consumidor_en_hilo("Transporte", SUSCRIPCIONES, antes_de_consumir=_borrar_cola_anterior)
