@@ -22,7 +22,7 @@ from comun.database import Base, engine, SessionLocal, get_db
 from comun import inbox
 import models
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
-from migraciones import agregar_columnas_faltantes
+from comun.migraciones import agregar_columnas_faltantes
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)

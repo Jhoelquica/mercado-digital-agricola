@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 from comun.database import Base, engine, SessionLocal
 import models
 from rabbitmq_consumer import _procesar_mensaje
-from migraciones import agregar_columnas_faltantes
+from comun.migraciones import agregar_columnas_faltantes
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)  # la base de pruebas puede venir de antes de la columna `estado`

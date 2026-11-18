@@ -26,7 +26,8 @@ from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRAN
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
-from migraciones import agregar_columnas_faltantes, asegurar_indice_unico_de_envios
+from comun.migraciones import agregar_columnas_faltantes
+from migraciones import asegurar_indice_unico_de_envios
 from minio_client import subir_foto_entrega, subir_documento_transportista, leer_documento_transportista
 from documentos import leer_documento_validado, LIMITE_CUERPO_DOCUMENTOS_BYTES
 from fastapi import Response

@@ -31,7 +31,7 @@ from comun.auth import verificar_token, requiere_rol, security
 
 from comun.database import Base, engine, SessionLocal, get_db
 from comun import inbox
-from migraciones import agregar_columnas_faltantes
+from comun.migraciones import agregar_columnas_faltantes
 import models
 import reniec
 import ventas

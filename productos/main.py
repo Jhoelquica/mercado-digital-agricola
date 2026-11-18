@@ -24,7 +24,8 @@ from comun.auth import verificar_token, requiere_rol, security, security_opciona
 from comun.auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from comun.database import Base, engine, SessionLocal, get_db
-from migraciones import agregar_columnas_faltantes, separar_fecha_de_creacion
+from comun.migraciones import agregar_columnas_faltantes
+from migraciones import separar_fecha_de_creacion
 import models
 from sqlalchemy import func
 from fastapi import FastAPI, Depends, HTTPException, Header

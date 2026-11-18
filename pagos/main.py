@@ -35,7 +35,8 @@ from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartid
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 import logica_cobros
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
-from migraciones import agregar_columnas_faltantes, asegurar_indice_unico_de_pagos
+from comun.migraciones import agregar_columnas_faltantes
+from migraciones import asegurar_indice_unico_de_pagos
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_constancia, leer_constancia
 from fastapi.responses import JSONResponse

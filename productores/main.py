@@ -31,7 +31,8 @@ from validaciones import (
 )
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_foto_cosecha, asegurar_bucket_publico
-from migraciones import agregar_columnas_faltantes, pasar_entero_a_decimal
+from comun.migraciones import agregar_columnas_faltantes
+from migraciones import pasar_entero_a_decimal
 import contornos
 from contornos import ContornoInvalido, validar_contorno
 import sugerencia_cosecha

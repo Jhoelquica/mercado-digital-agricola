@@ -1,18 +1,19 @@
-"""Migración mínima de esquema para Notificaciones (copia de productores/migraciones.py: cada servicio es autosuficiente).
+# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py
+"""Migración mínima de esquema, común a los servicios: las columnas nuevas de una tabla que ya existe.
 
-Este servicio no usa Alembic: Base.metadata.create_all() (main.py) crea las TABLAS que faltan, pero no agrega columnas
-nuevas a una tabla que ya existe. Cuando models.py suma una columna (p. ej. el estado del envío en `notificaciones`), toda base creada antes queda con errores "column ... does not exist" en cada consulta a esa
-tabla.
+Los servicios no usan Alembic: Base.metadata.create_all() (en cada main.py) crea las TABLAS que faltan, pero no agrega
+columnas nuevas a una tabla que ya existe. Cuando un models.py suma una columna, toda base creada antes queda con
+errores "column ... does not exist" en cada consulta a esa tabla.
 
 agregar_columnas_faltantes() cierra ese hueco para el caso simple: columnas nuevas que aceptan NULL. Una columna NOT
 NULL sin valor por defecto NO se agrega sola (las filas existentes quedarían inválidas): se avisa por log para
-resolverla a mano.
+resolverla a mano. Lo propio de cada servicio (índices, cambios de tipo, datos) sigue en su migraciones.py.
 """
 import logging
 
 from sqlalchemy import inspect, text
 
-logger = logging.getLogger("notificaciones.migraciones")
+logger = logging.getLogger("comun.migraciones")
 
 
 def agregar_columnas_faltantes(engine, base):

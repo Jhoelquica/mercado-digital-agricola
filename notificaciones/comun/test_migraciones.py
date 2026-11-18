@@ -1,4 +1,5 @@
-"""Tests de migraciones.agregar_columnas_faltantes.
+# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py
+"""Pruebas de comun/migraciones.py: agregar_columnas_faltantes.
 
 No necesitan Postgres: usan SQLite en memoria y un Base de prueba propio (no el del servicio, cuyos
 tipos UUID de postgresql no existen en SQLite). Lo que se prueba es la lógica de comparar modelo vs
@@ -9,8 +10,8 @@ import logging
 from sqlalchemy import Column, Integer, String, create_engine, inspect, text
 from sqlalchemy.orm import declarative_base
 
-import migraciones
-from migraciones import agregar_columnas_faltantes
+from comun import migraciones
+from comun.migraciones import agregar_columnas_faltantes
 
 
 def _base_vieja():
@@ -64,7 +65,7 @@ def test_es_idempotente():
 def test_no_agrega_una_columna_not_null_sin_default_y_avisa(caplog):
     engine = _base_vieja()
 
-    with caplog.at_level(logging.ERROR, logger="transporte.migraciones"):
+    with caplog.at_level(logging.ERROR, logger="comun.migraciones"):
         agregadas = agregar_columnas_faltantes(engine, _modelo(con_not_null=True))
 
     assert "envios.obligatoria" not in agregadas
@@ -87,6 +88,6 @@ def test_un_fallo_al_inspeccionar_no_tumba_el_arranque(monkeypatch, caplog):
 
     monkeypatch.setattr(migraciones, "inspect", _falla)
 
-    with caplog.at_level(logging.ERROR, logger="transporte.migraciones"):
+    with caplog.at_level(logging.ERROR, logger="comun.migraciones"):
         assert agregar_columnas_faltantes(create_engine("sqlite://"), _modelo()) == []
     assert "No se pudo inspeccionar el esquema" in caplog.text

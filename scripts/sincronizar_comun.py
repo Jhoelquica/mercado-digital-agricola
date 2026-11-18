@@ -24,6 +24,8 @@ TODOS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notif
 CON_RABBITMQ = ("productos", "pedidos", "transporte", "notificaciones", "pagos")
 # Los consumidores que se protegen de los mensajes repetidos con la tabla eventos_procesados (comun/inbox.py).
 CON_INBOX = ("pedidos", "notificaciones")
+# Los que agregan solas las columnas nuevas de sus tablas (comun/migraciones.py): todos menos Certificación.
+CON_MIGRACION_DE_COLUMNAS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notificaciones", "pagos")
 
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
@@ -33,15 +35,19 @@ DESTINOS = {
     "database.py": TODOS,
     "inbox.py": CON_INBOX,
     "logging.py": TODOS,
+    "migraciones.py": CON_MIGRACION_DE_COLUMNAS,
     "rabbitmq.py": CON_RABBITMQ,
     "test_database.py": TODOS,
     "test_inbox.py": CON_INBOX,
     "test_logging.py": TODOS,
+    "test_migraciones.py": CON_MIGRACION_DE_COLUMNAS,
     "test_rabbitmq.py": CON_RABBITMQ,
 }
 # Las pruebas y sus ayudas viajan con el código, pero un servicio no debe tener su propio módulo con el mismo nombre que
 # uno común: el de comun/ dejaría de ser el único (y un logging.py suelto taparía al de Python).
 NO_SON_MODULOS = {"__init__.py", "conftest.py"}
+# Salvo migraciones.py: comun/migraciones.py tiene la migración común y el migraciones.py del servicio, las suyas.
+PUEDEN_TENER_EL_SUYO = {"migraciones.py"}
 
 ENCABEZADO = "# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py\n"
 
@@ -104,7 +110,7 @@ def problemas() -> list:
         sobrantes = {p.name for p in carpeta.glob("*.py")} - deberian if carpeta.exists() else set()
         for archivo in sorted(sobrantes):
             encontrados.append(f"{servicio}/comun/{archivo} sobra: no sale de comun/ para este servicio")
-        for archivo in sorted(deberian - NO_SON_MODULOS):
+        for archivo in sorted(deberian - NO_SON_MODULOS - PUEDEN_TENER_EL_SUYO):
             if (RAIZ / servicio / archivo).exists():
                 encontrados.append(f"{servicio}/{archivo} existe además de {servicio}/comun/{archivo}: bórralo")
     manifiesto = _texto(MANIFIESTO_RABBITMQ)

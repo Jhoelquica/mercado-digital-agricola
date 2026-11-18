@@ -26,7 +26,8 @@ from comun.auth import secreto_de_servicio_valido
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
-from migraciones import agregar_columnas_faltantes, crear_indices_faltantes
+from comun.migraciones import agregar_columnas_faltantes
+from migraciones import crear_indices_faltantes
 import sunat
 from documentos import leer_documento_validado, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_documento_reclamo, leer_documento_reclamo
