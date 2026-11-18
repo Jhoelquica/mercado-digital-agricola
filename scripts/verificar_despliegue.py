@@ -15,9 +15,10 @@ Qué comprueba:
   - HTTPS (si --base es https): certificado válido (avisa si es el de PRUEBA o vence pronto), http redirige a https, y los
     puertos internos (9000, 8006, 8080, 5432) NO responden desde fuera.
   - Kubernetes (con --contexto): todos los pods listos y ninguno en CrashLoopBackOff (FALLA), ningún contenedor que se
-    haya reiniciado después de estar listo (AVISO), réplicas deseadas = listas y los consumidores de RabbitMQ conectados.
+    haya reiniciado después de estar listo (AVISO), réplicas deseadas = listas y RabbitMQ (abajo).
     Los reinicios acumulados desde que se creó cada pod se muestran solo como dato ([INFO]).
-  - Compose (con --compose): todos los contenedores en marcha y sanos, y los consumidores de RabbitMQ conectados.
+  - Compose (con --compose): todos los contenedores en marcha y sanos, y RabbitMQ.
+  - RabbitMQ: cada cola con consumidores y con su policy de fallidos (FALLA); <cola>.fallidos vacías (AVISO si no).
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
@@ -40,7 +41,8 @@ SERVICIOS = {"usuarios": 8006, "productores": 8001, "productos": 8002, "pedidos"
              "transporte": 8004, "notificaciones": 8005, "pagos": 8007, "certificacion": 8008}
 PUERTO_FRONTEND_COMPOSE = 8090
 PUERTO_MINIO = 9000
-COLAS_ESPERADAS = 7  # pedidos_envios, pagos_pedidos, transporte_pedidos, notificaciones_{pedidos,envios,productos}, pedidos_pagos
+# pedidos_{pagos,envios}, transporte_{pagos,productos}, notificaciones_{pedidos,envios,productos,pagos} y pagos_{pedidos,envios}
+COLAS_ESPERADAS = 10
 
 resultados = []  # (nivel, nombre, detalle)
 
@@ -164,23 +166,32 @@ def revisar_pods(pods):
     return {"no_listos": no_listos, "en_crashloop": en_crashloop, "tras_listo": tras_listo, "total": total}
 
 
-def contar_consumidores(salida):
-    """Parsea `rabbitmqctl list_queues name consumers` → {cola: consumidores}."""
-    colas = {}
-    for linea in salida.splitlines():
-        partes = linea.split()
-        if len(partes) == 2 and partes[1].isdigit() and partes[0] not in ("name", "Timeout:"):
-            colas[partes[0]] = int(partes[1])
-    return colas
+LISTAR_COLAS = ["rabbitmqctl", "list_queues", "-q", "--formatter", "json", "name", "consumers", "messages", "policy"]
 
 
-def comprobar_consumidores(colas):
+def leer_colas(salida):
+    """Parsea `rabbitmqctl list_queues ... --formatter json` → {cola: {consumers, messages, policy}}."""
+    try:
+        return {c["name"]: c for c in json.loads(salida or "[]")}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def comprobar_colas(colas):
     if not colas:
         return registrar("FALLA", "RabbitMQ: colas con consumidores", "no se pudieron leer las colas")
-    sin = sorted(c for c, n in colas.items() if n == 0)
-    comprobar("RabbitMQ: cada cola tiene consumidores conectados", len(colas) >= COLAS_ESPERADAS and not sin,
-              f"{len(colas)} colas, consumidores por cola: {sorted(set(colas.values()))}",
-              f"colas sin consumidores: {sin}" if sin else f"solo {len(colas)} colas (se esperaban {COLAS_ESPERADAS})")
+    # <cola>.fallidos guarda lo que falló 3 veces (comun/rabbitmq.py): nadie la consume, se revisa a mano.
+    de_trabajo = {n: c for n, c in colas.items() if not n.endswith(".fallidos")}
+    sin = sorted(n for n, c in de_trabajo.items() if not c.get("consumers"))
+    comprobar("RabbitMQ: cada cola tiene consumidores conectados", len(de_trabajo) >= COLAS_ESPERADAS and not sin,
+              f"{len(de_trabajo)} colas, consumidores por cola: {sorted({c.get('consumers') for c in de_trabajo.values()})}",
+              f"colas sin consumidores: {sin}" if sin else f"solo {len(de_trabajo)} colas (se esperaban {COLAS_ESPERADAS})")
+    sin_ruta = sorted(n for n, c in de_trabajo.items() if c.get("policy") != f"fallidos-{n}" or f"{n}.fallidos" not in colas)
+    comprobar("RabbitMQ: cada cola manda lo que falla a <cola>.fallidos (policy fallidos-<cola>)", not sin_ruta,
+              f"{len(de_trabajo)} colas con su policy y su cola de fallidos", f"sin policy o sin cola de fallidos: {sin_ruta}")
+    con_mensajes = sorted(f"{n}: {c.get('messages')}" for n, c in colas.items() if n.endswith(".fallidos") and c.get("messages"))
+    comprobar("RabbitMQ: las colas de fallidos están vacías", not con_mensajes, "",
+              f"mensajes por revisar en el panel de RabbitMQ: {', '.join(con_mensajes)}", "AVISO")
 
 
 def main():
@@ -348,11 +359,11 @@ def main():
             malos = [f"{d['metadata']['name']} {d['status'].get('readyReplicas', 0)}/{d['spec']['replicas']}"
                      for d in json.loads(salida)["items"] if d["status"].get("readyReplicas", 0) != d["spec"]["replicas"]]
             comprobar("Kubernetes: réplicas listas = réplicas deseadas en todos los Deployment", not malos, "", ", ".join(malos))
-        salida, error = kubectl(["exec", "deploy/rabbitmq", "--", "rabbitmqctl", "list_queues", "name", "consumers"], contexto_k)
+        salida, error = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_COLAS, contexto_k)
         if salida is None:
             registrar("FALLA", "RabbitMQ: leer las colas", error)
         else:
-            comprobar_consumidores(contar_consumidores(salida))
+            comprobar_colas(leer_colas(salida))
 
     # ---- 7. Compose
     if args.compose:
@@ -369,10 +380,10 @@ def main():
                 malos = [f"{f['Service']}({f['State']}/{f.get('Health') or 'sin healthcheck'})" for f in filas
                          if f["State"] != "running" or f.get("Health") in ("unhealthy", "starting")]
                 comprobar("Compose: todos los contenedores en marcha y sanos", not malos, f"{len(filas)} contenedores", ", ".join(malos))
-                comando = ["docker", "compose", "exec", "-T", "rabbitmq", "rabbitmqctl", "list_queues", "name", "consumers"]
+                comando = ["docker", "compose", "exec", "-T", "rabbitmq"] + LISTAR_COLAS
                 r = subprocess.run(comando, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
                                    cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-                comprobar_consumidores(contar_consumidores(r.stdout) if r.returncode == 0 else {})
+                comprobar_colas(leer_colas(r.stdout) if r.returncode == 0 else {})
 
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")
