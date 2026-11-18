@@ -12,4 +12,4 @@ TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO") or sys.
 
 
 def cabecera_pedidos() -> dict:
-    return {"X-Servicio-Secreto": TRANSPORTE_A_PEDIDOS_SECRETO or ""}
+    return {"X-Servicio-Secreto": TRANSPORTE_A_PEDIDOS_SECRETO}

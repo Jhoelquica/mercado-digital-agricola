@@ -126,7 +126,7 @@ def _reponer_en_productos(client, producto_id, cantidad: int) -> tuple[str, str 
         resp = client.post(
             f"{PRODUCTOS_URL}/productos/{producto_id}/stock/reponer",
             json={"cantidad": cantidad},
-            headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
+            headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO},
             timeout=5,
         )
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
@@ -219,7 +219,7 @@ def reservar_stock(items_json: str):
             resp = client.post(
                 f"{PRODUCTOS_URL}/productos/interno/descontar-stock-lote",
                 json={"lineas": [{"producto_id": producto_id, "cantidad": cantidad} for producto_id, cantidad in cantidades.items()]},
-                headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO or ""},
+                headers={"X-Servicio-Secreto": PAGOS_A_PRODUCTOS_SECRETO},
                 timeout=5,
             )
     except httpx.RequestError:

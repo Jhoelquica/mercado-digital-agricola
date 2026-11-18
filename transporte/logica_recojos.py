@@ -220,7 +220,7 @@ def liquidar(recojo: models.Recojo) -> None:
             json={"recojo_id": str(recojo.id), "repartidor_id": str(recojo.repartidor_id) if recojo.repartidor_id else None,
                   "productor_id": str(recojo.productor_id),
                   "producto_id": str(recojo.producto_id), "costo": float(recojo.costo)},
-            headers={"X-Servicio-Secreto": TRANSPORTE_A_PAGOS_SECRETO or ""},
+            headers={"X-Servicio-Secreto": TRANSPORTE_A_PAGOS_SECRETO},
             timeout=5,
         )
     resp.raise_for_status()

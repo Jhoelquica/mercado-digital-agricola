@@ -856,7 +856,7 @@ def _registrar_certificacion_cosecha(registro, productor, chacra, producto_id: s
         resp = httpx.post(
             f"{CERTIFICACION_URL}/certificacion/{producto_id}/cosecha-aprobada",
             json={"datos_cosecha": " ".join(partes), "foto_url": registro.foto_cosecha_url},
-            headers={"X-Servicio-Secreto": PRODUCTORES_A_CERTIFICACION_SECRETO or ""},
+            headers={"X-Servicio-Secreto": PRODUCTORES_A_CERTIFICACION_SECRETO},
             timeout=5,
         )
     except httpx.RequestError:

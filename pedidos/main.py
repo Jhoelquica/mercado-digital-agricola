@@ -733,7 +733,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                     {"producto_id": str(item.producto_id), "cantidad": cantidad_base}
                     for item, _, _, cantidad_base, _ in items_validados
                 ]},
-                headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO or ""},
+                headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO},
                 timeout=5,
             )
         except httpx.RequestError:
@@ -814,7 +814,7 @@ def _devolver_stock(client, lineas) -> None:
         resp = client.post(
             f"{PRODUCTOS_URL}/productos/interno/reponer-stock-lote",
             json={"lineas": [{"producto_id": str(producto_id), "cantidad": cantidad} for producto_id, cantidad in lineas]},
-            headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO or ""},
+            headers={"X-Servicio-Secreto": PEDIDOS_A_PRODUCTOS_SECRETO},
             timeout=5,
         )
     except httpx.RequestError:

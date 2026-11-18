@@ -1223,7 +1223,7 @@ def _registrar_llegada_en_la_cadena(producto_id, texto: str) -> None:
         resp = httpx.post(
             f"{CERTIFICACION_URL}/certificacion/{producto_id}/llegada-almacen",
             json={"datos": texto},
-            headers={"X-Servicio-Secreto": PRODUCTOS_A_CERTIFICACION_SECRETO or ""},
+            headers={"X-Servicio-Secreto": PRODUCTOS_A_CERTIFICACION_SECRETO},
             timeout=5,
         )
     except httpx.RequestError:
