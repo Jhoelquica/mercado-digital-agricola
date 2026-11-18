@@ -1994,3 +1994,46 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+# ============ Buckets de MinIO: dos réplicas pueden crearlos a la vez ============
+
+def _error_s3(codigo):
+    from minio.error import S3Error
+    return S3Error(None, codigo, "simulado", "/transporte-entregas", "id-de-prueba", "host-de-prueba")
+
+
+class _MinioQueFalla:
+    """No existe el bucket y crearlo da `error` (o nada): como si otra réplica se adelantara."""
+
+    def __init__(self, error=None):
+        self.error, self.creados = error, []
+
+    def bucket_exists(self, nombre):
+        return False
+
+    def make_bucket(self, nombre):
+        self.creados.append(nombre)
+        if self.error:
+            raise self.error
+
+    def put_object(self, *args, **kwargs):
+        pass
+
+
+@pytest.mark.parametrize("codigo", ["BucketAlreadyOwnedByYou", "BucketAlreadyExists"])
+def test_si_otra_replica_crea_el_bucket_a_la_vez_se_sigue_adelante(monkeypatch, codigo):
+    import minio_client
+    falso = _MinioQueFalla(_error_s3(codigo))
+    monkeypatch.setattr(minio_client, "client", falso)
+    minio_client._asegurar_bucket()
+    assert minio_client.subir_documento_transportista(b"%PDF-1.4", "application/pdf").endswith(".pdf")
+    assert falso.creados == ["transporte-entregas", "transporte-documentos"]
+
+
+def test_un_error_real_al_crear_el_bucket_no_se_traga(monkeypatch):
+    import minio_client
+    from minio.error import S3Error
+    monkeypatch.setattr(minio_client, "client", _MinioQueFalla(_error_s3("AccessDenied")))
+    with pytest.raises(S3Error):
+        minio_client._asegurar_bucket()

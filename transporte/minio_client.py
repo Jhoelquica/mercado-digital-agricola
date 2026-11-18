@@ -2,6 +2,7 @@ import os
 import sys
 import uuid
 from minio import Minio
+from minio.error import S3Error
 
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY") or sys.exit("Falta la variable de entorno MINIO_ACCESS_KEY: el servicio no arranca sin ella.")
@@ -17,12 +18,17 @@ client = Minio(
 )
 
 
-def _asegurar_bucket():
-    # A diferencia de "productos-imagenes" (creado a mano en MinIO), este bucket es nuevo: se crea
-    # solo la primera vez para que la feature funcione sin un paso manual previo. Sin política
-    # pública a propósito — es evidencia de entrega, no una imagen de catálogo.
-    if not client.bucket_exists(MINIO_BUCKET):
-        client.make_bucket(MINIO_BUCKET)
+def _asegurar_bucket(nombre: str = MINIO_BUCKET) -> None:
+    # Los buckets de Transporte se crean la primera vez que se usan, sin un paso manual previo. Sin política pública a
+    # propósito: son evidencia de entrega y documentos, no imágenes de catálogo. Con varias réplicas, dos pueden verlo
+    # faltar a la vez: la que llega segunda recibe "ya existe" y sigue (igual que en Usuarios, Productores, Productos y
+    # Pagos).
+    try:
+        if not client.bucket_exists(nombre):
+            client.make_bucket(nombre)
+    except S3Error as error:
+        if error.code not in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):  # otra réplica lo creó a la vez
+            raise
 
 
 EXTENSIONES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -50,8 +56,7 @@ EXTENSIONES_DOCUMENTOS = {**EXTENSIONES, "application/pdf": ".pdf"}
 
 def subir_documento_transportista(datos: bytes, content_type: str) -> str:
     import io
-    if not client.bucket_exists(BUCKET_DOCUMENTOS):
-        client.make_bucket(BUCKET_DOCUMENTOS)
+    _asegurar_bucket(BUCKET_DOCUMENTOS)
     nombre = f"{uuid.uuid4()}{EXTENSIONES_DOCUMENTOS.get(content_type, '.bin')}"
     client.put_object(BUCKET_DOCUMENTOS, nombre, io.BytesIO(datos), length=len(datos), content_type=content_type)
     return nombre
