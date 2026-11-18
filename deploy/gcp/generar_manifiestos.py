@@ -54,9 +54,7 @@ def recursos(limite_cpu, limite_mem, pedido_cpu, pedido_mem):
 
 
 def construir(args):
-    # Los pvc-*.yaml repiten el volumen que ya define cada db-*.yaml (con `storageClassName: standard`, propio de Docker
-    # Desktop): en GKE basta con el de db-*.yaml, que usa la clase de almacenamiento por defecto del clúster.
-    archivos = sorted(p.name for p in K8S.glob("*.yaml") if p.name not in EXCLUIDOS and not p.name.startswith("pvc-"))
+    archivos = sorted(p.name for p in K8S.glob("*.yaml") if p.name not in EXCLUIDOS)
     rel = "../../../k8s"
     lineas_recursos = "\n".join(f"  - {rel}/{nombre}" for nombre in archivos)
     imagenes = "\n".join(
@@ -114,6 +112,10 @@ def construir(args):
         '{kind: Middleware, name: "^cors-global$"}',
         f'- op: replace\n  path: /spec/headers/accessControlAllowOriginList\n  value: ["https://{args.dominio}"]',
     ))
+
+    # --- volúmenes de las bases: los pvc-*.yaml (su única fuente) piden la clase `standard`, la de Docker Desktop. En GKE
+    # se quita para que usen la clase de almacenamiento por defecto del clúster.
+    partes.append(parche('{kind: PersistentVolumeClaim, name: "^db-.*-pvc$"}', "- op: remove\n  path: /spec/storageClassName"))
 
     # --- límites de recursos
     partes.append(parche(f'{{kind: Deployment, name: "^({servicios_re})$"}}', recursos("500m", "512Mi", "50m", "128Mi")))

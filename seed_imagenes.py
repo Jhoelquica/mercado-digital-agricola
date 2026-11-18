@@ -15,10 +15,12 @@ MINIO_CLIENT = Minio("localhost:9000", access_key=MINIO_ACCESS_KEY, secret_key=M
 BUCKET = "productos-imagenes"
 
 # La base de Productos en 127.0.0.1:15432: ábrela antes con scripts/abrir-puertos.ps1 -Solo base-productos (y
-# ciérrala con -Cerrar). El usuario y la contraseña son los de esa base en el Secret (DB_USER, DB_PASSWORD_PRODUCTOS).
+# ciérrala con -Cerrar). El usuario y la contraseña son los de esa base en el Secret (DB_USER, DB_PASSWORD_PRODUCTOS), y el
+# nombre, el de la ConfigMap base-productos (DB_NAME; si no se da, "productos").
 DB_USER = os.getenv("DB_USER") or sys.exit("Falta la variable de entorno DB_USER: el script no corre sin ella.")
 DB_PASSWORD_PRODUCTOS = os.getenv("DB_PASSWORD_PRODUCTOS") or sys.exit("Falta la variable de entorno DB_PASSWORD_PRODUCTOS: el script no corre sin ella.")
-conn = psycopg2.connect(host="localhost", port=15432, dbname="productos", user=DB_USER, password=DB_PASSWORD_PRODUCTOS)
+DB_NAME = os.getenv("DB_NAME") or "productos"
+conn = psycopg2.connect(host="localhost", port=15432, dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD_PRODUCTOS)
 cur = conn.cursor()
 
 ALIAS = {

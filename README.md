@@ -217,6 +217,8 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
   `base-<servicio>` de `k8s/<servicio>.yaml`, la misma que leen el initContainer y la propia base; en compose, el nombre
   se escribe una vez en `POSTGRES_DB` y el servicio lo toma de ahí. El pool se ajusta con `DB_POOL_SIZE` y
   `DB_MAX_OVERFLOW` (por defecto 5 y 10 conexiones por proceso).
+- Los logs salen con hora, nivel y nombre del logger, al nivel de `LOG_LEVEL` (INFO por defecto). Las librerías ruidosas
+  (httpx, pika, Gemini...) quedan en WARNING, y el log de acceso de uvicorn solo escribe las respuestas con error.
 - CORS abierto (`*`).
 - El JWT es simétrico (HS256) y todos los servicios comparten la misma clave.
 

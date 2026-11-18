@@ -1,14 +1,3 @@
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: db-certificacion-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -64,7 +53,7 @@ spec:
               mountPath: /var/lib/postgresql/data
       volumes:
         - name: datos
-          persistentVolumeClaim:
+          persistentVolumeClaim:  # el volumen lo define k8s/pvc-certificacion.yaml, su única fuente
             claimName: db-certificacion-pvc
 ---
 apiVersion: v1
