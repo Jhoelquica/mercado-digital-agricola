@@ -11,7 +11,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from comun.database import SessionLocal
+from comun.database import en_su_sesion_sin_lanzar
 import models
 from rabbitmq_publisher import publicar_evento
 
@@ -56,16 +56,17 @@ def reenviar_eventos_pendientes(db, ahora=None) -> int:
     return enviados
 
 
+def una_pasada() -> bool:
+    """Un ciclo del hilo. Nunca lanza, aunque falle el rollback o el cierre de la sesión: el hilo no debe morir."""
+    return en_su_sesion_sin_lanzar(reenviar_eventos_pendientes, "El ciclo de la bandeja de salida", logger)
+
+
 def _bucle():
     while True:
-        db = SessionLocal()
         try:
-            reenviar_eventos_pendientes(db)
-        except Exception:
-            db.rollback()
-            logger.error("El ciclo de la bandeja de salida falló, reintenta en %ds", INTERVALO_SEGUNDOS, exc_info=True)
-        finally:
-            db.close()
+            una_pasada()
+        except Exception:  # una_pasada no lanza; esto es por si algo cambia
+            logger.exception("El ciclo de la bandeja de salida falló")
         time.sleep(INTERVALO_SEGUNDOS)
 
 

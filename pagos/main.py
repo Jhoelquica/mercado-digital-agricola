@@ -23,7 +23,7 @@ import time
 import httpx
 import logging
 
-from comun.database import Base, engine, SessionLocal, get_db
+from comun.database import Base, engine, SessionLocal, en_su_sesion_sin_lanzar, get_db
 import models
 from comun.auth import verificar_token, requiere_rol, security
 from comun.auth import secreto_de_servicio_valido
@@ -441,22 +441,20 @@ def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
     return len(vencidos)
 
 
+def una_pasada_de_vencimientos() -> None:
+    """Un ciclo del hilo, cada parte en su sesión: primero lo que no se pudo devolver antes (p. ej. Productos aún
+    arrancaba), después los nuevos vencidos. Nunca lanza, aunque falle el rollback o el cierre: el hilo no debe morir, y
+    un fallo de la primera parte no impide la segunda."""
+    en_su_sesion_sin_lanzar(reintentar_devoluciones_pendientes, "El reintento de devoluciones de stock", logger)
+    en_su_sesion_sin_lanzar(vencer_pagos_sin_pagar, "El ciclo de vencimiento de pagos", logger)
+
+
 def _bucle_vencimientos():
     while True:
-        db = SessionLocal()
         try:
-            # Primero lo que no se pudo devolver antes (p. ej. Productos aún arrancaba), después los nuevos vencidos.
-            reintentar_devoluciones_pendientes(db)
-        except Exception:
-            db.rollback()
-            logger.error("El reintento de devoluciones de stock falló, reintenta en %ds", INTERVALO_VENCIMIENTOS_SEGUNDOS, exc_info=True)
-        try:
-            vencer_pagos_sin_pagar(db)
-        except Exception:
-            db.rollback()
-            logger.error("El ciclo de vencimiento de pagos falló, reintenta en %ds", INTERVALO_VENCIMIENTOS_SEGUNDOS, exc_info=True)
-        finally:
-            db.close()
+            una_pasada_de_vencimientos()
+        except Exception:  # una_pasada_de_vencimientos no lanza; esto es por si algo cambia
+            logger.exception("El ciclo de vencimientos falló")
         time.sleep(INTERVALO_VENCIMIENTOS_SEGUNDOS)
 
 

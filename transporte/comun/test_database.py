@@ -79,3 +79,44 @@ def test_get_db_cierra_la_sesion_aunque_la_peticion_falle(monkeypatch):
     with pytest.raises(RuntimeError):
         peticion.throw(RuntimeError("la petición falló"))
     assert cerradas == [sesion]
+
+
+class _SesionQueFalla:
+    """Una sesión cuyo rollback y cierre también fallan: lo peor que le puede pasar a un hilo de fondo."""
+    deshechas = cerradas = 0
+
+    def rollback(self):
+        _SesionQueFalla.deshechas += 1
+        raise RuntimeError("tampoco se pudo deshacer")
+
+    def close(self):
+        _SesionQueFalla.cerradas += 1
+        raise RuntimeError("ni cerrar")
+
+
+def test_en_su_sesion_sin_lanzar_corre_el_trabajo_y_cierra():
+    import logging
+    usadas = []
+
+    class Sesion:
+        cerrada = False
+
+        def close(self):
+            Sesion.cerrada = True
+
+    assert database.en_su_sesion_sin_lanzar(usadas.append, "Una prueba", logging.getLogger("prueba"), Sesion) is True
+    assert len(usadas) == 1 and Sesion.cerrada
+
+
+def test_en_su_sesion_sin_lanzar_no_lanza_aunque_fallen_el_rollback_y_el_cierre(caplog):
+    import logging
+
+    def trabajo(_sesion):
+        raise RuntimeError("la base se cayó a mitad")
+
+    _SesionQueFalla.deshechas = _SesionQueFalla.cerradas = 0
+    with caplog.at_level(logging.ERROR, logger="prueba"):
+        resultado = database.en_su_sesion_sin_lanzar(trabajo, "Una prueba", logging.getLogger("prueba"), _SesionQueFalla)
+    assert resultado is False
+    assert (_SesionQueFalla.deshechas, _SesionQueFalla.cerradas) == (1, 1)
+    assert "Una prueba falló" in caplog.text and "tampoco se pudo deshacer" in caplog.text

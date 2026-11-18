@@ -8,6 +8,7 @@ Todo sale de variables de entorno:
   DB_POOL_SIZE, DB_MAX_OVERFLOW   conexiones por proceso: las que el pool mantiene abiertas y las que puede abrir de más
                                   en un momento de carga. Por defecto 5 y 10 (los valores de SQLAlchemy).
 """
+import logging
 import os
 import sys
 
@@ -66,3 +67,28 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def en_su_sesion_sin_lanzar(trabajo, descripcion: str, registro: logging.Logger, sesiones=None) -> bool:
+    """Para los hilos de fondo: corre trabajo(sesión) en una sesión propia y devuelve si salió bien. Nunca lanza: si falla
+    el trabajo, el rollback o el cierre, lo deja en el log y sigue. Antes un rollback que fallaba dentro del except
+    sacaba la excepción del bucle y el hilo moría sin avisar."""
+    db = None
+    try:
+        db = (sesiones or SessionLocal)()
+        trabajo(db)
+        return True
+    except Exception:
+        registro.error("%s falló; se reintenta en la próxima pasada", descripcion, exc_info=True)
+        try:
+            if db is not None:
+                db.rollback()
+        except Exception:
+            registro.error("%s: tampoco se pudo deshacer", descripcion, exc_info=True)
+        return False
+    finally:
+        try:
+            if db is not None:
+                db.close()
+        except Exception:
+            registro.error("%s: no se pudo cerrar la sesión", descripcion, exc_info=True)

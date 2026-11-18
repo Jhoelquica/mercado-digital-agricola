@@ -1764,3 +1764,25 @@ def test_dos_entregas_a_la_vez_del_mismo_pedido_creado_crean_un_solo_pago(monkey
         db.close()
     for canal in canales:  # las dos confirman su mensaje: la segunda no falla, cede
         canal.basic_ack.assert_called_once_with(delivery_tag=1)
+
+
+def test_una_pasada_de_vencimientos_sigue_aunque_la_primera_parte_y_su_rollback_fallen(monkeypatch):
+    from comun import database
+
+    class SesionQueFalla:
+        def rollback(self):
+            raise RuntimeError("tampoco se pudo deshacer")
+
+        def close(self):
+            pass
+
+    hechas = []
+
+    def devolver_que_falla(_db):
+        raise RuntimeError("Productos no respondió")
+
+    monkeypatch.setattr(database, "SessionLocal", SesionQueFalla)
+    monkeypatch.setattr(main, "reintentar_devoluciones_pendientes", devolver_que_falla)
+    monkeypatch.setattr(main, "vencer_pagos_sin_pagar", lambda db: hechas.append("vencimientos"))
+    main.una_pasada_de_vencimientos()  # no lanza
+    assert hechas == ["vencimientos"]

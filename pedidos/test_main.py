@@ -1812,3 +1812,22 @@ def test_un_pago_confirmado_no_revive_un_pedido_que_el_admin_cancelo():
     pedido_id = _pedido_en("cancelado", motivo_cancelacion="Sin stock: se devolvió el dinero")
     _evento_de_pago(pedido_id, "pago_confirmado")
     assert _estado(pedido_id) == "cancelado"
+
+
+def test_una_pasada_de_la_bandeja_de_salida_no_mata_el_hilo_aunque_falle_el_rollback(monkeypatch):
+    import reintento_eventos
+    from comun import database
+
+    class SesionQueFalla:
+        def rollback(self):
+            raise RuntimeError("tampoco se pudo deshacer")
+
+        def close(self):
+            raise RuntimeError("ni cerrar")
+
+    def reenviar_que_falla(_db, ahora=None):
+        raise RuntimeError("la base se cayó a mitad")
+
+    monkeypatch.setattr(database, "SessionLocal", SesionQueFalla)
+    monkeypatch.setattr(reintento_eventos, "reenviar_eventos_pendientes", reenviar_que_falla)
+    assert reintento_eventos.una_pasada() is False  # no lanzó: el hilo sigue
