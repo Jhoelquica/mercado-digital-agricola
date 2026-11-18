@@ -1,4 +1,13 @@
 {
+  "queues": [
+    {
+      "vhost": "/",
+      "name": "fallidos.sin_ruta",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    }
+  ],
   "exchanges": [
     {
       "vhost": "/",
@@ -7,6 +16,25 @@
       "durable": true,
       "auto_delete": false,
       "internal": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "fallidos.sin_ruta",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "vhost": "/",
+      "source": "fallidos.sin_ruta",
+      "destination": "fallidos.sin_ruta",
+      "destination_type": "queue",
+      "routing_key": "",
       "arguments": {}
     }
   ],
@@ -19,6 +47,16 @@
       "priority": 10,
       "definition": {
         "dead-letter-exchange": "fallidos"
+      }
+    },
+    {
+      "vhost": "/",
+      "name": "fallidos-sin-ruta",
+      "pattern": "^fallidos$",
+      "apply-to": "exchanges",
+      "priority": 10,
+      "definition": {
+        "alternate-exchange": "fallidos.sin_ruta"
       }
     }
   ]

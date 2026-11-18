@@ -18,7 +18,8 @@ Qué comprueba:
     haya reiniciado después de estar listo (AVISO), réplicas deseadas = listas y RabbitMQ (abajo).
     Los reinicios acumulados desde que se creó cada pod se muestran solo como dato ([INFO]).
   - Compose (con --compose): todos los contenedores en marcha y sanos, y RabbitMQ.
-  - RabbitMQ: cada cola con consumidores y con su policy de fallidos (FALLA); <cola>.fallidos vacías (AVISO si no).
+  - RabbitMQ: cada cola con consumidores y con su policy de fallidos, y fallidos.sin_ruta como alternate exchange de
+    fallidos (FALLA); <cola>.fallidos y fallidos.sin_ruta vacías (AVISO si no).
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
@@ -169,6 +170,13 @@ def revisar_pods(pods):
 LISTAR_COLAS = ["rabbitmqctl", "list_queues", "-q", "--formatter", "json", "name", "consumers", "messages", "policy"]
 LISTAR_LIGADURAS = ["rabbitmqctl", "list_bindings", "-q", "--formatter", "json", "source_name", "destination_name",
                     "routing_key"]
+LISTAR_EXCHANGES = ["rabbitmqctl", "list_exchanges", "-q", "--formatter", "json", "name", "policy"]
+# Lo rechazado que no tiene ruta en el exchange "fallidos" (la policy fallidos-sin-ruta le pone este alternate exchange).
+COLA_SIN_RUTA = "fallidos.sin_ruta"
+
+
+def es_de_fallidos(cola):
+    return cola.endswith(".fallidos") or cola == COLA_SIN_RUTA
 
 
 def leer_json(salida):
@@ -180,13 +188,15 @@ def leer_json(salida):
     return datos if isinstance(datos, list) else []
 
 
-def comprobar_colas(colas, ligaduras):
-    """colas: list_queues (name, consumers, messages, policy); ligaduras: list_bindings (source, destination, key)."""
+def comprobar_colas(colas, ligaduras, exchanges):
+    """colas: list_queues (name, consumers, messages, policy); ligaduras: list_bindings (source, destination, key);
+    exchanges: list_exchanges (name, policy)."""
     colas = {c["name"]: c for c in colas if isinstance(c, dict) and "name" in c}
     if not colas:
         return registrar("FALLA", "RabbitMQ: colas con consumidores", "no se pudieron leer las colas")
-    # <cola>.fallidos guarda lo que falló 3 veces (comun/rabbitmq.py): nadie la consume, se revisa a mano.
-    de_trabajo = {n: c for n, c in colas.items() if not n.endswith(".fallidos")}
+    # <cola>.fallidos guarda lo que falló 3 veces (comun/rabbitmq.py) y fallidos.sin_ruta lo que no tuvo ruta: nadie las
+    # consume, se revisan a mano.
+    de_trabajo = {n: c for n, c in colas.items() if not es_de_fallidos(n)}
     sin = sorted(n for n, c in de_trabajo.items() if not c.get("consumers"))
     comprobar("RabbitMQ: cada cola tiene consumidores conectados", len(de_trabajo) >= COLAS_ESPERADAS and not sin,
               f"{len(de_trabajo)} colas, consumidores por cola: {sorted({c.get('consumers') for c in de_trabajo.values()})}",
@@ -200,8 +210,13 @@ def comprobar_colas(colas, ligaduras):
     comprobar("RabbitMQ: cada cola manda lo que falla a <cola>.fallidos (policy fallidos)", not sin_ruta,
               f"{len(de_trabajo)} colas con la policy y su cola de fallidos ligada",
               f"sin la policy o sin su cola de fallidos ligada: {sin_ruta}")
-    con_mensajes = sorted(f"{n}: {c.get('messages')}" for n, c in colas.items() if n.endswith(".fallidos") and c.get("messages"))
-    comprobar("RabbitMQ: las colas de fallidos están vacías", not con_mensajes, "",
+    politica_del_exchange = {e.get("name"): e.get("policy") for e in exchanges if isinstance(e, dict)}.get("fallidos")
+    comprobar("RabbitMQ: fallidos.sin_ruta existe y es el alternate exchange de fallidos (policy fallidos-sin-ruta)",
+              COLA_SIN_RUTA in colas and politica_del_exchange == "fallidos-sin-ruta", "",
+              f"cola {COLA_SIN_RUTA}: {'sí' if COLA_SIN_RUTA in colas else 'no existe'}; policy del exchange fallidos: "
+              f"{politica_del_exchange or 'ninguna'}")
+    con_mensajes = sorted(f"{n}: {c.get('messages')}" for n, c in colas.items() if es_de_fallidos(n) and c.get("messages"))
+    comprobar("RabbitMQ: las colas de fallidos y fallidos.sin_ruta están vacías", not con_mensajes, "",
               f"mensajes por revisar en el panel de RabbitMQ: {', '.join(con_mensajes)}", "AVISO")
 
 
@@ -372,10 +387,11 @@ def main():
             comprobar("Kubernetes: réplicas listas = réplicas deseadas en todos los Deployment", not malos, "", ", ".join(malos))
         salida, error = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_COLAS, contexto_k)
         ligaduras, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_LIGADURAS, contexto_k)
+        exchanges, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_EXCHANGES, contexto_k)
         if salida is None:
             registrar("FALLA", "RabbitMQ: leer las colas", error)
         else:
-            comprobar_colas(leer_json(salida), leer_json(ligaduras))
+            comprobar_colas(leer_json(salida), leer_json(ligaduras), leer_json(exchanges))
 
     # ---- 7. Compose
     if args.compose:
@@ -393,7 +409,7 @@ def main():
                          if f["State"] != "running" or f.get("Health") in ("unhealthy", "starting")]
                 comprobar("Compose: todos los contenedores en marcha y sanos", not malos, f"{len(filas)} contenedores", ", ".join(malos))
                 salidas = []
-                for listar in (LISTAR_COLAS, LISTAR_LIGADURAS):
+                for listar in (LISTAR_COLAS, LISTAR_LIGADURAS, LISTAR_EXCHANGES):
                     r = subprocess.run(["docker", "compose", "exec", "-T", "rabbitmq"] + listar, capture_output=True,
                                        text=True, encoding="utf-8", errors="replace", timeout=60,
                                        cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))

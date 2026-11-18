@@ -11,6 +11,7 @@ INTENTOS veces; si fallan todas, va a <cola>.fallidos con el motivo en la cabece
 La ruta a fallidos es configuración de RabbitMQ, no de las colas (así no hay que borrar ni redeclarar las que existen):
 la policy "fallidos" de deploy/rabbitmq/definiciones.json, que RabbitMQ importa al arrancar, manda lo que se rechaza en
 cualquier cola de trabajo al exchange "fallidos"; cada consumidor liga ahí su <cola>.fallidos con el nombre de su cola.
+Lo que llega a ese exchange sin el nombre de una cola (sin ruta) va a fallidos.sin_ruta, su alternate exchange.
 """
 import json
 import logging

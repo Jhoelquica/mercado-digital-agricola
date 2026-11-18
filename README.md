@@ -231,7 +231,8 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
   `x-motivo` y un log de error: se revisa en el panel de RabbitMQ y se reenvía a mano. Si la base no responde, el
   evento espera en su cola sin gastar intentos. La ruta a fallidos es la policy `fallidos` de
   `deploy/rabbitmq/definiciones.json`, que RabbitMQ importa al arrancar (en Kubernetes, desde la ConfigMap
-  `rabbitmq-definiciones`, copia que mantiene `scripts/sincronizar_comun.py`).
+  `rabbitmq-definiciones`, copia que mantiene `scripts/sincronizar_comun.py`). Lo rechazado que no tiene ruta (no
+  llega con el nombre de una cola) va a `fallidos.sin_ruta`, el alternate exchange de `fallidos`.
 - Los consumidores son idempotentes: Pedidos y Notificaciones anotan cada `evento_id` en `eventos_procesados` junto
   con su efecto, y Transporte y Pagos tienen un índice único por pedido (un envío y un pago).
 - Si Productos no responde al devolver el stock de un pago rechazado, la compensación queda solo en el log: no se

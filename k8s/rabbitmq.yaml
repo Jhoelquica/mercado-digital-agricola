@@ -24,6 +24,15 @@ data:
   # GENERADO desde deploy/rabbitmq/definiciones.json — no editar aquí; edita ese archivo y corre scripts/sincronizar_comun.py
   definiciones.json: |
     {
+      "queues": [
+        {
+          "vhost": "/",
+          "name": "fallidos.sin_ruta",
+          "durable": true,
+          "auto_delete": false,
+          "arguments": {}
+        }
+      ],
       "exchanges": [
         {
           "vhost": "/",
@@ -32,6 +41,25 @@ data:
           "durable": true,
           "auto_delete": false,
           "internal": false,
+          "arguments": {}
+        },
+        {
+          "vhost": "/",
+          "name": "fallidos.sin_ruta",
+          "type": "fanout",
+          "durable": true,
+          "auto_delete": false,
+          "internal": false,
+          "arguments": {}
+        }
+      ],
+      "bindings": [
+        {
+          "vhost": "/",
+          "source": "fallidos.sin_ruta",
+          "destination": "fallidos.sin_ruta",
+          "destination_type": "queue",
+          "routing_key": "",
           "arguments": {}
         }
       ],
@@ -44,6 +72,16 @@ data:
           "priority": 10,
           "definition": {
             "dead-letter-exchange": "fallidos"
+          }
+        },
+        {
+          "vhost": "/",
+          "name": "fallidos-sin-ruta",
+          "pattern": "^fallidos$",
+          "apply-to": "exchanges",
+          "priority": 10,
+          "definition": {
+            "alternate-exchange": "fallidos.sin_ruta"
           }
         }
       ]
@@ -117,12 +155,12 @@ spec:
                       avisar "no se pudieron importar /etc/rabbitmq/definiciones/definiciones.json"
                       exit 0
                     fi
-                    # La importación es asíncrona: se espera a ver la policy, hasta el tope.
+                    # La importación es asíncrona: se espera a ver las policies, hasta el tope.
                     while queda_tiempo; do
                       politicas=$(timeout 15 rabbitmqctl -q list_policies --formatter json 2>/dev/null)
                       case "$politicas" in
-                        *'"name":"fallidos"'*)
-                          avisar "importadas: policy fallidos lista"
+                        *'"name":"fallidos"'*'"name":"fallidos-sin-ruta"'*|*'"name":"fallidos-sin-ruta"'*'"name":"fallidos"'*)
+                          avisar "importadas: policies fallidos y fallidos-sin-ruta listas"
                           exit 0 ;;
                       esac
                       sleep 1
