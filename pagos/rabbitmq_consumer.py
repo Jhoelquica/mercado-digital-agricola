@@ -25,7 +25,7 @@ def _procesar_mensaje(ch, method, properties, body):
         db = SessionLocal()
         try:
             # RabbitMQ entrega "al menos una vez" y Pedidos reenvía su bandeja de salida: un pedido_creado repetido no
-            # crea un segundo pago.
+            # crea un segundo pago. Si dos llegan a la vez, el índice único de pagos.pedido_id frena a la segunda.
             if db.query(models.Pago).filter(models.Pago.pedido_id == datos["pedido_id"]).first():
                 print(f"[Pagos] El pedido {datos['pedido_id']} ya tiene su registro de pago, no se crea otro")
                 ch.basic_ack(delivery_tag=method.delivery_tag)
@@ -44,8 +44,13 @@ def _procesar_mensaje(ch, method, properties, body):
                 vence_en=datetime.utcnow() + timedelta(minutes=PLAZO_PARA_PAGAR_MINUTOS),
             )
             db.add(nuevo_pago)
-            db.commit()
-            print(f"[Pagos] Registro de pago creado para pedido {datos['pedido_id']} (monto estimado: S/ {monto})")
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                print(f"[Pagos] Otra entrega del mismo pedido_creado creó el pago del pedido {datos['pedido_id']} a la vez")
+            else:
+                print(f"[Pagos] Registro de pago creado para pedido {datos['pedido_id']} (monto estimado: S/ {monto})")
         finally:
             db.close()
 

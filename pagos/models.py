@@ -1,11 +1,15 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Numeric, DateTime, Integer, UniqueConstraint
+from sqlalchemy import Column, String, Numeric, DateTime, Integer, UniqueConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID
 from comun.database import Base
 
 class Pago(Base):
     __tablename__ = "pagos"
+    # Un pago por pedido: los intentos fallidos (tarjeta rechazada, plazo vencido) reusan esta misma fila, que vuelve a
+    # cobrarse. Dos entregas a la vez del mismo pedido_creado no crean dos. En una base de antes lo agrega
+    # migraciones.asegurar_indice_unico_de_pagos (create_all no agrega índices a una tabla que ya existe).
+    __table_args__ = (Index("uq_pagos_pedido_id", "pedido_id", unique=True),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)

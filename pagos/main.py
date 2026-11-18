@@ -35,7 +35,7 @@ from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartid
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 import logica_cobros
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
-from migraciones import agregar_columnas_faltantes
+from migraciones import agregar_columnas_faltantes, asegurar_indice_unico_de_pagos
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_constancia, leer_constancia
 from fastapi.responses import JSONResponse
@@ -70,6 +70,7 @@ def _datos_transferencia():
 Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas a una tabla que ya existe (p. ej. la constancia de la transferencia en `pagos`).
 agregar_columnas_faltantes(engine, Base)
+asegurar_indice_unico_de_pagos(engine)
 
 app = FastAPI()
 

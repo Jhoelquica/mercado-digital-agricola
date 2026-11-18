@@ -1733,3 +1733,34 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+def test_dos_entregas_a_la_vez_del_mismo_pedido_creado_crean_un_solo_pago(monkeypatch):
+    import threading
+    pedido_id = str(uuid.uuid4())
+    evento = {"evento": "pedido_creado", "pedido_id": pedido_id, "costo_envio": 5.0,
+              "items": [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}]}
+    # Las dos ya miraron que no hay pago cuando la primera lo inserta: solo el índice único puede frenar a la segunda.
+    las_dos_miraron = threading.Barrier(2, timeout=10)
+    calcular = rabbitmq_consumer._calcular_monto
+
+    def calcular_cuando_las_dos_miraron(items, costo_envio=0):
+        las_dos_miraron.wait()
+        return calcular(items, costo_envio)
+
+    monkeypatch.setattr(rabbitmq_consumer, "_calcular_monto", calcular_cuando_las_dos_miraron)
+    canales = [MagicMock(), MagicMock()]
+    hilos = [threading.Thread(target=rabbitmq_consumer._procesar_mensaje,
+                              args=(canal, MagicMock(delivery_tag=1), None, json.dumps(evento).encode())) for canal in canales]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join(timeout=20)
+
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Pago).filter(main.models.Pago.pedido_id == pedido_id).count() == 1
+    finally:
+        db.close()
+    for canal in canales:  # las dos confirman su mensaje: la segunda no falla, cede
+        canal.basic_ack.assert_called_once_with(delivery_tag=1)
