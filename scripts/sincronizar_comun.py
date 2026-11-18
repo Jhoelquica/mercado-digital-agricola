@@ -8,11 +8,15 @@ generada desde comun/ con un encabezado que lo dice. Edita siempre comun/ y corr
 También mantiene la copia de deploy/rabbitmq/definiciones.json (lo que RabbitMQ importa al arrancar) dentro de la
 ConfigMap rabbitmq-definiciones de k8s/rabbitmq.yaml: compose monta el archivo y Kubernetes la ConfigMap.
 
+Y comprueba que cada dependencia que está en el requirements.txt de dos o más servicios tenga en todos la misma versión:
+el código común corre igual en todos solo si sus librerías son las mismas. Eso no lo arregla solo: se corrige a mano.
+
 Uso (desde la raíz del repositorio):
     python scripts/sincronizar_comun.py               # copia comun/ a los servicios
     python scripts/sincronizar_comun.py --verificar   # solo comprueba: sale con error si algo no coincide
 """
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -93,6 +97,30 @@ def _destinos_de(servicio: str) -> set:
     return {archivo for archivo, servicios in DESTINOS.items() if servicio in servicios}
 
 
+def versiones_de_las_dependencias() -> dict:
+    """{paquete: {servicio: versión}} según los requirements.txt (paquete==versión), con el nombre normalizado como pip."""
+    versiones = {}
+    for servicio in TODOS:
+        for linea in _texto(RAIZ / servicio / "requirements.txt").splitlines():
+            m = re.fullmatch(r"\s*([A-Za-z0-9][A-Za-z0-9_.\-]*)\s*==\s*([^\s;#]+)\s*", linea)
+            if m:
+                versiones.setdefault(re.sub(r"[-_.]+", "-", m.group(1)).lower(), {})[servicio] = m.group(2)
+    return versiones
+
+
+def dependencias_con_versiones_distintas() -> list:
+    """Las compartidas (en dos o más servicios) que no tienen la misma versión en todos, en frases."""
+    distintas = []
+    for paquete, por_servicio in sorted(versiones_de_las_dependencias().items()):
+        if len(por_servicio) > 1 and len(set(por_servicio.values())) > 1:
+            grupos = {}
+            for servicio, version in por_servicio.items():
+                grupos.setdefault(version, []).append(servicio)
+            detalle = "; ".join(f"{version} en {', '.join(servicios)}" for version, servicios in sorted(grupos.items()))
+            distintas.append(f"requirements.txt: {paquete} tiene versiones distintas ({detalle})")
+    return distintas
+
+
 def problemas() -> list:
     """Todo lo que no coincide, en frases. Vacío si las copias están al día."""
     encontrados = []
@@ -125,6 +153,7 @@ def problemas() -> list:
         encontrados.append("k8s/rabbitmq.yaml no tiene la ConfigMap rabbitmq-definiciones (definiciones.json: |)")
     elif manifiesto[bloque[0]:bloque[1]] != _definiciones_esperadas():
         encontrados.append("k8s/rabbitmq.yaml: su definiciones.json no coincide con deploy/rabbitmq/definiciones.json")
+    encontrados.extend(dependencias_con_versiones_distintas())
     return encontrados
 
 
@@ -169,16 +198,17 @@ def main():
         print(f"{cambios} archivo(s) actualizado(s)." if cambios else "Las copias ya estaban al día.")
     encontrados = problemas()
     if encontrados:
-        print("El código común no coincide con sus copias:", file=sys.stderr)
+        print("Lo común no coincide:", file=sys.stderr)
         for problema in encontrados:
             print(f"  - {problema}", file=sys.stderr)
-        if args.verificar:
-            print("Edita la fuente (comun/ o deploy/rabbitmq/definiciones.json), no las copias, y corre: "
-                  "python scripts/sincronizar_comun.py", file=sys.stderr)
+        print("Las copias se arreglan editando la fuente (comun/ o deploy/rabbitmq/definiciones.json) y corriendo "
+              "python scripts/sincronizar_comun.py; las versiones de requirements.txt, a mano.", file=sys.stderr)
         sys.exit(1)
     copias = sum(len(_destinos_de(s)) for s in TODOS)
-    print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), y las "
-          "definiciones de RabbitMQ en k8s/rabbitmq.yaml.")
+    compartidas = sum(1 for v in versiones_de_las_dependencias().values() if len(v) > 1)
+    print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), las "
+          f"definiciones de RabbitMQ en k8s/rabbitmq.yaml, y las {compartidas} dependencias compartidas tienen la "
+          "misma versión en todos.")
 
 
 if __name__ == "__main__":
