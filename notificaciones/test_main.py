@@ -180,3 +180,33 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
         assert error.status_code == 401 and "desactivada" in error.detail
     else:
         raise AssertionError("un token con rol verificador pasó la validación")
+
+
+def test_el_mismo_mensaje_dos_veces_deja_un_aviso_y_un_envio(monkeypatch):
+    import rabbitmq_consumer
+    envios = []
+    monkeypatch.setattr(rabbitmq_consumer.avisos_externos, "despachar", lambda *args, **kwargs: envios.append(args))
+    pedido_id, usuario_id = str(uuid.uuid4()), str(uuid.uuid4())
+    evento = {"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": usuario_id, "items": [],
+              "total": 50, "evento_id": str(uuid.uuid4())}
+
+    _procesar(evento)
+    _procesar(evento)  # RabbitMQ lo reentrega, o la bandeja de salida de Pedidos lo reenvía
+
+    db = SessionLocal()
+    try:
+        assert db.query(models.Notificacion).filter(models.Notificacion.pedido_id == pedido_id).count() == 1
+    finally:
+        db.close()
+    assert len(envios) == 1
+
+
+def test_dos_eventos_distintos_del_mismo_pedido_dejan_dos_avisos():
+    pedido_id = str(uuid.uuid4())
+    for evento in ("pago_rechazado", "pago_confirmado"):
+        _procesar({"evento": evento, "pedido_id": pedido_id, "evento_id": str(uuid.uuid4())})
+    db = SessionLocal()
+    try:
+        assert db.query(models.Notificacion).filter(models.Notificacion.pedido_id == pedido_id).count() == 2
+    finally:
+        db.close()
