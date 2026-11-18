@@ -234,7 +234,8 @@ Sí se suben las plantillas, con valores de ejemplo que no sirven: `deploy/local
   `rabbitmq-definiciones`, copia que mantiene `scripts/sincronizar_comun.py`). Lo rechazado que no tiene ruta (no
   llega con el nombre de una cola) va a `fallidos.sin_ruta`, el alternate exchange de `fallidos`.
 - Los consumidores son idempotentes: Pedidos y Notificaciones anotan cada `evento_id` en `eventos_procesados` junto
-  con su efecto, y Transporte y Pagos tienen un índice único por pedido (un envío y un pago).
+  con su efecto, y Transporte y Pagos tienen un índice único por pedido (un envío y un pago). Las marcas se guardan
+  `DIAS_RETENCION_EVENTOS` días (30 por defecto); un hilo de cada servicio borra las más viejas, cada hora.
 - Si Productos no responde al devolver el stock de un pago rechazado, la compensación queda solo en el log: no se
   reintenta.
 

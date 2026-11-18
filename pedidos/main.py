@@ -30,6 +30,7 @@ from reintento_eventos import lanzar_reintento_eventos_en_hilo
 from comun.auth import verificar_token, requiere_rol, security
 
 from comun.database import Base, engine, SessionLocal, get_db
+from comun import inbox
 from migraciones import agregar_columnas_faltantes
 import models
 import reniec
@@ -41,6 +42,7 @@ logger = logging.getLogger("pedidos")
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
+inbox.asegurar_indice_de_fecha(engine)  # el de eventos_procesados, en una tabla de antes
 
 app = FastAPI()
 
@@ -50,6 +52,7 @@ Instrumentator().instrument(app).expose(app)
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    inbox.lanzar_limpieza_en_hilo()  # borra las marcas de eventos_procesados viejas, cada hora
     lanzar_reintento_eventos_en_hilo()
 
 CLAVE_ALMACEN = "almacen_ubicacion"

@@ -82,3 +82,51 @@ def test_el_evento_id_del_mensaje():
     assert inbox.evento_id_de({"evento": "pago_confirmado"}) is None
     with pytest.raises(ValueError):
         inbox.evento_id_de({"evento_id": "no-es-un-uuid"})
+
+
+# ---- Limpieza de las marcas viejas ----
+
+def test_la_limpieza_borra_solo_las_marcas_viejas(consumidor):
+    from datetime import datetime, timedelta
+    vieja, nueva = uuid.uuid4(), uuid.uuid4()
+    db = SessionLocal()
+    try:
+        db.add_all([inbox.EventoProcesado(consumidor=consumidor, evento_id=vieja, fecha=datetime.utcnow() - timedelta(days=31)),
+                    inbox.EventoProcesado(consumidor=consumidor, evento_id=nueva, fecha=datetime.utcnow() - timedelta(days=29))])
+        db.commit()
+        assert inbox.borrar_procesados_viejos(db, dias=30) >= 1
+        db.commit()
+        quedan = {fila.evento_id for fila in db.query(inbox.EventoProcesado).filter(
+            inbox.EventoProcesado.consumidor == consumidor)}
+    finally:
+        db.close()
+    assert quedan == {nueva}
+
+
+def test_una_pasada_de_limpieza_no_lanza_aunque_fallen_el_commit_y_el_rollback():
+    class SesionQueFalla:
+        def query(self, *_):
+            raise RuntimeError("la base se cayó")
+
+        def rollback(self):
+            raise RuntimeError("y el rollback también")
+
+        def close(self):
+            raise RuntimeError("y el cierre")
+
+    assert inbox.limpiar_una_vez(sesiones=SesionQueFalla) is None
+
+
+def test_el_indice_por_fecha_existe():
+    from sqlalchemy import text
+    assert inbox.asegurar_indice_de_fecha(engine) is True
+    with engine.connect() as conexion:
+        assert conexion.execute(text("SELECT 1 FROM pg_indexes WHERE indexname = :nombre"),
+                                {"nombre": inbox.INDICE_DE_FECHA}).first() is not None
+
+
+def test_dias_de_retencion_por_defecto_y_mal_escritos(correr_python):
+    resultado = correr_python("from comun import inbox; print(inbox.DIAS_RETENCION_EVENTOS)", DIAS_RETENCION_EVENTOS=None)
+    assert resultado.stdout.strip() == "30", resultado.stderr
+    resultado = correr_python("import comun.inbox", DIAS_RETENCION_EVENTOS="treinta")
+    assert resultado.returncode != 0 and "DIAS_RETENCION_EVENTOS" in resultado.stderr

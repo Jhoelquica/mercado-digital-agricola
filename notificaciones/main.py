@@ -19,12 +19,14 @@ from comun.auth import secreto_de_servicio_valido
 import avisos_externos
 
 from comun.database import Base, engine, SessionLocal, get_db
+from comun import inbox
 import models
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from migraciones import agregar_columnas_faltantes
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
+inbox.asegurar_indice_de_fecha(engine)  # el de eventos_procesados, en una tabla de antes
 
 app = FastAPI()
 
@@ -40,6 +42,7 @@ app.add_middleware(
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    inbox.lanzar_limpieza_en_hilo()  # borra las marcas de eventos_procesados viejas, cada hora
 
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py). Usada SOLO
 # por el DELETE de limpieza QA de este servicio — ningún otro servicio lo llama.
