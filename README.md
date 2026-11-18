@@ -190,7 +190,7 @@ dominio y HTTPS, y crean secretos aleatorios.
 ## Estructura
 
 ```
-<servicio>/            8 microservicios: main.py, models.py, auth.py, módulos de lógica, Dockerfile, requirements.txt y test_*.py
+<servicio>/            8 microservicios: main.py, models.py, módulos de lógica, Dockerfile, requirements.txt y test_*.py
 comun/                 código común a los 8 servicios; cada uno lleva una copia generada en <servicio>/comun/
 frontend/              aplicación de React (src/), pruebas (Vitest en src/**/*.test.ts, E2E en e2e/), nginx.conf y Dockerfile
 k8s/                   manifiestos del clúster local (servicios, bases con volumen, RabbitMQ, Redis, MinIO, Traefik,

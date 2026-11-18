@@ -20,6 +20,7 @@ TODOS = ("usuarios", "productores", "productos", "pedidos", "transporte", "notif
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
     "__init__.py": TODOS,
+    "auth.py": TODOS,
     "conftest.py": TODOS,
     "database.py": TODOS,
     "test_database.py": TODOS,

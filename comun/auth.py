@@ -1,0 +1,69 @@
+"""Autenticación de las peticiones: el JWT que firma Usuarios, los roles y el secreto entre servicios."""
+import hmac
+import os
+import sys
+
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
+
+JWT_SECRET = os.getenv("JWT_SECRET") or sys.exit("Falta la variable de entorno JWT_SECRET: el servicio no arranca sin ella.")
+JWT_ALGORITHM = "HS256"
+
+security = HTTPBearer()
+
+# Roles retirados (histórico: rol verificador retirado el 2026-10-01). Sus cuentas quedaron desactivadas sin borrarse:
+# no inician sesión (usuarios/main.py) y un token que todavía lleve uno de estos roles no vale en ningún servicio,
+# aunque no haya vencido. Si se retira otro rol, se agrega aquí y se corre scripts/sincronizar_comun.py: vale para los ocho.
+ROLES_RETIRADOS = frozenset({"verificador"})
+MENSAJE_CUENTA_DESACTIVADA = "Esta cuenta está desactivada: su rol ya no existe en ChakraShop."
+
+# Para rutas públicas que muestran algo distinto según quién mira (un borrador solo lo ve su productor): trae
+# al usuario si el token es válido y, si no hay token o está vencido, sigue como visitante en vez de dar 401
+# (mirar un producto público no exige sesión).
+security_opcional = HTTPBearer(auto_error=False)
+
+
+def usuario_opcional(credentials: HTTPAuthorizationCredentials | None = Depends(security_opcional)):
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+    # Una cuenta desactivada (rol retirado) mira lo público como cualquier visitante, sin sesión.
+    return None if payload.get("rol") in ROLES_RETIRADOS else payload
+
+
+def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    if payload.get("rol") in ROLES_RETIRADOS:
+        raise HTTPException(status_code=401, detail=MENSAJE_CUENTA_DESACTIVADA)
+    return payload
+
+
+def requiere_rol(*roles_permitidos):
+    def verificar(usuario: dict = Depends(verificar_token)):
+        if usuario.get("rol") not in roles_permitidos:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Esta acción requiere rol: {', '.join(roles_permitidos)}"
+            )
+        return usuario
+    return verificar
+
+
+def secreto_de_servicio_valido(recibido, esperado) -> bool:
+    """Comprueba el secreto de servicio a servicio (cabecera X-Servicio-Secreto) en tiempo constante.
+
+    FALLA CERRADO: si el secreto no está configurado (None o vacío) no pasa nadie. Antes cada
+    endpoint hacía `if cabecera != SECRETO`: con la variable de entorno sin definir (SECRETO = None)
+    una petición sin cabecera (None) resultaba igual y pasaba, así que bastaba un despliegue sin la
+    variable para dejar abiertos los endpoints internos y los de limpieza."""
+    if not esperado or not recibido:
+        return False
+    return hmac.compare_digest(str(recibido).encode("utf-8"), str(esperado).encode("utf-8"))

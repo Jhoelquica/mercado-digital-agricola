@@ -27,7 +27,7 @@ import main
 import logica_cadena
 import migraciones
 from logica_cadena import verificar_cadena
-from auth import verificar_token
+from comun.auth import verificar_token
 
 client = TestClient(main.app)
 SECRETO = "secreto-de-prueba"
@@ -477,7 +477,7 @@ def test_el_qr_abre_la_pagina_verificar_del_frontend(monkeypatch):
 def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
     en este servicio igual que uno vencido, antes de mirar qué pide."""
-    import auth
+    from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
     from jose import jwt

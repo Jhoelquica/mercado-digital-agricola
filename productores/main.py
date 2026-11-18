@@ -15,9 +15,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from auth import verificar_token, requiere_rol, security
+from comun.auth import verificar_token, requiere_rol, security
 from fastapi.security import HTTPAuthorizationCredentials
-from auth import secreto_de_servicio_valido
+from comun.auth import secreto_de_servicio_valido
 import pybreaker
 from validaciones import (
     Cantidad, CodigoChacra, Comunidad, Contacto, Cultivo, Equivalencia, Fecha, Latitud, LatitudTexto,

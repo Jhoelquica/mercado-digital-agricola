@@ -13,7 +13,7 @@ import main
 import models
 import logica_recojos
 import rabbitmq_consumer
-from auth import verificar_token, security
+from comun.auth import verificar_token, security
 
 client = TestClient(main.app)
 

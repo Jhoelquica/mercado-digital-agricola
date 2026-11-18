@@ -15,7 +15,7 @@ from comun.database import Base, engine, SessionLocal, get_db
 import models
 from migraciones import asegurar_indice_unico_de_bloques, asegurar_columna_foto_url
 from logica_cadena import crear_bloque, verificar_cadena, generar_certificado_pedido
-from auth import secreto_de_servicio_valido
+from comun.auth import secreto_de_servicio_valido
 from fastapi import Header
 import json
 

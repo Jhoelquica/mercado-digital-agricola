@@ -21,8 +21,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
-from auth import verificar_token, requiere_rol, security
-from auth import secreto_de_servicio_valido
+from comun.auth import verificar_token, requiere_rol, security
+from comun.auth import secreto_de_servicio_valido
 from pedidos_interno import cabecera_pedidos
 from fastapi.responses import JSONResponse
 from imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE

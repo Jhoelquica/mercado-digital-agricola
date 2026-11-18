@@ -1,6 +1,9 @@
+# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py
+"""Autenticación de las peticiones: el JWT que firma Usuarios, los roles y el secreto entre servicios."""
 import hmac
 import os
 import sys
+
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
@@ -12,10 +15,26 @@ security = HTTPBearer()
 
 # Roles retirados (histórico: rol verificador retirado el 2026-10-01). Sus cuentas quedaron desactivadas sin borrarse:
 # no inician sesión (usuarios/main.py) y un token que todavía lleve uno de estos roles no vale en ningún servicio,
-# aunque no haya vencido. Cada servicio tiene su copia de esta lista (no hay librería común entre microservicios): si
-# se retira otro rol, se agrega en los ocho auth.py.
+# aunque no haya vencido. Si se retira otro rol, se agrega aquí y se corre scripts/sincronizar_comun.py: vale para los ocho.
 ROLES_RETIRADOS = frozenset({"verificador"})
 MENSAJE_CUENTA_DESACTIVADA = "Esta cuenta está desactivada: su rol ya no existe en ChakraShop."
+
+# Para rutas públicas que muestran algo distinto según quién mira (un borrador solo lo ve su productor): trae
+# al usuario si el token es válido y, si no hay token o está vencido, sigue como visitante en vez de dar 401
+# (mirar un producto público no exige sesión).
+security_opcional = HTTPBearer(auto_error=False)
+
+
+def usuario_opcional(credentials: HTTPAuthorizationCredentials | None = Depends(security_opcional)):
+    if credentials is None:
+        return None
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except JWTError:
+        return None
+    # Una cuenta desactivada (rol retirado) mira lo público como cualquier visitante, sin sesión.
+    return None if payload.get("rol") in ROLES_RETIRADOS else payload
+
 
 def verificar_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     token = credentials.credentials
@@ -37,7 +56,6 @@ def requiere_rol(*roles_permitidos):
             )
         return usuario
     return verificar
-
 
 
 def secreto_de_servicio_valido(recibido, esperado) -> bool:

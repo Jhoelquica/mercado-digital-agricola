@@ -30,8 +30,8 @@ logging.basicConfig(level=logging.INFO)
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
-from auth import verificar_token, requiere_rol, security
-from auth import secreto_de_servicio_valido
+from comun.auth import verificar_token, requiere_rol, security
+from comun.auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from culqi_client import crear_cargo, crear_devolucion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS

@@ -16,8 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from auth import verificar_token, requiere_rol, security, security_opcional, usuario_opcional
-from auth import secreto_de_servicio_valido
+from comun.auth import verificar_token, requiere_rol, security, security_opcional, usuario_opcional
+from comun.auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from comun.database import Base, engine, SessionLocal, get_db
 from migraciones import agregar_columnas_faltantes, separar_fecha_de_creacion

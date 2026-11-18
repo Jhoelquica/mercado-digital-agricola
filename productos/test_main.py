@@ -43,7 +43,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 import main
-from auth import verificar_token
+from comun.auth import verificar_token
 
 client = TestClient(main.app)
 
@@ -1412,7 +1412,7 @@ def _token_real(sub, rol, segundos=3600):
     firman uno de verdad con el mismo secreto del servicio."""
     import time
 
-    import auth
+    from comun import auth
     from jose import jwt
     return jwt.encode({"sub": str(sub), "rol": rol, "exp": int(time.time()) + segundos}, auth.JWT_SECRET, algorithm="HS256")
 
@@ -1966,7 +1966,7 @@ def test_el_detalle_publico_dice_de_que_siembra_salio_el_producto():
 def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
     en este servicio igual que uno vencido, antes de mirar qué pide."""
-    import auth
+    from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
     from jose import jwt

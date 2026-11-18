@@ -26,7 +26,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 import main
-from auth import verificar_token
+from comun.auth import verificar_token
 
 client = TestClient(main.app)
 main.sembrar_configuracion_almacen()
@@ -1718,7 +1718,7 @@ def test_la_oficina_de_recojo_de_la_agencia_la_pone_el_admin_y_la_ve_el_comprado
 def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
     en este servicio igual que uno vencido, antes de mirar qué pide."""
-    import auth
+    from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
     from jose import jwt

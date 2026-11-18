@@ -36,7 +36,7 @@ import logica_certificacion
 import logica_repartidores
 from reintento_liquidacion_repartidor import reintentar_liquidaciones_repartidor_pendientes
 from reintento_certificacion import reintentar_certificaciones_pendientes
-from auth import verificar_token, security
+from comun.auth import verificar_token, security
 
 client = TestClient(main.app)
 
@@ -1978,7 +1978,7 @@ def test_si_un_transportista_verificado_cambia_de_vehiculo_vuelve_a_revision():
 def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
     en este servicio igual que uno vencido, antes de mirar qué pide."""
-    import auth
+    from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
     from jose import jwt

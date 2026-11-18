@@ -9,8 +9,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
-from auth import security, verificar_token
-from auth import secreto_de_servicio_valido
+from comun.auth import security, verificar_token
+from comun.auth import secreto_de_servicio_valido
 
 import avisos_externos
 

@@ -16,9 +16,9 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 from google.auth import exceptions as google_exceptions
-from auth import verificar_token, requiere_rol
-from auth import ROLES_RETIRADOS, MENSAJE_CUENTA_DESACTIVADA
-from auth import secreto_de_servicio_valido
+from comun.auth import verificar_token, requiere_rol
+from comun.auth import ROLES_RETIRADOS, MENSAJE_CUENTA_DESACTIVADA
+from comun.auth import secreto_de_servicio_valido
 
 from comun.database import Base, engine, SessionLocal, get_db
 import models
@@ -290,7 +290,7 @@ def _validar_rol_de_registro(rol: str) -> None:
 
 
 def _rechazar_cuenta_desactivada(usuario) -> None:
-    """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en auth.py; histórico: rol verificador retirado el 2026-10-01) está desactivada: no se borra, pero
+    """Una cuenta cuyo rol se retiró (ROLES_RETIRADOS en comun/auth.py; histórico: rol verificador retirado el 2026-10-01) está desactivada: no se borra, pero
     no vuelve a iniciar sesión, ni con contraseña ni con Google, así que no recibe tokens nuevos; los que tuviera
     dejan de valer en todos los servicios (verificar_token).
 

@@ -37,7 +37,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
-from auth import verificar_token
+from comun.auth import verificar_token
 
 client = TestClient(main.app)
 
@@ -1660,7 +1660,7 @@ def test_quitar_el_contorno_deja_un_null_de_sql_y_no_el_null_de_json():
 def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     """El rol verificador se retiró del todo y sus cuentas están desactivadas: un token que todavía lo lleve se rechaza
     en este servicio igual que uno vencido, antes de mirar qué pide."""
-    import auth
+    from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
     from jose import jwt

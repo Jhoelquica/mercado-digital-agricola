@@ -19,11 +19,11 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field, field_validator
 from rabbitmq_publisher import publicar_evento
-from auth import verificar_token
-from auth import secreto_de_servicio_valido
+from comun.auth import verificar_token
+from comun.auth import secreto_de_servicio_valido
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
 from reintento_eventos import lanzar_reintento_eventos_en_hilo
-from auth import verificar_token, requiere_rol, security
+from comun.auth import verificar_token, requiere_rol, security
 
 from comun.database import Base, engine, SessionLocal, get_db
 from migraciones import agregar_columnas_faltantes

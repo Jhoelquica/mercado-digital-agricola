@@ -28,7 +28,7 @@ from google.genai import types
 
 import main
 import sugerencia_cosecha
-from auth import verificar_token
+from comun.auth import verificar_token
 
 client = TestClient(main.app)
 SIEMBRA = datetime(2026, 10, 15)
