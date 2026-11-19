@@ -77,7 +77,7 @@ PUBLICAR_SOLO_EN = {("comun/rabbitmq.py", "Publicador.publicar"), ("comun/rabbit
 USAR_EL_PUBLICADOR_SOLO_EN = {"comun/rabbitmq.py", "comun/bandeja_salida.py"}
 # TEMPORAL: los servicios que todavía publican directo (con comun.rabbitmq.publicar_evento) mientras pasan, uno por
 # commit, a la bandeja de salida. Con el último se borran esto y publicar_evento.
-PUBLICAN_DIRECTO_TODAVIA = {"pagos", "transporte", "productos"}
+PUBLICAN_DIRECTO_TODAVIA = {"transporte", "productos"}
 CARPETAS_QUE_NO_SON_CODIGO = {"venv", ".venv", "__pycache__", "node_modules"}
 
 ENCABEZADO = "# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py\n"

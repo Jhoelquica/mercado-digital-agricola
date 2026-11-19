@@ -30,7 +30,8 @@ from comun.auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 from culqi_client import crear_cargo, crear_devolucion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
-from rabbitmq_publisher import publicar_evento
+from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
+from comun import bandeja_salida
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, crear_liquidacion_recojo, pagos_sin_liquidaciones
 from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 import logica_cobros
@@ -72,6 +73,7 @@ Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas a una tabla que ya existe (p. ej. la constancia de la transferencia en `pagos`).
 agregar_columnas_faltantes(engine, Base)
 asegurar_indice_unico_de_pagos(engine)
+bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # los índices de la bandeja de salida
 
 app = FastAPI()
 
@@ -100,6 +102,7 @@ def iniciar():
     lanzar_consumidor_en_hilo()
     lanzar_reintento_liquidaciones_en_hilo()
     threading.Thread(target=_bucle_vencimientos, daemon=True).start()
+    bandeja_salida.lanzar_relevo_en_hilo()  # el único que publica: lo que dejó registrar_evento, en orden
 
 def _cantidades_base_por_producto(items_json) -> dict:
     """Cuánto stock (en la unidad base de cada producto) reserva un pedido: la suma de sus líneas por producto.
@@ -424,15 +427,12 @@ def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
         pago.estado = "rechazado"
         pago.motivo_rechazo = MOTIVO_VENCIDO
         pago.vencido_en = ahora
+        registrar_evento(db, "pago_rechazado", {"pedido_id": str(pago.pedido_id), "motivo": MOTIVO_VENCIDO, "vencido": True})
     db.commit()
     sin_devolver = 0
     for pago in vencidos:
         resultado = compensar_stock(pago.items, pedido_id=pago.pedido_id) or {}
         sin_devolver += sum(1 for estado in resultado.values() if estado != "devuelta")
-        try:
-            publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": MOTIVO_VENCIDO, "vencido": True})
-        except Exception:
-            logger.error("No se pudo avisar que venció el pago del pedido %s", pago.pedido_id, exc_info=True)
     if vencidos and sin_devolver:
         logger.warning("Vencieron %d pedido(s) sin pagar: %d devolución(es) de stock quedaron anotadas para reintentar",
                        len(vencidos), sin_devolver)
@@ -470,9 +470,10 @@ def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id
         pago.fecha_adelanto = ahora
         pago.culqi_charge_id = cargo_id or pago.culqi_charge_id
         pago.parte_en_revision = None
+        registrar_evento(db, "pago_confirmado", {"pedido_id": str(pago.pedido_id), "adelanto": True,
+                                                 "monto": _dinero(monto_de(pago, "adelanto")),
+                                                 "saldo": _dinero(monto_de(pago, "saldo"))})
         db.commit()
-        publicar_evento({"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
-                         "monto": _dinero(monto_de(pago, "adelanto")), "saldo": _dinero(monto_de(pago, "saldo"))})
         return
     if parte == "saldo":
         pago.estado = "aprobado"
@@ -480,8 +481,8 @@ def _registrar_parte_pagada(db: Session, pago, parte: str, metodo: str, cargo_id
         pago.culqi_charge_id_saldo = cargo_id
         pago.fecha_saldo = ahora
         pago.parte_en_revision = None
+        registrar_evento(db, "saldo_pagado", {"pedido_id": str(pago.pedido_id), "monto": _dinero(monto_de(pago, "saldo"))})
         db.commit()
-        publicar_evento({"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id), "monto": _dinero(monto_de(pago, "saldo"))})
         _crear_liquidaciones_sin_romper(db, pago)
         return
     pago.estado = "aprobado"
@@ -504,14 +505,11 @@ def _crear_liquidaciones_sin_romper(db: Session, pago) -> None:
 
 
 def _confirmar_pago_aprobado(db: Session, pago) -> None:
-    """Lo que sigue a un pago aprobado, venga de Culqi o de una transferencia que aprobó un admin: se guarda, se
-    avisa (pago_confirmado: Pedidos lo marca confirmado y Transporte crea el envío) y se crean las liquidaciones."""
+    """Lo que sigue a un pago aprobado, venga de Culqi o de una transferencia que aprobó un admin: se guarda junto con
+    su aviso (pago_confirmado, en la bandeja de salida: Pedidos lo marca confirmado y Transporte crea el envío) y se
+    crean las liquidaciones."""
+    registrar_evento(db, "pago_confirmado", {"pedido_id": str(pago.pedido_id), "monto": _dinero(pago.monto)})
     db.commit()
-    publicar_evento({
-        "evento": "pago_confirmado",
-        "pedido_id": str(pago.pedido_id),
-        "monto": _dinero(pago.monto),
-    })
 
     # Separado del commit de arriba a propósito — ver el docstring de crear_liquidaciones: el
     # pago ya quedó "aprobado", así que un fallo acá no debe deshacer ni ocultar eso. Se degrada
@@ -581,13 +579,10 @@ def procesar_pago(
     else:
         if not es_reintento:
             pago.estado = "rechazado"
-            db.commit()
+        registrar_evento(db, "pago_rechazado", {"pedido_id": str(pago.pedido_id),
+                                                "motivo": resultado["data"].get("user_message")})
+        db.commit()
         compensar_stock(pago.items, pedido_id=pago.pedido_id)
-        publicar_evento({
-            "evento": "pago_rechazado",
-            "pedido_id": str(pago.pedido_id),
-            "motivo": resultado["data"].get("user_message"),
-        })
     raise HTTPException(
         status_code=402,
         detail=resultado["data"].get("user_message", "El pago fue rechazado"),
@@ -767,13 +762,13 @@ def rechazar_transferencia(
         # El pedido ya va en el camión con su adelanto: solo vuelve a esperar el saldo (sin tocar stock ni cancelar).
         # saldo_rechazado y no pago_rechazado: este último cancela el pedido en Pedidos.
         pago.estado = "adelanto_pagado"
+        registrar_evento(db, "saldo_rechazado", {"pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
         db.commit()
-        publicar_evento({"evento": "saldo_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
         return _transferencia_resumen(pago, parte)
     pago.estado = "rechazado"
+    registrar_evento(db, "pago_rechazado", {"pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
     db.commit()
     compensar_stock(pago.items, pedido_id=pago.pedido_id)
-    publicar_evento({"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id), "motivo": datos.motivo})
     return _transferencia_resumen(pago, parte)
 
 
@@ -874,13 +869,11 @@ def devolver_pago(pedido_id: uuid.UUID, datos: Devolucion, db: Session = Depends
                                                            models.Liquidacion.estado == "pendiente").all():
         _devolver_descuentos_cobrados(db, liquidacion)
         liquidacion.estado = "anulada"
+    registrar_evento(db, "pago_reembolsado", {"pedido_id": str(pago.pedido_id), "motivo": motivo,
+                                              "monto": _dinero(pago.monto_reembolsado),
+                                              "manual": _dinero(manual) if manual else None})
     db.commit()
     compensar_stock(pago.items, pedido_id=pago.pedido_id)
-    try:
-        publicar_evento({"evento": "pago_reembolsado", "pedido_id": str(pago.pedido_id), "motivo": motivo,
-                         "monto": _dinero(pago.monto_reembolsado), "manual": _dinero(manual) if manual else None})
-    except Exception:
-        logger.error("No se pudo avisar la devolución del pedido %s", pedido_id, exc_info=True)
     return _resumen_devolucion(pago)
 
 
@@ -1108,14 +1101,11 @@ def registrar_pago_a_beneficiario(tipo: Literal["productor", "repartidor"], bene
     db.flush()
     for l in cubiertas:
         l.estado, l.fecha_pago, l.pago_beneficiario_id = "pagado", ahora, pago.id
+    registrar_evento(db, "pago_a_beneficiario", {"usuario_id": str(cuenta.usuario_id), "beneficiario_tipo": tipo,
+                                                 "monto": _dinero(total), "metodo": datos.metodo,
+                                                 "numero_operacion": pago.numero_operacion, "cantidad": len(cubiertas)})
     db.commit()
     db.refresh(pago)
-    try:
-        publicar_evento({"evento": "pago_a_beneficiario", "usuario_id": str(cuenta.usuario_id), "beneficiario_tipo": tipo,
-                         "monto": _dinero(total), "metodo": datos.metodo, "numero_operacion": pago.numero_operacion,
-                         "cantidad": len(cubiertas)})
-    except Exception:
-        logger.error("No se pudo avisar el pago %s a %s %s", pago.id, tipo, beneficiario_id, exc_info=True)
     return _pago_beneficiario_salida(pago)
 
 

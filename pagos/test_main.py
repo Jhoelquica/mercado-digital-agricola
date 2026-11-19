@@ -14,8 +14,8 @@ No se levanta Culqi ni Productos reales: crear_cargo se mockea para simular un c
 mockea con un stub que resuelve producto_id -> productor_id desde un diccionario fijo. Como
 crear_liquidaciones vive en su propio módulo (logica_liquidaciones.py, con su propio `import
 httpx` — ver el docstring de ese archivo sobre por qué), el mock se aplica sobre
-logica_liquidaciones.httpx.Client, no sobre main.httpx.Client. publicar_evento también se mockea
-para no depender de RabbitMQ.
+logica_liquidaciones.httpx.Client, no sobre main.httpx.Client. Los eventos no tocan RabbitMQ: quedan en
+la bandeja de salida (comun/bandeja_salida.py), y las pruebas que los miran los anotan con _anotar_eventos.
 
 Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar main) — no se puede sustituir por SQLite, mismo criterio que el resto de
@@ -34,6 +34,18 @@ import main
 import logica_liquidaciones
 from reintento_liquidaciones import reintentar_liquidaciones_pendientes
 from comun.auth import verificar_token
+
+
+def _anotar_eventos(monkeypatch, eventos: list) -> None:
+    """Anota en `eventos` cada evento que el código deja en la bandeja de salida, como se publicará (sin su evento_id,
+    que es nuevo cada vez), y lo deja también en la bandeja, como en producción."""
+    registrar = main.registrar_evento
+
+    def anotar(sesion, tipo, datos):
+        eventos.append({"evento": tipo, **datos})
+        return registrar(sesion, tipo, datos)
+
+    monkeypatch.setattr(main, "registrar_evento", anotar)
 
 client = TestClient(main.app)
 
@@ -136,7 +148,6 @@ def test_pedido_un_solo_productor_crea_una_liquidacion(monkeypatch):
 
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto_a: productor_id, producto_b: productor_id})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar(pago)
     assert resp.status_code == 200, resp.text
@@ -148,6 +159,44 @@ def test_pedido_un_solo_productor_crea_una_liquidacion(monkeypatch):
     assert liq.beneficiario_tipo == "productor"
     assert liq.estado == "pendiente"
     assert float(liq.monto_bruto) == 50.00
+
+
+from comun.conftest import bandeja  # noqa: E402,F401 - la fixture de los eventos que quedaron en la bandeja de salida
+
+
+def _sin_rabbitmq(monkeypatch):
+    """RabbitMQ caído: si algo de la petición intentara conectarse, la prueba lo vería."""
+    monkeypatch.setattr("pika.BlockingConnection",
+                        MagicMock(side_effect=AssertionError("la petición no debe conectarse a RabbitMQ")))
+
+
+def test_con_rabbitmq_caido_el_pago_con_tarjeta_responde_bien_y_su_aviso_queda_en_la_bandeja(monkeypatch, bandeja):
+    producto = str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 2, "precio_unitario": 20.0}])
+    _mockear_cargo_aprobado(monkeypatch)
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    _sin_rabbitmq(monkeypatch)
+
+    resp = _procesar(pago)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["estado"] == "aprobado"
+    [aviso] = [m for m in bandeja("pago_confirmado") if m["pedido_id"] == str(pago.pedido_id)]
+    assert aviso["monto"] == "40.00" and aviso["evento_id"]
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+
+
+def test_con_rabbitmq_caido_una_tarjeta_rechazada_da_402_y_su_aviso_queda_en_la_bandeja(monkeypatch, bandeja):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 30.0}])
+    monkeypatch.setattr(main, "crear_cargo", lambda **kwargs: {"status_code": 400, "data": {"user_message": "Tarjeta rechazada"}})
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    _sin_rabbitmq(monkeypatch)
+
+    resp = _procesar(pago)
+
+    assert resp.status_code == 402, resp.text
+    [aviso] = [m for m in bandeja("pago_rechazado") if m["pedido_id"] == str(pago.pedido_id)]
+    assert aviso["motivo"] == "Tarjeta rechazada"
 
 
 def test_pedido_dos_productores_crea_dos_liquidaciones_con_su_propio_subtotal(monkeypatch):
@@ -163,7 +212,6 @@ def test_pedido_dos_productores_crea_dos_liquidaciones_con_su_propio_subtotal(mo
 
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto_a: productor_1, producto_b: productor_2})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar(pago)
     assert resp.status_code == 200, resp.text
@@ -184,7 +232,6 @@ def test_comision_plataforma_y_monto_neto_calculados_correctamente(monkeypatch):
 
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto_id: productor_id})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar(pago)
     assert resp.status_code == 200, resp.text
@@ -203,7 +250,6 @@ def test_fecha_limite_es_24h_despues_de_fecha_creacion(monkeypatch):
 
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto_id: productor_id})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar(pago)
     assert resp.status_code == 200, resp.text
@@ -222,7 +268,6 @@ def test_productos_no_responde_pago_se_confirma_sin_liquidaciones(monkeypatch):
     pago = _crear_pago_directo(items)
 
     _mockear_cargo_aprobado(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     class _ClienteRoto:
         def __enter__(self):
@@ -619,7 +664,6 @@ def test_el_primer_rechazo_devuelve_el_stock_y_cada_reintento_fallido_lo_deja_co
     compensar, reservar = MagicMock(), MagicMock()
     monkeypatch.setattr(main, "compensar_stock", compensar)
     monkeypatch.setattr(main, "reservar_stock", reservar)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     primero = _procesar(pago)
     segundo = _procesar(pago)
@@ -643,7 +687,6 @@ def test_reintentar_un_pago_rechazado_reserva_el_stock_antes_de_cobrar_y_al_apro
     monkeypatch.setattr(main, "compensar_stock", compensar)
     monkeypatch.setattr(main, "crear_cargo", lambda **kw: (orden.append(("cobrar", None)) or {"status_code": 201, "data": {"id": "chr_reintento"}}))
     _mockear_productos(monkeypatch, {producto: productor})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar(pago)
 
@@ -704,7 +747,6 @@ def test_un_segundo_intento_sobre_un_pago_ya_aprobado_falla_409_sin_cobrar_otra_
     cobros = []
     monkeypatch.setattr(main, "crear_cargo", lambda **kw: (cobros.append(1) or {"status_code": 201, "data": {"id": "chr_1"}}))
     _mockear_productos(monkeypatch, {producto: productor})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     assert _procesar(pago).status_code == 200
     segundo = _procesar(pago)
@@ -729,7 +771,6 @@ def test_solo_el_comprador_dueno_puede_pagar_su_pedido(monkeypatch):
     cargo = MagicMock(return_value={"status_code": 400, "data": {"user_message": "Tarjeta rechazada"}})
     monkeypatch.setattr(main, "crear_cargo", cargo)
     monkeypatch.setattr(main, "compensar_stock", MagicMock())
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     llamadas = _mockear_pedidos(monkeypatch, usuario_id=str(dueno))  # el pedido es de `dueno`
     try:
         # otro comprador y el admin: 403, sin cobrar y sin tocar el pago
@@ -906,7 +947,6 @@ def test_yape_justo_en_el_limite_se_cobra_y_queda_guardado_el_metodo(monkeypatch
     pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 2, "precio_unitario": 250.0}])
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto: productor})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     resp = _procesar_con(pago, "yape")
 
@@ -924,7 +964,6 @@ def test_con_tarjeta_no_hay_limite_y_un_metodo_desconocido_falla_422(monkeypatch
     pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 3, "precio_unitario": 400.0}])
     _mockear_cargo_aprobado(monkeypatch)
     _mockear_productos(monkeypatch, {producto: productor})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     assert _procesar_con(pago, "bitcoin").status_code == 422
     assert _procesar_con(pago, "tarjeta").status_code == 200
@@ -954,7 +993,7 @@ def transferencia(monkeypatch):
     monkeypatch.setattr(main, "subir_constancia", _subir)
     monkeypatch.setattr(main, "leer_constancia", lambda nombre: guardadas[nombre])
     eventos, reservar, compensar = [], MagicMock(), MagicMock()
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    _anotar_eventos(monkeypatch, eventos)
     monkeypatch.setattr(main, "reservar_stock", reservar)
     monkeypatch.setattr(main, "compensar_stock", compensar)
     return {"guardadas": guardadas, "eventos": eventos, "reservar": reservar, "compensar": compensar}
@@ -1131,7 +1170,7 @@ def _pago_en_camion(total=1000.0, adelanto=700.0, estado="pendiente"):
 def _capturar(monkeypatch):
     cobros, eventos, compensar = [], [], MagicMock()
     monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": f"chr_{len(cobros)}"}})
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    _anotar_eventos(monkeypatch, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
     return cobros, eventos, compensar
 
@@ -1300,7 +1339,7 @@ def test_un_pedido_sin_pagar_vence_devuelve_su_stock_y_avisa(monkeypatch):
     _con_vencimiento(al_dia, ahora + timedelta(minutes=30))
     _con_vencimiento(en_revision, ahora - timedelta(minutes=1), estado="en_revision")
     eventos, compensar = [], MagicMock()
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    _anotar_eventos(monkeypatch, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
 
     db = main.SessionLocal()
@@ -1400,7 +1439,7 @@ def test_devolver_un_pago_con_tarjeta_anula_las_ganancias_y_devuelve_el_stock(mo
     _aprobado_con_tarjeta(pago)
     devoluciones, eventos, compensar = [], [], MagicMock()
     monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": "ref_1"}})
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    _anotar_eventos(monkeypatch, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
 
     assert client.post(f"/pagos/admin/{pago.pedido_id}/devolver", json={"motivo": "x x x"}).status_code == 403  # solo el admin
@@ -1422,7 +1461,6 @@ def test_lo_pagado_por_transferencia_queda_para_devolver_a_mano(monkeypatch):
     pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 25.0}])
     _aprobado_con_tarjeta(pago, cargo=None, metodo="transferencia")
     monkeypatch.setattr(main, "crear_devolucion", MagicMock(side_effect=AssertionError("no hay cargo en Culqi")))
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "compensar_stock", MagicMock())
     cuerpo = _devolver(pago.pedido_id).json()
     assert (cuerpo["monto_reembolsado"], cuerpo["reembolso_manual"]) == (0.0, 25.0)
@@ -1439,7 +1477,6 @@ def test_un_pedido_en_camion_devuelve_el_adelanto_y_el_saldo_por_separado(monkey
         db.close()
     devoluciones = []
     monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": f"ref_{cargo}"}})
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "compensar_stock", MagicMock())
     assert _devolver(pago.pedido_id).json()["monto_reembolsado"] == 1000.0
     assert devoluciones == [("chr_a", 700.0), ("chr_s", 300.0)]
@@ -1541,7 +1578,7 @@ def test_el_admin_paga_lo_cumplido_hasta_el_corte_y_se_le_avisa(monkeypatch):
     _liquidacion("repartidor", yo["id"], 12.5, corte - timedelta(days=2))
     _liquidacion("repartidor", yo["id"], 8, corte + (ahora - corte) / 2)  # de esta semana
     eventos = []
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    _anotar_eventos(monkeypatch, eventos)
     url = f"/ganancias/admin/repartidor/{yo['id']}/pagar"
     _sesion_con_rol("admin")
     try:
@@ -1571,7 +1608,6 @@ def test_por_yape_mas_de_500_pide_un_numero_por_operacion(monkeypatch):
     corte = logica_cobros.corte_de_la_semana()
     venta = _liquidacion("productor", yo["id"], 750, corte - timedelta(days=3))
     _entrega(venta.pedido_id, corte - timedelta(days=2))
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     url = f"/ganancias/admin/productor/{yo['id']}/pagar"
     _sesion_con_rol("admin")
     try:
@@ -1644,7 +1680,6 @@ def test_si_productos_no_responde_al_vencer_la_devolucion_queda_pendiente_y_se_r
     pago = _crear_pago_directo([{"producto_id": maiz, "cantidad": 5, "precio_unitario": 6.0, "cantidad_base": 5}])
     ahora = datetime.utcnow()
     _con_vencimiento(pago, ahora - timedelta(minutes=1))
-    monkeypatch.setattr(main, "publicar_evento", lambda evento: None)
     llamadas = []
     _productos_reponer(monkeypatch, "caido", llamadas)  # Docker recién vuelve: Productos todavía no acepta conexiones
 
