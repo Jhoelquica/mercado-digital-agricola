@@ -27,6 +27,7 @@ import uuid
 from unittest.mock import MagicMock
 
 import pytest
+from fastapi import Header
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
@@ -2049,3 +2050,63 @@ def test_un_error_real_al_crear_el_bucket_no_se_traga(monkeypatch):
     monkeypatch.setattr(minio_client, "client", _MinioQueFalla(_error_s3("AccessDenied")))
     with pytest.raises(S3Error):
         minio_client._asegurar_bucket()
+
+
+# ============ Saga de cancelación: el envío se cancela de forma atómica y nada lo revive ============
+import threading as _hilos  # noqa: E402
+
+
+def _cancelar_envio_del_pedido(pedido_id):
+    _auth(str(uuid.uuid4()), rol="admin")
+    return client.post(f"/envios/pedido/{pedido_id}/cancelar")
+
+
+def test_un_envio_que_ya_salio_no_se_cancela():
+    envio = _crear_envio_directo(_crear_repartidor_directo().id, estado="en_camino")
+    resp = _cancelar_envio_del_pedido(envio.pedido_id)
+    assert resp.status_code == 409 and "en camino" in resp.json()["detail"]
+    assert _envio_recargado(envio.id).estado == "en_camino"
+
+
+def test_un_envio_cancelado_no_revive_ni_con_el_repartidor_ni_con_el_camion(monkeypatch):
+    usuario = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="asignado")
+    assert _cancelar_envio_del_pedido(envio.pedido_id).json()["estado"] == "cancelado"
+    assert _cancelar_envio_del_pedido(envio.pedido_id).status_code == 200  # repetirlo no hace nada
+    _auth(usuario)
+    resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "en_camino"}, headers={"Authorization": "Bearer x"})
+    assert resp.status_code == 409 and _envio_recargado(envio.id).estado == "cancelado"
+
+
+def _usuario_por_cabecera(x_prueba_sub: str = Header(None), x_prueba_rol: str = Header(None)):
+    """Para las pruebas con peticiones a la vez: el falso de verificar_token es uno solo para toda la app, así que cada
+    petición dice quién es en una cabecera."""
+    return {"sub": x_prueba_sub, "rol": x_prueba_rol}
+
+
+def test_cancelar_y_salir_a_la_vez_solo_gana_uno():
+    usuario = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="asignado")
+    _auth(usuario)  # deja puesto el falso de `security`
+    main.app.dependency_overrides[verificar_token] = _usuario_por_cabecera
+    resultados = {}
+
+    def cancelar():
+        resultados["cancelar"] = client.post(f"/envios/pedido/{envio.pedido_id}/cancelar",
+                                             headers={"X-Prueba-Sub": str(uuid.uuid4()), "X-Prueba-Rol": "admin"}).status_code
+
+    def salir():
+        resultados["salir"] = client.patch(f"/envios/{envio.id}/estado", json={"estado": "en_camino"},
+                                           headers={"X-Prueba-Sub": usuario, "X-Prueba-Rol": "repartidor"}).status_code
+
+    try:
+        hilos = [_hilos.Thread(target=cancelar), _hilos.Thread(target=salir)]
+        for hilo in hilos:
+            hilo.start()
+        for hilo in hilos:
+            hilo.join(timeout=30)
+    finally:
+        _auth(usuario)
+    final = _envio_recargado(envio.id).estado
+    assert sorted(resultados.values()) == [200, 409], resultados
+    assert final == ("cancelado" if resultados["cancelar"] == 200 else "en_camino")

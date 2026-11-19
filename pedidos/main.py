@@ -1127,49 +1127,55 @@ def _detalle_de(resp) -> str:
 def cancelar_pedido_pagado(pedido_id: uuid.UUID, datos: CancelacionPedido, db: Session = Depends(get_db),
                            usuario: dict = Depends(requiere_rol("admin")),
                            credenciales: HTTPAuthorizationCredentials = Depends(security)):
-    """Saga para cancelar un pedido ya pagado (la pide el admin; cada paso va con su token):
-    1) Transporte dice si el envío todavía se puede cancelar (no salió). Si no, no se toca nada.
-    2) Pagos devuelve el dinero (Culqi; lo pagado por transferencia queda para devolver a mano), anula las ganancias que
-       no se pagaron y devuelve el stock. Si falla, no se toca nada.
-    3) Transporte cancela el envío y libera al repartidor.
-    4) El pedido queda cancelado con su motivo (el aviso al comprador lo publica Pagos al devolver).
-    Si el paso 3 fallara (el envío salió justo entre medio) el dinero ya está devuelto: queda en el log para resolverlo a mano."""
-    pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).with_for_update().first()
+    """Saga para cancelar un pedido ya pagado (la pide el admin; cada paso va con su token). Lo irreversible va al final:
+    1) Transporte cancela el envío de forma atómica (UPDATE ... WHERE estado IN cancelables). Si ya salió: 409 y no se
+       hace nada más (no se devuelve dinero).
+    2) Pagos devuelve el dinero, en dos fases (lo pagado por transferencia queda para devolverlo a mano). Si la devolución
+       queda a medias o falla, la cancelación del envío NO se deshace: Pagos la reintenta sola (con tope) y queda en el
+       aviso de conciliación (pago aprobado con el pedido cancelado).
+    3) El pedido queda cancelado con su motivo (UPDATE condicional desde "confirmado"; el aviso al comprador lo publica
+       Pagos al terminar de devolver).
+    Ninguna llamada se hace con el pedido bloqueado ni con una transacción abierta. Repetirla retoma lo que falte: cada
+    paso es idempotente."""
+    pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
     if not pedido:
         raise HTTPException(status_code=404, detail="Pedido no encontrado")
-    if pedido.estado == "cancelado" and pedido.motivo_cancelacion:
-        return pedido_para(usuario, pedido)  # ya se canceló antes: repetir no hace nada
-    if pedido.estado != "confirmado":
+    ya_cancelado = pedido.estado == "cancelado" and bool(pedido.motivo_cancelacion)
+    if pedido.estado != "confirmado" and not ya_cancelado:
         raise HTTPException(status_code=409, detail="Solo se cancela así un pedido pagado que todavía no se entregó.")
-    motivo = " ".join(datos.motivo.split())
+    motivo = pedido.motivo_cancelacion if ya_cancelado else " ".join(datos.motivo.split())
+    db.rollback()  # sin transacción abierta mientras se llama a Transporte y a Pagos
     cabecera = {"Authorization": f"Bearer {credenciales.credentials}"}
     try:
         with httpx.Client() as client:
-            revision = client.post(f"{TRANSPORTE_URL}/envios/pedido/{pedido_id}/cancelar", params={"solo_revisar": "true"},
-                                   headers=cabecera, timeout=10)
-            if revision.status_code == 409:
-                raise HTTPException(status_code=409, detail=_detalle_de(revision))
-            if revision.status_code != 200:
-                raise HTTPException(status_code=503, detail="Transporte no respondió: no se canceló nada.")
-            devolucion = client.post(f"{PAGOS_URL}/pagos/admin/{pedido_id}/devolver", json={"motivo": motivo},
-                                     headers=cabecera, timeout=40)
-            if devolucion.status_code != 200:
-                raise HTTPException(status_code=devolucion.status_code if devolucion.status_code in (409, 502) else 503,
-                                    detail=_detalle_de(devolucion))
             envio = client.post(f"{TRANSPORTE_URL}/envios/pedido/{pedido_id}/cancelar", headers=cabecera, timeout=10)
+            if envio.status_code == 409:
+                raise HTTPException(status_code=409, detail=_detalle_de(envio))
             if envio.status_code != 200:
-                logger.error("Pedido %s: el dinero ya se devolvió pero Transporte no canceló el envío (%s). REVISAR A MANO.",
-                             pedido_id, _detalle_de(envio))
+                raise HTTPException(status_code=503, detail="Transporte no respondió: no se canceló nada.")
+            try:
+                devolucion = client.post(f"{PAGOS_URL}/pagos/admin/{pedido_id}/devolver", json={"motivo": motivo},
+                                         headers=cabecera, timeout=60)
+                if devolucion.status_code in (200, 202):
+                    resumen = devolucion.json()
+                else:
+                    resumen = {"estado": "pendiente", "detalle": _detalle_de(devolucion)}
+            except httpx.RequestError:
+                resumen = {"estado": "pendiente", "detalle": "Pagos no respondió."}
     except httpx.RequestError:
-        raise HTTPException(status_code=503, detail="Un servicio no respondió: no se canceló nada.")
-    pedido.estado = "cancelado"
-    pedido.motivo_cancelacion = motivo
-    pedido.fecha_cancelacion = datetime.utcnow()
+        raise HTTPException(status_code=503, detail="Transporte no respondió: no se canceló nada.")
+    if resumen.get("estado") != "reembolsado":
+        logger.error("Pedido %s: el envío ya se canceló pero la devolución quedó %s (%s): se reintenta y queda en el "
+                     "aviso de conciliación", pedido_id, resumen.get("estado"), resumen.get("detalle"))
+    (db.query(models.Pedido)
+     .filter(models.Pedido.id == pedido_id, models.Pedido.estado == "confirmado")
+     .update({models.Pedido.estado: "cancelado", models.Pedido.motivo_cancelacion: motivo,
+              models.Pedido.fecha_cancelacion: datetime.utcnow()}, synchronize_session=False))
     db.commit()
-    db.refresh(pedido)
+    pedido = db.query(models.Pedido).filter(models.Pedido.id == pedido_id).first()
     pedido.items
     respuesta = pedido_para(usuario, pedido)
-    respuesta["devolucion"] = devolucion.json()
+    respuesta["devolucion"] = resumen
     return respuesta
 
 

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
@@ -389,7 +390,8 @@ def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dic
     if not repartidor:
         raise HTTPException(status_code=404, detail="Aún no tienes un perfil de repartidor")
 
-    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    # Bloqueada: si el admin la cancela a la vez, una de las dos espera a la otra (y aceptar ve el "cancelado").
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).with_for_update().first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
     if str(envio.repartidor_id) != str(repartidor.id):
@@ -565,9 +567,12 @@ def actualizar_estado(
     usuario: dict = Depends(requiere_rol("repartidor", "productor")),
     credenciales: HTTPAuthorizationCredentials = Depends(security),
 ):
-    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).first()
+    # Bloqueada, como en la cancelación: un "en camino" no pisa un envío que el admin acaba de cancelar.
+    envio = db.query(models.Envio).filter(models.Envio.id == envio_id).with_for_update().first()
     if not envio:
         raise HTTPException(status_code=404, detail="Envío no encontrado")
+    if envio.estado == "cancelado":
+        raise HTTPException(status_code=409, detail="Este envío se canceló: ya no se puede cambiar.")
 
     if usuario.get("rol") == "repartidor":
         # "asignado"/"en_camino" siguen igual acá. "entregado" ya NO — un repartidor tiene que
@@ -984,7 +989,9 @@ def salir_de_viaje(viaje_id: uuid.UUID, datos: SalidaDeViaje = SalidaDeViaje(), 
     viaje.fecha_salida = datetime.utcnow()
     transportista = db.query(models.Repartidor).filter(models.Repartidor.id == viaje.transportista_id).first()
     transportista.estado_disponibilidad = "ocupado"
-    envios = db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id).all()
+    # Solo los que siguen en pie: uno cancelado conserva su viaje_id y no debe revivir (bloqueados, por la cancelación).
+    envios = (db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id, models.Envio.estado != "cancelado")
+              .with_for_update().all())
     for envio in envios:
         envio.repartidor_id = viaje.transportista_id
         envio.estado = "en_camino"
@@ -1430,25 +1437,37 @@ ESTADOS_QUE_YA_SALIERON = {"en_camino": "en camino", "en_destino": "en la ciudad
 @app.post("/envios/pedido/{pedido_id}/cancelar")
 def cancelar_envio_de_pedido(pedido_id: uuid.UUID, solo_revisar: bool = False, db: Session = Depends(get_db),
                              usuario: dict = Depends(requiere_rol("admin"))):
-    """Paso de la saga de cancelación de un pedido pagado (cancelar_pedido_pagado en Pedidos): el envío se cancela solo
-    si todavía no salió. Con solo_revisar=true no cambia nada, solo dice si se puede (Pedidos lo pregunta ANTES de
-    devolver el dinero). Libera al repartidor que lo tenía propuesto o asignado y saca sus sacos del camión."""
-    envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).with_for_update().first()
-    if not envio or envio.estado == "cancelado":
+    """Paso 1 de la saga de cancelación de un pedido pagado (cancelar_pedido_pagado en Pedidos, ANTES de devolver el
+    dinero): el envío se cancela solo si todavía no salió, en un UPDATE condicional (WHERE estado IN cancelables): si el
+    repartidor lo sacó justo antes, no se cancela (409) y Pedidos no devuelve nada. Las transiciones del repartidor
+    bloquean la fila y no pisan un envío cancelado. Con solo_revisar=true no cambia nada, solo dice si se puede. Libera
+    al repartidor que lo tenía propuesto o asignado y saca sus sacos del camión. Repetirlo no hace nada."""
+    previo = db.query(models.Envio.id, models.Envio.estado).filter(models.Envio.pedido_id == pedido_id).first()
+    if not previo or previo.estado == "cancelado":
         db.rollback()
-        return {"envio_id": str(envio.id) if envio else None, "estado": envio.estado if envio else None, "cancelable": True}
-    if envio.estado not in ESTADOS_ENVIO_CANCELABLES:
-        db.rollback()
-        legible = ESTADOS_QUE_YA_SALIERON.get(envio.estado, envio.estado.replace("_", " "))
-        raise HTTPException(status_code=409, detail=f"El pedido ya está {legible}: no se puede cancelar.")
+        return {"envio_id": str(previo.id) if previo else None, "estado": previo.estado if previo else None, "cancelable": True}
     if solo_revisar:
         db.rollback()
-        return {"envio_id": str(envio.id), "estado": envio.estado, "cancelable": True}
-    repartidor_id = envio.repartidor_id if envio.estado in ("propuesto", "asignado") else None
-    viaje = db.query(models.Viaje).filter(models.Viaje.id == envio.viaje_id).with_for_update().first() if envio.viaje_id else None
-    envio.estado = "cancelado"
-    db.flush()
-    if repartidor_id and not tiene_otro_trabajo(db, repartidor_id, salvo_envio=envio.id):
+        if previo.estado not in ESTADOS_ENVIO_CANCELABLES:
+            raise HTTPException(status_code=409, detail=_ya_salio(previo.estado))
+        return {"envio_id": str(previo.id), "estado": previo.estado, "cancelable": True}
+    cancelado = db.execute(text(
+        "UPDATE envios e SET estado = 'cancelado' "
+        "FROM (SELECT id, estado AS anterior FROM envios WHERE pedido_id = :pedido FOR UPDATE) v "
+        "WHERE e.id = v.id AND v.anterior IN :cancelables "
+        "RETURNING e.id, v.anterior, e.repartidor_id, e.viaje_id"
+    ).bindparams(bindparam("cancelables", expanding=True)),
+        {"pedido": pedido_id, "cancelables": list(ESTADOS_ENVIO_CANCELABLES)}).first()
+    if cancelado is None:
+        db.rollback()
+        actual = db.query(models.Envio.estado).filter(models.Envio.pedido_id == pedido_id).scalar()
+        if actual == "cancelado":
+            return {"envio_id": str(previo.id), "estado": "cancelado", "cancelable": True}
+        raise HTTPException(status_code=409, detail=_ya_salio(actual))
+    repartidor_id = cancelado.repartidor_id if cancelado.anterior in ("propuesto", "asignado") else None
+    viaje = (db.query(models.Viaje).filter(models.Viaje.id == cancelado.viaje_id).with_for_update().first()
+             if cancelado.viaje_id else None)
+    if repartidor_id and not tiene_otro_trabajo(db, repartidor_id, salvo_envio=cancelado.id):
         repartidor = db.query(models.Repartidor).filter(models.Repartidor.id == repartidor_id).first()
         if repartidor:
             repartidor.estado_disponibilidad = "disponible"
@@ -1457,4 +1476,9 @@ def cancelar_envio_de_pedido(pedido_id: uuid.UUID, solo_revisar: bool = False, d
     db.commit()
     if repartidor_id:
         intentar_resolver_envio_huerfano(db)
-    return {"envio_id": str(envio.id), "estado": "cancelado", "cancelable": True}
+    return {"envio_id": str(cancelado.id), "estado": "cancelado", "cancelable": True}
+
+
+def _ya_salio(estado: str) -> str:
+    legible = ESTADOS_QUE_YA_SALIERON.get(estado, (estado or "").replace("_", " "))
+    return f"El pedido ya está {legible}: no se puede cancelar."

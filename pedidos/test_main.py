@@ -1500,10 +1500,11 @@ def _servicios(respuestas):
     return mock_client, llamadas
 
 
-def test_cancelar_un_pedido_pagado_revisa_devuelve_cancela_el_envio_y_lo_marca(monkeypatch):
+def test_cancelar_un_pedido_pagado_cancela_el_envio_devuelve_y_lo_marca_en_ese_orden(monkeypatch):
+    # Lo irreversible (la devolución) va al final: primero el envío, que se cancela solo si todavía no salió.
     pedido_id = _pedido_confirmado()
     devolucion = {"estado": "reembolsado", "monto_reembolsado": 55.0, "reembolso_manual": None, "reembolso_ids": []}
-    mock_client, llamadas = _servicios([(200, {"cancelable": True}), (200, devolucion), (200, {"estado": "cancelado"})])
+    mock_client, llamadas = _servicios([(200, {"estado": "cancelado", "cancelable": True}), (200, devolucion)])
     _como(str(uuid.uuid4()), "admin")
     try:
         with patch("main.httpx.Client", return_value=mock_client):
@@ -1513,9 +1514,8 @@ def test_cancelar_un_pedido_pagado_revisa_devuelve_cancela_el_envio_y_lo_marca(m
     assert resp.status_code == 200, resp.text
     cuerpo = resp.json()
     assert (cuerpo["estado"], cuerpo["motivo_cancelacion"], cuerpo["devolucion"]) == ("cancelado", "Sin repartidor desde hace días", devolucion)
-    assert [u.split("/", 3)[-1] for u, _ in llamadas] == [f"envios/pedido/{pedido_id}/cancelar", f"pagos/admin/{pedido_id}/devolver",
-                                                         f"envios/pedido/{pedido_id}/cancelar"]
-    assert llamadas[0][1] == {"solo_revisar": "true"} and llamadas[2][1] is None
+    assert [u.split("/", 3)[-1] for u, _ in llamadas] == [f"envios/pedido/{pedido_id}/cancelar", f"pagos/admin/{pedido_id}/devolver"]
+    assert llamadas[0][1] is None  # ya no "solo revisa": lo cancela de una vez, de forma atómica
 
 
 def test_si_el_envio_ya_salio_no_se_devuelve_nada(monkeypatch):
@@ -1528,12 +1528,12 @@ def test_si_el_envio_ya_salio_no_se_devuelve_nada(monkeypatch):
     finally:
         _como(str(uuid.uuid4()), "comprador")
     assert resp.status_code == 409 and "en camino" in resp.json()["detail"]
-    assert len(llamadas) == 1  # ni Pagos ni la cancelación del envío
+    assert len(llamadas) == 1  # no se llega a Pagos: no se devuelve dinero
 
 
-def test_si_la_devolucion_falla_el_envio_y_el_pedido_siguen_igual(monkeypatch):
+def test_si_la_devolucion_falla_despues_de_cancelar_el_envio_no_se_deshace_y_el_pedido_queda_cancelado(monkeypatch):
     pedido_id = _pedido_confirmado()
-    mock_client, llamadas = _servicios([(200, {"cancelable": True}), (502, {"detail": "Culqi no hizo la devolución."})])
+    mock_client, llamadas = _servicios([(200, {"estado": "cancelado"}), (502, {"detail": "Culqi no hizo la devolución."})])
     _como(str(uuid.uuid4()), "admin")
     try:
         with patch("main.httpx.Client", return_value=mock_client):
@@ -1541,8 +1541,27 @@ def test_si_la_devolucion_falla_el_envio_y_el_pedido_siguen_igual(monkeypatch):
             otra = client.get(f"/pedidos/{pedido_id}", headers=CON_TOKEN)
     finally:
         _como(str(uuid.uuid4()), "comprador")
-    assert resp.status_code == 502 and len(llamadas) == 2
-    assert otra.json()["estado"] == "confirmado"
+    assert resp.status_code == 200 and len(llamadas) == 2, resp.text
+    assert resp.json()["devolucion"] == {"estado": "pendiente", "detalle": "Culqi no hizo la devolución."}
+    assert otra.json()["estado"] == "cancelado"  # la devolución la reintenta Pagos y queda en el aviso de conciliación
+
+
+def test_una_devolucion_a_medias_deja_el_pedido_cancelado_y_repetir_la_retoma(monkeypatch):
+    pedido_id = _pedido_confirmado()
+    a_medias = {"estado": "reembolso_procesando", "pendientes": [{"cargo": "chr_x", "estado": "en_curso"}]}
+    hecha = {"estado": "reembolsado", "monto_reembolsado": 55.0, "reembolso_manual": None, "reembolso_ids": []}
+    mock_client, llamadas = _servicios([(200, {"estado": "cancelado"}), (202, a_medias),
+                                        (200, {"estado": "cancelado"}), (200, hecha)])
+    _como(str(uuid.uuid4()), "admin")
+    try:
+        with patch("main.httpx.Client", return_value=mock_client):
+            primera = client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "Lo pidió el comprador"}, headers=CON_TOKEN)
+            segunda = client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "otro motivo"}, headers=CON_TOKEN)
+    finally:
+        _como(str(uuid.uuid4()), "comprador")
+    assert primera.json()["estado"] == "cancelado" and primera.json()["devolucion"]["estado"] == "reembolso_procesando"
+    assert segunda.json()["devolucion"]["estado"] == "reembolsado" and len(llamadas) == 4
+    assert segunda.json()["motivo_cancelacion"] == "Lo pidió el comprador"  # el motivo es el de la primera vez
 
 
 def test_solo_el_admin_cancela_y_solo_un_pedido_pagado():
