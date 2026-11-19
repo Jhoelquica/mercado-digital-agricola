@@ -56,6 +56,18 @@ def _mensajes_entre(desde, hasta=None):
         db.close()
 
 
+def anotar_eventos(monkeypatch, modulo, eventos: list) -> None:
+    """Anota en `eventos` cada evento que `modulo` deja en la bandeja de salida con su registrar_evento, tal como se
+    publicará (sin el evento_id, que es nuevo cada vez), y lo deja también en la bandeja, como en producción."""
+    registrar = modulo.registrar_evento
+
+    def anotar(sesion, tipo, datos):
+        eventos.append({"evento": tipo, **{clave: valor for clave, valor in datos.items() if clave != "evento"}})
+        return registrar(sesion, tipo, datos)
+
+    monkeypatch.setattr(modulo, "registrar_evento", anotar)
+
+
 @contextmanager
 def bandeja_como_mock():
     """Para las pruebas de antes de la bandeja de salida, que sustituían publicar_evento por un mock: da un MagicMock

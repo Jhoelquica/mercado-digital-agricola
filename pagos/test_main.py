@@ -15,7 +15,7 @@ mockea con un stub que resuelve producto_id -> productor_id desde un diccionario
 crear_liquidaciones vive en su propio módulo (logica_liquidaciones.py, con su propio `import
 httpx` — ver el docstring de ese archivo sobre por qué), el mock se aplica sobre
 logica_liquidaciones.httpx.Client, no sobre main.httpx.Client. Los eventos no tocan RabbitMQ: quedan en
-la bandeja de salida (comun/bandeja_salida.py), y las pruebas que los miran los anotan con _anotar_eventos.
+la bandeja de salida (comun/bandeja_salida.py), y las pruebas que los miran los anotan con anotar_eventos.
 
 Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar main) — no se puede sustituir por SQLite, mismo criterio que el resto de
@@ -35,17 +35,7 @@ import logica_liquidaciones
 from reintento_liquidaciones import reintentar_liquidaciones_pendientes
 from comun.auth import verificar_token
 
-
-def _anotar_eventos(monkeypatch, eventos: list) -> None:
-    """Anota en `eventos` cada evento que el código deja en la bandeja de salida, como se publicará (sin su evento_id,
-    que es nuevo cada vez), y lo deja también en la bandeja, como en producción."""
-    registrar = main.registrar_evento
-
-    def anotar(sesion, tipo, datos):
-        eventos.append({"evento": tipo, **datos})
-        return registrar(sesion, tipo, datos)
-
-    monkeypatch.setattr(main, "registrar_evento", anotar)
+from comun.conftest import anotar_eventos
 
 client = TestClient(main.app)
 
@@ -993,7 +983,7 @@ def transferencia(monkeypatch):
     monkeypatch.setattr(main, "subir_constancia", _subir)
     monkeypatch.setattr(main, "leer_constancia", lambda nombre: guardadas[nombre])
     eventos, reservar, compensar = [], MagicMock(), MagicMock()
-    _anotar_eventos(monkeypatch, eventos)
+    anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "reservar_stock", reservar)
     monkeypatch.setattr(main, "compensar_stock", compensar)
     return {"guardadas": guardadas, "eventos": eventos, "reservar": reservar, "compensar": compensar}
@@ -1170,7 +1160,7 @@ def _pago_en_camion(total=1000.0, adelanto=700.0, estado="pendiente"):
 def _capturar(monkeypatch):
     cobros, eventos, compensar = [], [], MagicMock()
     monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": f"chr_{len(cobros)}"}})
-    _anotar_eventos(monkeypatch, eventos)
+    anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
     return cobros, eventos, compensar
 
@@ -1339,7 +1329,7 @@ def test_un_pedido_sin_pagar_vence_devuelve_su_stock_y_avisa(monkeypatch):
     _con_vencimiento(al_dia, ahora + timedelta(minutes=30))
     _con_vencimiento(en_revision, ahora - timedelta(minutes=1), estado="en_revision")
     eventos, compensar = [], MagicMock()
-    _anotar_eventos(monkeypatch, eventos)
+    anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
 
     db = main.SessionLocal()
@@ -1439,7 +1429,7 @@ def test_devolver_un_pago_con_tarjeta_anula_las_ganancias_y_devuelve_el_stock(mo
     _aprobado_con_tarjeta(pago)
     devoluciones, eventos, compensar = [], [], MagicMock()
     monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": "ref_1"}})
-    _anotar_eventos(monkeypatch, eventos)
+    anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
 
     assert client.post(f"/pagos/admin/{pago.pedido_id}/devolver", json={"motivo": "x x x"}).status_code == 403  # solo el admin
@@ -1578,7 +1568,7 @@ def test_el_admin_paga_lo_cumplido_hasta_el_corte_y_se_le_avisa(monkeypatch):
     _liquidacion("repartidor", yo["id"], 12.5, corte - timedelta(days=2))
     _liquidacion("repartidor", yo["id"], 8, corte + (ahora - corte) / 2)  # de esta semana
     eventos = []
-    _anotar_eventos(monkeypatch, eventos)
+    anotar_eventos(monkeypatch, main, eventos)
     url = f"/ganancias/admin/repartidor/{yo['id']}/pagar"
     _sesion_con_rol("admin")
     try:

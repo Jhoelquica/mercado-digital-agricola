@@ -27,7 +27,7 @@ from fastapi import HTTPException
 from sqlalchemy import case, or_
 
 import models
-from rabbitmq_publisher import publicar_evento
+from eventos import registrar_evento
 from logica_repartidores import PLAZO_RESPUESTA_MINUTOS, SIN_RESPUESTA, tiene_otro_trabajo, _repartidor_existe
 
 PRODUCTOS_URL = os.getenv("PRODUCTOS_URL", "http://localhost:8002")
@@ -167,13 +167,10 @@ def es_contratado(recojo: models.Recojo) -> bool:
     return bool(recojo.transportista_nombre)
 
 
-def avisar_a_los_admins(evento: dict) -> None:
-    """Un aviso para todos los admins (Notificaciones lo guarda con rol_destino="admin" y lo manda a sus celulares).
-    Nunca rompe el paso que lo dispara: el recojo igual aparece en "Productos en tránsito"."""
-    try:
-        publicar_evento(evento)
-    except Exception:
-        logger.warning("No se pudo avisar a los admins (%s)", evento.get("evento"), exc_info=True)
+def avisar_a_los_admins(db, evento: dict) -> None:
+    """Un aviso para todos los admins (Notificaciones lo guarda con rol_destino="admin" y lo manda a sus celulares). Va
+    a la bandeja de salida, en la transacción de `db`: sale con el commit del paso que lo dispara."""
+    registrar_evento(db, evento["evento"], evento)
 
 
 def liberar_repartidor(db, repartidor_id) -> None:
@@ -183,15 +180,13 @@ def liberar_repartidor(db, repartidor_id) -> None:
 
 
 def avisar_al_agricultor(db, recojo: models.Recojo) -> None:
-    """Le cuenta al agricultor cómo va su recojo (Notificaciones arma el texto). Nunca rompe el paso que lo dispara: si
-    RabbitMQ no responde, el agricultor igual lo ve en su panel."""
+    """Le cuenta al agricultor cómo va su recojo (Notificaciones arma el texto). Va a la bandeja de salida, en la
+    transacción de `db`: se llama ANTES del commit del cambio de estado, y sale con él."""
     if not recojo.productor_usuario_id:
         return
     repartidor = (db.query(models.Repartidor).filter(models.Repartidor.id == recojo.repartidor_id).first()
                   if recojo.repartidor_id else None)
-    try:
-        publicar_evento({
-            "evento": "recojo_actualizado",
+    registrar_evento(db, "recojo_actualizado", {
             "recojo_id": str(recojo.id),
             "producto_id": str(recojo.producto_id),
             "usuario_id": str(recojo.productor_usuario_id),
@@ -206,8 +201,6 @@ def avisar_al_agricultor(db, recojo: models.Recojo) -> None:
             "transportista_placa": recojo.transportista_placa,
             "fecha_programada": recojo.fecha_programada.isoformat() if recojo.fecha_programada else None,
         })
-    except Exception:
-        logger.warning("No se pudo avisar al agricultor del recojo %s (%s)", recojo.id, recojo.estado, exc_info=True)
 
 
 def liquidar(recojo: models.Recojo) -> None:
@@ -251,8 +244,8 @@ def cerrar_por_llegada(db, producto_id) -> None:
             liberar_repartidor(db, recojo.repartidor_id)
         recojo.estado = "completado"
         recojo.fecha_completado = ahora
-        db.commit()
         avisar_al_agricultor(db, recojo)
+        db.commit()
         _liquidar_sin_romper(db, recojo)
         return
     if recojo.modalidad == "repartidor":
@@ -262,8 +255,8 @@ def cerrar_por_llegada(db, producto_id) -> None:
     else:
         recojo.estado = "completado"
     recojo.fecha_completado = ahora
-    db.commit()
     avisar_al_agricultor(db, recojo)
+    db.commit()
 
 
 def reintentar_liquidaciones(db) -> None:

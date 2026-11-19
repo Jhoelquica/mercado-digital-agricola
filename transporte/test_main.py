@@ -17,7 +17,7 @@ No se levantan Pedidos, Pagos, Certificación ni RabbitMQ reales:
   POST /pagos/interno/liquidar-repartidor, y por logica_certificacion para GET /pedidos/{id} y
   las llamadas a Certificación) se mockea con stubs en cada módulo por separado — cada uno tiene
   su propio `import httpx`, ver el docstring de logica_certificacion.py sobre por qué.
-- publicar_evento se mockea para no depender de RabbitMQ.
+- Los eventos no tocan RabbitMQ: quedan en la bandeja de salida (comun/bandeja_salida.py).
 
 Requiere una base de datos Postgres real accesible según comun/database.py (tipos UUID de postgresql +
 create_all() al importar main) — no se puede sustituir por SQLite, mismo criterio que el resto de
@@ -31,6 +31,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 import main
+from comun.conftest import anotar_eventos
 import logica_liquidacion_repartidor
 import logica_certificacion
 import logica_repartidores
@@ -204,7 +205,6 @@ def test_entregar_envio_con_pagos_ok_marca_liquidacion_confirmada(monkeypatch):
     envio = _crear_envio_directo(repartidor.id, estado="asignado")
 
     _mockear_pagos_ok(monkeypatch, costo_envio=8.0)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
@@ -220,7 +220,6 @@ def test_entregar_envio_con_pagos_fallando_no_bloquea_respuesta(monkeypatch):
     envio = _crear_envio_directo(repartidor.id, estado="asignado")
 
     _mockear_pagos_roto(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
@@ -256,7 +255,6 @@ def test_entregar_envio_con_certificacion_ok_marca_certificacion_confirmada(monk
     envio = _crear_envio_directo(repartidor.id, estado="asignado")
 
     _mockear_certificacion_ok(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
@@ -272,7 +270,6 @@ def test_entregar_envio_con_certificacion_fallando_no_bloquea_respuesta(monkeypa
     envio = _crear_envio_directo(repartidor.id, estado="asignado")
 
     _mockear_certificacion_rota(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto.jpg")
 
     _auth(usuario_id)
@@ -322,7 +319,6 @@ def test_confirmar_entrega_con_pin_correcto_marca_entregado_y_copia_gps(monkeypa
 
     _mockear_pagos_ok(monkeypatch, costo_envio=6.0)
     _mockear_certificacion_ok(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto-entrega.jpg")
 
     _auth(usuario_id)
@@ -336,6 +332,27 @@ def test_confirmar_entrega_con_pin_correcto_marca_entregado_y_copia_gps(monkeypa
     # repartidor sigue moviéndose después, esto no debe cambiar.
     assert envio_recargado.entrega_latitud == "-12.0464"
     assert envio_recargado.entrega_longitud == "-77.0428"
+
+
+from comun.conftest import bandeja  # noqa: E402,F401 - la fixture de los eventos que quedaron en la bandeja de salida
+
+
+def test_con_rabbitmq_caido_la_entrega_responde_bien_y_su_aviso_queda_en_la_bandeja(monkeypatch, bandeja):
+    usuario_id = str(uuid.uuid4())
+    envio = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario_id).id, estado="en_camino",
+                                 pin_entrega="2468")
+    _mockear_pagos_ok(monkeypatch, costo_envio=6.0)
+    _mockear_certificacion_ok(monkeypatch)
+    monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto-entrega.jpg")
+    monkeypatch.setattr("pika.BlockingConnection",
+                        MagicMock(side_effect=AssertionError("la petición no debe conectarse a RabbitMQ")))
+
+    _auth(usuario_id)
+    resp = _confirmar_entrega(envio.id, pin="2468")
+
+    assert resp.status_code == 200, resp.text
+    [aviso] = [m for m in bandeja("envio_actualizado") if m["pedido_id"] == str(envio.pedido_id)]
+    assert aviso["estado"] == "entregado" and aviso["evento_id"]
 
 
 def test_confirmar_entrega_con_pin_incorrecto_falla_400(monkeypatch):
@@ -822,7 +839,6 @@ def test_actualizar_estado_productor_marca_entregado_si_le_corresponde(monkeypat
     envio = _crear_envio_directo(None, estado="pendiente_entrega_directa", productor_id=productor_id)
 
     monkeypatch.setattr(main.httpx, "Client", lambda *a, **kw: _ClienteEntregaDirectaFalso(productor_id))
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     _auth(str(uuid.uuid4()), rol="productor")
     resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "entregado"})
@@ -873,7 +889,6 @@ def test_actualizar_estado_repartidor_sigue_funcionando_igual_regresion(monkeypa
     repartidor = _crear_repartidor_directo(usuario_id=usuario_id)
     envio = _crear_envio_directo(repartidor.id, estado="asignado")
 
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
 
     _auth(usuario_id)  # rol="repartidor" por defecto
     resp = client.patch(f"/envios/{envio.id}/estado", json={"estado": "en_camino"})
@@ -1133,7 +1148,6 @@ def test_las_respuestas_que_devuelven_un_envio_no_llevan_el_pin(monkeypatch):
     usuario = str(uuid.uuid4())
     repartidor = _crear_repartidor_directo(usuario_id=usuario)
     propuesto = _crear_envio_directo(repartidor.id, estado="propuesto", pin_entrega="7391")
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     _mockear_pedidos(monkeypatch, _pedido_de(str(uuid.uuid4()), estado="confirmado"))
 
     _auth(usuario)
@@ -1154,7 +1168,7 @@ def test_las_respuestas_que_devuelven_un_envio_no_llevan_el_pin(monkeypatch):
 def _preparar_propuesta(monkeypatch, estado_pedido):
     usuario = str(uuid.uuid4())
     propuesto = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="propuesto")
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
+    monkeypatch.setattr(main, "registrar_evento", MagicMock(wraps=main.registrar_evento))
     _mockear_pedidos(monkeypatch, _pedido_de(str(uuid.uuid4()), estado=estado_pedido))
     _auth(usuario)
     return propuesto
@@ -1169,7 +1183,7 @@ def test_no_se_acepta_la_propuesta_de_un_pedido_sin_pagar(monkeypatch, estado_pe
     assert resp.status_code == 409, resp.text
     assert "pago" in resp.json()["detail"]
     assert _envio_recargado(propuesto.id).estado == "propuesto"  # no avanzó
-    main.publicar_evento.assert_not_called()
+    main.registrar_evento.assert_not_called()  # ni un aviso
 
 
 def test_se_acepta_la_propuesta_de_un_pedido_pagado(monkeypatch):
@@ -1184,7 +1198,6 @@ def test_se_acepta_la_propuesta_de_un_pedido_pagado(monkeypatch):
 def test_si_pedidos_no_responde_no_se_acepta_a_ciegas(monkeypatch):
     usuario = str(uuid.uuid4())
     propuesto = _crear_envio_directo(_crear_repartidor_directo(usuario_id=usuario).id, estado="propuesto")
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     _mockear_pedidos(monkeypatch, None, roto=True)
     _auth(usuario)
 
@@ -1200,7 +1213,6 @@ def _preparar_entrega_con_pin(monkeypatch, pin="7391"):
     envio = _crear_envio_directo(repartidor.id, estado="en_camino", pin_entrega=pin)
     _mockear_pagos_ok(monkeypatch)
     _mockear_certificacion_ok(monkeypatch)
-    monkeypatch.setattr(main, "publicar_evento", MagicMock())
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/foto-entrega.jpg")
     _auth(usuario)
     return envio
@@ -1411,7 +1423,7 @@ PDF_FALSO = b"%PDF-1.7 documento de prueba"
 def lejanos(monkeypatch):
     """Sin RabbitMQ, MinIO, Pagos ni Certificación de verdad: todo queda capturado o simulado."""
     eventos = []
-    monkeypatch.setattr(main, "publicar_evento", eventos.append)
+    anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "subir_foto_entrega", lambda *a, **kw: "http://fake/guia.jpg")
     monkeypatch.setattr(main, "intentar_resolver_envio_huerfano", MagicMock())
     guardados = {}

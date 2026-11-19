@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 import main
 import models
 import logica_recojos
+from comun.conftest import anotar_eventos
 import rabbitmq_consumer
 from comun.auth import verificar_token, security
 
@@ -44,7 +45,7 @@ def mundo(monkeypatch):
     monkeypatch.setattr(logica_recojos, "liquidar", lambda recojo: liquidados.append((str(recojo.id), float(recojo.costo))))
     monkeypatch.setattr(main, "intentar_resolver_envio_huerfano", MagicMock())
     avisos = []
-    monkeypatch.setattr(logica_recojos, "publicar_evento", avisos.append)
+    anotar_eventos(monkeypatch, logica_recojos, avisos)
     return {"productor_id": productor_id, "producto_id": producto_id, "producto": producto, "liquidados": liquidados, "avisos": avisos}
 
 

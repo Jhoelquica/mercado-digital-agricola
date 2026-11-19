@@ -39,7 +39,8 @@ from logica_repartidores import reofrecer_entregas_directas
 from logica_liquidacion_repartidor import notificar_liquidacion_repartidor
 from logica_certificacion import notificar_entrega_a_certificacion
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
-from rabbitmq_publisher import publicar_evento
+from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
+from comun import bandeja_salida
 from reintento_huerfanos import lanzar_reintento_huerfanos_en_hilo
 from reintento_liquidacion_repartidor import lanzar_reintento_liquidacion_repartidor_en_hilo
 from reintento_certificacion import lanzar_reintento_certificacion_en_hilo
@@ -52,6 +53,7 @@ Base.metadata.create_all(bind=engine)
 # una columna nueva en models.py falla en cada consulta (ver migraciones.py).
 agregar_columnas_faltantes(engine, Base)
 asegurar_indice_unico_de_envios(engine)
+bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # los índices de la bandeja de salida
 
 # Un transportista de carga sube tres documentos: licencia, tarjeta de propiedad y SOAT.
 LIMITE_CUERPO_DOCUMENTOS_BYTES = limite_del_cuerpo(3)
@@ -86,6 +88,7 @@ app.add_middleware(
 @app.on_event("startup")
 def iniciar():
     lanzar_consumidor_en_hilo()
+    bandeja_salida.lanzar_relevo_en_hilo()  # el único que publica: lo que dejó registrar_evento, en orden
     lanzar_reintento_huerfanos_en_hilo()
     lanzar_reintento_liquidacion_repartidor_en_hilo()
     lanzar_reintento_certificacion_en_hilo()
@@ -399,10 +402,9 @@ def aceptar_propuesta(envio_id: str, db: Session = Depends(get_db), usuario: dic
         raise HTTPException(status_code=409, detail="El pago de este pedido todavía no está confirmado: no se puede aceptar")
 
     envio.estado = "asignado"
+    registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
     db.refresh(envio)
-
-    publicar_evento(evento_envio_actualizado(envio))
     return envio
 
 
@@ -598,10 +600,9 @@ def actualizar_estado(
             raise HTTPException(status_code=403, detail="No puedes actualizar un envío que no te corresponde")
 
     envio.estado = datos.estado
+    registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
     db.refresh(envio)
-
-    publicar_evento(evento_envio_actualizado(envio))
 
     if datos.estado == "entregado":
         _efectos_post_entrega(db, envio)
@@ -688,10 +689,9 @@ def confirmar_entrega(
     envio.entrega_longitud = envio.repartidor_longitud
     envio.pin_intentos_fallidos = 0
     envio.pin_bloqueado_hasta = None
+    registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
     db.refresh(envio)
-
-    publicar_evento(evento_envio_actualizado(envio))
 
     _efectos_post_entrega(db, envio)
 
@@ -745,9 +745,9 @@ def despachar_en_agencia(
     envio.numero_guia = numero_guia
     envio.foto_guia_url = url_foto
     envio.fecha_despacho = datetime.utcnow()
+    registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
     db.refresh(envio)
-    publicar_evento(evento_envio_actualizado(envio))
     # Su parte terminó: queda libre para otro envío y se le liquida su tramo.
     repartidor.estado_disponibilidad = "disponible"
     db.commit()
@@ -769,9 +769,9 @@ def confirmar_que_lo_recogi(envio_id: uuid.UUID, db: Session = Depends(get_db), 
         raise HTTPException(status_code=409, detail="Este pedido todavía no está en la agencia (o ya lo confirmaste)")
     envio.estado = "entregado"
     envio.fecha_recibido = datetime.utcnow()
+    registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
     db.refresh(envio)
-    publicar_evento(evento_envio_actualizado(envio))
     try:
         notificar_entrega_a_certificacion(db, envio)
         db.commit()
@@ -988,9 +988,8 @@ def salir_de_viaje(viaje_id: uuid.UUID, datos: SalidaDeViaje = SalidaDeViaje(), 
     for envio in envios:
         envio.repartidor_id = viaje.transportista_id
         envio.estado = "en_camino"
+        registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
-    for envio in envios:
-        publicar_evento(evento_envio_actualizado(envio))
     return _viaje_para_mostrar(db, viaje)
 
 
@@ -1007,9 +1006,8 @@ def llegar_a_destino(viaje_id: uuid.UUID, db: Session = Depends(get_db), usuario
     envios = db.query(models.Envio).filter(models.Envio.viaje_id == viaje.id, models.Envio.estado == "en_camino").all()
     for envio in envios:
         envio.estado = "en_destino"
+        registrar_evento(db, "envio_actualizado", evento_envio_actualizado(envio))
     db.commit()
-    for envio in envios:
-        publicar_evento(evento_envio_actualizado(envio))
     return _viaje_para_mostrar(db, viaje)
 
 
@@ -1214,14 +1212,15 @@ def pedir_recojo(datos: RecojoCrear, db: Session = Depends(get_db), usuario: dic
     recojo.estado = "pendiente_asignacion"
     db.add(recojo)
     db.flush()
-    logica_recojos.proponer_recojo(db, recojo)
     if not logica_recojos.hay_vehiculo_para(db, peso):
         # H8: ningún vehículo registrado lo carga: los admins tienen que contratar uno (aviso en la app y al celular).
-        logica_recojos.avisar_a_los_admins({
+        # Va en la misma transacción que el recojo: la confirma proponer_recojo.
+        logica_recojos.avisar_a_los_admins(db, {
             "evento": "recojo_sin_vehiculo", "recojo_id": str(recojo.id), "producto_id": str(recojo.producto_id),
             "producto_nombre": recojo.producto_nombre, "productor_nombre": producto.get("productor_nombre"),
             "peso_kg": peso, "sacos": recojo.sacos, "distancia_km": recojo.distancia_km,
         })
+    logica_recojos.proponer_recojo(db, recojo)
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1255,16 +1254,16 @@ def cancelar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario
     contratado_en_camino = logica_recojos.es_contratado(recojo) and recojo.estado == "asignado"
     recojo.estado = "cancelado"
     recojo.motivo_cancelacion = "Lo anuló el agricultor."
-    db.commit()
-    if liberado:
-        intentar_resolver_envio_huerfano(db)
     if contratado_en_camino:
         # H8: el conductor contratado no tiene la app: el admin tiene que avisarle que ya no vaya.
-        logica_recojos.avisar_a_los_admins({
+        logica_recojos.avisar_a_los_admins(db, {
             "evento": "recojo_anulado_contratado", "recojo_id": str(recojo.id), "producto_id": str(recojo.producto_id),
             "producto_nombre": recojo.producto_nombre, "transportista_nombre": recojo.transportista_nombre,
             "transportista_telefono": recojo.transportista_telefono,
         })
+    db.commit()
+    if liberado:
+        intentar_resolver_envio_huerfano(db)
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1299,8 +1298,8 @@ def aceptar_recojo(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario:
     recojo, _ = _recojo_del_repartidor(db, recojo_id, usuario, "propuesto")
     recojo.estado = "asignado"
     recojo.fecha_aceptado = datetime.utcnow()
-    db.commit()
     logica_recojos.avisar_al_agricultor(db, recojo)
+    db.commit()
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1320,8 +1319,8 @@ def marcar_recogido(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuario
     recojo, _ = _recojo_del_repartidor(db, recojo_id, usuario, "asignado")
     recojo.estado = "recogido"
     recojo.fecha_recogido = datetime.utcnow()
-    db.commit()
     logica_recojos.avisar_al_agricultor(db, recojo)
+    db.commit()
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
@@ -1333,8 +1332,8 @@ def dejar_en_almacen(recojo_id: uuid.UUID, db: Session = Depends(get_db), usuari
     recojo.estado = "en_almacen"
     recojo.fecha_en_almacen = datetime.utcnow()
     repartidor.estado_disponibilidad = "disponible"
-    db.commit()
     logica_recojos.avisar_al_agricultor(db, recojo)
+    db.commit()
     intentar_resolver_envio_huerfano(db)
     logica_recojos.asignar_recojos_pendientes(db)
     return logica_recojos.recojo_para_mostrar(db, recojo)
@@ -1392,8 +1391,8 @@ def contratar_transporte(recojo_id: uuid.UUID, datos: TransporteContratado, db: 
     recojo.contratado_por = usuario.get("sub")
     recojo.estado = "asignado"
     recojo.fecha_aceptado = ahora
-    db.commit()
     logica_recojos.avisar_al_agricultor(db, recojo)
+    db.commit()
     if liberado:
         intentar_resolver_envio_huerfano(db)
     return logica_recojos.recojo_para_mostrar(db, recojo)
@@ -1408,8 +1407,8 @@ def marcar_recogido_por_contratado(recojo_id: uuid.UUID, db: Session = Depends(g
         raise HTTPException(status_code=409, detail="Solo se marca así un recojo con transporte contratado que todavía no se recogió.")
     recojo.estado = "recogido"
     recojo.fecha_recogido = datetime.utcnow()
-    db.commit()
     logica_recojos.avisar_al_agricultor(db, recojo)
+    db.commit()
     return logica_recojos.recojo_para_mostrar(db, recojo)
 
 
