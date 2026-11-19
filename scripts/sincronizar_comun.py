@@ -8,14 +8,21 @@ generada desde comun/ con un encabezado que lo dice. Edita siempre comun/ y corr
 También mantiene la copia de deploy/rabbitmq/definiciones.json (lo que RabbitMQ importa al arrancar) dentro de la
 ConfigMap rabbitmq-definiciones de k8s/rabbitmq.yaml: compose monta el archivo y Kubernetes la ConfigMap.
 
-Y comprueba que cada dependencia que está en el requirements.txt de dos o más servicios tenga en todos la misma versión:
-el código común corre igual en todos solo si sus librerías son las mismas. Eso no lo arregla solo: se corrige a mano.
+Y comprueba, sin arreglarlo (se corrige a mano):
+- que cada dependencia que está en el requirements.txt de dos o más servicios tenga en todos la misma versión: el código
+  común corre igual en todos solo si sus librerías son las mismas;
+- que ningún servicio publique directo en RabbitMQ: todo evento pasa por la bandeja de salida (comun/bandeja_salida.py)
+  y solo su relevo publica;
+- que definiciones.json declare las colas de todos los consumidores (y sus .fallidos), durables y con sus enlaces: así
+  existen desde que RabbitMQ arranca, aunque su consumidor todavía no se haya conectado.
 
 Uso (desde la raíz del repositorio):
     python scripts/sincronizar_comun.py               # copia comun/ a los servicios
     python scripts/sincronizar_comun.py --verificar   # solo comprueba: sale con error si algo no coincide
 """
 import argparse
+import ast
+import json
 import re
 import sys
 from pathlib import Path
@@ -33,11 +40,14 @@ CON_MIGRACION_DE_COLUMNAS = ("usuarios", "productores", "productos", "pedidos", 
 # Los que reciben fotos (comun/imagenes.py) y los que reciben documentos en foto o PDF (comun/documentos.py).
 CON_IMAGENES = ("productores", "productos", "transporte", "pagos")
 CON_DOCUMENTOS = ("usuarios", "transporte")
+# Los que publican eventos: siempre por su bandeja de salida (comun/bandeja_salida.py).
+CON_BANDEJA_DE_SALIDA = ("productos", "pedidos", "transporte", "pagos")
 
 # Qué servicios llevan cada archivo de comun/. Un archivo nuevo en comun/ tiene que agregarse aquí.
 DESTINOS = {
     "__init__.py": TODOS,
     "auth.py": TODOS,
+    "bandeja_salida.py": CON_BANDEJA_DE_SALIDA,
     "conftest.py": TODOS,
     "database.py": TODOS,
     "documentos.py": CON_DOCUMENTOS,
@@ -46,6 +56,7 @@ DESTINOS = {
     "logging.py": TODOS,
     "migraciones.py": CON_MIGRACION_DE_COLUMNAS,
     "rabbitmq.py": CON_RABBITMQ,
+    "test_bandeja_salida.py": CON_BANDEJA_DE_SALIDA,
     "test_database.py": TODOS,
     "test_documentos.py": CON_DOCUMENTOS,
     "test_inbox.py": CON_INBOX,
@@ -58,6 +69,16 @@ DESTINOS = {
 NO_SON_MODULOS = {"__init__.py", "conftest.py"}
 # Salvo migraciones.py: comun/migraciones.py tiene la migración común y el migraciones.py del servicio, las suyas.
 PUEDEN_TENER_EL_SUYO = {"migraciones.py"}
+
+# Ningún servicio publica directo: solo el relevo de la bandeja de salida, con el Publicador de comun/rabbitmq.py, que
+# solo usa comun/bandeja_salida.py. Lo que un consumidor devuelve a su propia cola para mandarlo a fallidos (_apartar) no
+# es publicar un evento.
+PUBLICAR_SOLO_EN = {("comun/rabbitmq.py", "Publicador.publicar"), ("comun/rabbitmq.py", "_apartar")}
+USAR_EL_PUBLICADOR_SOLO_EN = {"comun/rabbitmq.py", "comun/bandeja_salida.py"}
+# TEMPORAL: los servicios que todavía publican directo (con comun.rabbitmq.publicar_evento) mientras pasan, uno por
+# commit, a la bandeja de salida. Con el último se borran esto y publicar_evento.
+PUBLICAN_DIRECTO_TODAVIA = {"pagos", "transporte", "productos"}
+CARPETAS_QUE_NO_SON_CODIGO = {"venv", ".venv", "__pycache__", "node_modules"}
 
 ENCABEZADO = "# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py\n"
 
@@ -121,6 +142,128 @@ def dependencias_con_versiones_distintas() -> list:
     return distintas
 
 
+def _archivos_de_codigo():
+    """(ruta relativa, ruta) de cada .py de comun/ y de los servicios que corre en producción: sin las pruebas, sus
+    ayudas ni las copias de comun/ (que son iguales a comun/)."""
+    for carpeta in (ORIGEN, *(RAIZ / servicio for servicio in TODOS)):
+        for ruta in sorted(carpeta.rglob("*.py")):
+            partes = ruta.relative_to(RAIZ).parts
+            if partes[0] != "comun" and "comun" in partes[1:-1]:
+                continue
+            if ruta.name.startswith("test_") or ruta.name == "conftest.py" or CARPETAS_QUE_NO_SON_CODIGO & set(partes):
+                continue
+            yield "/".join(partes), ruta
+
+
+class _Publicaciones(ast.NodeVisitor):
+    """Las llamadas que publican (basic_publish, publicar_evento) y los usos del Publicador, con la función donde están."""
+
+    def __init__(self):
+        self.pila, self.encontradas = [], []
+
+    def _dentro(self, nodo):
+        self.pila.append(nodo.name)
+        self.generic_visit(nodo)
+        self.pila.pop()
+
+    visit_FunctionDef = visit_AsyncFunctionDef = visit_ClassDef = _dentro
+
+    def visit_Call(self, nodo):
+        nombre = nodo.func.attr if isinstance(nodo.func, ast.Attribute) else getattr(nodo.func, "id", None)
+        if nombre in ("basic_publish", "publicar_evento"):
+            self.encontradas.append((nodo.lineno, nombre, ".".join(self.pila)))
+        self.generic_visit(nodo)
+
+    def visit_Name(self, nodo):
+        if nodo.id == "Publicador":
+            self.encontradas.append((nodo.lineno, "Publicador", ".".join(self.pila)))
+
+    def visit_Attribute(self, nodo):
+        if nodo.attr == "Publicador":
+            self.encontradas.append((nodo.lineno, "Publicador", ".".join(self.pila)))
+        self.generic_visit(nodo)
+
+
+def publicaciones_directas() -> list:
+    """Lo que publica en RabbitMQ fuera del relevo de la bandeja de salida, en frases."""
+    permitidas = set(PUBLICAR_SOLO_EN)
+    if PUBLICAN_DIRECTO_TODAVIA:
+        permitidas.add(("comun/rabbitmq.py", "publicar_evento"))
+    encontradas = []
+    for relativa, ruta in _archivos_de_codigo():
+        visitante = _Publicaciones()
+        visitante.visit(ast.parse(_texto(ruta), filename=relativa))
+        for linea, nombre, donde in visitante.encontradas:
+            if nombre == "Publicador":
+                bien = relativa in USAR_EL_PUBLICADOR_SOLO_EN
+            elif nombre == "publicar_evento":
+                bien = relativa.split("/")[0] in PUBLICAN_DIRECTO_TODAVIA
+            else:
+                bien = (relativa, donde) in permitidas
+            if not bien:
+                encontradas.append(f"{relativa}:{linea}: {nombre} fuera del relevo de la bandeja de salida (en "
+                                   f"{donde or 'el módulo'}): los eventos se dejan con registrar_evento")
+    return encontradas
+
+
+def suscripciones_de_los_consumidores() -> set:
+    """{(exchange, cola)} de las SUSCRIPCIONES de cada rabbitmq_consumer.py: lo que declara cada consumidor al conectar."""
+    suscripciones = set()
+    for servicio in TODOS:
+        ruta = RAIZ / servicio / "rabbitmq_consumer.py"
+        if not ruta.exists():
+            continue
+        arbol = ast.parse(_texto(ruta), filename=str(ruta))
+        constantes = {nodo.targets[0].id: nodo.value.value for nodo in arbol.body
+                      if isinstance(nodo, ast.Assign) and isinstance(nodo.targets[0], ast.Name)
+                      and isinstance(nodo.value, ast.Constant) and isinstance(nodo.value.value, str)}
+        for nodo in arbol.body:
+            if isinstance(nodo, ast.Assign) and getattr(nodo.targets[0], "id", None) == "SUSCRIPCIONES":
+                for tupla in nodo.value.elts:
+                    exchange, cola = (e.value if isinstance(e, ast.Constant) else constantes[e.id]
+                                      for e in tupla.elts[:2])
+                    suscripciones.add((exchange, cola))
+    return suscripciones
+
+
+def topologia_sin_declarar() -> list:
+    """Lo que los consumidores declaran al conectarse y definiciones.json no (o declara distinto), en frases."""
+    definiciones = json.loads(_texto(DEFINICIONES_RABBITMQ))
+    colas = {cola["name"]: cola for cola in definiciones.get("queues", [])}
+    exchanges = {exchange["name"]: exchange for exchange in definiciones.get("exchanges", [])}
+    enlaces = {(e["source"], e["destination"], e["routing_key"]) for e in definiciones.get("bindings", [])}
+    encontrados = []
+
+    def exigir_cola(nombre):
+        if nombre not in colas:
+            encontrados.append(f"definiciones.json no declara la cola {nombre}")
+        elif not colas[nombre].get("durable") or colas[nombre].get("auto_delete") or colas[nombre].get("arguments"):
+            encontrados.append(f"definiciones.json: la cola {nombre} debe ser durable, sin auto_delete ni argumentos "
+                               "(como la declaran los consumidores)")
+
+    def exigir_exchange(nombre, tipo):
+        if exchanges.get(nombre, {}).get("type") != tipo or not exchanges.get(nombre, {}).get("durable"):
+            encontrados.append(f"definiciones.json no declara el exchange {nombre} ({tipo}, durable)")
+
+    def exigir_enlace(origen, destino, clave):
+        if (origen, destino, clave) not in enlaces:
+            encontrados.append(f"definiciones.json no liga {destino} a {origen} (routing key {clave!r})")
+
+    suscripciones = suscripciones_de_los_consumidores()
+    con_consumidor = {cola for _, cola in suscripciones}
+    exigir_exchange("fallidos", "direct")
+    for exchange, cola in sorted(suscripciones):
+        exigir_exchange(exchange, "fanout")
+        exigir_cola(cola)
+        exigir_cola(f"{cola}.fallidos")
+        exigir_enlace(exchange, cola, "")
+        exigir_enlace("fallidos", f"{cola}.fallidos", cola)
+    for nombre in sorted(colas):
+        if nombre != "fallidos.sin_ruta" and nombre.removesuffix(".fallidos") not in con_consumidor:
+            encontrados.append(f"definiciones.json declara la cola {nombre}, que no tiene consumidor: se llenaría")
+    return encontrados
+
+
 def problemas() -> list:
     """Todo lo que no coincide, en frases. Vacío si las copias están al día."""
     encontrados = []
@@ -154,6 +297,8 @@ def problemas() -> list:
     elif manifiesto[bloque[0]:bloque[1]] != _definiciones_esperadas():
         encontrados.append("k8s/rabbitmq.yaml: su definiciones.json no coincide con deploy/rabbitmq/definiciones.json")
     encontrados.extend(dependencias_con_versiones_distintas())
+    encontrados.extend(publicaciones_directas())
+    encontrados.extend(topologia_sin_declarar())
     return encontrados
 
 
@@ -202,13 +347,16 @@ def main():
         for problema in encontrados:
             print(f"  - {problema}", file=sys.stderr)
         print("Las copias se arreglan editando la fuente (comun/ o deploy/rabbitmq/definiciones.json) y corriendo "
-              "python scripts/sincronizar_comun.py; las versiones de requirements.txt, a mano.", file=sys.stderr)
+              "python scripts/sincronizar_comun.py; lo demás, a mano.", file=sys.stderr)
         sys.exit(1)
     copias = sum(len(_destinos_de(s)) for s in TODOS)
     compartidas = sum(1 for v in versiones_de_las_dependencias().values() if len(v) > 1)
     print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), las "
-          f"definiciones de RabbitMQ en k8s/rabbitmq.yaml, y las {compartidas} dependencias compartidas tienen la "
-          "misma versión en todos.")
+          f"definiciones de RabbitMQ en k8s/rabbitmq.yaml (con las {len(suscripciones_de_los_consumidores())} colas de "
+          f"los consumidores), las {compartidas} dependencias compartidas tienen la misma versión en todos, y solo el "
+          "relevo de la bandeja de salida publica"
+          + (f" (salvo {', '.join(sorted(PUBLICAN_DIRECTO_TODAVIA))}, que todavía no pasaron a ella)."
+             if PUBLICAN_DIRECTO_TODAVIA else "."))
 
 
 if __name__ == "__main__":

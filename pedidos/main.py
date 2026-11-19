@@ -3,7 +3,6 @@ from comun.logging import configurar_logging
 configurar_logging()  # lo primero: lo que se registre al importar lo demás ya sale con hora, nivel y nombre del logger
 
 from prometheus_fastapi_instrumentator import Instrumentator
-import json
 import logging
 import os
 import sys
@@ -22,15 +21,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field, field_validator
-from rabbitmq_publisher import publicar_evento
+from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
 from comun.auth import verificar_token
 from comun.auth import secreto_de_servicio_valido
 from rabbitmq_consumer import lanzar_consumidor_en_hilo
-from reintento_eventos import lanzar_reintento_eventos_en_hilo
 from comun.auth import verificar_token, requiere_rol, security
 
 from comun.database import Base, engine, SessionLocal, get_db
-from comun import inbox
+from comun import bandeja_salida, inbox
 from comun.migraciones import agregar_columnas_faltantes
 import models
 import reniec
@@ -43,6 +41,7 @@ logger = logging.getLogger("pedidos")
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
 inbox.asegurar_indice_de_fecha(engine)  # el de eventos_procesados, en una tabla de antes
+bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # la bandeja de antes: le faltan secuencia y exchange
 
 app = FastAPI()
 
@@ -53,7 +52,7 @@ Instrumentator().instrument(app).expose(app)
 def iniciar():
     lanzar_consumidor_en_hilo()
     inbox.lanzar_limpieza_en_hilo()  # borra las marcas de eventos_procesados viejas, cada hora
-    lanzar_reintento_eventos_en_hilo()
+    bandeja_salida.lanzar_relevo_en_hilo()  # el único que publica: lo que dejó registrar_evento, en orden
 
 CLAVE_ALMACEN = "almacen_ubicacion"
 # Aproximación del Mercado Nery García Zárate, en Ayacucho — valor inicial hasta que el Admin lo
@@ -765,9 +764,9 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             db.add(nuevo_item)
             filas_con_base.append((nuevo_item, cantidad_base))
 
-        # El evento va a la bandeja de salida en la MISMA transacción que el pedido (ver models.EventoSaliente).
-        saliente = models.EventoSaliente(tipo="pedido_creado", cuerpo=json.dumps(_evento_pedido_creado(nuevo_pedido, usuario, filas_con_base)))
-        db.add(saliente)
+        # El evento va a la bandeja de salida en la MISMA transacción que el pedido (comun/bandeja_salida.py): si el
+        # pedido no se guarda, el evento tampoco; si se guarda, sale aunque RabbitMQ esté caído.
+        registrar_evento(db, "pedido_creado", _evento_pedido_creado(nuevo_pedido, usuario, filas_con_base))
         try:
             db.commit()
         except Exception:
@@ -777,8 +776,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             _devolver_stock(client, [(item.producto_id, cantidad_base) for item, _, _, cantidad_base, _ in items_validados])
             raise HTTPException(status_code=503, detail="No se pudo registrar tu pedido y no se te cobró nada. Intenta de nuevo en unos momentos.")
 
-    _publicar_saliente(db, saliente)
-    # Después de publicar: marcar el evento enviado hace commit y vence los atributos del pedido ya cargados.
+    # El commit vence los atributos del pedido ya cargados: se vuelven a leer para la respuesta.
     db.refresh(nuevo_pedido)
     nuevo_pedido.items  # fuerza la carga de la relación: sin esto la respuesta sale sin "items"
     return pedido_para(usuario, nuevo_pedido)
@@ -826,18 +824,6 @@ def _devolver_stock(client, lineas) -> None:
     if resp.status_code != 200:
         logger.error("Productos no devolvió el stock (HTTP %s). REVISAR A MANO: %s", resp.status_code, lineas)
 
-
-def _publicar_saliente(db: Session, saliente) -> None:
-    """Publica un evento de la bandeja de salida y lo marca enviado. Si RabbitMQ no responde, el pedido ya está creado
-    igual: el evento sigue en la bandeja y reintento_eventos.py lo reenvía."""
-    try:
-        publicar_evento(saliente.mensaje())
-    except Exception:
-        logger.warning("RabbitMQ no respondió al publicar %s: queda en la bandeja de salida", saliente.tipo, exc_info=True)
-        return
-    saliente.fecha_envio = datetime.utcnow()
-    saliente.intentos = (saliente.intentos or 0) + 1
-    db.commit()
 
 # Público a propósito (mismo criterio que /configuracion/almacen): el comprador ve cuánto le va a
 # costar el envío ANTES de pagar, sin crear todavía el pedido. DEBE declararse antes de

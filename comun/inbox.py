@@ -6,8 +6,6 @@ ya está y el efecto no se repite. Si el efecto falla, el rollback se lleva tamb
 de nuevo. Dos entregas a la vez se turnan en el índice único: la segunda espera a que la primera confirme o se deshaga.
 """
 import logging
-import os
-import sys
 import threading
 import time
 import uuid
@@ -17,20 +15,12 @@ from sqlalchemy import Column, DateTime, String, text
 from sqlalchemy.dialects.postgresql import UUID, insert
 
 from comun.database import Base, SessionLocal
+# Las marcas se guardan DIAS_RETENCION_EVENTOS días (30 si no se dice): un repetido llega en minutos (RabbitMQ) o en
+# horas (la bandeja de salida reenvía lo que no salió), así que sobra. Las más viejas las borra un hilo, cada hora.
+from comun.rabbitmq import DIAS_RETENCION_EVENTOS
 
 logger = logging.getLogger("comun.inbox")
 
-
-def _dias_de_retencion() -> int:
-    valor = os.getenv("DIAS_RETENCION_EVENTOS") or "30"
-    if not valor.isdigit() or int(valor) < 1:
-        sys.exit(f"La variable de entorno DIAS_RETENCION_EVENTOS debe ser un número de días (1 o más), no {valor!r}.")
-    return int(valor)
-
-
-# Las marcas se guardan este tiempo: un repetido llega en minutos (RabbitMQ) o en días (la bandeja de salida de Pedidos
-# borra los suyos a la semana), así que con 30 días sobra. Las más viejas las borra un hilo, cada hora.
-DIAS_RETENCION_EVENTOS = _dias_de_retencion()
 INTERVALO_DE_LIMPIEZA_SEGUNDOS = 3600
 INDICE_DE_FECHA = "ix_eventos_procesados_fecha"
 

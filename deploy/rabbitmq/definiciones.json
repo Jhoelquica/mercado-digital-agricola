@@ -2,6 +2,146 @@
   "queues": [
     {
       "vhost": "/",
+      "name": "notificaciones_envios",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_pagos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_pedidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_productos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pagos_envios",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pagos_pedidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pedidos_envios",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pedidos_pagos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "transporte_pagos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "transporte_productos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_envios.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_pagos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_pedidos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "notificaciones_productos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pagos_envios.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pagos_pedidos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pedidos_envios.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "pedidos_pagos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "transporte_pagos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "transporte_productos.fallidos",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
       "name": "fallidos.sin_ruta",
       "durable": true,
       "auto_delete": false,
@@ -9,6 +149,42 @@
     }
   ],
   "exchanges": [
+    {
+      "vhost": "/",
+      "name": "eventos_envios",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "eventos_pagos",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "eventos_pedidos",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "name": "eventos_productos",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
     {
       "vhost": "/",
       "name": "fallidos",
@@ -29,6 +205,166 @@
     }
   ],
   "bindings": [
+    {
+      "vhost": "/",
+      "source": "eventos_envios",
+      "destination": "notificaciones_envios",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_envios",
+      "destination": "pagos_envios",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_envios",
+      "destination": "pedidos_envios",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_pagos",
+      "destination": "notificaciones_pagos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_pagos",
+      "destination": "pedidos_pagos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_pagos",
+      "destination": "transporte_pagos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_pedidos",
+      "destination": "notificaciones_pedidos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_pedidos",
+      "destination": "pagos_pedidos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_productos",
+      "destination": "notificaciones_productos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "eventos_productos",
+      "destination": "transporte_productos",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "notificaciones_envios.fallidos",
+      "destination_type": "queue",
+      "routing_key": "notificaciones_envios",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "notificaciones_pagos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "notificaciones_pagos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "notificaciones_pedidos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "notificaciones_pedidos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "notificaciones_productos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "notificaciones_productos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "pagos_envios.fallidos",
+      "destination_type": "queue",
+      "routing_key": "pagos_envios",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "pagos_pedidos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "pagos_pedidos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "pedidos_envios.fallidos",
+      "destination_type": "queue",
+      "routing_key": "pedidos_envios",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "pedidos_pagos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "pedidos_pagos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "transporte_pagos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "transporte_pagos",
+      "arguments": {}
+    },
+    {
+      "vhost": "/",
+      "source": "fallidos",
+      "destination": "transporte_productos.fallidos",
+      "destination_type": "queue",
+      "routing_key": "transporte_productos",
+      "arguments": {}
+    },
     {
       "vhost": "/",
       "source": "fallidos.sin_ruta",

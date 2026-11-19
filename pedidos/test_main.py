@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 import main
 from comun.auth import verificar_token
+from comun.conftest import bandeja_como_mock
 
 client = TestClient(main.app)
 main.sembrar_configuracion_almacen()
@@ -94,7 +95,7 @@ def test_pedido_valido_dentro_de_ayacucho_y_sobre_el_minimo():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento") as mock_publicar:
+         bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -109,7 +110,7 @@ def test_pedido_sin_telefono_falla_con_422():
     del payload["comprador_telefono"]
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento") as mock_publicar:
+         bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 422, resp.text
@@ -122,7 +123,7 @@ def test_pedido_con_telefono_invalido_falla_con_422():
         payload["comprador_telefono"] = telefono
 
         with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-             patch("main.publicar_evento"):
+             bandeja_como_mock():
             resp = client.post("/pedidos", json=payload)
 
         assert resp.status_code == 422, f"{telefono!r}: {resp.text}"
@@ -133,7 +134,7 @@ def test_pedido_normaliza_el_telefono_sin_espacios():
     payload["comprador_telefono"] = "987 654 321"
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -144,7 +145,7 @@ def test_pedido_fuera_de_ayacucho_falla_con_400():
     payload = _payload(DESTINO_FUERA_AYACUCHO, precio_item=50.0)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)) as mock_ctor, \
-         patch("main.publicar_evento") as mock_publicar:
+         bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 400
@@ -160,7 +161,7 @@ def test_pedido_bajo_el_monto_minimo_falla_con_400():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=10.0)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=10.0)), \
-         patch("main.publicar_evento") as mock_publicar:
+         bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 400
@@ -211,7 +212,7 @@ def test_costo_envio_tramo_hasta_10km():
     destino_lat, destino_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 5)  # ~5km
     payload = _payload({"destino_latitud": destino_lat, "destino_longitud": destino_lon}, precio_item=50.0)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -223,7 +224,7 @@ def test_costo_envio_tramo_10_a_25km():
     destino_lat, destino_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 17)  # ~17km
     payload = _payload({"destino_latitud": destino_lat, "destino_longitud": destino_lon}, precio_item=50.0)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -235,7 +236,7 @@ def test_costo_envio_tramo_mas_de_25km():
     destino_lat, destino_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 35)  # ~35km
     payload = _payload({"destino_latitud": destino_lat, "destino_longitud": destino_lon}, precio_item=50.0)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -248,7 +249,7 @@ def test_evento_pedido_creado_incluye_costo_envio():
     payload = _payload({"destino_latitud": destino_lat, "destino_longitud": destino_lon}, precio_item=50.0)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento") as mock_publicar:
+         bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -261,7 +262,7 @@ def test_cambiar_ubicacion_almacen_afecta_costo_de_pedidos_futuros():
     destino_lat, destino_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 5)  # ~5km del almacén original
     payload = _payload({"destino_latitud": destino_lat, "destino_longitud": destino_lon}, precio_item=50.0)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         primero = client.post("/pedidos", json=payload)
     assert primero.status_code == 200, primero.text
     assert float(primero.json()["costo_envio"]) == 5.00
@@ -272,7 +273,7 @@ def test_cambiar_ubicacion_almacen_afecta_costo_de_pedidos_futuros():
     almacen_lejano_lat, almacen_lejano_lon = _punto_a_km_al_sur(ALMACEN_LAT_PRUEBA, ALMACEN_LON_PRUEBA, 40)
     _fijar_almacen(almacen_lejano_lat, almacen_lejano_lon)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         segundo = client.post("/pedidos", json=payload)  # mismo destino que el primer pedido
     assert segundo.status_code == 200, segundo.text
     assert float(segundo.json()["costo_envio"]) == 12.00
@@ -301,7 +302,7 @@ def test_cotizar_envio_coincide_con_el_costo_que_guarda_crear_pedido():
     cotizado = _cotizar(lat, lon).json()["costo_envio"]
 
     payload = _payload({"destino_latitud": lat, "destino_longitud": lon}, precio_item=50.0)
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         creado = client.post("/pedidos", json=payload)
 
     assert creado.status_code == 200, creado.text
@@ -361,7 +362,7 @@ def test_pedido_en_unidad_base_guarda_unidad_null():
     precio y cantidad en la unidad base, PedidoItem.unidad queda en null."""
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -375,7 +376,7 @@ def test_pedido_en_unidad_alternativa_cobra_precio_y_descuenta_stock_convertido(
     unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
     mock_client = _mock_httpx_client(precio=5.0, stock=100, unidades_alternativas=unidades_alt)
 
-    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=mock_client), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -397,7 +398,7 @@ def test_pedido_en_unidad_alternativa_valida_stock_ya_convertido():
     unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
     mock_client = _mock_httpx_client(precio=5.0, stock=40, unidades_alternativas=unidades_alt)
 
-    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar:
+    with patch("main.httpx.Client", return_value=mock_client), bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 409
@@ -408,7 +409,7 @@ def test_pedido_en_unidad_no_existente_para_el_producto_falla_400():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=1, unidad="saco")
     mock_client = _mock_httpx_client(precio=5.0, unidades_alternativas=[])  # sin "saco" registrado
 
-    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar:
+    with patch("main.httpx.Client", return_value=mock_client), bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 400
@@ -423,7 +424,7 @@ def test_precio_unitario_ignora_precio_enviado_en_el_payload():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
     payload["items"][0]["precio"] = 0.01  # intento de manipular el precio
 
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -449,7 +450,7 @@ def test_pedido_en_kg_bajo_el_umbral_no_requiere_vehiculo_grande():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=10)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -464,7 +465,7 @@ def test_pedido_en_kg_sobre_el_umbral_requiere_vehiculo_grande():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=30)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -484,7 +485,7 @@ def test_pedido_con_producto_unidad_no_kg_deja_peso_null_y_no_marca_vehiculo_gra
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=1.0, cantidad=100)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=1.0, unidad_medida="unidad")), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -503,7 +504,7 @@ def test_pedido_con_equivalencia_kg_conocida_aporta_al_peso_total():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=2.0, cantidad=30)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=2.0, unidad_medida="litro", equivalencia_kg=1.0)), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -535,7 +536,7 @@ def test_pedido_con_una_linea_no_kg_entre_varias_deja_peso_total_null():
     mock_client.get.side_effect = [respuesta_kg, respuesta_unidad]
     mock_client.post.return_value = MagicMock(status_code=200)
 
-    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=mock_client), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -549,7 +550,7 @@ def test_cambiar_umbral_afecta_pedidos_futuros_sin_tocar_los_ya_creados():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=30)  # 30 kg, S/150.00
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         primero = client.post("/pedidos", json=payload)
     assert primero.status_code == 200, primero.text
     assert primero.json()["requiere_vehiculo_grande"] is True
@@ -559,7 +560,7 @@ def test_cambiar_umbral_afecta_pedidos_futuros_sin_tocar_los_ya_creados():
     _fijar_umbral(50.0)
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, unidad_medida="kg")), \
-         patch("main.publicar_evento"):
+         bandeja_como_mock():
         segundo = client.post("/pedidos", json=payload)
     assert segundo.status_code == 200, segundo.text
     assert segundo.json()["requiere_vehiculo_grande"] is False
@@ -605,7 +606,7 @@ def test_los_endpoints_protegidos_por_secreto_rechazan_a_todos_si_el_secreto_no_
 def _crear_pedido_de(comprador_sub: str) -> str:
     _como(comprador_sub, "comprador")
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
     assert resp.status_code == 200, resp.text
     return resp.json()["id"]
@@ -756,7 +757,7 @@ def _pedidos_de(usuario_sub):
 def _intentar_pedido(payload, cliente_falso):
     sub = str(uuid.uuid4())
     _como(sub, "comprador")
-    with patch("main.httpx.Client", return_value=cliente_falso), patch("main.publicar_evento") as mock_publicar:
+    with patch("main.httpx.Client", return_value=cliente_falso), bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
     return sub, resp, mock_publicar
 
@@ -879,7 +880,7 @@ def test_el_evento_pedido_creado_lleva_la_cantidad_en_unidad_base_de_cada_linea(
     unidades_alt = [{"unidad": "saco", "precio": 45.0, "factor_a_base": 10.0}]
     cliente = _mock_httpx_client(precio=5.0, stock=100, unidades_alternativas=unidades_alt)
 
-    with patch("main.httpx.Client", return_value=cliente), patch("main.publicar_evento") as mock_publicar:
+    with patch("main.httpx.Client", return_value=cliente), bandeja_como_mock() as mock_publicar:
         resp = client.post("/pedidos", json=payload)
 
     assert resp.status_code == 200, resp.text
@@ -982,14 +983,14 @@ def _envio_base(destino=DESTINO_DENTRO_AYACUCHO):
 
 
 def _crear(payload, **producto):
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(**producto)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(**producto)), bandeja_como_mock():
         return client.post("/pedidos", json=payload)
 
 
 def _cotizar_carrito(payload, **producto):
     cuerpo = {k: payload[k] for k in ("destino_latitud", "destino_longitud", "items")}
     mock = _mock_httpx_client(**producto)
-    with patch("main.httpx.Client", return_value=mock), patch("main.publicar_evento") as publicar:
+    with patch("main.httpx.Client", return_value=mock), bandeja_como_mock() as publicar:
         resp = client.post("/pedidos/cotizar", json=cuerpo)
     return resp, mock, publicar
 
@@ -1041,7 +1042,7 @@ def test_el_evento_y_el_resumen_para_transporte_llevan_el_envio_con_el_recargo(m
     _fijar_umbral(25.0)
     base = _envio_base()
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=5.0, stock=500)), \
-         patch("main.publicar_evento") as publicar:
+         bandeja_como_mock() as publicar:
         resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=5.0, cantidad=125))
     assert resp.status_code == 200, resp.text
     assert publicar.call_args[0][0]["costo_envio"] == round(base + 10.0, 2)
@@ -1157,7 +1158,7 @@ def _pedido_lejano(cantidad_kg, modalidad, dni="45678912", precio=2.0, stock=100
     payload = _payload(DESTINO_LIMA, precio_item=precio, cantidad=cantidad_kg)
     payload.update(modalidad_envio=modalidad, receptor_dni=dni)
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=precio, stock=stock, **producto)), \
-         patch("main.publicar_evento") as publicar:
+         bandeja_como_mock() as publicar:
         resp = client.post("/pedidos", json=payload)
     return resp, publicar
 
@@ -1250,7 +1251,7 @@ def test_fuera_de_ayacucho_hay_que_elegir_modalidad_y_dar_un_dni_que_exista():
 def test_dentro_de_ayacucho_no_se_elige_agencia_ni_camion():
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
     payload["modalidad_envio"] = "camion"
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=payload)
     assert resp.status_code == 422
 
@@ -1390,9 +1391,11 @@ def test_las_condiciones_dicen_el_saco_y_el_adelanto():
 # ============ Saga del pedido: compensar el stock y bandeja de salida ============
 
 def _eventos_salientes_del(pedido_id):
+    from comun.bandeja_salida import EventoSaliente
     db = main.SessionLocal()
     try:
-        return [e for e in db.query(main.models.EventoSaliente).all() if json.loads(e.cuerpo)["pedido_id"] == pedido_id]
+        return [e for e in db.query(EventoSaliente).filter(EventoSaliente.tipo == "pedido_creado").all()
+                if e.mensaje()["pedido_id"] == pedido_id]
     finally:
         db.close()
 
@@ -1400,7 +1403,7 @@ def _eventos_salientes_del(pedido_id):
 def test_si_el_pedido_no_se_puede_guardar_se_devuelve_el_stock_descontado():
     mock_client = _mock_httpx_client(precio=50.0)
     payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2)
-    with patch("main.httpx.Client", return_value=mock_client), patch("main.publicar_evento") as mock_publicar, \
+    with patch("main.httpx.Client", return_value=mock_client), bandeja_como_mock() as mock_publicar, \
          patch("sqlalchemy.orm.Session.commit", side_effect=RuntimeError("la base no respondió")):
         resp = client.post("/pedidos", json=payload)
 
@@ -1412,40 +1415,42 @@ def test_si_el_pedido_no_se_puede_guardar_se_devuelve_el_stock_descontado():
     mock_publicar.assert_not_called()
 
 
-def test_si_rabbitmq_no_responde_el_pedido_se_crea_y_el_evento_se_reenvia_despues():
-    import reintento_eventos
-    from datetime import datetime, timedelta
+def test_el_pedido_se_crea_sin_tocar_rabbitmq_y_su_evento_sale_por_el_relevo():
+    from comun import bandeja_salida
 
     with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), \
-         patch("main.publicar_evento", side_effect=ConnectionError("RabbitMQ caído")) as primer_intento:
+         patch("pika.BlockingConnection", side_effect=AssertionError("la petición no debe conectarse a RabbitMQ")):
         resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
     assert resp.status_code == 200, resp.text
     pedido_id = resp.json()["id"]
     [pendiente] = _eventos_salientes_del(pedido_id)
-    assert pendiente.fecha_envio is None and pendiente.tipo == "pedido_creado"
-    # El evento_id es el id de su fila en la bandeja: el primer intento y el reenvío llevan el mismo.
-    assert primer_intento.call_args.args[0]["evento_id"] == str(pendiente.id)
+    assert pendiente.fecha_envio is None and pendiente.exchange == "eventos_pedidos"
+    # El evento_id es el id de su fila en la bandeja: cada reenvío lleva el mismo.
+    assert pendiente.mensaje()["evento_id"] == str(pendiente.id)
+
+    publicados = []
+
+    class Publicador:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def publicar(self, exchange, cuerpo, evento_id):
+            publicados.append((exchange, json.loads(cuerpo), evento_id))
 
     db = main.SessionLocal()
     try:
-        with patch("reintento_eventos.publicar_evento") as publicar:
-            reintento_eventos.reenviar_eventos_pendientes(db, ahora=datetime.utcnow() + timedelta(minutes=1))
+        while bandeja_salida.publicar_pendientes(db, Publicador):  # lo pendiente de otras pruebas sale antes
+            pass
     finally:
         db.close()
-    reenviados = [llamada.args[0] for llamada in publicar.call_args_list if llamada.args[0]["pedido_id"] == pedido_id]
-    assert len(reenviados) == 1 and reenviados[0]["evento"] == "pedido_creado" and reenviados[0]["items"]
-    assert reenviados[0]["evento_id"] == str(pendiente.id)
+    [(exchange, mensaje, evento_id)] = [p for p in publicados if p[1].get("pedido_id") == pedido_id]
+    assert exchange == "eventos_pedidos" and mensaje["evento"] == "pedido_creado" and mensaje["items"]
+    assert evento_id == str(pendiente.id)
     [enviado] = _eventos_salientes_del(pedido_id)
     assert enviado.fecha_envio is not None and enviado.intentos == 1
-
-
-def test_un_pedido_normal_deja_su_evento_marcado_como_enviado():
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento") as mock_publicar:
-        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
-    pedido_id = resp.json()["id"]
-    assert mock_publicar.call_args.args[0]["pedido_id"] == pedido_id
-    [evento] = _eventos_salientes_del(pedido_id)
-    assert evento.fecha_envio is not None
 
 
 # ============ Costo del recojo en la chacra ============
@@ -1466,7 +1471,7 @@ def test_el_recojo_cuesta_lo_mismo_que_un_envio_de_ese_peso_y_solo_dentro_de_aya
 # ============ Cancelar un pedido pagado (saga con Transporte y Pagos) ============
 
 def _pedido_confirmado():
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         pedido_id = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
     db = main.SessionLocal()
     try:
@@ -1544,7 +1549,7 @@ def test_solo_el_admin_cancela_y_solo_un_pedido_pagado():
     pedido_id = _pedido_confirmado()
     _como(str(uuid.uuid4()), "comprador")
     assert client.post(f"/pedidos/{pedido_id}/cancelar", json={"motivo": "quiero"}, headers=CON_TOKEN).status_code == 403
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         sin_pagar = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
     _como(str(uuid.uuid4()), "admin")
     try:
@@ -1561,7 +1566,7 @@ def test_cada_linea_vendida_guarda_de_quien_es_el_producto():
     productor = str(uuid.uuid4())
     mock = _mock_httpx_client(precio=50.0, nombre="Papa amarilla")
     mock.get.return_value.json.return_value["productor_id"] = productor
-    with patch("main.httpx.Client", return_value=mock), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=mock), bandeja_como_mock():
         pedido_id = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
     db = main.SessionLocal()
     try:
@@ -1742,7 +1747,7 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
 # ============ Consumidor de pagos idempotente (pedidos_pagos) ============
 
 def _pedido_en(estado, motivo_cancelacion=None):
-    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), patch("main.publicar_evento"):
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
         resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
     pedido_id = resp.json()["id"]
     db = main.SessionLocal()
@@ -1812,22 +1817,3 @@ def test_un_pago_confirmado_no_revive_un_pedido_que_el_admin_cancelo():
     pedido_id = _pedido_en("cancelado", motivo_cancelacion="Sin stock: se devolvió el dinero")
     _evento_de_pago(pedido_id, "pago_confirmado")
     assert _estado(pedido_id) == "cancelado"
-
-
-def test_una_pasada_de_la_bandeja_de_salida_no_mata_el_hilo_aunque_falle_el_rollback(monkeypatch):
-    import reintento_eventos
-    from comun import database
-
-    class SesionQueFalla:
-        def rollback(self):
-            raise RuntimeError("tampoco se pudo deshacer")
-
-        def close(self):
-            raise RuntimeError("ni cerrar")
-
-    def reenviar_que_falla(_db, ahora=None):
-        raise RuntimeError("la base se cayó a mitad")
-
-    monkeypatch.setattr(database, "SessionLocal", SesionQueFalla)
-    monkeypatch.setattr(reintento_eventos, "reenviar_eventos_pendientes", reenviar_que_falla)
-    assert reintento_eventos.una_pasada() is False  # no lanzó: el hilo sigue

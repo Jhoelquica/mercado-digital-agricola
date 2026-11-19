@@ -1,6 +1,4 @@
 """Pruebas de comun/rabbitmq.py sin un RabbitMQ real: se sustituyen la conexión, el canal y la API de gestión."""
-import json
-import uuid
 from unittest.mock import MagicMock
 
 import pika
@@ -35,47 +33,66 @@ def _conexion_falsa(canal):
     return conexion
 
 
-# ---- Publicar ----
+# ---- Publicar (solo el relevo de la bandeja de salida) ----
 
-def test_publica_persistente_en_el_exchange_dado_y_cierra(monkeypatch):
+@pytest.fixture
+def conexion_falsa(monkeypatch):
+    """Sustituye pika.BlockingConnection: devuelve la conexión falsa, con su canal, y los parámetros con que se abrió."""
     canal = MagicMock()
     conexion = _conexion_falsa(canal)
-    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
-    evento_id = rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "id": 1})
-    datos = canal.basic_publish.call_args.kwargs
-    assert (datos["exchange"], datos["routing_key"], datos["properties"].delivery_mode) == ("eventos_prueba", "", 2)
-    assert json.loads(datos["body"]) == {"evento": "algo", "id": 1, "evento_id": evento_id}
-    assert str(uuid.UUID(evento_id)) == evento_id == datos["properties"].message_id
+    abiertas = []
+
+    def abrir(parametros):
+        abiertas.append(parametros)
+        return conexion
+
+    monkeypatch.setattr(pika, "BlockingConnection", abrir)
+    return conexion, canal, abiertas
+
+
+def test_publica_de_a_uno_persistente_obligatorio_y_confirmado(conexion_falsa):
+    conexion, canal, abiertas = conexion_falsa
+    with rabbitmq.Publicador() as publicador:
+        publicador.publicar("eventos_prueba", '{"evento": "algo"}', "id-1")
+        publicador.publicar("eventos_prueba", '{"evento": "otro"}', "id-2")
+    canal.confirm_delivery.assert_called_once()
+    primero, segundo = (llamada.kwargs for llamada in canal.basic_publish.call_args_list)
+    assert (primero["exchange"], primero["routing_key"], primero["body"]) == ("eventos_prueba", "", '{"evento": "algo"}')
+    assert primero["mandatory"] is True and primero["properties"].delivery_mode == 2
+    assert (primero["properties"].message_id, segundo["properties"].message_id) == ("id-1", "id-2")
     canal.exchange_declare.assert_called_once_with(exchange="eventos_prueba", exchange_type="fanout", durable=True)
     conexion.close.assert_called_once()
+    assert abiertas[0].heartbeat == rabbitmq.LATIDO_DEL_PUBLICADOR_SEGUNDOS
+    assert abiertas[0].blocked_connection_timeout == rabbitmq.ESPERA_MAXIMA_SI_RABBITMQ_FRENA
 
 
-def test_respeta_el_evento_id_que_trae_y_genera_uno_distinto_cada_vez(monkeypatch):
-    canal = MagicMock()
-    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: _conexion_falsa(canal))
-    propio = str(uuid.uuid4())
-    assert rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "evento_id": propio}) == propio
-    assert json.loads(canal.basic_publish.call_args.kwargs["body"])["evento_id"] == propio
-    generados = {rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo"}) for _ in range(3)}
-    assert len(generados) == 3
-
-
-def test_un_evento_id_que_no_es_uuid_no_se_publica(monkeypatch):
-    conexiones = []
-    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexiones.append(1))
-    with pytest.raises(ValueError):
-        rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo", "evento_id": "pedido-123"})
-    assert conexiones == []
-
-
-def test_cierra_la_conexion_aunque_la_publicacion_falle(monkeypatch):
-    canal = MagicMock()
-    canal.basic_publish.side_effect = pika.exceptions.ChannelClosedByBroker(406, "PRECONDITION_FAILED")
-    conexion = _conexion_falsa(canal)
-    monkeypatch.setattr(pika, "BlockingConnection", lambda *args, **kwargs: conexion)
-    with pytest.raises(pika.exceptions.ChannelClosedByBroker):
-        rabbitmq.publicar_evento("eventos_prueba", {"evento": "algo"})
+@pytest.mark.parametrize("error", [pika.exceptions.UnroutableError([]), pika.exceptions.NackError([]),
+                                   pika.exceptions.StreamLostError("se cortó")])
+def test_sin_cola_un_rechazo_o_una_conexion_caida_lanzan_y_cierran(conexion_falsa, error):
+    conexion, canal, _ = conexion_falsa
+    canal.basic_publish.side_effect = error
+    with pytest.raises(type(error)):
+        with rabbitmq.Publicador() as publicador:
+            publicador.publicar("eventos_prueba", "{}", "id-1")
     conexion.close.assert_called_once()
+
+
+def test_si_no_se_puede_abrir_el_canal_cierra_la_conexion(conexion_falsa):
+    conexion, _, _ = conexion_falsa
+    conexion.channel.side_effect = pika.exceptions.ChannelClosedByBroker(406, "PRECONDITION_FAILED")
+    with pytest.raises(pika.exceptions.ChannelClosedByBroker):
+        with rabbitmq.Publicador():
+            pass
+    conexion.close.assert_called_once()
+
+
+def test_dias_de_retencion_por_defecto_y_mal_escritos(correr_python):
+    resultado = correr_python("from comun import rabbitmq; print(rabbitmq.DIAS_RETENCION_EVENTOS)",
+                              DIAS_RETENCION_EVENTOS=None)
+    assert resultado.returncode == 0 and resultado.stdout.strip() == "30", resultado.stderr
+    for valor in ("treinta", "0"):
+        resultado = correr_python("import comun.rabbitmq", DIAS_RETENCION_EVENTOS=valor)
+        assert resultado.returncode != 0 and "DIAS_RETENCION_EVENTOS" in resultado.stderr
 
 
 # ---- Reintentos y fallidos ----
