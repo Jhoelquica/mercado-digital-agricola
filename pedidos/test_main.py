@@ -1817,3 +1817,62 @@ def test_un_pago_confirmado_no_revive_un_pedido_que_el_admin_cancelo():
     pedido_id = _pedido_en("cancelado", motivo_cancelacion="Sin stock: se devolvió el dinero")
     _evento_de_pago(pedido_id, "pago_confirmado")
     assert _estado(pedido_id) == "cancelado"
+
+
+# ============ Consumidor de envíos: solo hacia adelante (pedidos_envios) ============
+
+def _evento_de_envio(pedido_id, estado, evento_id=None):
+    import rabbitmq_consumer
+    canal = MagicMock()
+    cuerpo = {"evento": "envio_actualizado", "pedido_id": pedido_id, "estado": estado,
+              "evento_id": str(evento_id or uuid.uuid4())}
+    rabbitmq_consumer._procesar_mensaje_envio(canal, MagicMock(delivery_tag=1), None, json.dumps(cuerpo).encode())
+    canal.basic_ack.assert_called_once_with(delivery_tag=1)
+
+
+def test_la_entrega_antes_que_el_pago_confirmado_termina_entregado_y_el_pago_tardio_se_ignora(caplog):
+    # Vienen por colas distintas: la entrega puede procesarse antes que el pago (p. ej. si el pago esperó en la bandeja).
+    pedido_id = _pedido_en("pendiente")
+    _evento_de_envio(pedido_id, "entregado")
+    assert _estado(pedido_id) == "entregado"
+    with caplog.at_level("WARNING", logger="pedidos.rabbitmq_consumer"):
+        _evento_de_pago(pedido_id, "pago_confirmado")
+    assert _estado(pedido_id) == "entregado"
+    assert "no lo hace avanzar y se ignora" in caplog.text
+
+
+def test_un_estado_intermedio_del_envio_despues_de_la_entrega_no_la_deshace():
+    pedido_id = _pedido_en("confirmado")
+    _evento_de_envio(pedido_id, "entregado")
+    _evento_de_envio(pedido_id, "en_camino")  # atrasado: Pedidos no sigue los estados intermedios
+    assert _estado(pedido_id) == "entregado"
+
+
+def test_la_entrega_de_un_pedido_cancelado_sin_motivo_lo_marca_entregado():
+    # Un pago rechazado lo canceló y el comprador volvió a pagar: el envío existe, así que hubo pago.
+    pedido_id = _pedido_en("cancelado")
+    _evento_de_envio(pedido_id, "entregado")
+    assert _estado(pedido_id) == "entregado"
+
+
+def test_la_entrega_de_un_pedido_que_el_admin_cancelo_con_devolucion_no_lo_cambia_y_deja_un_error(caplog):
+    pedido_id = _pedido_en("cancelado", motivo_cancelacion="Sin stock: se devolvió el dinero")
+    with caplog.at_level("ERROR", logger="pedidos.rabbitmq_consumer"):
+        _evento_de_envio(pedido_id, "entregado")
+    assert _estado(pedido_id) == "cancelado"
+    assert "canceló con devolución" in caplog.text and "conciliación" in caplog.text
+
+
+def test_la_misma_entrega_dos_veces_se_procesa_una():
+    pedido_id = _pedido_en("confirmado")
+    evento_id = uuid.uuid4()
+    _evento_de_envio(pedido_id, "entregado", evento_id)
+    db = main.SessionLocal()
+    try:  # para que se note si el efecto se repite, el pedido vuelve a "confirmado" a mano
+        db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).update(
+            {"estado": "confirmado"}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+    _evento_de_envio(pedido_id, "entregado", evento_id)
+    assert _estado(pedido_id) == "confirmado"  # ya estaba procesado: no se repite

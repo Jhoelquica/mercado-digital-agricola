@@ -237,6 +237,8 @@ def cerrar_por_llegada(db, producto_id) -> None:
               .filter(models.Recojo.producto_id == producto_id, models.Recojo.estado.in_(ESTADOS_EN_CURSO))
               .with_for_update().first())
     if not recojo:
+        logger.info("Producto %s: no tiene un recojo en curso; la llegada_almacen (repetida, o sin recojo) se ignora",
+                    producto_id)
         return
     ahora = datetime.utcnow()
     if recojo.modalidad == "repartidor" and recojo.estado in ("asignado", "recogido", "en_almacen"):

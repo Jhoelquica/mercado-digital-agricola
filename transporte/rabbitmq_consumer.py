@@ -1,4 +1,5 @@
 import json
+import logging
 import secrets
 
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +12,8 @@ from comun import rabbitmq
 from comun.database import SessionLocal
 import models
 
+
+logger = logging.getLogger("transporte.rabbitmq_consumer")
 
 COLA = "transporte_pagos"
 # Cola de antes de este arreglo, ligada a eventos_pedidos: si se deja, RabbitMQ la sigue llenando con cada
@@ -37,7 +40,7 @@ def crear_envio_si_falta(pedido_id, adelanto=False):
     try:
         envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).first()
         if envio and envio.estado != "pendiente":
-            print(f"[Transporte] El pedido {pedido_id} ya tiene envío, no se crea otro")
+            logger.info("Pedido %s: ya tiene envío ('%s'); el pago_confirmado repetido se ignora", pedido_id, envio.estado)
             return None
         pedido = _obtener_pedido(pedido_id)
         if envio:
@@ -80,7 +83,11 @@ def marcar_saldo_pagado(pedido_id):
     db = SessionLocal()
     try:
         envio = db.query(models.Envio).filter(models.Envio.pedido_id == pedido_id).first()
-        if envio:
+        if not envio:
+            logger.warning("Pedido %s: llegó saldo_pagado y no tiene envío; se ignora", pedido_id)
+        elif envio.saldo_pagado:
+            logger.info("Pedido %s: su saldo ya estaba pagado; el saldo_pagado repetido se ignora", pedido_id)
+        else:
             envio.saldo_pagado = True
             db.commit()
     finally:

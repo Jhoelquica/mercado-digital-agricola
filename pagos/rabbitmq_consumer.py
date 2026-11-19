@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from datetime import datetime, timedelta
 
 from sqlalchemy.exc import IntegrityError
@@ -8,6 +9,8 @@ from comun import rabbitmq
 from comun.database import SessionLocal
 import models
 from logica_cobros import ESTADOS_CUMPLIDOS
+
+logger = logging.getLogger("pagos.rabbitmq_consumer")
 
 # Cuánto tiempo se guarda el stock de un pedido sin pagar (main.vencer_pagos_sin_pagar lo devuelve al vencer).
 PLAZO_PARA_PAGAR_MINUTOS = int(os.getenv("PLAZO_PARA_PAGAR_MINUTOS", "60"))
@@ -27,7 +30,7 @@ def _procesar_mensaje(ch, method, properties, body):
             # RabbitMQ entrega "al menos una vez" y Pedidos reenvía su bandeja de salida: un pedido_creado repetido no
             # crea un segundo pago. Si dos llegan a la vez, el índice único de pagos.pedido_id frena a la segunda.
             if db.query(models.Pago).filter(models.Pago.pedido_id == datos["pedido_id"]).first():
-                print(f"[Pagos] El pedido {datos['pedido_id']} ya tiene su registro de pago, no se crea otro")
+                logger.info("Pedido %s: ya tiene su registro de pago; el pedido_creado repetido se ignora", datos["pedido_id"])
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 return
             # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del
@@ -62,6 +65,9 @@ def _procesar_mensaje(ch, method, properties, body):
             if not db.query(models.EntregaPedido).filter(models.EntregaPedido.pedido_id == datos["pedido_id"]).first():
                 db.add(models.EntregaPedido(pedido_id=datos["pedido_id"], estado=datos["estado"], fecha=datetime.utcnow()))
                 db.commit()
+            else:
+                logger.info("Pedido %s: su entrega ya estaba registrada; el envio_actualizado '%s' se ignora",
+                            datos["pedido_id"], datos["estado"])
         except IntegrityError:
             db.rollback()
         finally:
