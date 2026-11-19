@@ -34,7 +34,8 @@ from fastapi import UploadFile, File
 from minio_client import subir_imagen, asegurar_bucket_publico
 import pybreaker
 import cache
-from rabbitmq_publisher import publicar_evento
+from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
+from comun import bandeja_salida
 from comun.imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 
 
@@ -42,6 +43,7 @@ Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas a una tabla que ya existe (p. ej. productos.descripcion).
 agregar_columnas_faltantes(engine, Base)
 separar_fecha_de_creacion(engine)
+bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # los índices de la bandeja de salida
 
 
 def _asegurar_una_resena_por_comprador():
@@ -348,6 +350,11 @@ def productor_del_token(token: str):
         return _pedir_productor_me(token)
     except (pybreaker.CircuitBreakerError, httpx.RequestError):
         raise HTTPException(status_code=503, detail="Servicio de Productores no disponible")
+
+@app.on_event("startup")
+def lanzar_relevo_de_eventos():
+    bandeja_salida.lanzar_relevo_en_hilo()  # el único que publica: lo que dejó registrar_evento, en orden
+
 
 @app.on_event("startup")
 def preparar_almacen_de_imagenes():
@@ -1272,35 +1279,25 @@ def confirmar_llegada_almacen(
 
     producto.stock = datos.cantidad_recibida
     producto.estado = "disponible"
-    db.commit()
-    db.refresh(producto)
-    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
-
-    # La cosecha ya está pesada en el almacén: Transporte cierra su recojo en la chacra (si lo hubo) y recién ahí se le
-    # liquida al repartidor. Si RabbitMQ no responde la llegada ya quedó confirmada igual: el admin ve el recojo
-    # "en el almacén" y Transporte lo cierra con el siguiente aviso.
-    try:
-        publicar_evento({
-            "evento": "llegada_almacen",
-            "producto_id": str(producto.id),
-            "productor_id": str(producto.productor_id),
-            "cantidad_recibida": datos.cantidad_recibida,
-        })
-    except Exception:
-        logging.getLogger(__name__).error("No se pudo avisar la llegada al almacén del producto %s", producto.id, exc_info=True)
-
-    # Un evento por cada reserva (fanout, mismo patrón que pedidos/transporte con
-    # eventos_pedidos/eventos_envios) — Notificaciones lo consume y crea el aviso; acá no hace
-    # falta saber nada de Notificaciones, solo publicar.
+    # Los avisos van en la MISMA transacción que la llegada (comun/bandeja_salida.py): salen aunque RabbitMQ esté caído.
+    # llegada_almacen: la cosecha ya está pesada; Transporte cierra su recojo en la chacra (si lo hubo) y recién ahí se
+    # le liquida al repartidor.
+    registrar_evento(db, "llegada_almacen", {
+        "producto_id": str(producto.id),
+        "productor_id": str(producto.productor_id),
+        "cantidad_recibida": datos.cantidad_recibida,
+    })
+    # Un producto_disponible por cada reserva: Notificaciones le avisa a cada comprador que lo esperaba.
     reservas = db.query(models.Reserva).filter(models.Reserva.producto_id == producto_id).all()
     for reserva in reservas:
-        publicar_evento({
-            "evento": "producto_disponible",
+        registrar_evento(db, "producto_disponible", {
             "usuario_id": str(reserva.comprador_id),
             "producto_id": str(producto.id),
             "nombre_producto": producto.nombre,
         })
-
+    db.commit()
+    db.refresh(producto)
+    cache.invalidar(cache.CLAVE_CATALOGO, cache.clave_detalle(producto_id))
     return producto
 
 def _cantidad_de_la_reserva(producto, datos: ReservaCrear | None):

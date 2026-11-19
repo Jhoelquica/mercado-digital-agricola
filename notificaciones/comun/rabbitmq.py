@@ -14,13 +14,11 @@ la policy "fallidos" de deploy/rabbitmq/definiciones.json, que RabbitMQ importa 
 cualquier cola de trabajo al exchange "fallidos"; cada consumidor liga ahí su <cola>.fallidos con el nombre de su cola.
 Lo que llega a ese exchange sin el nombre de una cola (sin ruta) va a fallidos.sin_ruta, su alternate exchange.
 """
-import json  # TEMPORAL: solo para publicar_evento
 import logging
 import os
 import sys
 import threading
 import time
-import uuid  # TEMPORAL: solo para publicar_evento
 
 import pika
 from sqlalchemy import exc as errores_de_la_base
@@ -118,22 +116,6 @@ class Publicador:
         _cerrar(self._conexion)
         return False
 
-
-def publicar_evento(exchange: str, datos: dict) -> str:
-    """TEMPORAL: la publicación directa de antes, solo para los servicios que todavía no pasaron a la bandeja de salida
-    (PUBLICAN_DIRECTO_TODAVIA en scripts/sincronizar_comun.py). Se borra con el último."""
-    mensaje = dict(datos)
-    evento_id = str(uuid.UUID(str(mensaje.get("evento_id") or uuid.uuid4())))
-    mensaje["evento_id"] = evento_id
-    conexion = pika.BlockingConnection(_parametros())
-    try:
-        canal = conexion.channel()
-        canal.exchange_declare(exchange=exchange, exchange_type="fanout", durable=True)
-        canal.basic_publish(exchange=exchange, routing_key="", body=json.dumps(mensaje, default=str),
-                            properties=pika.BasicProperties(delivery_mode=2, message_id=evento_id))
-    finally:
-        _cerrar(conexion)
-    return evento_id
 
 
 def _apartar(canal, cola, metodo, propiedades, cuerpo, motivo) -> None:

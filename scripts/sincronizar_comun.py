@@ -75,9 +75,6 @@ PUEDEN_TENER_EL_SUYO = {"migraciones.py"}
 # es publicar un evento.
 PUBLICAR_SOLO_EN = {("comun/rabbitmq.py", "Publicador.publicar"), ("comun/rabbitmq.py", "_apartar")}
 USAR_EL_PUBLICADOR_SOLO_EN = {"comun/rabbitmq.py", "comun/bandeja_salida.py"}
-# TEMPORAL: los servicios que todavía publican directo (con comun.rabbitmq.publicar_evento) mientras pasan, uno por
-# commit, a la bandeja de salida. Con el último se borran esto y publicar_evento.
-PUBLICAN_DIRECTO_TODAVIA = {"productos"}
 CARPETAS_QUE_NO_SON_CODIGO = {"venv", ".venv", "__pycache__", "node_modules"}
 
 ENCABEZADO = "# GENERADO desde comun/ — no editar aquí; edita comun/ y corre scripts/sincronizar_comun.py\n"
@@ -186,9 +183,6 @@ class _Publicaciones(ast.NodeVisitor):
 
 def publicaciones_directas() -> list:
     """Lo que publica en RabbitMQ fuera del relevo de la bandeja de salida, en frases."""
-    permitidas = set(PUBLICAR_SOLO_EN)
-    if PUBLICAN_DIRECTO_TODAVIA:
-        permitidas.add(("comun/rabbitmq.py", "publicar_evento"))
     encontradas = []
     for relativa, ruta in _archivos_de_codigo():
         visitante = _Publicaciones()
@@ -197,9 +191,9 @@ def publicaciones_directas() -> list:
             if nombre == "Publicador":
                 bien = relativa in USAR_EL_PUBLICADOR_SOLO_EN
             elif nombre == "publicar_evento":
-                bien = relativa.split("/")[0] in PUBLICAN_DIRECTO_TODAVIA
+                bien = False  # la publicación directa de antes: ya no existe
             else:
-                bien = (relativa, donde) in permitidas
+                bien = (relativa, donde) in PUBLICAR_SOLO_EN
             if not bien:
                 encontradas.append(f"{relativa}:{linea}: {nombre} fuera del relevo de la bandeja de salida (en "
                                    f"{donde or 'el módulo'}): los eventos se dejan con registrar_evento")
@@ -354,9 +348,7 @@ def main():
     print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), las "
           f"definiciones de RabbitMQ en k8s/rabbitmq.yaml (con las {len(suscripciones_de_los_consumidores())} colas de "
           f"los consumidores), las {compartidas} dependencias compartidas tienen la misma versión en todos, y solo el "
-          "relevo de la bandeja de salida publica"
-          + (f" (salvo {', '.join(sorted(PUBLICAN_DIRECTO_TODAVIA))}, que todavía no pasaron a ella)."
-             if PUBLICAN_DIRECTO_TODAVIA else "."))
+          "relevo de la bandeja de salida publica.")
 
 
 if __name__ == "__main__":

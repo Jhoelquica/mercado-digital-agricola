@@ -43,6 +43,7 @@ from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 
 import main
+from comun.conftest import anotar_eventos, bandeja  # noqa: F401 - bandeja es una fixture
 from comun.auth import verificar_token
 
 client = TestClient(main.app)
@@ -472,8 +473,8 @@ def test_confirmar_llegada_requiere_admin(monkeypatch):
 
 
 def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
-    """No se levanta un RabbitMQ real: se reemplaza publicar_evento por un mock y se revisa qué
-    se le pasó, mismo criterio que _mockear_productores_me con httpx."""
+    """No se levanta un RabbitMQ real: los eventos quedan en la bandeja de salida y se anotan al registrarse
+    (anotar_eventos), mismo criterio que _mockear_productores_me con httpx."""
     producto = _crear_producto_directo(estado="en_transito")
     comprador_1 = str(uuid.uuid4())
     comprador_2 = str(uuid.uuid4())
@@ -486,16 +487,16 @@ def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
     resp2 = client.post(f"/productos/{producto.id}/reservar", headers=HEADERS_AUTH)
     assert resp2.status_code == 200, resp2.text
 
-    mock_publicar = MagicMock()
-    monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+    anotados = []
+    anotar_eventos(monkeypatch, main, anotados)
     _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
     resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
 
-    assert mock_publicar.call_count == 3
-    llegada, *eventos = [llamada.args[0] for llamada in mock_publicar.call_args_list]
+    assert len(anotados) == 3
+    llegada, *eventos = anotados
     assert llegada == {"evento": "llegada_almacen", "producto_id": str(producto.id), "productor_id": str(producto.productor_id),
                        "cantidad_recibida": producto.stock}
     for evento in eventos:
@@ -508,15 +509,30 @@ def test_confirmar_llegada_publica_un_evento_por_cada_reserva(monkeypatch):
 def test_confirmar_llegada_sin_reservas_solo_avisa_la_llegada(monkeypatch):
     producto = _crear_producto_directo(estado="en_transito")
 
-    mock_publicar = MagicMock()
-    monkeypatch.setattr(main, "publicar_evento", mock_publicar)
+    anotados = []
+    anotar_eventos(monkeypatch, main, anotados)
     _mockear_cadena(monkeypatch)
 
     _auth(str(uuid.uuid4()), rol="admin")
     resp = _confirmar_llegada(producto, producto.stock)
     assert resp.status_code == 200, resp.text
-    [llamada] = mock_publicar.call_args_list
-    assert llamada.args[0]["evento"] == "llegada_almacen"
+    [llegada] = anotados
+    assert llegada["evento"] == "llegada_almacen"
+
+
+def test_con_rabbitmq_caido_la_llegada_al_almacen_se_confirma_y_su_aviso_queda_en_la_bandeja(monkeypatch, bandeja):
+    producto = _crear_producto_directo(estado="en_transito")
+    _mockear_cadena(monkeypatch)
+    monkeypatch.setattr("pika.BlockingConnection",
+                        MagicMock(side_effect=AssertionError("la petición no debe conectarse a RabbitMQ")))
+
+    _auth(str(uuid.uuid4()), rol="admin")
+    resp = _confirmar_llegada(producto, producto.stock)
+
+    assert resp.status_code == 200, resp.text
+    assert _estado_y_stock(producto.id)[0] == "disponible"
+    [aviso] = [m for m in bandeja("llegada_almacen") if m["producto_id"] == str(producto.id)]
+    assert aviso["productor_id"] == str(producto.productor_id) and aviso["evento_id"]
 
 
 # ============ POST /productos/{id}/reservar ============
