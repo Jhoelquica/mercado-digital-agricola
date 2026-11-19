@@ -1876,3 +1876,33 @@ def test_la_misma_entrega_dos_veces_se_procesa_una():
         db.close()
     _evento_de_envio(pedido_id, "entregado", evento_id)
     assert _estado(pedido_id) == "confirmado"  # ya estaba procesado: no se repite
+
+
+# ============ /pedidos/interno/{id}/para-cobrar: Pagos crea el pago al cobrar si pedido_creado no llegó ============
+
+def test_para_cobrar_exige_el_secreto_de_pagos():
+    pedido_id = _pedido_en("pendiente")
+    assert client.get(f"/pedidos/interno/{pedido_id}/para-cobrar").status_code == 403
+    assert client.get(f"/pedidos/interno/{pedido_id}/para-cobrar",
+                      headers={"X-Servicio-Secreto": main.TRANSPORTE_A_PEDIDOS_SECRETO}).status_code == 403
+
+
+def test_para_cobrar_da_lo_mismo_que_pedido_creado():
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock() as publicados:
+        resp = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2))
+    assert resp.status_code == 200, resp.text
+    pedido_id = resp.json()["id"]
+    evento = dict(publicados.call_args[0][0])
+    evento.pop("evento_id")
+    para_cobrar = client.get(f"/pedidos/interno/{pedido_id}/para-cobrar",
+                             headers={"X-Servicio-Secreto": main.PAGOS_A_PEDIDOS_SECRETO})
+    assert para_cobrar.status_code == 200, para_cobrar.text
+    assert para_cobrar.json() == evento
+    assert para_cobrar.json()["items"][0]["cantidad_base"] == 2
+
+
+def test_para_cobrar_de_un_pedido_que_ya_no_se_puede_pagar_da_409_y_de_uno_que_no_existe_404():
+    secreto = {"X-Servicio-Secreto": main.PAGOS_A_PEDIDOS_SECRETO}
+    assert client.get(f"/pedidos/interno/{_pedido_en('cancelado', motivo_cancelacion='Sin stock')}/para-cobrar",
+                      headers=secreto).status_code == 409
+    assert client.get(f"/pedidos/interno/{uuid.uuid4()}/para-cobrar", headers=secreto).status_code == 404

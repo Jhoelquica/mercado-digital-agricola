@@ -178,6 +178,8 @@ PRODUCTORES_URL = os.getenv("PRODUCTORES_URL", "http://localhost:8001")
 # Sin fallback hardcodeado a propósito (ver mismo comentario en usuarios/main.py).
 PEDIDOS_A_PRODUCTOS_SECRETO = os.getenv("PEDIDOS_A_PRODUCTOS_SECRETO") or sys.exit("Falta la variable de entorno PEDIDOS_A_PRODUCTOS_SECRETO: el servicio no arranca sin ella.")  # para llamar a descontar_stock en Productos
 QA_LIMPIEZA_SECRETO = os.getenv("QA_LIMPIEZA_SECRETO") or sys.exit("Falta la variable de entorno QA_LIMPIEZA_SECRETO: el servicio no arranca sin ella.")  # eliminar_pedido (DELETE de limpieza QA)
+# Pagos -> Pedidos: /pedidos/interno/{id}/para-cobrar (Pagos crea el pago al cobrar si pedido_creado no llegó).
+PAGOS_A_PEDIDOS_SECRETO = os.getenv("PAGOS_A_PEDIDOS_SECRETO") or sys.exit("Falta la variable de entorno PAGOS_A_PEDIDOS_SECRETO: el servicio no arranca sin ella.")
 TRANSPORTE_A_PEDIDOS_SECRETO = os.getenv("TRANSPORTE_A_PEDIDOS_SECRETO") or sys.exit("Falta la variable de entorno TRANSPORTE_A_PEDIDOS_SECRETO: el servicio no arranca sin ella.")  # obtener_pedido_interno (lo llama Transporte)
 
 # Rango aproximado del departamento de Ayacucho — el pedido solo se acepta si el destino de
@@ -760,6 +762,7 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
                 peso_kg=peso_kg,
                 productor_id=producto.get("productor_id"),
                 producto_nombre=producto.get("nombre"),
+                cantidad_base=cantidad_base,
             )
             db.add(nuevo_item)
             filas_con_base.append((nuevo_item, cantidad_base))
@@ -783,10 +786,16 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
 
 
 def _evento_pedido_creado(nuevo_pedido, usuario: dict, filas_con_base) -> dict:
+    return _datos_para_cobrar(nuevo_pedido, str(usuario.get("sub")), filas_con_base)
+
+
+def _datos_para_cobrar(nuevo_pedido, usuario_id: str, filas_con_base) -> dict:
+    """Lo que necesita Pagos para crear el pago del pedido: el cuerpo de pedido_creado y la respuesta de
+    /pedidos/interno/{id}/para-cobrar, que es lo mismo."""
     return {
         "evento": "pedido_creado",
         "pedido_id": str(nuevo_pedido.id),
-        "usuario_id": str(usuario.get("sub")),
+        "usuario_id": usuario_id,
         "comprador_nombre": nuevo_pedido.comprador_nombre,
         "costo_envio": float(nuevo_pedido.costo_envio),
         # Pagos cobra el adelanto en vez del total cuando el pedido va en camión (el resto al llegar).
@@ -996,6 +1005,20 @@ def obtener_pedido_interno(
     if not secreto_de_servicio_valido(x_servicio_secreto, TRANSPORTE_A_PEDIDOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
     return _pedido_o_404(db, pedido_id)
+
+
+# Lo que Pagos necesita para crear el pago de un pedido cuyo pedido_creado todavía no le llegó (RabbitMQ caído o
+# atrasado): lo mismo que el evento, monto incluido, calculado aquí (nunca lo dice el cliente). Solo de un pedido que
+# todavía se puede pagar. Ruta interna, con el secreto de Pagos; va antes de /pedidos/{pedido_id}.
+@app.get("/pedidos/interno/{pedido_id}/para-cobrar")
+def pedido_para_cobrar(pedido_id: uuid.UUID, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if not secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PEDIDOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    pedido = _pedido_o_404(db, pedido_id)
+    if pedido.estado != "pendiente":
+        raise HTTPException(status_code=409, detail="Este pedido ya no se puede pagar")
+    filas = [(item, item.cantidad_base if item.cantidad_base is not None else item.cantidad) for item in pedido.items]
+    return _datos_para_cobrar(pedido, str(pedido.usuario_id), filas)
 
 
 # Lo que un repartidor necesita para decidir si acepta un envío que se le PROPONE: cuánto hay que recorrer, cuánto

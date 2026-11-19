@@ -35,7 +35,7 @@ ENVS=(-e DB_USER=admin -e DB_PASSWORD=pruebas -e DB_HOST="$PG" -e DB_PORT=5432 -
   -e PAGOS_A_PRODUCTOS_SECRETO=secreto-prueba-3 -e QA_LIMPIEZA_SECRETO=secreto-prueba-4
   -e PRODUCTORES_A_CERTIFICACION_SECRETO=secreto-prueba-5 -e TRANSPORTE_A_CERTIFICACION_SECRETO=secreto-prueba-6
   -e TRANSPORTE_A_PAGOS_SECRETO=secreto-prueba-7 -e TRANSPORTE_A_PEDIDOS_SECRETO=secreto-prueba-8
-  -e PRODUCTOS_A_CERTIFICACION_SECRETO=secreto-prueba-9
+  -e PRODUCTOS_A_CERTIFICACION_SECRETO=secreto-prueba-9 -e PAGOS_A_PEDIDOS_SECRETO=secreto-prueba-12
   -e RABBITMQ_USER=usuario-de-pruebas -e RABBITMQ_PASSWORD=clave-de-pruebas-rabbitmq
   -e MINIO_ACCESS_KEY=usuario-de-pruebas -e MINIO_SECRET_KEY=clave-de-pruebas-minio -e CULQI_SECRET_KEY=sk_test_de_pruebas)
 # El código no tiene valores por defecto de credenciales: si falta una de estas, el servicio ni siquiera se importa.

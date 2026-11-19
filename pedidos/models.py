@@ -82,6 +82,10 @@ class PedidoItem(Base):
     # tienen forma de estimar peso (RegistroProduccion.equivalencia_kg existe en Productores pero
     # no llega hasta Producto ni hasta acá); eso se resuelve en una sub-entrega aparte.
     peso_kg = Column(Numeric(10, 3), nullable=True)
+    # Lo que se descontó del stock, en la unidad base del producto (3 sacos de 10 kg = 30): lo necesita Pagos para
+    # devolver o volver a reservar exactamente eso. Viaja en pedido_creado y, desde el 2026-11-19, queda guardado para
+    # /pedidos/interno/{id}/para-cobrar. NULL en las líneas de antes.
+    cantidad_base = Column(Float, nullable=True)
     # De quién es lo vendido y cómo se llamaba al venderse (copia de Productos al crear el pedido): con esto el agricultor
     # ve sus ventas por mes y por producto (ver ventas.py). Los pedidos de antes se rellenaron desde Productos.
     productor_id = Column(UUID(as_uuid=True), nullable=True, index=True)

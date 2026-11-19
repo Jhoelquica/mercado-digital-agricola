@@ -161,6 +161,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: TRANSPORTE_A_PEDIDOS_SECRETO
+            # Pagos -> Pedidos: GET /pedidos/interno/{id}/para-cobrar (Pedidos lo valida, Pagos lo envía).
+            - name: PAGOS_A_PEDIDOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PAGOS_A_PEDIDOS_SECRETO
             # DNI de quien recibe un pedido en otra ciudad, consultado en RENIEC (ver pedidos/reniec.py). apis.net.pe
             # respondía sin clave el 2026-10-03; desde el 2026-10-14 la exige (401 "Apikey Required"). La misma clave
             # sirve para SUNAT (usuarios.yaml): se guardan las dos con scripts/poner_clave_apis_net_pe.py.

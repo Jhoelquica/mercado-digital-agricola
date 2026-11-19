@@ -151,6 +151,12 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: TRANSPORTE_A_PAGOS_SECRETO
+            # Pagos -> Pedidos: GET /pedidos/interno/{id}/para-cobrar (crear el pago al cobrar si pedido_creado no llegó).
+            - name: PAGOS_A_PEDIDOS_SECRETO
+              valueFrom:
+                secretKeyRef:
+                  name: credenciales-app
+                  key: PAGOS_A_PEDIDOS_SECRETO
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:
                 secretKeyRef:
