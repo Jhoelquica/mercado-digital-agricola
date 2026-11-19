@@ -68,6 +68,22 @@ export interface TransferenciaEnRevision {
   motivo_rechazo: string | null;
 }
 
+// Un cobro o una devolución que no se resolvió solo (lleva más de 10 minutos en proceso): con la referencia que va en la
+// metadata del cargo en Culqi, para buscarlo en su panel.
+export interface PagoPorRevisar {
+  pedido_id: string;
+  tipo: 'cobro' | 'devolucion';
+  parte: string | null;
+  monto: number;
+  desde: string;
+  referencia: string | null;
+  cargo_id: string | null;
+  estado_del_intento: string | null;
+  pasadas: number;
+  revision_manual: boolean;
+  mensaje: string | null;
+}
+
 export const pagos = {
   procesar: (datos: Esquemas['ProcesarPago']) => request<ResultadoCobro>('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
   obtener: (pedidoId: string) => request<Pago>('pagos', `/pagos/${pedidoId}`, { auth: true }),
@@ -83,6 +99,7 @@ export const pagos = {
   },
   admin: {
     transferencias: () => request<TransferenciaEnRevision[]>('pagos', '/pagos/admin/transferencias', { auth: true }),
+    porRevisar: () => request<PagoPorRevisar[]>('pagos', '/pagos/admin/por-revisar', { auth: true }),
     constancia: (pedidoId: string) => requestBlob('pagos', `/pagos/admin/transferencias/${pedidoId}/constancia`),
     aprobar: (pedidoId: string) => request<TransferenciaEnRevision>('pagos', `/pagos/admin/transferencias/${pedidoId}/aprobar`, { method: 'POST', auth: true }),
     rechazar: (pedidoId: string, motivo: string) => request<TransferenciaEnRevision>('pagos', `/pagos/admin/transferencias/${pedidoId}/rechazar`, { method: 'POST', body: { motivo } satisfies Esquemas['RechazarTransferencia'], auth: true }),

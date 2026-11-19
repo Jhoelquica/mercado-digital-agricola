@@ -2069,3 +2069,28 @@ def test_si_culqi_devuelve_y_no_se_puede_guardar_no_se_devuelve_dos_veces(monkey
     _conciliar(_solo(intento, {"id": "ref_hecha", "metadata": {"referencia": str(intento.id)}}), pasadas=2)
     assert llamadas == [cargo] and _estado_del_pago(pago) == "reembolsado"
     assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_reembolsado"]
+
+
+def test_el_admin_ve_los_cobros_atascados_con_la_referencia_para_buscarlos_en_culqi():
+    pago = _crear_pago_con_estado("procesando", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    referencia = uuid.uuid4()
+    db = main.SessionLocal()
+    try:
+        hace_rato = main.datetime.utcnow() - main.timedelta(minutes=main.MINUTOS_PARA_AVISAR + 5)
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.procesando_desde, fila.parte_en_proceso = hace_rato, "total"
+        db.add(main.models.IntentoPago(id=referencia, pago_id=pago.id, pedido_id=pago.pedido_id, tipo="cobro", parte="total",
+                                       monto=40, metodo="tarjeta", estado="en_curso", estado_anterior="pendiente",
+                                       fecha_inicio=hace_rato, conciliaciones=10, revision_manual=True,
+                                       mensaje="Culqi no respondió a la búsqueda"))
+        db.commit()
+    finally:
+        db.close()
+    _sesion_con_rol("comprador")
+    assert client.get("/pagos/admin/por-revisar").status_code == 403
+    _sesion_con_rol("admin")
+    filas = [f for f in client.get("/pagos/admin/por-revisar").json() if f["pedido_id"] == str(pago.pedido_id)]
+    assert len(filas) == 1
+    fila = filas[0]
+    assert (fila["tipo"], fila["referencia"], fila["revision_manual"], fila["pasadas"]) == ("cobro", str(referencia), True, 10)
+    assert fila["monto"] == 40.0 and fila["mensaje"] == "Culqi no respondió a la búsqueda"

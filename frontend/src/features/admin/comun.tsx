@@ -11,7 +11,7 @@ import { productos } from '../../api/productos';
 import { recojos } from '../../api/recojos';
 import { transporte, type EnvioDetalle } from '../../api/transporte';
 import { usuarios } from '../../api/usuarios';
-import { manejarError } from '../../components/Toast';
+import { manejarError, toast } from '../../components/Toast';
 import { ETIQUETAS_ESTADO_ENVIO } from '../../lib/envios';
 
 // Una carga que falla avisa con el mismo texto que el frontend anterior y deja la pantalla vacía.
@@ -19,6 +19,7 @@ const conAviso = <T,>(cargar: () => Promise<T>, accion: string) => () => cargar(
 
 // ---- datos
 export const useTransferencias = () => useQuery({ queryKey: ['admin', 'transferencias'], queryFn: conAviso(pagos.admin.transferencias, 'cargar las transferencias') });
+export const usePagosPorRevisar = () => useQuery({ queryKey: ['admin', 'por-revisar'], queryFn: conAviso(pagos.admin.porRevisar, 'cargar los cobros por revisar') });
 export const useReclamosRuc = () => useQuery({ queryKey: ['admin', 'reclamos-ruc'], queryFn: conAviso(() => usuarios.admin.reclamosRuc(), 'cargar los reclamos de RUC') });
 export const useTransportistas = (estado: string) => useQuery({
   queryKey: ['admin', 'transportistas', estado],
@@ -129,6 +130,15 @@ export function useRefrescarAdmin() {
 }
 
 // ---- piezas de las pantallas
+export async function copiarAlPortapapeles(valor: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(valor);
+    toast(`Copiado: ${valor}`);
+  } catch {
+    toast('No se pudo copiar. Selecciónalo y cópialo a mano.', 'error');
+  }
+}
+
 export function EncabezadoSeccion({ icono, titulo, alRefrescar, children }: { icono: string; titulo: ReactNode; alRefrescar?: () => void; children?: ReactNode }) {
   return (
     <div className="section-header inner">

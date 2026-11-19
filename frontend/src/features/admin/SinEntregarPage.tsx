@@ -30,11 +30,16 @@ function CancelarConDevolucion({ d, monto, comoSeDevuelve }: { d: PedidoSinEntre
     setEnviando(true);
     try {
       const pedido = await pedidos.admin.cancelar(d.pedido.id, texto);
-      const dev = (pedido.devolucion || {}) as { reembolso_manual?: number | string | null; monto_reembolsado?: number | string | null };
+      const dev = (pedido.devolucion || {}) as { estado?: string; reembolso_manual?: number | string | null; monto_reembolsado?: number | string | null };
       const aMano = Number(dev.reembolso_manual) || 0;
-      toast(aMano > 0
-        ? `Pedido cancelado. Falta que devuelvas ${formatearMoneda(aMano)} por transferencia al comprador.`
-        : `Pedido cancelado: se devolvieron ${formatearMoneda(dev.monto_reembolsado)} y el comprador ya tiene el aviso.`);
+      if (dev.estado !== 'reembolsado') {
+        // El envío ya se canceló y eso no se deshace: la devolución se reintenta sola y, si no sale, aparece en Transferencias.
+        toast('Pedido cancelado. La devolución quedó en proceso: se reintenta sola y, si no sale, aparece en "Cobros por revisar en Culqi".');
+      } else {
+        toast(aMano > 0
+          ? `Pedido cancelado. Falta que devuelvas ${formatearMoneda(aMano)} por transferencia al comprador.`
+          : `Pedido cancelado: se devolvieron ${formatearMoneda(dev.monto_reembolsado)} y el comprador ya tiene el aviso.`);
+      }
       await refrescar('sin-entregar', 'capacidad');
     } catch (err) {
       setEnviando(false);

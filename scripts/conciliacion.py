@@ -7,7 +7,12 @@ Cruza las bases de Pagos, Pedidos, Transporte y Productos (cada servicio tiene l
   3. llegadas al almacén con el recojo sin terminar (llegada_almacen no llegó a Transporte);
   4. pedidos cancelados con devolución que tienen un envío entregado o en curso;
   5. pagos aprobados sin envío (pago_confirmado no llegó a Transporte);
-  6. envíos cumplidos (entregado o en agencia) sin la entrega anotada en Pagos (el cobro del agricultor no se desbloqueó).
+  6. envíos cumplidos (entregado o en agencia) sin la entrega anotada en Pagos (el cobro del agricultor no se desbloqueó);
+  7. cobros "procesando" hace más de MINUTOS_EN_PROCESO minutos (la conciliación de Pagos no pudo resolverlos), con su
+     referencia para buscarla en el panel de Culqi;
+  8. devoluciones a medias ("reembolso_procesando" hace más de MINUTOS_EN_PROCESO minutos), con sus referencias;
+  9. la regla inversa: pedidos confirmados o entregados sin el pago aprobado (un entregado exige el pago aprobado; un
+     confirmado admite el adelanto pagado o un cobro o una devolución en proceso).
 
 Lo que todavía está en camino no cuenta: si la bandeja de salida del servicio que avisa tiene ese evento pendiente, o lo
 publicó hace menos de EN_CAMINO_MINUTOS, se espera. Si un pendiente se atasca, verificar_despliegue.py avisa aparte
@@ -25,6 +30,10 @@ import sys
 import uuid
 
 EN_CAMINO_MINUTOS = 2
+MINUTOS_EN_PROCESO = 10
+# Con qué estado del pago está bien cada estado del pedido (regla 9).
+PAGO_ESPERADO = {"entregado": ("aprobado",),
+                 "confirmado": ("aprobado", "adelanto_pagado", "procesando", "reembolso_procesando")}
 PAGADOS = ("aprobado", "adelanto_pagado")
 CUMPLIDOS = ("entregado", "en_agencia")
 RECOJO_EN_CURSO = ("pendiente_asignacion", "propuesto", "asignado", "recogido", "en_almacen", "en_camino")
@@ -62,7 +71,11 @@ def _en(valores) -> str:
 
 
 def _tiene_bandeja(consultar, servicio) -> bool:
-    return consultar(servicio, "SELECT to_regclass('eventos_salientes') IS NOT NULL")[0][0] == "t"
+    return _tiene_tabla(consultar, servicio, "eventos_salientes")
+
+
+def _tiene_tabla(consultar, servicio, tabla) -> bool:
+    return consultar(servicio, f"SELECT to_regclass('{tabla}') IS NOT NULL")[0][0] == "t"
 
 
 def _en_camino(consultar, servicio, tipo, clave) -> set:
@@ -117,7 +130,37 @@ def inconsistencias(consultar) -> list:
     for recojo_id, producto_id, estado in recojos:
         if producto_id in disponibles and producto_id not in llegada_en_camino:
             hallazgos.append((3, f"recojo {recojo_id} en '{estado}' con su producto {producto_id} ya en el almacén"))
+    hallazgos.extend(_en_proceso_hace_mucho(consultar))
+    estados_de_pago = {fila[0]: fila[1] for fila in consultar("pagos", "SELECT pedido_id, estado FROM pagos")}
+    for pedido_id, (estado, _) in sorted(pedidos.items()):
+        if estado in PAGO_ESPERADO and estados_de_pago.get(pedido_id) not in PAGO_ESPERADO[estado]:
+            if pedido_id not in pago_en_camino:
+                hallazgos.append((9, f"pedido {pedido_id} '{estado}' con el pago "
+                                     + (f"'{estados_de_pago[pedido_id]}'" if pedido_id in estados_de_pago else "sin registro")))
     return sorted(hallazgos)
+
+
+def _en_proceso_hace_mucho(consultar) -> list:
+    """Reglas 7 y 8: los cobros y devoluciones en proceso hace más de MINUTOS_EN_PROCESO minutos, con las referencias de
+    sus intentos (las que se buscan en el panel de Culqi)."""
+    if not _tiene_tabla(consultar, "pagos", "intentos_pago"):
+        return []
+    filas = consultar("pagos", (
+        "SELECT p.pedido_id, p.estado, coalesce(string_agg(i.id::text || CASE WHEN i.revision_manual THEN ' (revisión "
+        "manual)' ELSE '' END, ', '), '') FROM pagos p LEFT JOIN intentos_pago i ON i.pago_id = p.id AND "
+        "(i.estado = 'en_curso' OR i.revision_manual) WHERE p.estado IN ('procesando', 'reembolso_procesando') AND "
+        f"p.procesando_desde < timezone('utc', now()) - interval '{MINUTOS_EN_PROCESO} minutes' "
+        "GROUP BY p.pedido_id, p.estado ORDER BY p.pedido_id"))
+    hallazgos = []
+    for pedido_id, estado, referencias in filas:
+        detalle = f"referencia {referencias}" if referencias else "sin intento en curso"
+        if estado == "procesando":
+            hallazgos.append((7, f"cobro del pedido {pedido_id} 'procesando' hace más de {MINUTOS_EN_PROCESO} minutos "
+                                 f"({detalle})"))
+        else:
+            hallazgos.append((8, f"devolución del pedido {pedido_id} a medias hace más de {MINUTOS_EN_PROCESO} minutos "
+                                 f"({detalle})"))
+    return hallazgos
 
 
 def bandejas(consultar) -> list:
@@ -142,6 +185,9 @@ REGLAS = {
     4: "Pedido cancelado con devolución con un envío entregado o en curso",
     5: "Pago aprobado sin envío",
     6: "Envío cumplido sin la entrega anotada en Pagos (el cobro no se desbloqueó)",
+    7: f"Cobro en proceso hace más de {MINUTOS_EN_PROCESO} minutos (buscar la referencia en Culqi)",
+    8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos",
+    9: "Pedido confirmado o entregado sin el pago aprobado",
 }
 
 

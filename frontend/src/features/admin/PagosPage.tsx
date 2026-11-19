@@ -7,18 +7,9 @@ import { SkeletonFilas } from '../../components/SkeletonFilas';
 import { toast } from '../../components/Toast';
 import { formatearFechaServidor, formatearMoneda } from '../../lib/formato';
 import { fechaDePago } from '../ganancias/MisGanancias';
-import { EncabezadoSeccion, MensajeError, usePagosPorHacer, useRefrescarAdmin, Vacio } from './comun';
+import { copiarAlPortapapeles, EncabezadoSeccion, MensajeError, usePagosPorHacer, useRefrescarAdmin, Vacio } from './comun';
 
 const redondear2 = (n: number | string) => Math.round(Number(n) * 100) / 100;
-
-async function copiarAlPortapapeles(valor: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(valor);
-    toast(`Copiado: ${valor}`);
-  } catch {
-    toast('No se pudo copiar. Selecciónalo y cópialo a mano.', 'error');
-  }
-}
 
 function Cabecera({ d }: { d: PorPagar }) {
   const domingo = new Date(`${d.dia_de_pago}T12:00:00`);

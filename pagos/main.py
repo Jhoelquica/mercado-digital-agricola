@@ -908,6 +908,39 @@ def _transferencia_resumen(pago, parte=None) -> dict:
     }
 
 
+MINUTOS_PARA_AVISAR = 10
+
+
+@app.get("/pagos/admin/por-revisar")
+def pagos_por_revisar(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
+    """Los cobros y devoluciones que no se resolvieron solos: el pago lleva más de MINUTOS_PARA_AVISAR minutos
+    "procesando" o "reembolso_procesando" (la conciliación todavía no pudo, o ya los dejó para revisión manual). Cada uno
+    con la referencia de su intento: es la que va en la metadata del cargo, para buscarlo en el panel de Culqi."""
+    limite = datetime.utcnow() - timedelta(minutes=MINUTOS_PARA_AVISAR)
+    pagos = (db.query(models.Pago)
+             .filter(models.Pago.estado.in_(("procesando", "reembolso_procesando")), models.Pago.procesando_desde < limite)
+             .order_by(models.Pago.procesando_desde).all())
+    salida = []
+    for pago in pagos:
+        intentos = (db.query(models.IntentoPago).filter(models.IntentoPago.pago_id == pago.id)
+                    .order_by(models.IntentoPago.fecha_inicio.desc()).all())
+        actual = next((i for i in intentos if i.estado == "en_curso"), intentos[0] if intentos else None)
+        salida.append({
+            "pedido_id": str(pago.pedido_id),
+            "tipo": "devolucion" if pago.estado == "reembolso_procesando" else "cobro",
+            "parte": pago.parte_en_proceso or (actual.parte if actual else None),
+            "monto": float(actual.monto) if actual else float(pago.monto),
+            "desde": pago.procesando_desde.isoformat(),
+            "referencia": str(actual.id) if actual else None,
+            "cargo_id": actual.cargo_id if actual else None,
+            "estado_del_intento": actual.estado if actual else None,
+            "pasadas": actual.conciliaciones if actual else 0,
+            "revision_manual": any(i.revision_manual for i in intentos),
+            "mensaje": actual.mensaje if actual else None,
+        })
+    return salida
+
+
 @app.get("/pagos/admin/transferencias")
 def listar_transferencias_en_revision(db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("admin"))):
     """Las que esperan la revisión de un admin, la más antigua primero."""
