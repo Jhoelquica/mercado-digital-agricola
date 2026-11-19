@@ -235,7 +235,7 @@ data:
           "source": "eventos_envios",
           "destination": "notificaciones_envios",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "notificaciones_envios",
           "arguments": {}
         },
         {
@@ -243,7 +243,7 @@ data:
           "source": "eventos_envios",
           "destination": "pagos_envios",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "pagos_envios",
           "arguments": {}
         },
         {
@@ -251,7 +251,7 @@ data:
           "source": "eventos_envios",
           "destination": "pedidos_envios",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "pedidos_envios",
           "arguments": {}
         },
         {
@@ -259,7 +259,7 @@ data:
           "source": "eventos_pagos",
           "destination": "notificaciones_pagos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "notificaciones_pagos",
           "arguments": {}
         },
         {
@@ -267,7 +267,7 @@ data:
           "source": "eventos_pagos",
           "destination": "pedidos_pagos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "pedidos_pagos",
           "arguments": {}
         },
         {
@@ -275,7 +275,7 @@ data:
           "source": "eventos_pagos",
           "destination": "transporte_pagos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "transporte_pagos",
           "arguments": {}
         },
         {
@@ -283,7 +283,7 @@ data:
           "source": "eventos_pedidos",
           "destination": "notificaciones_pedidos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "notificaciones_pedidos",
           "arguments": {}
         },
         {
@@ -291,7 +291,7 @@ data:
           "source": "eventos_pedidos",
           "destination": "pagos_pedidos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "pagos_pedidos",
           "arguments": {}
         },
         {
@@ -299,7 +299,7 @@ data:
           "source": "eventos_productos",
           "destination": "notificaciones_productos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "notificaciones_productos",
           "arguments": {}
         },
         {
@@ -307,7 +307,7 @@ data:
           "source": "eventos_productos",
           "destination": "transporte_productos",
           "destination_type": "queue",
-          "routing_key": "",
+          "routing_key": "transporte_productos",
           "arguments": {}
         },
         {

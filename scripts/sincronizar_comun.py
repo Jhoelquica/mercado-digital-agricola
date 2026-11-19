@@ -250,7 +250,7 @@ def topologia_sin_declarar() -> list:
         exigir_exchange(exchange, "fanout")
         exigir_cola(cola)
         exigir_cola(f"{cola}.fallidos")
-        exigir_enlace(exchange, cola, "")
+        exigir_enlace(exchange, cola, cola)  # como liga queue_bind sin routing key: con el nombre de la cola
         exigir_enlace("fallidos", f"{cola}.fallidos", cola)
     for nombre in sorted(colas):
         if nombre != "fallidos.sin_ruta" and nombre.removesuffix(".fallidos") not in con_consumidor:
