@@ -18,8 +18,10 @@ Qué comprueba:
     haya reiniciado después de estar listo (AVISO), réplicas deseadas = listas y RabbitMQ (abajo).
     Los reinicios acumulados desde que se creó cada pod se muestran solo como dato ([INFO]).
   - Compose (con --compose): todos los contenedores en marcha y sanos, y RabbitMQ.
-  - RabbitMQ: cada cola con consumidores y con su policy de fallidos, y fallidos.sin_ruta como alternate exchange de
-    fallidos (FALLA); <cola>.fallidos y fallidos.sin_ruta vacías (AVISO si no).
+  - RabbitMQ: todas las colas durables, cada una con consumidores y con su policy de fallidos, y fallidos.sin_ruta como
+    alternate exchange de fallidos (FALLA); <cola>.fallidos y fallidos.sin_ruta vacías (AVISO si no).
+  - Conciliación (scripts/conciliacion.py, en el clúster o en compose): pagos, pedidos, envíos y recojos coinciden entre
+    servicios, y ningún evento espera más de 5 minutos en una bandeja de salida (AVISO si no).
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
@@ -37,6 +39,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+
+import conciliacion  # scripts/conciliacion.py: lo inconsistente entre servicios
 
 SERVICIOS = {"usuarios": 8006, "productores": 8001, "productos": 8002, "pedidos": 8003,
              "transporte": 8004, "notificaciones": 8005, "pagos": 8007, "certificacion": 8008}
@@ -167,7 +171,8 @@ def revisar_pods(pods):
     return {"no_listos": no_listos, "en_crashloop": en_crashloop, "tras_listo": tras_listo, "total": total}
 
 
-LISTAR_COLAS = ["rabbitmqctl", "list_queues", "-q", "--formatter", "json", "name", "consumers", "messages", "policy"]
+LISTAR_COLAS = ["rabbitmqctl", "list_queues", "-q", "--formatter", "json", "name", "consumers", "messages", "policy",
+                "durable"]
 LISTAR_LIGADURAS = ["rabbitmqctl", "list_bindings", "-q", "--formatter", "json", "source_name", "destination_name",
                     "routing_key"]
 LISTAR_EXCHANGES = ["rabbitmqctl", "list_exchanges", "-q", "--formatter", "json", "name", "policy"]
@@ -189,11 +194,15 @@ def leer_json(salida):
 
 
 def comprobar_colas(colas, ligaduras, exchanges):
-    """colas: list_queues (name, consumers, messages, policy); ligaduras: list_bindings (source, destination, key);
-    exchanges: list_exchanges (name, policy)."""
+    """colas: list_queues (name, consumers, messages, policy, durable); ligaduras: list_bindings (source, destination,
+    key); exchanges: list_exchanges (name, policy)."""
     colas = {c["name"]: c for c in colas if isinstance(c, dict) and "name" in c}
     if not colas:
         return registrar("FALLA", "RabbitMQ: colas con consumidores", "no se pudieron leer las colas")
+    # Una cola no durable se pierde (con sus mensajes) al reiniciar RabbitMQ: todas lo son, también las de fallidos.
+    no_durables = sorted(n for n, c in colas.items() if c.get("durable") is not True)
+    comprobar("RabbitMQ: todas las colas son durables (también las de fallidos)", not no_durables, f"{len(colas)} colas",
+              f"no durables: {no_durables}")
     # <cola>.fallidos guarda lo que falló 3 veces (comun/rabbitmq.py) y fallidos.sin_ruta lo que no tuvo ruta: nadie las
     # consume, se revisan a mano.
     de_trabajo = {n: c for n, c in colas.items() if not es_de_fallidos(n)}
@@ -218,6 +227,31 @@ def comprobar_colas(colas, ligaduras, exchanges):
     con_mensajes = sorted(f"{n}: {c.get('messages')}" for n, c in colas.items() if es_de_fallidos(n) and c.get("messages"))
     comprobar("RabbitMQ: las colas de fallidos y fallidos.sin_ruta están vacías", not con_mensajes, "",
               f"mensajes por revisar en el panel de RabbitMQ: {', '.join(con_mensajes)}", "AVISO")
+
+
+# Un evento que espera más que esto en una bandeja de salida está atascado (el relevo publica cada 1,5 s).
+LIMITE_PENDIENTE_EN_BANDEJA_S = 300
+
+
+def comprobar_conciliacion(consultar, donde):
+    """Avisos: lo inconsistente entre Pagos, Pedidos, Transporte y Productos (scripts/conciliacion.py) y los eventos
+    que esperan en una bandeja de salida más de LIMITE_PENDIENTE_EN_BANDEJA_S."""
+    try:
+        hallazgos = conciliacion.inconsistencias(consultar)
+        cajas = conciliacion.bandejas(consultar)
+    except Exception as error:  # noqa: BLE001 - un aviso, no un fallo del chequeo entero
+        return registrar("AVISO", f"{donde}: conciliación entre servicios", f"no se pudo revisar: {error}")
+    comprobar(f"{donde}: pagos, pedidos, envíos y recojos coinciden (conciliación)", not hallazgos,
+              "sin inconsistencias", f"{conciliacion.resumen(hallazgos)} (detalle: python scripts/conciliacion.py)",
+              "AVISO")
+    atascadas = [f"{servicio}: {n} pendiente(s), el más antiguo de hace {segundos} s" for servicio, n, segundos in cajas
+                 if n and segundos > LIMITE_PENDIENTE_EN_BANDEJA_S]
+    sin_bandeja = [servicio for servicio, n, _ in cajas if n is None]
+    pendientes = sum(n for _, n, _ in cajas if n)
+    comprobar(f"{donde}: ningún evento espera más de {LIMITE_PENDIENTE_EN_BANDEJA_S // 60} minutos en una bandeja de "
+              "salida", not atascadas,
+              f"{pendientes} pendiente(s) ahora" + (f"; sin bandeja todavía: {', '.join(sin_bandeja)}" if sin_bandeja else ""),
+              "; ".join(atascadas), "AVISO")
 
 
 def main():
@@ -392,6 +426,7 @@ def main():
             registrar("FALLA", "RabbitMQ: leer las colas", error)
         else:
             comprobar_colas(leer_json(salida), leer_json(ligaduras), leer_json(exchanges))
+        comprobar_conciliacion(conciliacion.consultar_en_k8s(contexto_k), "Kubernetes")
 
     # ---- 7. Compose
     if args.compose:
@@ -415,6 +450,7 @@ def main():
                                        cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
                     salidas.append(leer_json(r.stdout) if r.returncode == 0 else [])
                 comprobar_colas(*salidas)
+                comprobar_conciliacion(conciliacion.consultar_en_compose(), "Compose")
 
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")
