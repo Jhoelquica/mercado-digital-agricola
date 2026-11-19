@@ -1877,9 +1877,10 @@ def _conciliar(buscar, pasadas=1):
 
 def _solo(intento, encontrado=None, completo=True):
     """Un buscador falso de Culqi que solo sabe de este intento (de los de otras pruebas no se sabe nada)."""
-    def buscar(recurso, referencia, desde):
+    def buscar(tipo, referencia, inicio, cargo_id, monto):
         if referencia != str(intento.id):
             return {"encontrado": None, "completo": False}
+        assert tipo == intento.tipo and cargo_id == intento.cargo_id and float(monto) == float(intento.monto)
         return {"encontrado": encontrado, "completo": completo}
     return buscar
 
@@ -1994,7 +1995,7 @@ def test_si_no_se_puede_averiguar_en_culqi_queda_para_revision_manual(monkeypatc
     assert _procesar(pago).status_code == 502
     [intento] = _intentos_de(pago)
 
-    def buscar(recurso, referencia, desde):
+    def buscar(tipo, referencia, inicio, cargo_id, monto):
         if referencia == str(intento.id):
             raise main.httpx.ConnectError("Culqi no contesta")
         return {"encontrado": None, "completo": False}

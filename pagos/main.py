@@ -735,7 +735,7 @@ def procesar_pago(
 # ---- Conciliación de lo que quedó en proceso: averigua en Culqi qué pasó con cada referencia ----
 INTERVALO_CONCILIACION_SEGUNDOS = 60
 ESPERA_ANTES_DE_CONCILIAR = timedelta(minutes=2)
-MARGEN_DE_BUSQUEDA = timedelta(minutes=5)
+MARGEN_DE_BUSQUEDA = timedelta(minutes=5)  # la ventana alrededor de la hora del intento (reloj de Culqi, demoras)
 PASADAS_SIN_RASTRO = 3  # tantas búsquedas completas sin encontrarlo: Culqi no lo hizo
 PASADAS_MAXIMAS = 10  # sin poder averiguarlo: revisión manual, con aviso en verificar_despliegue y en el panel
 
@@ -759,22 +759,32 @@ def _anotar_pasada(db: Session, referencia, mensaje: str) -> int:
     return pasadas
 
 
+def averiguar_en_culqi(tipo: str, referencia: str, inicio: datetime, cargo_id, monto) -> dict:
+    """Qué pasó en Culqi con un intento ({"encontrado", "completo"}, ver culqi_client): el cobro se busca por su
+    referencia entre los cargos de la ventana de su hora; la devolución, en el cargo que se devolvía (amount_refunded),
+    porque Culqi no guarda la metadata de las devoluciones."""
+    desde, hasta = inicio - MARGEN_DE_BUSQUEDA, inicio + MARGEN_DE_BUSQUEDA
+    if tipo == "cobro":
+        return culqi_client.buscar_cargo(referencia, desde, hasta)
+    return culqi_client.buscar_devolucion(cargo_id, monto, desde, hasta)
+
+
 def conciliar_intentos_en_curso(db: Session, ahora=None, buscar=None) -> int:
-    """Los intentos (cobros y devoluciones) en curso hace más de ESPERA_ANTES_DE_CONCILIAR: se buscan en Culqi por su
-    referencia y se resuelven, cada uno en su commit (con su aviso, una sola vez). Nunca con una transacción abierta
-    mientras se consulta a Culqi. Devuelve cuántos resolvió."""
+    """Los intentos (cobros y devoluciones) en curso hace más de ESPERA_ANTES_DE_CONCILIAR: se averigua en Culqi qué
+    pasó con cada uno (averiguar_en_culqi) y se resuelven, cada uno en su commit (con su aviso, una sola vez). Nunca con
+    una transacción abierta mientras se consulta a Culqi. Devuelve cuántos resolvió."""
     ahora = ahora or datetime.utcnow()
-    buscar = buscar or culqi_client.buscar_por_referencia
-    pendientes = [(fila.id, fila.tipo, fila.fecha_inicio, fila.conciliaciones) for fila in (
+    buscar = buscar or averiguar_en_culqi
+    pendientes = [(fila.id, fila.tipo, fila.fecha_inicio, fila.conciliaciones, fila.cargo_id, fila.monto) for fila in (
         db.query(models.IntentoPago)
         .filter(models.IntentoPago.estado == "en_curso", models.IntentoPago.revision_manual.is_(False),
                 models.IntentoPago.fecha_inicio < ahora - ESPERA_ANTES_DE_CONCILIAR)
         .order_by(models.IntentoPago.fecha_inicio).all())]
     db.rollback()
     resueltos = 0
-    for referencia, tipo, inicio, pasadas in pendientes:
+    for referencia, tipo, inicio, pasadas, cargo_id, monto in pendientes:
         try:
-            hallado = buscar("charges" if tipo == "cobro" else "refunds", str(referencia), inicio - MARGEN_DE_BUSQUEDA)
+            hallado = buscar(tipo, str(referencia), inicio, cargo_id, monto)
         except Exception as error:  # noqa: BLE001 - Culqi no contestó: se reintenta en la pasada siguiente
             _anotar_pasada(db, referencia, f"Culqi no respondió a la búsqueda: {type(error).__name__}")
             continue
@@ -801,7 +811,7 @@ def conciliar_intentos_en_curso(db: Session, ahora=None, buscar=None) -> int:
                 resueltos += 1
         else:
             _anotar_pasada(db, referencia, "Todavía no aparece en Culqi" if hallado["completo"] else
-                           "La búsqueda en Culqi no alcanzó a llegar a la hora del intento")
+                           "Lo que respondió Culqi no alcanza para saberlo")
     return resueltos
 
 

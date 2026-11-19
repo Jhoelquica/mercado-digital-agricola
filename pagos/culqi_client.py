@@ -1,9 +1,16 @@
 """Las llamadas a Culqi (API v2). Montos en CÉNTIMOS (S/ 10.00 = 1000). Las respuestas se devuelven tal cual
 ({"status_code", "data"}): quien llama decide qué hacer con un rechazo.
 
-Cada cobro y cada devolución llevan nuestra referencia (la del IntentoPago) en la metadata, y la del cobro también en la
-descripción: así la conciliación los encuentra en Culqi aunque se haya perdido la respuesta (ver buscar_por_referencia),
-y una persona los encuentra en el panel de Culqi.
+Cada cobro lleva nuestra referencia (la del IntentoPago) en la metadata y en la descripción: así la conciliación lo
+encuentra en Culqi aunque se haya perdido la respuesta (ver buscar_cargo), y una persona lo encuentra en el panel de
+Culqi. La devolución también la manda en la metadata, pero Culqi no la guarda: la conciliación mira el cargo que se
+devolvía (ver buscar_devolucion).
+
+Lo que se comprobó contra el sandbox (2026-11-19) y en lo que se apoyan las búsquedas:
+- la lista de cargos (o devoluciones) NO viene en orden de fecha (va por id) y before/after no la recorren en orden:
+  no se pagina;
+- creation_date_from y creation_date_to (en ms) sí filtran; un parámetro que Culqi no conoce se ignora en silencio;
+- el cargo dice cuánto se le devolvió (amount_refunded): 0 si nada.
 
 CULQI_API_BASE se cambia solo para las pruebas (un doble de Culqi en Docker); por defecto es la API real.
 """
@@ -17,17 +24,20 @@ CULQI_SECRET_KEY = os.getenv("CULQI_SECRET_KEY") or sys.exit("Falta la variable 
 CULQI_API_BASE = (os.getenv("CULQI_API_BASE") or "https://api.culqi.com/v2").rstrip("/")
 LARGO_MAXIMO_DESCRIPCION = 80  # el de Culqi
 POR_PAGINA = 100  # el máximo que deja listar Culqi
-PAGINAS_MAXIMAS = 5  # hasta 500 cargos (o devoluciones) hacia atrás por búsqueda
 
 
 def _cabeceras() -> dict:
     return {"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"}
 
 
+def _centimos(monto_soles) -> int:
+    return int(round(float(monto_soles) * 100))
+
+
 def crear_cargo(token: str, monto_soles: float, email: str, descripcion: str, metadata: dict | None = None) -> dict:
     """Envía un cargo a Culqi usando un token generado en el frontend."""
     payload = {
-        "amount": int(round(monto_soles * 100)),
+        "amount": _centimos(monto_soles),
         "currency_code": "PEN",
         "email": email,
         "source_id": token,
@@ -43,7 +53,7 @@ def crear_cargo(token: str, monto_soles: float, email: str, descripcion: str, me
 def crear_devolucion(charge_id: str, monto_soles: float, razon: str = "solicitud_comprador",
                      metadata: dict | None = None) -> dict:
     """Devuelve (total o en parte) un cargo de Culqi."""
-    payload = {"amount": int(round(monto_soles * 100)), "charge_id": charge_id, "reason": razon}
+    payload = {"amount": _centimos(monto_soles), "charge_id": charge_id, "reason": razon}
     if metadata:
         payload["metadata"] = {clave: str(valor) for clave, valor in metadata.items()}
     with httpx.Client() as client:
@@ -56,33 +66,56 @@ def _milisegundos(momento: datetime) -> int:
     return int(momento.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def buscar_por_referencia(recurso: str, referencia: str, desde: datetime) -> dict:
-    """Busca en Culqi el cargo ("charges") o la devolución ("refunds") que lleva nuestra referencia en la metadata.
-
-    La API no filtra por metadata: se recorren los más nuevos primero, de a POR_PAGINA, hasta pasar `desde` (la hora en
-    que empezó el intento, con margen). Devuelve {"encontrado": el objeto o None, "completo": bool}:
-    - completo=True: se miró todo lo creado desde `desde`; si no apareció, no existe;
-    - completo=False: se cortó antes (demasiados, o la paginación no siguió): no se puede concluir nada.
-    Si Culqi no responde, lanza (httpx.HTTPError): quien llama reintenta en la pasada siguiente."""
-    limite = _milisegundos(desde)
-    parametros = {"limit": POR_PAGINA}
+def _listar_en_ventana(recurso: str, desde: datetime, hasta: datetime) -> list | None:
+    """Los cargos ("charges") o devoluciones ("refunds") creados entre desde y hasta, en UNA consulta (no se pagina: ver
+    arriba). Si algo cae fuera de la ventana, Culqi no aplicó el filtro y devuelve None: con eso no se concluye nada.
+    Si Culqi no responde o responde con error, lanza (httpx.HTTPError)."""
+    inicio, fin = _milisegundos(desde), _milisegundos(hasta)
     with httpx.Client() as client:
-        for _ in range(PAGINAS_MAXIMAS):
-            resp = client.get(f"{CULQI_API_BASE}/{recurso}", params=parametros, headers=_cabeceras(), timeout=15)
-            resp.raise_for_status()
-            cuerpo = resp.json()
-            objetos = cuerpo.get("data") or []
-            for objeto in objetos:
-                if str((objeto.get("metadata") or {}).get("referencia")) == str(referencia):
-                    return {"encontrado": objeto, "completo": True}
-            fechas = [o["creation_date"] for o in objetos if isinstance(o.get("creation_date"), (int, float))]
-            if not objetos or len(objetos) < POR_PAGINA or (fechas and min(fechas) < limite):
-                return {"encontrado": None, "completo": True}
-            cursor = ((cuerpo.get("paging") or {}).get("cursors") or {}).get("before") or objetos[-1].get("id")
-            if not cursor:
-                return {"encontrado": None, "completo": False}
-            parametros = {"limit": POR_PAGINA, "before": cursor}
-    return {"encontrado": None, "completo": False}
+        resp = client.get(f"{CULQI_API_BASE}/{recurso}", headers=_cabeceras(), timeout=15,
+                          params={"limit": POR_PAGINA, "creation_date_from": inicio, "creation_date_to": fin})
+    resp.raise_for_status()
+    objetos = resp.json().get("data") or []
+    if any(not isinstance(o.get("creation_date"), (int, float)) or not inicio <= o["creation_date"] <= fin for o in objetos):
+        return None
+    return objetos
+
+
+def buscar_cargo(referencia: str, desde: datetime, hasta: datetime) -> dict:
+    """El cargo que lleva nuestra referencia en la metadata, creado entre desde y hasta (la hora del intento con margen).
+    Devuelve {"encontrado": el cargo o None, "completo": bool}:
+    - completo=True: llegó todo lo creado en la ventana; si no apareció, Culqi no lo cobró;
+    - completo=False: no se puede concluir (Culqi no filtró por fecha, o la ventana trae POR_PAGINA o más).
+    Si Culqi no responde, lanza: quien llama reintenta en la pasada siguiente."""
+    objetos = _listar_en_ventana("charges", desde, hasta)
+    if objetos is None:
+        return {"encontrado": None, "completo": False}
+    hallado = next((o for o in objetos if str((o.get("metadata") or {}).get("referencia")) == str(referencia)), None)
+    return {"encontrado": hallado, "completo": hallado is not None or len(objetos) < POR_PAGINA}
+
+
+def buscar_devolucion(cargo_id: str, monto_soles, desde: datetime, hasta: datetime) -> dict:
+    """Si ya se devolvió el cargo, mirando cuánto dice Culqi que se le devolvió (amount_refunded): cada cargo se devuelve
+    una sola vez y por su monto (lo asegura el índice uq_intentos_pago_devolucion). Devuelve {"encontrado", "completo"}:
+    - amount_refunded >= el monto: se devolvió. La devolución se busca entre las de la ventana (por su charge_id) para
+      tener su id; si no aparece, va {"id": None, "charge_id": ...};
+    - amount_refunded == 0: no se devolvió (completo);
+    - otro valor, o sin el campo: no se puede concluir.
+    Si Culqi no responde al pedir el cargo, lanza: quien llama reintenta en la pasada siguiente."""
+    with httpx.Client() as client:
+        resp = client.get(f"{CULQI_API_BASE}/charges/{cargo_id}", headers=_cabeceras(), timeout=15)
+    resp.raise_for_status()
+    devuelto = resp.json().get("amount_refunded")
+    if isinstance(devuelto, bool) or not isinstance(devuelto, (int, float)):
+        return {"encontrado": None, "completo": False}
+    if devuelto < _centimos(monto_soles):
+        return {"encontrado": None, "completo": devuelto == 0}
+    try:
+        devoluciones = _listar_en_ventana("refunds", desde, hasta) or []
+    except httpx.HTTPError:  # ya se sabe que se devolvió: el id es un dato más
+        devoluciones = []
+    hallada = next((o for o in devoluciones if o.get("charge_id") == cargo_id), None)
+    return {"encontrado": hallada or {"id": None, "charge_id": cargo_id}, "completo": True}
 
 
 def cargo_exitoso(cargo: dict) -> bool:
