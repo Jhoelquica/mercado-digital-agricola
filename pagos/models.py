@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Numeric, DateTime, Integer, UniqueConstraint, Index
+from sqlalchemy import Boolean, Column, String, Numeric, DateTime, Integer, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from comun.database import Base
 
@@ -53,6 +53,46 @@ class Pago(Base):
     reembolso_ids = Column(String, nullable=True)
     motivo_reembolso = Column(String, nullable=True)
     fecha_reembolso = Column(DateTime, nullable=True)
+    # ---- Cobro y devolución en dos fases (ver IntentoPago y main.procesar_pago) ----
+    # Mientras Culqi cobra, el pago está "procesando" (o "reembolso_procesando" mientras devuelve): ningún otro cobro, el
+    # vencimiento ni la reposición de stock lo tocan. Aquí queda qué parte se cobra, de qué estado venía (al que vuelve
+    # un saldo rechazado) y desde cuándo.
+    parte_en_proceso = Column(String, nullable=True)
+    estado_antes_de_procesar = Column(String, nullable=True)
+    procesando_desde = Column(DateTime, nullable=True)
+
+
+class IntentoPago(Base):
+    """Cada llamada a Culqi, un cobro o una devolución, con una referencia propia (el id de esta fila) que viaja en la
+    metadata y en la descripción. Se anota y se confirma ANTES de llamar a Culqi: si después el proceso muere o el commit
+    del resultado falla, el intento queda "en_curso" y la conciliación averigua en Culqi qué pasó con esa referencia.
+    También es el historial de intentos de cada pago."""
+    __tablename__ = "intentos_pago"
+    __table_args__ = (
+        # Un solo intento en curso por pago: el UPDATE condicional del pago ya lo asegura; la base lo sostiene igual.
+        Index("uq_intentos_pago_en_curso", "pago_id", unique=True,
+              postgresql_where=text("tipo = 'cobro' AND estado = 'en_curso'")),
+        # Un cargo se devuelve una sola vez: mientras su devolución está en curso o ya salió, no se puede empezar otra.
+        Index("uq_intentos_pago_devolucion", "cargo_id", unique=True,
+              postgresql_where=text("tipo = 'devolucion' AND estado IN ('en_curso', 'aprobado')")),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # la referencia propia que ve Culqi
+    pago_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    pedido_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    tipo = Column(String, nullable=False)  # cobro | devolucion
+    parte = Column(String, nullable=False)  # total | adelanto | saldo
+    monto = Column(Numeric(10, 2), nullable=False)
+    metodo = Column(String, nullable=True)  # cobro: tarjeta | yape
+    estado = Column(String, nullable=False, default="en_curso")  # en_curso | aprobado | rechazado
+    estado_anterior = Column(String, nullable=True)  # el del pago al empezar
+    cargo_id = Column(String, nullable=True)  # cobro: el cargo que creó Culqi; devolución: el cargo que se devuelve
+    devolucion_id = Column(String, nullable=True)
+    mensaje = Column(String, nullable=True)  # por qué se rechazó, o cómo se resolvió
+    fecha_inicio = Column(DateTime, nullable=False, default=datetime.utcnow)
+    fecha_fin = Column(DateTime, nullable=True)
+    conciliaciones = Column(Integer, nullable=False, default=0)  # veces que la conciliación lo buscó en Culqi
+    revision_manual = Column(Boolean, nullable=False, default=False)  # la conciliación no pudo: lo revisa una persona
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

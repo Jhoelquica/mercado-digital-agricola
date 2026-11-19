@@ -706,7 +706,9 @@ def test_si_ya_no_hay_stock_el_reintento_no_cobra_nada_y_el_pago_sigue_rechazado
     assert _estado_del_pago(pago) == "rechazado"
 
 
-def test_si_la_pasarela_no_responde_no_se_cobra_ni_cambia_el_pago(monkeypatch):
+def test_si_la_pasarela_no_responde_el_pago_queda_procesando_sin_tocar_el_stock(monkeypatch):
+    # Puede que Culqi haya cobrado y se perdiera la respuesta: no vuelve a "pendiente" (otro cobro sería doble) ni se
+    # devuelve el stock; la conciliación lo averigua (ver las pruebas de conciliar_intentos_en_curso).
     def pasarela_caida(**kwargs):
         raise main.httpx.RequestError("boom")
 
@@ -717,18 +719,19 @@ def test_si_la_pasarela_no_responde_no_se_cobra_ni_cambia_el_pago(monkeypatch):
 
     primer_intento = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
     resp = _procesar(primer_intento)
-    assert resp.status_code == 502, resp.text
-    assert _estado_del_pago(primer_intento) == "pendiente"
+    assert resp.status_code == 502 and "no vuelvas a pagar" in resp.json()["detail"], resp.text
+    assert _estado_del_pago(primer_intento) == "procesando"
     reservar.assert_not_called()
     compensar.assert_not_called()
+    assert _procesar(primer_intento).status_code == 409  # mientras tanto, otro cobro no
 
-    # en un reintento se había reservado stock para este intento: se libera
+    # en un reintento se reservó stock para este intento: sigue reservado hasta que la conciliación decida
     reintento = _crear_pago_con_estado("rechazado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
     resp = _procesar(reintento)
     assert resp.status_code == 502, resp.text
-    assert _estado_del_pago(reintento) == "rechazado"
+    assert _estado_del_pago(reintento) == "procesando"
     reservar.assert_called_once_with(reintento.items)
-    compensar.assert_called_once_with(reintento.items, pedido_id=reintento.pedido_id)
+    compensar.assert_not_called()
 
 
 def test_un_segundo_intento_sobre_un_pago_ya_aprobado_falla_409_sin_cobrar_otra_vez(monkeypatch):
@@ -1411,7 +1414,17 @@ def _devolver(pedido_id, motivo="El repartidor no pudo llevarlo"):
         _sesion_con_rol("comprador")
 
 
-def _aprobado_con_tarjeta(pago, cargo="chr_test_1", metodo="tarjeta"):
+def _pago_recargado(pago):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+    finally:
+        db.close()
+
+
+def _aprobado_con_tarjeta(pago, cargo=None, metodo="tarjeta"):
+    # Un cargo distinto en cada prueba: un cargo se devuelve una sola vez (el índice único de las devoluciones).
+    cargo = cargo or f"chr_test_{uuid.uuid4().hex[:10]}"
     db = main.SessionLocal()
     try:
         fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
@@ -1426,9 +1439,10 @@ def _aprobado_con_tarjeta(pago, cargo="chr_test_1", metodo="tarjeta"):
 
 def test_devolver_un_pago_con_tarjeta_anula_las_ganancias_y_devuelve_el_stock(monkeypatch):
     pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
-    _aprobado_con_tarjeta(pago)
+    cargo = f"chr_test_{uuid.uuid4().hex[:10]}"
+    _aprobado_con_tarjeta(pago, cargo=cargo)
     devoluciones, eventos, compensar = [], [], MagicMock()
-    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": "ref_1"}})
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto, **kw: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": "ref_1"}})
     anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
 
@@ -1436,8 +1450,8 @@ def test_devolver_un_pago_con_tarjeta_anula_las_ganancias_y_devuelve_el_stock(mo
     resp = _devolver(pago.pedido_id)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"estado": "reembolsado", "monto_reembolsado": 40.0, "reembolso_manual": None,
-                           "reembolso_ids": [{"cargo": "chr_test_1", "devolucion": "ref_1", "monto": 40.0}]}
-    assert devoluciones == [("chr_test_1", 40.0)]
+                           "reembolso_ids": [{"cargo": cargo, "devolucion": "ref_1", "monto": 40.0}]}
+    assert devoluciones == [(cargo, 40.0)]
     compensar.assert_called_once()
     assert [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["anulada"]
     assert eventos == [{"evento": "pago_reembolsado", "pedido_id": str(pago.pedido_id), "motivo": "El repartidor no pudo llevarlo",
@@ -1461,27 +1475,35 @@ def test_un_pedido_en_camion_devuelve_el_adelanto_y_el_saldo_por_separado(monkey
     db = main.SessionLocal()
     try:
         fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
-        fila.metodo, fila.culqi_charge_id, fila.metodo_saldo, fila.culqi_charge_id_saldo = "tarjeta", "chr_a", "yape", "chr_s"
+        sufijo = uuid.uuid4().hex[:10]  # un cargo se devuelve una sola vez en toda la base: cada prueba, los suyos
+        cargo_a, cargo_s = f"chr_a_{sufijo}", f"chr_s_{sufijo}"
+        fila.metodo, fila.culqi_charge_id, fila.metodo_saldo, fila.culqi_charge_id_saldo = "tarjeta", cargo_a, "yape", cargo_s
         db.commit()
     finally:
         db.close()
     devoluciones = []
-    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": f"ref_{cargo}"}})
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto, **kw: devoluciones.append((cargo, monto)) or {"status_code": 201, "data": {"id": f"ref_{cargo}"}})
     monkeypatch.setattr(main, "compensar_stock", MagicMock())
     assert _devolver(pago.pedido_id).json()["monto_reembolsado"] == 1000.0
-    assert devoluciones == [("chr_a", 700.0), ("chr_s", 300.0)]
+    assert devoluciones == [(cargo_a, 700.0), (cargo_s, 300.0)]
 
 
-def test_si_culqi_rechaza_la_devolucion_no_se_cancela_nada(monkeypatch):
+def test_si_culqi_rechaza_la_devolucion_queda_a_medias_y_se_reintenta_con_tope(monkeypatch):
+    # El envío ya se canceló antes (paso 1 de la saga): la devolución no se deshace, queda a medias y se reintenta.
     pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
     _aprobado_con_tarjeta(pago)
-    compensar = MagicMock()
-    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto: {"status_code": 400, "data": {"user_message": "Cargo no encontrado"}})
+    compensar, llamadas = MagicMock(), []
+    monkeypatch.setattr(main, "crear_devolucion", lambda cargo, monto, **kw: llamadas.append(cargo) or {"status_code": 400, "data": {"user_message": "Cargo no encontrado"}})
     monkeypatch.setattr(main, "compensar_stock", compensar)
     resp = _devolver(pago.pedido_id)
-    assert resp.status_code == 502 and "Cargo no encontrado" in resp.json()["detail"]
-    assert _estado_del_pago(pago) == "aprobado" and [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["pendiente"]
+    cargo = _pago_recargado(pago).culqi_charge_id
+    assert resp.status_code == 202 and resp.json()["pendientes"] == [{"cargo": cargo, "estado": "rechazado"}], resp.text
+    assert _estado_del_pago(pago) == "reembolso_procesando" and [l.estado for l in _liquidaciones_de(pago.pedido_id)] == ["pendiente"]
     compensar.assert_not_called()
+    for _ in range(main.MAX_INTENTOS_DEVOLUCION + 2):  # se reintenta, pero con tope
+        _devolver(pago.pedido_id)
+    assert len(llamadas) == main.MAX_INTENTOS_DEVOLUCION
+    assert _devolver(pago.pedido_id).json()["pendientes"] == [{"cargo": cargo, "estado": "revision"}]
     assert _devolver(_crear_pago_directo([]).pedido_id).status_code == 409  # sin pago confirmado no hay qué devolver
 
 
@@ -1811,3 +1833,239 @@ def test_una_pasada_de_vencimientos_sigue_aunque_la_primera_parte_y_su_rollback_
     monkeypatch.setattr(main, "vencer_pagos_sin_pagar", lambda db: hechas.append("vencimientos"))
     main.una_pasada_de_vencimientos()  # no lanza
     assert hechas == ["vencimientos"]
+
+
+# ============ Cobro y devolución en dos fases: nada abierto mientras se llama a Culqi, y la conciliación ============
+import threading as _hilos  # noqa: E402
+import time as _tiempo  # noqa: E402
+
+from sqlalchemy import text as _sql  # noqa: E402
+from sqlalchemy.exc import OperationalError as _ErrorDeLaBase  # noqa: E402
+
+from comun.database import engine as _engine  # noqa: E402
+
+
+def _cargo_nuevo():
+    return f"chr_{uuid.uuid4().hex[:12]}"
+
+
+def _intentos_de(pago, tipo="cobro"):
+    db = main.SessionLocal()
+    try:
+        return (db.query(main.models.IntentoPago)
+                .filter(main.models.IntentoPago.pago_id == pago.id, main.models.IntentoPago.tipo == tipo)
+                .order_by(main.models.IntentoPago.fecha_inicio).all())
+    finally:
+        db.close()
+
+
+def _transacciones_abiertas():
+    """Cuántas conexiones a esta base tienen una transacción abierta, sin contar la que pregunta."""
+    with _engine.connect() as conexion:
+        return conexion.execute(_sql("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                                     "AND state LIKE 'idle in transaction%' AND pid <> pg_backend_pid()")).scalar()
+
+
+def _conciliar(buscar, pasadas=1):
+    db = main.SessionLocal()
+    try:
+        ahora = main.datetime.utcnow() + main.timedelta(minutes=3)
+        return [main.conciliar_intentos_en_curso(db, ahora=ahora, buscar=buscar) for _ in range(pasadas)]
+    finally:
+        db.close()
+
+
+def _solo(intento, encontrado=None, completo=True):
+    """Un buscador falso de Culqi que solo sabe de este intento (de los de otras pruebas no se sabe nada)."""
+    def buscar(recurso, referencia, desde):
+        if referencia != str(intento.id):
+            return {"encontrado": None, "completo": False}
+        return {"encontrado": encontrado, "completo": completo}
+    return buscar
+
+
+def _base_caida(*_args, **_kwargs):
+    raise _ErrorDeLaBase("COMMIT", {}, Exception("la base se cayó a mitad"))
+
+
+def test_ninguna_llamada_a_culqi_ocurre_con_una_transaccion_abierta(monkeypatch):
+    producto, cargo = str(uuid.uuid4()), _cargo_nuevo()
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}])
+    vistas = []
+
+    def crear_cargo(**kwargs):
+        vistas.append({"abiertas": _transacciones_abiertas(), **kwargs})
+        return {"status_code": 201, "data": {"id": cargo}}
+
+    def crear_devolucion(cargo_a_devolver, monto, **kwargs):
+        vistas.append({"abiertas": _transacciones_abiertas(), **kwargs})
+        return {"status_code": 201, "data": {"id": "ref_mirada"}}
+
+    monkeypatch.setattr(main, "crear_cargo", crear_cargo)
+    monkeypatch.setattr(main, "crear_devolucion", crear_devolucion)
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+
+    assert _procesar(pago).status_code == 200
+    assert _devolver(pago.pedido_id).status_code == 200
+    cobro, devolucion = vistas
+    assert cobro["abiertas"] == 0 and devolucion["abiertas"] == 0
+    [intento] = _intentos_de(pago)
+    assert cobro["metadata"]["referencia"] == str(intento.id) and str(intento.id)[:8] in cobro["descripcion"]
+    assert (intento.estado, intento.cargo_id) == ("aprobado", cargo)
+    [intento_devolucion] = _intentos_de(pago, "devolucion")
+    assert devolucion["metadata"]["referencia"] == str(intento_devolucion.id)
+
+
+def test_dos_cobros_a_la_vez_del_mismo_pedido_hacen_un_solo_cobro_en_culqi(monkeypatch):
+    producto = str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}])
+    cobros = []
+
+    def crear_cargo(**kwargs):
+        cobros.append(kwargs["metadata"]["referencia"])
+        _tiempo.sleep(0.5)  # el segundo llega mientras el primero espera a Culqi
+        return {"status_code": 201, "data": {"id": _cargo_nuevo()}}
+
+    monkeypatch.setattr(main, "crear_cargo", crear_cargo)
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    respuestas = []
+    hilos = [_hilos.Thread(target=lambda: respuestas.append(_procesar(pago).status_code)) for _ in range(2)]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join(timeout=30)
+    assert len(cobros) == 1 and sorted(respuestas) == [200, 409]
+    assert _estado_del_pago(pago) == "aprobado"
+
+
+def test_si_culqi_cobra_y_no_se_puede_guardar_queda_procesando_y_la_conciliacion_lo_aprueba_una_vez(monkeypatch):
+    producto, cargo = str(uuid.uuid4()), _cargo_nuevo()
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}])
+    cobros, eventos = [], []
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": cargo}})
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    anotar_eventos(monkeypatch, main, eventos)
+    cerrar_de_verdad = main._cerrar_cobro
+    monkeypatch.setattr(main, "_cerrar_cobro", _base_caida)
+
+    resp = _procesar(pago)
+    assert resp.status_code == 502 and "no vuelvas a pagar" in resp.json()["detail"], resp.text
+    assert _estado_del_pago(pago) == "procesando"
+    assert _procesar(pago).status_code == 409 and len(cobros) == 1  # mientras tanto, un segundo intento: sin cobro
+
+    monkeypatch.setattr(main, "_cerrar_cobro", cerrar_de_verdad)
+    [intento] = _intentos_de(pago)
+    hallado = {"id": cargo, "outcome": {"type": "venta_exitosa"}, "metadata": {"referencia": str(intento.id)}}
+    _conciliar(_solo(intento, hallado), pasadas=2)
+    fila = _pago_recargado(pago)
+    assert (fila.estado, fila.culqi_charge_id) == ("aprobado", cargo)
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_confirmado"]
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+
+
+def test_un_cobro_que_culqi_no_tiene_la_conciliacion_lo_rechaza_y_devuelve_el_stock(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    compensar, eventos = MagicMock(), []
+
+    def culqi_caido(**kwargs):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    monkeypatch.setattr(main, "crear_cargo", culqi_caido)
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    anotar_eventos(monkeypatch, main, eventos)
+    assert _procesar(pago).status_code == 502
+    [intento] = _intentos_de(pago)
+    _conciliar(_solo(intento), pasadas=main.PASADAS_SIN_RASTRO - 1)
+    assert _estado_del_pago(pago) == "procesando"  # todavía no: se busca varias veces antes de concluir
+    _conciliar(_solo(intento))
+    assert _estado_del_pago(pago) == "rechazado"
+    compensar.assert_called_once_with(pago.items, pedido_id=pago.pedido_id)
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_rechazado"]
+
+
+def test_si_no_se_puede_averiguar_en_culqi_queda_para_revision_manual(monkeypatch):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+
+    def culqi_caido(*args, **kwargs):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    monkeypatch.setattr(main, "crear_cargo", culqi_caido)
+    assert _procesar(pago).status_code == 502
+    [intento] = _intentos_de(pago)
+
+    def buscar(recurso, referencia, desde):
+        if referencia == str(intento.id):
+            raise main.httpx.ConnectError("Culqi no contesta")
+        return {"encontrado": None, "completo": False}
+
+    _conciliar(buscar, pasadas=main.PASADAS_MAXIMAS)
+    [intento] = _intentos_de(pago)
+    assert intento.revision_manual and intento.estado == "en_curso" and _estado_del_pago(pago) == "procesando"
+
+
+def test_el_vencimiento_y_la_reposicion_de_stock_no_tocan_un_pago_en_proceso(monkeypatch):
+    producto = str(uuid.uuid4())
+    pago = _crear_pago_con_estado("procesando", [{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}])
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.vence_en = main.datetime.utcnow() - main.timedelta(hours=2)
+        db.add(main.models.DevolucionStock(pedido_id=pago.pedido_id, producto_id=producto, cantidad=1, estado="pendiente",
+                                           intentos=1))
+        db.commit()
+        repuestos = []
+        monkeypatch.setattr(main, "_reponer_en_productos",
+                            lambda cliente, pid, cantidad: repuestos.append(str(pid)) or ("devuelta", None))
+        monkeypatch.setattr(main, "compensar_stock", MagicMock())
+        main.vencer_pagos_sin_pagar(db)
+        main.reintentar_devoluciones_pendientes(db)
+    finally:
+        db.close()
+    assert _estado_del_pago(pago) == "procesando"
+    assert producto not in repuestos
+
+
+def test_si_el_pago_no_existe_se_crea_con_lo_que_dice_pedidos_y_el_monto_no_lo_pone_el_cliente(monkeypatch):
+    pedido_id, producto = str(uuid.uuid4()), str(uuid.uuid4())
+    del_pedido = {"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": str(uuid.uuid4()), "comprador_nombre": "QA",
+                  "costo_envio": 5.0, "modalidad_envio": "local", "monto_adelanto": None,
+                  "items": [{"producto_id": producto, "cantidad": 2, "unidad": "kg", "cantidad_base": 2, "precio_unitario": 10.0}]}
+    pedidas, cobros = [], []
+
+    def get(url, headers=None, timeout=None):
+        pedidas.append((url, headers))
+        return MagicMock(status_code=200, json=lambda: del_pedido)
+
+    monkeypatch.setattr(main.httpx, "get", get)
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": _cargo_nuevo()}})
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    resp = client.post("/pagos/procesar", json={"pedido_id": pedido_id, "token_culqi": "tkn_test", "email": "cliente@test.com",
+                                                "monto": 1}, headers=CON_TOKEN)
+    assert resp.status_code == 200, resp.text
+    url, cabeceras = pedidas[0]
+    assert url.endswith(f"/pedidos/interno/{pedido_id}/para-cobrar")
+    assert cabeceras["X-Servicio-Secreto"] == main.PAGOS_A_PEDIDOS_SECRETO
+    assert cobros[0]["monto_soles"] == 25.0  # 2 × S/ 10 + S/ 5 de envío, lo que dijo Pedidos; el "monto" del cuerpo no cuenta
+
+
+def test_si_culqi_devuelve_y_no_se_puede_guardar_no_se_devuelve_dos_veces(monkeypatch):
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    llamadas, eventos = [], []
+    monkeypatch.setattr(main, "crear_devolucion",
+                        lambda c, m, **kw: llamadas.append(c) or {"status_code": 201, "data": {"id": "ref_hecha"}})
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    anotar_eventos(monkeypatch, main, eventos)
+    cerrar_de_verdad = main._cerrar_devolucion
+    monkeypatch.setattr(main, "_cerrar_devolucion", _base_caida)
+
+    resp = _devolver(pago.pedido_id)
+    assert resp.status_code == 202 and resp.json()["pendientes"] == [{"cargo": cargo, "estado": "en_curso"}], resp.text
+    assert _devolver(pago.pedido_id).status_code == 202 and llamadas == [cargo]  # repetir no vuelve a devolver
+
+    monkeypatch.setattr(main, "_cerrar_devolucion", cerrar_de_verdad)
+    [intento] = _intentos_de(pago, "devolucion")
+    _conciliar(_solo(intento, {"id": "ref_hecha", "metadata": {"referencia": str(intento.id)}}), pasadas=2)
+    assert llamadas == [cargo] and _estado_del_pago(pago) == "reembolsado"
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_reembolsado"]

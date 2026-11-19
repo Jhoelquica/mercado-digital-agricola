@@ -21,41 +21,45 @@ def _calcular_monto(items: list, costo_envio: float = 0) -> float:
     return subtotal + costo_envio
 
 
+def crear_pago_si_falta(datos: dict) -> bool:
+    """El registro de pago del pedido, con lo que trae pedido_creado (o lo que dice Pedidos al cobrar, que es lo mismo:
+    ver main._pago_o_crearlo). En su propia sesión. RabbitMQ entrega "al menos una vez", Pedidos reenvía su bandeja de
+    salida y el cobro también puede crearlo: uno repetido no crea un segundo pago; si dos llegan a la vez, el índice
+    único de pagos.pedido_id frena al segundo. Devuelve si lo creó."""
+    db = SessionLocal()
+    try:
+        if db.query(models.Pago).filter(models.Pago.pedido_id == datos["pedido_id"]).first():
+            logger.info("Pedido %s: ya tiene su registro de pago; no se crea otro", datos["pedido_id"])
+            return False
+        # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del almacén, ver
+        # calcular_costo_envio en pedidos/main.py); el 0 por defecto es solo para un evento viejo sin esa clave.
+        monto = _calcular_monto(datos.get("items", []), datos.get("costo_envio", 0))
+        db.add(models.Pago(
+            pedido_id=datos["pedido_id"],
+            monto=monto,
+            estado="pendiente",
+            items=json.dumps(datos.get("items", [])),
+            # Pedido en camión: primero se cobra el adelanto, el resto al llegar (ver Pago.monto_adelanto).
+            monto_adelanto=datos.get("monto_adelanto") if datos.get("modalidad_envio") == "camion" else None,
+            vence_en=datetime.utcnow() + timedelta(minutes=PLAZO_PARA_PAGAR_MINUTOS),
+        ))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            logger.info("Pedido %s: otro creó su registro de pago a la vez", datos["pedido_id"])
+            return False
+        logger.info("Pedido %s: registro de pago creado (S/ %s)", datos["pedido_id"], monto)
+        return True
+    finally:
+        db.close()
+
+
 def _procesar_mensaje(ch, method, properties, body):
     datos = json.loads(body)
 
     if datos.get("evento") == "pedido_creado":
-        db = SessionLocal()
-        try:
-            # RabbitMQ entrega "al menos una vez" y Pedidos reenvía su bandeja de salida: un pedido_creado repetido no
-            # crea un segundo pago. Si dos llegan a la vez, el índice único de pagos.pedido_id frena a la segunda.
-            if db.query(models.Pago).filter(models.Pago.pedido_id == datos["pedido_id"]).first():
-                logger.info("Pedido %s: ya tiene su registro de pago; el pedido_creado repetido se ignora", datos["pedido_id"])
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-                return
-            # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del
-            # almacén, ver calcular_costo_envio en pedidos/main.py) — el default 0 es solo para
-            # no romper si algún día llega un evento viejo sin esa clave.
-            monto = _calcular_monto(datos.get("items", []), datos.get("costo_envio", 0))
-            nuevo_pago = models.Pago(
-                pedido_id=datos["pedido_id"],
-                monto=monto,
-                estado="pendiente",
-                items=json.dumps(datos.get("items", [])),
-                # Pedido en camión: primero se cobra el adelanto, el resto al llegar (ver Pago.monto_adelanto).
-                monto_adelanto=datos.get("monto_adelanto") if datos.get("modalidad_envio") == "camion" else None,
-                vence_en=datetime.utcnow() + timedelta(minutes=PLAZO_PARA_PAGAR_MINUTOS),
-            )
-            db.add(nuevo_pago)
-            try:
-                db.commit()
-            except IntegrityError:
-                db.rollback()
-                print(f"[Pagos] Otra entrega del mismo pedido_creado creó el pago del pedido {datos['pedido_id']} a la vez")
-            else:
-                print(f"[Pagos] Registro de pago creado para pedido {datos['pedido_id']} (monto estimado: S/ {monto})")
-        finally:
-            db.close()
+        crear_pago_si_falta(datos)
 
     elif datos.get("evento") == "envio_actualizado" and datos.get("estado") in ESTADOS_CUMPLIDOS and datos.get("pedido_id"):
         # El pedido llegó (o quedó en la agencia de la ciudad del comprador): desde ahora el agricultor puede cobrar lo
