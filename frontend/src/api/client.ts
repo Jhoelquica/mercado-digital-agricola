@@ -83,7 +83,7 @@ export async function request<T>(servicio: Servicio, ruta: string, { method = 'G
       throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
     }
     if (resp.status === 403) throw new ApiError('No tienes permiso para esta acción.', 403);
-    throw new ApiError(mensajeDeDetalle(detalleDe(data) || `Error ${resp.status} en ${servicio}`), resp.status);
+    throw new ApiError(mensajeDeDetalle(detalleDe(data) || `Error ${resp.status} en ${servicio}`), resp.status, detalleDe(data));
   }
 
   return data as T;
@@ -111,7 +111,7 @@ export async function requestFormData<T>(servicio: Servicio, ruta: string, formD
       throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
     }
     if (resp.status === 403) throw new ApiError('No tienes permiso para esta acción.', 403);
-    throw new ApiError(mensajeDeDetalle(detalleDe(data) || `Error ${resp.status} en ${servicio}`), resp.status);
+    throw new ApiError(mensajeDeDetalle(detalleDe(data) || `Error ${resp.status} en ${servicio}`), resp.status, detalleDe(data));
   }
 
   return data as T;

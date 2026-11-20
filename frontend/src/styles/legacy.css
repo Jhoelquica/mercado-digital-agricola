@@ -6001,3 +6001,50 @@ body.asistente-abierto { overflow: hidden; }
 .perfil-siembras-acceso p { margin: 4px 0 0; font-size: 0.92rem; color: var(--texto-suave); }
 .perfil-siembras-icono { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 14px; background: var(--verde-pastel); color: var(--color-primario); font-size: 1.5rem; }
 @media (max-width: 640px) { .perfil-siembras-acceso { grid-template-columns: auto minmax(0, 1fr); } .perfil-siembras-acceso .btn { grid-column: 1 / -1; } }
+
+/* ===== Un solo pedido sin pagar por comprador (checkout y Mis pedidos) =====
+   21st.dev "Alert with actions" (la tarjeta del pedido sin pagar: ícono, título, datos y acciones en un bloque) y
+   "Confirmation Button" (Cancelar pedido pide confirmar ahí mismo). ui-ux-pro-max: el aviso de "pedido guardado" con
+   role="status" sin robar el foco, la consecuencia escrita antes de confirmar, el foco en la opción segura, el error junto a
+   las acciones, botones de 44 px o más y los mismos tonos (4.5:1 o más) de los avisos que ya había. */
+.checkout-pedido-guardado {
+  display: flex; align-items: flex-start; gap: 10px; margin: 2px 0 0; padding: 12px 14px; border-radius: 14px;
+  background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.9rem; line-height: 1.45;
+}
+.checkout-pedido-guardado i { flex: none; margin-top: 2px; font-size: 1.1rem; }
+.checkout-pedido-guardado.es-interrumpido { background: #fff0ee; color: #8a2f1c; box-shadow: inset 0 0 0 1.5px #f3aa9a; }
+
+.checkout-pendiente { border: 2px solid #e6d3a3; background: linear-gradient(180deg, var(--acento-cosecha-suave), #fff 70%); }
+.checkout-pendiente > h3 { color: var(--acento-cosecha-texto); }
+.checkout-pendiente > h3:focus { outline: none; }
+.checkout-pendiente > h3:focus-visible { outline: 3px solid rgba(161, 98, 7, 0.35); outline-offset: 4px; border-radius: 8px; }
+.checkout-pendiente.es-verificando { border-color: var(--borde); background: #f6faf8; }
+.checkout-pendiente.es-verificando > h3 { color: var(--texto); }
+.checkout-pendiente-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 18px; margin: 0 0 14px; }
+.checkout-pendiente-datos > div { display: grid; gap: 2px; min-width: 0; }
+.checkout-pendiente-datos dt { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--texto-suave); }
+.checkout-pendiente-datos dd { margin: 0; font-size: 1rem; color: var(--texto); overflow-wrap: anywhere; }
+.checkout-pendiente-datos > .checkout-pendiente-productos { grid-column: 1 / -1; }
+.checkout-pendiente-nota { margin: 0 0 16px; font-size: 0.95rem; line-height: 1.5; color: var(--texto-suave); }
+.checkout-pendiente-error {
+  display: flex; gap: 8px; align-items: flex-start; margin: 0 0 14px; padding: 10px 12px; border-radius: 12px;
+  background: #fdecec; color: #9b1c1c; font-size: 0.92rem; font-weight: 600; line-height: 1.45;
+}
+.checkout-pendiente-error i { flex: none; margin-top: 2px; }
+.checkout-pendiente-acciones { display: flex; flex-wrap: wrap; gap: 10px; }
+.checkout-pendiente-acciones .btn { min-height: 46px; flex: 1 1 200px; }
+
+.mp-alerta .btn-cancelar-pedido { padding: 10px 16px; color: #8a2f1c; }
+.mp-alerta .btn-cancelar-pedido:hover { background: rgba(180, 35, 24, 0.08); }
+.mp-alerta > .mp-cancelar-confirmar { flex: 1 1 100%; display: grid; gap: 10px; padding: 14px 16px; border-radius: 14px; background: #fdecec; color: #9b1c1c; }
+.mp-cancelar-confirmar > p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.92rem; font-weight: 600; line-height: 1.45; }
+.mp-cancelar-confirmar > p i { flex: none; margin-top: 1px; font-size: 1.15rem; }
+.mp-cancelar-confirmar .mp-cancelar-error { font-size: 0.88rem; }
+.mp-cancelar-acciones { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.mp-alerta .mp-cancelar-acciones .btn { min-height: 44px; padding: 10px 18px; }
+.mp-cancelar-acciones .btn-danger { background: #b42318; color: #fff; }
+.mp-cancelar-acciones .btn-danger:hover { background: #912018; }
+.mp-cancelar-acciones .btn-ghost { color: #7a271a; }
+@media (max-width: 560px) {
+  .checkout-pendiente-acciones .btn, .mp-cancelar-acciones .btn { flex: 1 1 100%; }
+}

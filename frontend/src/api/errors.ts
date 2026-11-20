@@ -2,11 +2,15 @@ export const MENSAJE_SESION_EXPIRADA = 'Tu sesión expiró. Inicia sesión de nu
 
 export class ApiError extends Error {
   status: number;
+  // El "detail" tal como vino del servidor: algunas respuestas traen datos además del mensaje (p. ej. el 409 de un pedido
+  // sin pagar trae ese pedido, para que el checkout ofrezca pagarlo o reemplazarlo).
+  detalle: unknown;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detalle: unknown = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.detalle = detalle;
   }
 }
 
@@ -34,6 +38,7 @@ interface ErrorDeValidacion {
 // texto legible ("costo_semillas: debe estar entre 0 y 9999999.99") en vez de mostrar el JSON crudo.
 export function mensajeDeDetalle(detail: unknown): string {
   if (typeof detail === 'string') return detail;
+  if (detail && typeof detail === 'object' && 'mensaje' in detail && typeof detail.mensaje === 'string') return detail.mensaje;
   if (Array.isArray(detail)) {
     return (detail as ErrorDeValidacion[]).map((e) => {
       const campo = Array.isArray(e.loc) ? e.loc.filter((parte) => parte !== 'body').join(' › ') : '';

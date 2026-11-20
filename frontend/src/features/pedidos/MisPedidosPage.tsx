@@ -5,6 +5,7 @@ import { pedidos, type Pedido } from '../../api/pedidos';
 import { transporte } from '../../api/transporte';
 import { useAuth } from '../../auth/AuthContext';
 import { toast } from '../../components/Toast';
+import { vaciarCarritoSiSePagoSuPedido } from '../checkout/carrito';
 import { formatearMoneda } from '../../lib/formato';
 import { ContadorAnimado } from '../../components/ContadorAnimado';
 import { abrirPanelBusqueda } from '../catalogo/menus';
@@ -171,6 +172,17 @@ export default function MisPedidosPage() {
   const { data: catalogoCargado, isLoading: cargandoCatalogo } = useCatalogo();
   const catalogo = catalogoCargado ?? [];
   const datos = data?.datos ?? [];
+
+  // El carrito se vacía cuando su pedido se paga: si se pagó por otro lado (un cobro que se confirmó al verificarse, o la
+  // constancia de una transferencia), al verlo aquí ya pagado se vacía, siempre que el carrito siga teniendo lo mismo.
+  useEffect(() => {
+    for (const d of data?.datos ?? []) {
+      if (pagoConfirmadoPedido(d) || d.pago?.estado === 'en_revision') {
+        const items = (d.pedido.items || []).map((i) => ({ producto_id: i.producto_id, unidad: i.unidad, cantidad: i.cantidad }));
+        vaciarCarritoSiSePagoSuPedido(d.pedido.id, items);
+      }
+    }
+  }, [data]);
   // Un pedido por agencia muestra la oficina de recojo de su ciudad.
   const hayAgencia = datos.some((d) => d.envio?.modalidad_envio === 'agencia') || encontrado?.envio?.modalidad_envio === 'agencia';
   const { data: destinos = [] } = useQuery({ queryKey: ['destinos-lejanos'], queryFn: pedidos.destinosLejanos, enabled: hayAgencia });

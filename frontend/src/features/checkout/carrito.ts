@@ -1,4 +1,5 @@
 import { toast } from '../../components/Toast';
+import { mismasLineas, type LineaDePedido } from '../../lib/pedidoPendiente';
 import { precioEnUnidad, stockEnUnidad, type ProductoConPrecio } from '../../lib/productos';
 
 // El carrito vive solo en memoria, como en el frontend anterior: no tiene datos personales y se conserva si la sesión
@@ -46,7 +47,36 @@ export function guardarCarrito(nuevas: LineaCarrito[]): void {
 
 export function vaciarCarrito(): void {
   telefonoDeEntrega = '';
+  pedidoDelCarrito = null;
   guardarCarrito([]);
+}
+
+// ---- El carrito se vacía cuando su pedido se paga, no al crearlo ----
+// Un pago que no se completa (la ventana de Culqi cerrada, un token que no llega, una tarjeta rechazada) deja el carrito
+// como estaba: volver a pagar con él retoma el mismo pedido (Pedidos lo reconoce) en vez de empujar a armar otro.
+let pedidoDelCarrito: string | null = null;
+
+const lineasDelCarrito = (): LineaDePedido[] => lineas.map((l) => ({ producto_id: l.producto_id, unidad: l.unidad, cantidad: l.cantidad }));
+
+export const carritoCoincideCon = (items: readonly LineaDePedido[]): boolean => lineas.length > 0 && mismasLineas(lineasDelCarrito(), items);
+
+// El pedido que se creó (o se retomó) con este carrito: si después se paga desde otro lado (Mis pedidos, o un cobro que
+// se confirmó tras verificarse), el carrito se vacía igual.
+export function vincularCarritoAlPedido(pedidoId: string): void {
+  pedidoDelCarrito = pedidoId;
+}
+
+// Al confirmarse el pago de un pedido: vacía el carrito si tiene lo mismo que ese pedido (si el comprador ya armó otro,
+// no se toca). Devuelve si lo vació.
+export function vaciarCarritoSiCoincide(items: readonly LineaDePedido[] | null | undefined): boolean {
+  if (!items || !carritoCoincideCon(items)) return false;
+  vaciarCarrito();
+  return true;
+}
+
+// Lo mismo, solo para el pedido vinculado al carrito (lo usa Mis pedidos al ver un pedido ya pagado).
+export function vaciarCarritoSiSePagoSuPedido(pedidoId: string, items: readonly LineaDePedido[] | null | undefined): boolean {
+  return pedidoDelCarrito === pedidoId && vaciarCarritoSiCoincide(items);
 }
 
 const esLaLinea = (linea: LineaCarrito, productoId: string, unidad: string | null) => linea.producto_id === productoId && linea.unidad === unidad;

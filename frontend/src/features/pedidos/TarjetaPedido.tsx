@@ -1,8 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { certificacion, type CertificadoPedido } from '../../api/certificacion';
 import { ApiError } from '../../api/errors';
+import { pagos } from '../../api/pagos';
 import type { DestinoPublico, Pedido } from '../../api/pedidos';
 import type { ProductoCatalogo } from '../../api/productos';
 import { productos } from '../../api/productos';
@@ -10,6 +11,7 @@ import { transporte, type EnvioDetalle, type RutaEnvio } from '../../api/transpo
 import { useAuth } from '../../auth/AuthContext';
 import { manejarError, toast } from '../../components/Toast';
 import { formatearFechaServidor, formatearMoneda, hashCorto, parsearFechaServidor } from '../../lib/formato';
+import { horaDeLima } from '../../lib/pedidoPendiente';
 import { unidadCorta, unidadPlural } from '../../lib/productos';
 import { MediaProducto } from '../catalogo/TarjetasProducto';
 import type { EstadoDetalle } from '../catalogo/useCatalogo';
@@ -215,7 +217,68 @@ function tieneAlertaDePago(d: DatosPedido): boolean {
     || (pago?.estado === 'adelanto_pagado' && envio?.estado === 'en_destino');
 }
 
-function AlertaPago({ d, total, costoEnvio }: { d: DatosPedido; total: number; costoEnvio: number }) {
+// "Cancelar pedido" de un pedido sin pagar: sus productos vuelven al catálogo en el acto y el comprador puede armar otro.
+// 21st.dev "Confirmation Button" (el primer toque pide confirmar ahí mismo) con el patrón de "Cancelar y devolver" del admin;
+// ui-ux-pro-max: confirmar antes de una acción que no se deshace, el foco en la opción segura, Escape vuelve atrás, el error
+// junto a los botones (role="alert") y un aviso al terminar.
+function CancelarPedidoSinPagar({ pedidoId, alCancelar }: { pedidoId: string; alCancelar: () => void }) {
+  const queryClient = useQueryClient();
+  const [abierto, setAbierto] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const botonAbrir = useRef<HTMLButtonElement>(null);
+  const botonVolver = useRef<HTMLButtonElement>(null);
+  const idCorto = pedidoId.slice(0, 8);
+
+  function cerrar() {
+    setAbierto(false);
+    setError(null);
+    setTimeout(() => botonAbrir.current?.focus());
+  }
+
+  async function cancelar() {
+    setEnviando(true);
+    setError(null);
+    try {
+      await pagos.cancelarPedido(pedidoId);
+      toast(`Cancelaste el pedido #${idCorto}: sus productos volvieron al catálogo.`);
+      void queryClient.invalidateQueries({ queryKey: ['catalogo'] });
+      alCancelar();
+    } catch (err) {
+      setEnviando(false);
+      setError((err as Error).message || 'No se pudo cancelar el pedido. Intenta de nuevo.');
+    }
+  }
+
+  function alTeclear(e: KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Escape' && !enviando) {
+      e.stopPropagation();
+      cerrar();
+    }
+  }
+
+  if (!abierto) {
+    return (
+      <button ref={botonAbrir} type="button" className="btn btn-ghost btn-cancelar-pedido" onClick={() => { setAbierto(true); setTimeout(() => botonVolver.current?.focus()); }}>
+        <i className="ti ti-x" aria-hidden="true" /> Cancelar pedido
+      </button>
+    );
+  }
+  return (
+    <div className="mp-cancelar-confirmar" role="group" aria-labelledby={`cancelar-pregunta-${pedidoId}`} onKeyDown={alTeclear}>
+      <p id={`cancelar-pregunta-${pedidoId}`}><i className="ti ti-alert-triangle" aria-hidden="true" /><span>¿Cancelar el pedido #{idCorto}? Sus productos vuelven al catálogo y ya no se podrá pagar.</span></p>
+      {error && <p className="mp-cancelar-error" role="alert">{error}</p>}
+      <div className="mp-cancelar-acciones">
+        <button ref={botonVolver} type="button" className="btn btn-ghost btn-sm btn-cancelar-volver" disabled={enviando} onClick={cerrar}>No, mantenerlo</button>
+        <button type="button" className="btn btn-danger btn-confirmar-cancelar" disabled={enviando} aria-busy={enviando} onClick={() => { void cancelar(); }}>
+          {enviando ? <><i className="ti ti-loader-2 icono-girando" aria-hidden="true" /> Cancelando…</> : 'Sí, cancelar pedido'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AlertaPago({ d, total, costoEnvio, alCambiar }: { d: DatosPedido; total: number; costoEnvio: number; alCambiar: () => void }) {
   const navigate = useNavigate();
   const { pedido, envio, pago } = d;
   const montoAhora = pago?.monto_a_pagar != null ? Number(pago.monto_a_pagar) : total;
@@ -225,8 +288,10 @@ function AlertaPago({ d, total, costoEnvio }: { d: DatosPedido; total: number; c
       type="button"
       className="btn btn-primary btn-reintentar-pago"
       onClick={() => {
+        // Con lo que tiene el pedido (si el carrito tiene lo mismo, se vacía al pagarlo) y hasta cuándo se guarda.
+        const items = (pedido.items || []).map((i) => ({ producto_id: i.producto_id, unidad: i.unidad, cantidad: i.cantidad }));
         void navigate('/comprador/checkout', {
-          state: { conFondo: true, reintento: { id: pedido.id, monto: montoAhora, envio: costoEnvio, parte: pago?.parte_a_pagar } } satisfies EstadoCheckout,
+          state: { conFondo: true, reintento: { id: pedido.id, monto: montoAhora, envio: costoEnvio, parte: pago?.parte_a_pagar, items, venceEn: pago?.vence_en } } satisfies EstadoCheckout,
           preventScrollReset: true,
         });
       }}
@@ -261,7 +326,7 @@ function AlertaPago({ d, total, costoEnvio }: { d: DatosPedido; total: number; c
     const esAdelanto = pago.parte_a_pagar === 'adelanto';
     const vence = pago.vence_en ? parsearFechaServidor(pago.vence_en) : null;
     const plazo = vence && !isNaN(vence.getTime())
-      ? ` Lo guardamos hasta las ${vence.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}; si no se paga, los productos vuelven al catálogo.`
+      ? ` Lo guardamos hasta las ${horaDeLima(vence)} (hora de Lima); si no se paga, los productos vuelven al catálogo.`
       : '';
     return (
       <div className="mp-alerta mp-alerta-info" role="status">
@@ -269,6 +334,7 @@ function AlertaPago({ d, total, costoEnvio }: { d: DatosPedido; total: number; c
         <div><strong>{esAdelanto ? `Falta pagar el adelanto (70%): ${formatearMoneda(montoAhora)}` : 'Falta pagar este pedido'}</strong>{' '}
           <span>{esAdelanto ? 'Con el adelanto reservas tu lugar en el camión; el 30% se paga cuando llegue.' : 'Está reservado: págalo con tarjeta, Yape o transferencia.'}{plazo}</span></div>
         {botonPagar(esAdelanto ? 'Pagar el adelanto' : 'Pagar ahora')}
+        <CancelarPedidoSinPagar pedidoId={pedido.id} alCancelar={alCambiar} />
       </div>
     );
   }
@@ -475,7 +541,7 @@ export function TarjetaPedido({ datos: d, indice = 0, catalogo, destinos, alCamb
         </section>
         {hayLateral && (
           <aside className="mp-col-lateral">
-            {hayAlerta && <AlertaPago d={d} total={total} costoEnvio={costoEnvio} />}
+            {hayAlerta && <AlertaPago d={d} total={total} costoEnvio={costoEnvio} alCambiar={alCambiar} />}
             {esLejano && envio && <BloqueLejano d={d} envio={envio} destinos={destinos} alCambiar={alCambiar} />}
             {conPin && envio?.pin_entrega && <PinEntrega pin={envio.pin_entrega} />}
             {activo && envio && (

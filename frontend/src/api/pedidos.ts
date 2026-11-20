@@ -1,4 +1,5 @@
 import { request } from './client';
+import { ApiError } from './errors';
 import type { components } from './esquemas/pedidos';
 
 type Esquemas = components['schemas'];
@@ -40,10 +41,29 @@ export interface Pedido {
   motivo_cancelacion: string | null;
   fecha_cancelacion: string | null;
   items?: PedidoItem[];
+  // Solo al crear: el comprador ya tenía este pedido sin pagar con el mismo carrito, y se retomó (sin reservar de nuevo).
+  reutilizado?: boolean;
 }
 
 export interface PedidoCancelado extends Pedido {
   devolucion: unknown;
+}
+
+// El pedido sin pagar que frena otro carrito (409 de POST /pedidos): un solo pendiente por comprador.
+export interface PedidoPendiente {
+  id: string;
+  fecha_creacion: string | null;
+  costo_envio: number;
+  total: number;
+  monto_adelanto: number | null;
+  modalidad_envio: string;
+  items: { producto_id: string; producto_nombre: string | null; cantidad: number; unidad: string | null }[];
+}
+
+export function pedidoPendienteDe(error: unknown): PedidoPendiente | null {
+  if (!(error instanceof ApiError) || error.status !== 409) return null;
+  const detalle = error.detalle as { codigo?: string; pedido_pendiente?: PedidoPendiente } | null;
+  return detalle?.codigo === 'pedido_pendiente' && detalle.pedido_pendiente ? detalle.pedido_pendiente : null;
 }
 
 export interface CondicionesDeCompra {

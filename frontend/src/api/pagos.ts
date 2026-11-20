@@ -8,6 +8,19 @@ export interface CondicionesDePago {
   yape_maximo_por_operacion: number;
   // null si la plataforma no tiene una cuenta configurada para transferir.
   transferencia: { banco: string; titular: string; cuenta: string; cci: string } | null;
+  // Cuánto se guarda un pedido sin pagar (sin este dato en un servidor de antes).
+  plazo_para_pagar_minutos?: number;
+}
+
+// POST /pagos/{pedido_id}/cancelar: el comprador cancela su pedido sin pagar ("Cancelar pedido", "Reemplazar").
+export interface PedidoCanceladoSinPagar {
+  pedido_id: string;
+  estado: 'cancelado';
+  // devuelto: volvió al catálogo en el acto; por_devolver: Productos no respondió y se reintenta solo; ya_devuelto: el
+  // pago ya se había rechazado o vencido.
+  stock: 'devuelto' | 'por_devolver' | 'ya_devuelto';
+  // false: Pedidos no respondió y lo cancela el aviso en unos segundos.
+  pedido_cancelado: boolean;
 }
 
 // La fila de la base más lo que el comprador tiene que pagar ahora (null si ya está todo pagado).
@@ -97,6 +110,8 @@ export interface CasoResuelto {
 export const pagos = {
   procesar: (datos: Esquemas['ProcesarPago']) => request<ResultadoCobro>('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
   obtener: (pedidoId: string) => request<Pago>('pagos', `/pagos/${pedidoId}`, { auth: true }),
+  // El comprador cancela su pedido sin pagar: el stock vuelve en el acto (409 si su pago se está verificando).
+  cancelarPedido: (pedidoId: string) => request<PedidoCanceladoSinPagar>('pagos', `/pagos/${pedidoId}/cancelar`, { method: 'POST', auth: true }),
   // Público: la comisión de la plataforma, el límite de Yape y la cuenta para transferir (null si no hay).
   condiciones: () => request<CondicionesDePago>('pagos', '/pagos/condiciones'),
   // El comprador sube la constancia de su transferencia: el pago queda "en revisión" hasta que un admin la revisa.

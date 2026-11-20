@@ -1,22 +1,25 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
+import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../../api/errors';
-import { pagos, type ResultadoCobro } from '../../api/pagos';
-import { pedidos, type Cotizacion, type DestinoPublico } from '../../api/pedidos';
+import { pagos, type Pago, type ResultadoCobro } from '../../api/pagos';
+import { pedidoPendienteDe, pedidos, type Cotizacion, type DestinoPublico, type Pedido, type PedidoPendiente } from '../../api/pedidos';
 import { useAuth } from '../../auth/AuthContext';
 import { manejarError, toast } from '../../components/Toast';
 import { atraparFoco } from '../../lib/foco';
 import { obtenerUbicacionActual } from '../../lib/ubicacion';
 import { formatearMoneda } from '../../lib/formato';
+import { horaDeLima, pagoSeEstaVerificando, venceDelPedido, type LineaDePedido } from '../../lib/pedidoPendiente';
 import { unidadCorta, unidadPlural } from '../../lib/productos';
 import { abrirPanelBusqueda } from '../catalogo/menus';
 import { MediaProducto } from '../catalogo/TarjetasProducto';
 import { useCatalogo } from '../catalogo/useCatalogo';
+import { totalPedido } from '../pedidos/estadoPedido';
 import { guardarPedidoRecordado } from '../pedidos/pedidosRecordados';
 import { BloqueLejano, InfoLejanos, SelectorCiudades, type CotizacionLejana, type Modalidad, type Receptor } from './BloquesLejanos';
 import {
-  cambiarCantidad, guardarTelefonoDeEntrega, itemsParaPedido, leerCarrito, leerTelefonoDeEntrega, quitarLinea, subtotalCarrito, suscribirCarrito, vaciarCarrito, type LineaCarrito,
+  cambiarCantidad, carritoCoincideCon, guardarTelefonoDeEntrega, itemsParaPedido, leerCarrito, leerTelefonoDeEntrega, quitarLinea, subtotalCarrito, suscribirCarrito,
+  vaciarCarritoSiCoincide, vincularCarritoAlPedido, type LineaCarrito,
 } from './carrito';
 import { abrirCulqi, cargarCulqi, type MetodoCulqi } from './culqi';
 import { ciudadDelPunto, distanciaKmAprox, estaEnAyacucho, formatearKg, netoDelRepartidor } from './lejanos';
@@ -30,6 +33,9 @@ export interface PagoPendiente {
   monto: number;
   envio: number;
   parte?: string | null;
+  // Lo que tiene el pedido (al pagarlo se vacía el carrito si tiene lo mismo) y hasta cuándo se guarda.
+  items?: LineaDePedido[];
+  venceEn?: string | null;
 }
 
 // Lo que recibe la ruta al abrirse: si hay una página detrás (se puede volver a ella) y, desde Mis Pedidos, el pedido por pagar.
@@ -40,6 +46,76 @@ export interface EstadoCheckout {
 
 type Metodo = MetodoCulqi | 'transferencia';
 type Paso = 1 | 2 | 3;
+// Qué hace el botón de pago mientras está ocupado (null: libre).
+type FaseDelPago = 'creando' | 'abriendo' | 'confirmando' | null;
+
+const ESPERA_TRAS_REEMPLAZAR_MS = 1500;
+const esperar = (ms: number) => new Promise((resolver) => { setTimeout(resolver, ms); });
+const lineasDe = (pedido: Pedido): LineaDePedido[] => (pedido.items || []).map((i) => ({ producto_id: i.producto_id, unidad: i.unidad, cantidad: i.cantidad }));
+
+// El pedido del comprador como lo muestra la tarjeta de "pedido sin pagar" (el mismo resumen que trae el 409 de Pedidos).
+function resumenDe(pedido: Pedido): PedidoPendiente {
+  return {
+    id: pedido.id,
+    fecha_creacion: pedido.fecha_creacion,
+    costo_envio: Number(pedido.costo_envio) || 0,
+    total: totalPedido(pedido),
+    monto_adelanto: pedido.monto_adelanto != null ? Number(pedido.monto_adelanto) : null,
+    modalidad_envio: pedido.modalidad_envio || 'local',
+    items: (pedido.items || []).map((i) => ({ producto_id: i.producto_id, producto_nombre: i.producto_nombre, cantidad: i.cantidad, unidad: i.unidad })),
+  };
+}
+
+// Un solo pedido sin pagar por comprador: con otro carrito, Pedidos responde 409 con ese pedido y aquí se elige pagarlo o
+// reemplazarlo (se cancela y su stock vuelve en el acto). Si su pago se está verificando, ninguna de las dos: hay que esperar.
+// 21st.dev "Alert with actions" (ícono, título, datos y acciones en un mismo bloque); ui-ux-pro-max: la consecuencia de
+// reemplazar escrita antes del botón, el error junto a las acciones (role="alert") y botones de 44 px o más.
+function PedidoSinPagar({ resumen, pago, vence, error, reemplazando, titulo, alPagar, alReemplazar, alVerPedidos }: {
+  resumen: PedidoPendiente;
+  pago: Pago | null;
+  vence: Date | null;
+  error: string | null;
+  reemplazando: boolean;
+  titulo: RefObject<HTMLHeadingElement | null>;
+  alPagar: () => void;
+  alReemplazar: () => void;
+  alVerPedidos: () => void;
+}) {
+  const verificando = pagoSeEstaVerificando(pago?.estado);
+  const monto = pago?.monto_a_pagar != null ? Number(pago.monto_a_pagar) : resumen.monto_adelanto ?? resumen.total;
+  const productos = resumen.items.map((i) => `${i.producto_nombre || 'Producto'} × ${i.cantidad}`).join(' · ');
+  return (
+    <section className={`checkout-bloque checkout-pendiente${verificando ? ' es-verificando' : ''}`} id="checkout-pedido-pendiente" aria-labelledby="checkout-pendiente-titulo">
+      <h3 id="checkout-pendiente-titulo" ref={titulo} tabIndex={-1}>
+        <i className={`ti ti-${verificando ? 'hourglass' : 'receipt'}`} aria-hidden="true" /> {verificando ? 'Tu pago anterior se está verificando' : 'Tienes un pedido sin pagar'}
+      </h3>
+      <dl className="checkout-pendiente-datos">
+        <div><dt>Pedido</dt><dd>#{resumen.id.slice(0, 8)}</dd></div>
+        <div><dt>{resumen.monto_adelanto != null ? 'Adelanto por pagar' : 'Total'}</dt><dd><strong>{formatearMoneda(monto)}</strong></dd></div>
+        {vence && !verificando && <div><dt>Guardado hasta</dt><dd><strong>{horaDeLima(vence)}</strong> (hora de Lima)</dd></div>}
+        <div className="checkout-pendiente-productos"><dt>Productos</dt><dd>{productos}</dd></div>
+      </dl>
+      <p className="checkout-pendiente-nota">
+        {verificando
+          ? 'Cuando se confirme podrás hacer otro pedido. Míralo en Mis pedidos.'
+          : 'Sus productos siguen reservados para ti. Págalo, o reemplázalo por lo que tienes ahora en el carrito: ese pedido se cancela y sus productos vuelven al catálogo.'}
+      </p>
+      {error && <p className="checkout-pendiente-error" role="alert"><i className="ti ti-alert-circle" aria-hidden="true" /> {error}</p>}
+      <div className="checkout-pendiente-acciones">
+        {verificando ? (
+          <button type="button" className="btn btn-outline" onClick={alVerPedidos}>Ver mis pedidos</button>
+        ) : (
+          <>
+            <button type="button" className="btn btn-primary btn-pagar-pendiente" disabled={reemplazando} onClick={alPagar}>Pagar ese pedido</button>
+            <button type="button" className="btn btn-outline btn-reemplazar-pendiente" disabled={reemplazando} aria-busy={reemplazando} onClick={alReemplazar}>
+              {reemplazando ? <><i className="ti ti-loader-2 icono-girando" aria-hidden="true" /> Reemplazando…</> : 'Reemplazarlo por este carrito'}
+            </button>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
 
 type Final =
   | { tipo: 'resultado'; pedidoId: string; monto: number; envio: number; resultado: ResultadoCobro | null; errorMsg: string | null }
@@ -174,19 +250,32 @@ export default function CheckoutPage() {
   const [modalidad, setModalidad] = useState<Modalidad | null>(null);
   const [receptor, setReceptor] = useState<Receptor | null>(null);
   const [metodo, setMetodo] = useState<Metodo>('tarjeta');
-  const [enviandoPago, setEnviandoPago] = useState(false);
+  const [fase, setFase] = useState<FaseDelPago>(null);
+  const enviandoPago = fase !== null;
   const [final, setFinal] = useState<Final | null>(null);
 
   const reintento = estadoInicial.reintento ?? null;
-  // Pedido por pagar: el que vino de Mis Pedidos o el que acaba de crearse aquí. Una vez creado, volver a tocar "Confirmar y
-  // pagar" reabre el cobro de ESE pedido en vez de crear otro.
+  // Pedido por pagar: el que vino de Mis Pedidos o el que acaba de crearse (o retomarse) aquí. Mientras exista, el botón
+  // dice "Volver a pagar" y reabre el cobro de ESE pedido en vez de crear otro. pedidoActivo es lo mismo para pintar.
   const pedidoPorPagar = useRef<PagoPendiente | null>(reintento);
+  const [pedidoActivo, setPedidoActivo] = useState<PagoPendiente | null>(reintento);
+  const [vence, setVence] = useState<Date | null>(() => venceDelPedido(reintento?.venceEn, null, null));
+  // El comprador cerró la ventana de Culqi sin pagar (Culqi avisó con closeCheckout).
+  const [cobroInterrumpido, setCobroInterrumpido] = useState(false);
+  // El pedido sin pagar que frenó a este carrito (409 de Pedidos), para pagarlo o reemplazarlo.
+  const [pendiente, setPendiente] = useState<{ resumen: PedidoPendiente; pago: Pago | null } | null>(null);
+  const [errorPendiente, setErrorPendiente] = useState<string | null>(null);
+  const [reemplazando, setReemplazando] = useState(false);
+  // Se está pagando ese otro pedido (no el del carrito): el resumen muestra ese pedido, como un reintento.
+  const [pagandoOtroPedido, setPagandoOtroPedido] = useState(false);
   const pagoEnProceso = useRef(false); // bloquea el segundo clic antes de que React llegue a deshabilitar el botón
   const cotizandoRef = useRef(false);
   const mapa = useRef<MapaSeleccionableApi>(null);
   const modal = useRef<HTMLDivElement>(null);
   const cuerpo = useRef<HTMLDivElement>(null);
   const campoTelefono = useRef<HTMLInputElement>(null);
+  const botonPagar = useRef<HTMLButtonElement>(null);
+  const tituloPendiente = useRef<HTMLHeadingElement>(null);
 
   const lineas = carrito.length;
   const subtotal = subtotalCarrito(carrito);
@@ -293,6 +382,11 @@ export default function CheckoutPage() {
       if (c.tipo === 'lejano') setModalidad((actual) => modalidadPorDefecto(c, actual));
       setRecap(carrito);
       setTelefonoConfirmado(telefonoLimpio);
+      // Desde el paso 1 el carrito o la entrega pudieron cambiar: el pedido por pagar lo vuelve a decidir Pedidos (el mismo
+      // carrito retoma el pedido sin pagar; otro, 409 con ese pedido).
+      olvidarPedido();
+      setPendiente(null);
+      setErrorPendiente(null);
       setPaso(2);
     } catch (err) {
       manejarError(err, 'calcular el envío');
@@ -304,8 +398,10 @@ export default function CheckoutPage() {
   }
 
   // ---- Lo que se muestra en el paso 2 ----
-  const cotizacionLejana = cotizacion?.tipo === 'lejano' ? cotizacion : null;
-  const cotizacionLocal = !reintento && cotizacion?.tipo === 'local' ? cotizacion : null;
+  // Un pedido que no es el del carrito (vino de Mis pedidos, o es el pendiente que eligió pagar): se muestra ese pedido.
+  const pedidoAjeno = reintento ?? (pagandoOtroPedido ? pedidoActivo : null);
+  const cotizacionLejana = !pedidoAjeno && cotizacion?.tipo === 'lejano' ? cotizacion : null;
+  const cotizacionLocal = !pedidoAjeno && cotizacion?.tipo === 'local' ? cotizacion : null;
   const opcionLejana = cotizacionLejana && modalidad ? cotizacionLejana.opciones[modalidad] : null;
   const opcionCamion = modalidad === 'camion' ? cotizacionLejana?.opciones.camion ?? null : null;
   const opcionAgencia = modalidad === 'agencia' ? cotizacionLejana?.opciones.agencia ?? null : null;
@@ -316,13 +412,13 @@ export default function CheckoutPage() {
   let etiquetaTotal = 'Total a pagar';
   let totalAPagar = 0;
   let sinDesglose = false; // un pago parcial (camión) muestra solo lo que toca pagar ahora
-  if (reintento) {
-    envioMostrado = reintento.envio;
-    subtotalMostrado = reintento.monto - reintento.envio;
-    totalAPagar = reintento.monto;
-    if (reintento.parte === 'adelanto' || reintento.parte === 'saldo') {
+  if (pedidoAjeno) {
+    envioMostrado = pedidoAjeno.envio;
+    subtotalMostrado = pedidoAjeno.monto - pedidoAjeno.envio;
+    totalAPagar = pedidoAjeno.monto;
+    if (pedidoAjeno.parte === 'adelanto' || pedidoAjeno.parte === 'saldo') {
       sinDesglose = true;
-      etiquetaTotal = reintento.parte === 'saldo' ? 'Saldo (30%)' : 'Adelanto (70%)';
+      etiquetaTotal = pedidoAjeno.parte === 'saldo' ? 'Saldo (30%)' : 'Adelanto (70%)';
     }
   } else if (cotizacionLejana) {
     subtotalMostrado = Number(cotizacionLejana.subtotal) || 0;
@@ -341,6 +437,10 @@ export default function CheckoutPage() {
     if (Number.isFinite(Number(cotizacionLocal.distancia_km))) etiquetaEnvio = `Envío · ${Number(cotizacionLocal.distancia_km).toFixed(1)} km`;
   }
   const hayOpcionEnLejano = !cotizacionLejana || Boolean(opcionLejana);
+  const etiquetaDelBoton = fase === 'creando' ? 'Enviando pedido...'
+    : fase === 'abriendo' ? 'Abriendo el pago...'
+      : fase === 'confirmando' ? 'Confirmando tu pago...'
+        : pedidoActivo ? 'Volver a pagar' : 'Confirmar y pagar';
 
   // Yape permite hasta S/ 500 por operación (el límite lo da Pagos, que también lo exige): con un total mayor la opción se
   // apaga y se dice por qué, en vez de dejar que la pasarela lo rechace después.
@@ -355,10 +455,38 @@ export default function CheckoutPage() {
   // ---- Pagar ----
   function resetearBotonPago() {
     pagoEnProceso.current = false;
-    setEnviandoPago(false);
+    setFase(null);
+  }
+
+  // El pedido que se va a pagar (creado, retomado o el pendiente que eligió pagar): desde aquí el botón dice "Volver a
+  // pagar" y el aviso dice hasta qué hora se guarda (en hora de Lima).
+  function activarPedido(p: PagoPendiente, fechaCreacion: string | null = null) {
+    pedidoPorPagar.current = p;
+    setPedidoActivo(p);
+    setCobroInterrumpido(false);
+    setVence(venceDelPedido(p.venceEn, fechaCreacion, condicionesPago?.plazo_para_pagar_minutos));
+    if (!p.venceEn) {
+      // El plazo exacto es el del pago, que Pagos crea con el aviso del pedido nuevo (unos instantes después).
+      void pagos.obtener(p.id).then((pago) => {
+        const exacto = venceDelPedido(pago.vence_en, null, null);
+        if (exacto && pedidoPorPagar.current?.id === p.id) setVence(exacto);
+      }).catch(() => { /* se queda el calculado */ });
+    }
+  }
+
+  function olvidarPedido() {
+    if (reintento) return; // el pedido que vino de Mis pedidos es el que se paga aquí
+    pedidoPorPagar.current = null;
+    setPedidoActivo(null);
+    setPagandoOtroPedido(false);
+    setCobroInterrumpido(false);
+    setVence(null);
   }
 
   async function procesarPagoCulqi(tokenId: string, pago: PagoPendiente, metodoCulqi: MetodoCulqi) {
+    pagoEnProceso.current = true;
+    setFase('confirmando');
+    setCobroInterrumpido(false);
     let resultado: ResultadoCobro | null = null;
     let errorMsg: string | null = null;
     try {
@@ -366,6 +494,8 @@ export default function CheckoutPage() {
     } catch (err) {
       errorMsg = (err as Error).message;
     }
+    // El carrito se vacía con el pago confirmado (no al crear el pedido), y solo si tiene lo mismo que ese pedido.
+    if (resultado && ['aprobado', 'adelanto_pagado'].includes(resultado.estado || '')) vaciarCarritoSiCoincide(pago.items);
     void queryClient.invalidateQueries({ queryKey: ['mis-pedidos'] });
     setFinal({ tipo: 'resultado', pedidoId: pago.id, monto: pago.monto, envio: pago.envio, resultado, errorMsg });
     resetearBotonPago();
@@ -383,6 +513,7 @@ export default function CheckoutPage() {
       setPaso(3);
       return;
     }
+    setFase('abriendo');
     const abierto = await abrirCulqi({
       monto: pago.monto,
       metodo: metodoElegido,
@@ -391,20 +522,95 @@ export default function CheckoutPage() {
         toast(mensaje, 'error');
         resetearBotonPago();
       },
+      // Cerró la ventana sin pagar: el pedido sigue guardado y el botón ya dice "Volver a pagar".
+      alCerrar: () => {
+        setCobroInterrumpido(true);
+        resetearBotonPago();
+        requestAnimationFrame(() => botonPagar.current?.focus());
+      },
     });
     if (!abierto) {
-      toast('No se pudo cargar la pasarela de pagos. Vuelve a intentar el pago desde "Mis Pedidos".', 'error');
-      resetearBotonPago();
+      toast('No se pudo cargar la pasarela de pagos. Toca «Volver a pagar» en un momento o paga tu pedido desde Mis pedidos.', 'error');
+    }
+    // Culqi puede cerrar su ventana sin avisar (ver culqi.ts): el botón vuelve a servir apenas se abre, y tocarlo reabre
+    // el cobro de este mismo pedido (Pagos ya impide dos cobros a la vez).
+    resetearBotonPago();
+  }
+
+  // POST /pedidos. Si se acaba de reemplazar el pendiente y Pedidos todavía lo ve (lo cancela el aviso de Pagos cuando la
+  // llamada directa no llegó), se espera un momento y se reintenta.
+  async function crearPedido(reemplazado: string | null): Promise<Pedido> {
+    const esLejano = cotizacion?.tipo === 'lejano';
+    const datos = {
+      comprador_nombre: sesion.nombre || 'Cliente Chakra Shop',
+      comprador_telefono: telefono.replace(/\s+/g, ''),
+      destino_latitud: destino!.lat,
+      destino_longitud: destino!.lng,
+      items: itemsParaPedido(carrito),
+      ...(esLejano && modalidad && receptor ? { modalidad_envio: modalidad, receptor_dni: receptor.dni } : {}),
+    };
+    for (let intento = 0; ; intento++) {
+      try {
+        return await pedidos.crear(datos);
+      } catch (err) {
+        if (reemplazado && intento < 3 && pedidoPendienteDe(err)?.id === reemplazado) {
+          await esperar(ESPERA_TRAS_REEMPLAZAR_MS);
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
-  async function confirmarYPagar() {
+  async function mostrarPendiente(resumen: PedidoPendiente, pago?: Pago | null) {
+    const suPago = pago !== undefined ? pago : await pagos.obtener(resumen.id).catch(() => null);
+    setPendiente({ resumen, pago: suPago });
+    requestAnimationFrame(() => {
+      document.getElementById('checkout-pedido-pendiente')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      tituloPendiente.current?.focus({ preventScroll: true });
+    });
+  }
+
+  async function pagarElPendiente() {
+    if (!pendiente || pagoEnProceso.current) return;
+    const { resumen, pago } = pendiente;
+    const monto = pago?.monto_a_pagar != null ? Number(pago.monto_a_pagar) : resumen.monto_adelanto ?? resumen.total;
+    activarPedido({ id: resumen.id, monto, envio: resumen.costo_envio, parte: pago?.parte_a_pagar, items: resumen.items, venceEn: pago?.vence_en }, resumen.fecha_creacion);
+    setPagandoOtroPedido(!carritoCoincideCon(resumen.items));
+    setPendiente(null);
+    setErrorPendiente(null);
+    pagoEnProceso.current = true;
+    await cobrar(pedidoPorPagar.current!, metodo);
+  }
+
+  async function reemplazarPendiente() {
+    if (!pendiente || reemplazando || pagoEnProceso.current) return;
+    const { resumen } = pendiente;
+    setReemplazando(true);
+    setErrorPendiente(null);
+    try {
+      await pagos.cancelarPedido(resumen.id);
+    } catch (err) {
+      setReemplazando(false);
+      setErrorPendiente((err as Error).message || 'No se pudo reemplazar el pedido. Intenta de nuevo.');
+      // Puede que su pago se esté verificando: la tarjeta lo muestra con su estado de ahora.
+      if (err instanceof ApiError && err.status === 409) void mostrarPendiente(resumen);
+      return;
+    }
+    toast(`Cancelamos el pedido #${resumen.id.slice(0, 8)}: sus productos volvieron al catálogo.`);
+    void queryClient.invalidateQueries({ queryKey: ['mis-pedidos'] });
+    setPendiente(null);
+    setReemplazando(false);
+    await confirmarYPagar(resumen.id);
+  }
+
+  async function confirmarYPagar(reemplazado: string | null = null) {
     if (pagoEnProceso.current) return;
 
     // Ya hay un pedido: solo falta cobrarlo.
     if (pedidoPorPagar.current) {
       pagoEnProceso.current = true;
-      setEnviandoPago(true);
+      setFase('abriendo');
       await cobrar(pedidoPorPagar.current, metodo);
       return;
     }
@@ -431,34 +637,44 @@ export default function CheckoutPage() {
     }
 
     pagoEnProceso.current = true;
-    setEnviandoPago(true);
+    setFase('creando');
+    setPendiente(null);
+    setErrorPendiente(null);
     try {
-      const pedido = await pedidos.crear({
-        comprador_nombre: sesion.nombre || 'Cliente Chakra Shop',
-        comprador_telefono: telefono.replace(/\s+/g, ''),
-        destino_latitud: destino.lat,
-        destino_longitud: destino.lng,
-        items: itemsParaPedido(carrito),
-        ...(esLejano && modalidad && receptor ? { modalidad_envio: modalidad, receptor_dni: receptor.dni } : {}),
-      });
+      // El carrito NO se vacía aquí: si el pago no se completa, sigue igual y volver a pagar con él retoma este pedido.
+      const pedido = await crearPedido(reemplazado);
       guardarPedidoRecordado(sesion.usuarioId, pedido.id);
-      const subtotalPedido = subtotalCarrito(carrito);
-      vaciarCarrito();
-      setTelefono('');
+      vincularCarritoAlPedido(pedido.id);
       // El stock recién bajó: el menú de categorías y la búsqueda no deben seguir mostrando el anterior.
       void queryClient.invalidateQueries({ queryKey: ['catalogo'] });
       void queryClient.invalidateQueries({ queryKey: ['mis-pedidos'] });
 
       // El envío lo calcula el servidor; Pagos cobra subtotal + envío, así que Culqi y la confirmación deben mostrar eso.
       const envio = Number(pedido.costo_envio) || 0;
-      if (Math.abs(envio - envioMostrado) > 0.005) toast(`El costo de envío cambió a ${formatearMoneda(envio)}. Revisa el monto antes de pagar.`);
+      if (pedido.reutilizado) {
+        // El mismo carrito con un pedido sin pagar: es ese pedido. Si su pago se está verificando, no se abre Culqi.
+        const suPago = await pagos.obtener(pedido.id).catch(() => null);
+        if (suPago && pagoSeEstaVerificando(suPago.estado)) {
+          resetearBotonPago();
+          await mostrarPendiente(resumenDe(pedido), suPago);
+          return;
+        }
+        toast(`Seguimos con tu pedido #${pedido.id.slice(0, 8)}, que estaba sin pagar: sus productos ya estaban reservados.`);
+      } else if (Math.abs(envio - envioMostrado) > 0.005) {
+        toast(`El costo de envío cambió a ${formatearMoneda(envio)}. Revisa el monto antes de pagar.`);
+      }
       // En camión se cobra ahora solo el adelanto (el resto, al llegar).
-      const ahora = pedido.monto_adelanto != null ? Number(pedido.monto_adelanto) : subtotalPedido + envio;
-      pedidoPorPagar.current = { id: pedido.id, monto: ahora, envio };
-      await cobrar(pedidoPorPagar.current, metodo);
+      const ahora = pedido.monto_adelanto != null ? Number(pedido.monto_adelanto) : totalPedido(pedido);
+      activarPedido({ id: pedido.id, monto: ahora, envio, items: lineasDe(pedido) }, pedido.fecha_creacion);
+      await cobrar(pedidoPorPagar.current!, metodo);
     } catch (err) {
-      manejarError(err, 'crear el pedido');
       resetearBotonPago();
+      const otro = pedidoPendienteDe(err);
+      if (otro) {
+        await mostrarPendiente(otro);
+        return;
+      }
+      manejarError(err, 'crear el pedido');
     }
   }
 
@@ -563,6 +779,19 @@ export default function CheckoutPage() {
           <div className={`checkout-panel ${paso === 2 ? 'active' : ''}`} id="checkout-panel-2">
             <div className="checkout-grid">
               <div className="checkout-principal">
+                {pendiente && (
+                  <PedidoSinPagar
+                    resumen={pendiente.resumen}
+                    pago={pendiente.pago}
+                    vence={venceDelPedido(pendiente.pago?.vence_en, pendiente.resumen.fecha_creacion, condicionesPago?.plazo_para_pagar_minutos)}
+                    error={errorPendiente}
+                    reemplazando={reemplazando}
+                    titulo={tituloPendiente}
+                    alPagar={() => { void pagarElPendiente(); }}
+                    alReemplazar={() => { void reemplazarPendiente(); }}
+                    alVerPedidos={() => { void navigate('/comprador/pedidos', { replace: true }); }}
+                  />
+                )}
                 {cotizacionLejana && (
                     <BloqueLejano key={vecesCotizado} cotizacion={cotizacionLejana} modalidad={modalidad} receptor={receptor} alElegirModalidad={setModalidad} alCambiarReceptor={setReceptor} />
                 )}
@@ -599,7 +828,7 @@ export default function CheckoutPage() {
                   )}
                 </section>
 
-                {!reintento && destino && (
+                {!pedidoAjeno && destino && (
                   <section className="checkout-bloque" id="checkout-bloque-entrega">
                     <h3><i className="ti ti-truck-delivery" /> Entrega</h3>
                     <dl className="checkout-entrega-resumen">
@@ -614,10 +843,10 @@ export default function CheckoutPage() {
               <aside className="checkout-resumen" aria-label="Resumen del pedido">
                 <h3>Tu pedido</h3>
                 <ul className="checkout-recap" id="checkout-recap">
-                  {reintento ? (
+                  {pedidoAjeno ? (
                     <li className="checkout-recap-reintento">
                       <i className="ti ti-receipt" aria-hidden="true" />
-                      <span>Pago pendiente del pedido <strong>#{reintento.id.slice(0, 8)}</strong></span>
+                      <span>Pago pendiente del pedido <strong>#{pedidoAjeno.id.slice(0, 8)}</strong></span>
                     </li>
                   ) : recap.map((l) => (
                     <li className="checkout-recap-item" key={`${l.producto_id}-${l.unidad || ''}`}>
@@ -674,9 +903,32 @@ export default function CheckoutPage() {
                   <strong id="checkout-total-paso2">{hayOpcionEnLejano ? formatearMoneda(totalAPagar) : '—'}</strong>
                 </div>
                 <div className="checkout-actions">
-                  <button type="button" className="btn btn-primary" id="btn-checkout-pagar" disabled={enviandoPago} onClick={() => { void confirmarYPagar(); }}>{enviandoPago ? 'Enviando pedido...' : 'Confirmar y pagar'}</button>
-                  <button type="button" className="btn btn-outline" id="btn-checkout-paso2-volver" onClick={() => setPaso(1)}>← Volver</button>
+                  <button
+                    ref={botonPagar}
+                    type="button"
+                    className="btn btn-primary"
+                    id="btn-checkout-pagar"
+                    disabled={enviandoPago || Boolean(pendiente)}
+                    aria-busy={enviandoPago}
+                    aria-describedby={pedidoActivo && !pendiente ? 'checkout-pedido-guardado' : undefined}
+                    onClick={() => { void confirmarYPagar(); }}
+                  >{etiquetaDelBoton}</button>
+                  <button type="button" className="btn btn-outline" id="btn-checkout-paso2-volver" disabled={enviandoPago} onClick={() => setPaso(1)}>← Volver</button>
                 </div>
+                {/* El pedido ya existe y sus productos están reservados: si la ventana de Culqi se cerró sin pagar (o el token no
+                    llegó), "Volver a pagar" reabre el cobro de este mismo pedido. ui-ux-pro-max: estado con role="status", sin
+                    robar el foco; el botón lo cita con aria-describedby. */}
+                {pedidoActivo && !pendiente && (
+                  <p className={`checkout-pedido-guardado${cobroInterrumpido ? ' es-interrumpido' : ''}`} id="checkout-pedido-guardado" role="status">
+                    <i className={`ti ti-${cobroInterrumpido ? 'alert-circle' : 'clock'}`} aria-hidden="true" />
+                    <span>
+                      {cobroInterrumpido && <strong>No se completó el pago. </strong>}
+                      Tu pedido <strong>#{pedidoActivo.id.slice(0, 8)}</strong> está guardado
+                      {vence && <> hasta las <strong>{horaDeLima(vence)}</strong> (hora de Lima)</>}.
+                      {cobroInterrumpido ? ' Toca «Volver a pagar» para intentarlo otra vez.' : ' Si cierras la ventana de pago, puedes volver a pagar aquí o desde Mis pedidos.'}
+                    </span>
+                  </p>
+                )}
               </aside>
             </div>
           </div>
@@ -690,6 +942,8 @@ export default function CheckoutPage() {
                   monto={final.monto}
                   cuenta={condicionesPago.transferencia}
                   alEnviar={(numeroOperacion) => {
+                    // Con la constancia enviada, el comprador ya pagó (falta que se revise): el carrito de ese pedido se vacía.
+                    vaciarCarritoSiCoincide(pedidoPorPagar.current?.items);
                     void queryClient.invalidateQueries({ queryKey: ['mis-pedidos'] });
                     setFinal({ tipo: 'constancia', pedidoId: final.pedidoId, numeroOperacion });
                   }}

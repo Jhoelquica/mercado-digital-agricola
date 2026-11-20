@@ -36,15 +36,15 @@ export function pagoRechazadoPedido(d: DatosDeEstado): boolean {
   return d.pago?.estado === 'rechazado' && !pagoConfirmadoPedido(d);
 }
 
-const ETIQUETAS_ESTADO_PAGO: Record<string, string> = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado', adelanto_pagado: 'Adelanto pagado (70%)', reembolsado: 'Devuelto' };
+const ETIQUETAS_ESTADO_PAGO: Record<string, string> = { pendiente: 'Pendiente', en_revision: 'En revisión', aprobado: 'Aprobado', rechazado: 'Rechazado', adelanto_pagado: 'Adelanto pagado (70%)', reembolsado: 'Devuelto', cancelado: 'Cancelado por ti' };
 const ETIQUETAS_METODO_PAGO: Record<string, string> = { tarjeta: 'tarjeta', yape: 'Yape', transferencia: 'transferencia' };
 
 export function textoEstadoPago(pago: Pago | null): string {
   if (!pago) return '—';
   if (pago.estado === 'rechazado' && pago.vencido_en) return 'Plazo para pagar vencido';
   const estado = ETIQUETAS_ESTADO_PAGO[pago.estado || ''] || pago.estado || '';
-  // El método solo se sabe cuando hubo un intento (un pago pendiente todavía no tiene uno elegido).
-  return pago.estado === 'pendiente' || !pago.metodo ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
+  // El método solo se sabe cuando hubo un intento (un pago pendiente, o cancelado sin pagar, no tiene uno elegido).
+  return pago.estado === 'pendiente' || pago.estado === 'cancelado' || !pago.metodo ? estado : `${estado} · ${ETIQUETAS_METODO_PAGO[pago.metodo] || pago.metodo}`;
 }
 
 export interface EstadoGeneral {
@@ -67,7 +67,8 @@ export function estadoGeneralPedido(d: DatosDeEstado): EstadoGeneral {
       : { clave: 'pago_rechazado', etiqueta: 'Pago rechazado', icono: 'alert-triangle', pill: 'rechazado' };
   }
   if (d.pago?.estado === 'reembolsado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado · dinero devuelto', icono: 'receipt-refund', pill: 'cancelado' };
-  if (pedido.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
+  // Lo canceló el comprador antes de pagar (Pedidos puede ir un instante detrás de Pagos).
+  if (pedido.estado === 'cancelado' || d.pago?.estado === 'cancelado') return { clave: 'pago_rechazado', etiqueta: 'Cancelado', icono: 'circle-x', pill: 'cancelado' };
   if (envio?.estado === 'en_agencia') return { clave: 'en_curso', etiqueta: 'En la agencia de tu ciudad', icono: 'building-warehouse', pill: 'en_camino' };
   if (envio?.estado === 'en_destino') return { clave: 'en_curso', etiqueta: 'El camión llegó a tu ciudad', icono: 'truck', pill: 'en_camino' };
   if (envio?.estado === 'esperando_camion') return { clave: 'en_curso', etiqueta: 'Esperando que se llene el camión', icono: 'truck-loading', pill: 'confirmado' };
@@ -93,7 +94,7 @@ export function pasosPedido(d: DatosDeEstado): PasoPedido[] {
   const pagoOk = pagoConfirmadoPedido(d);
   // Una transferencia en revisión no es un fallo, aunque sea el reintento de un pedido que quedó cancelado.
   const enRevision = d.pago?.estado === 'en_revision';
-  const pagoMal = !pagoOk && !enRevision && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado');
+  const pagoMal = !pagoOk && !enRevision && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado' || d.pago?.estado === 'cancelado');
   const enCamino = ['en_camino', 'en_agencia', 'en_destino'].includes(envio?.estado || '') || entregado;
   // Pedidos a otra ciudad: el paso "En camino" dice cómo va (agencia o camión) en vez de "Buscando repartidor".
   const detalleLejano = ({ esperando_camion: 'Completando el camión', en_agencia: 'En la agencia de tu ciudad', en_destino: 'Llegó a tu ciudad' } as Record<string, string>)[envio?.estado || ''];
@@ -106,7 +107,7 @@ export function pasosPedido(d: DatosDeEstado): PasoPedido[] {
       hecho: pagoOk,
       error: pagoMal,
       detalle: pagoOk ? 'Confirmado' : enRevision ? 'En revisión'
-        : pagoMal ? (d.pago?.estado === 'reembolsado' ? 'Devuelto' : pedido.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
+        : pagoMal ? (d.pago?.estado === 'reembolsado' ? 'Devuelto' : pedido.estado === 'cancelado' || d.pago?.estado === 'cancelado' ? 'Cancelado' : 'Rechazado') : 'Pendiente',
     },
     {
       icono: 'truck',

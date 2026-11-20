@@ -19,12 +19,16 @@ declare global {
   interface Window {
     Culqi?: CulqiGlobal;
     culqi?: () => void;
+    // Culqi la llama cuando el comprador cierra su ventana (si existe). No avisa por window.culqi.
+    closeCheckout?: () => void;
   }
 }
 
 interface PagoEnCurso {
   alToken: (tokenId: string) => void;
   alError: (mensaje: string) => void;
+  // El comprador cerró la ventana de Culqi sin que llegara un token: el pedido sigue guardado y se puede volver a pagar.
+  alCerrar?: () => void;
 }
 
 let pagoEnCurso: PagoEnCurso | null = null;
@@ -45,6 +49,14 @@ function alResponderCulqi(): void {
   } else if (culqi.error) {
     pagoEnCurso.alError(culqi.error.user_message || 'Revisa los datos de tu tarjeta e intenta de nuevo.');
   }
+}
+
+// Culqi tiene dos maneras de cerrar su ventana: con una llama a window.closeCheckout y con la otra no avisa a nadie (por
+// eso el checkout vuelve a habilitar su botón apenas la abre, sin esperar esto). Si ya llegó el token, el pago en curso
+// ya se limpió y cerrar no cambia nada.
+function alCerrarCulqi(): void {
+  if (!pagoEnCurso || window.Culqi?.token) return;
+  pagoEnCurso.alCerrar?.();
 }
 
 export function cargarCulqi(): Promise<boolean> {
@@ -70,15 +82,19 @@ interface OpcionesDePago extends PagoEnCurso {
 }
 
 // false: no se pudo cargar la pasarela.
-export async function abrirCulqi({ monto, metodo, alToken, alError }: OpcionesDePago): Promise<boolean> {
+export async function abrirCulqi({ monto, metodo, alToken, alError, alCerrar }: OpcionesDePago): Promise<boolean> {
   const disponible = await cargarCulqi();
   const culqi = window.Culqi;
   if (!disponible || !culqi) return false;
-  pagoEnCurso = { alToken, alError };
+  pagoEnCurso = { alToken, alError, alCerrar };
   window.culqi = alResponderCulqi;
+  window.closeCheckout = alCerrarCulqi;
   culqi.publicKey = CULQI_PUBLIC_KEY;
   culqi.settings({ title: 'Chakra Shop', currency: 'PEN', amount: Math.round(monto * 100) });
   culqi.options({ paymentMethods: { tarjeta: metodo === 'tarjeta', yape: metodo === 'yape' } });
+  // Sin restos de una apertura anterior: un token o un error viejos confundirían al cerrar o al responder.
+  culqi.token = null;
+  culqi.error = null;
   culqi.open();
   return true;
 }
