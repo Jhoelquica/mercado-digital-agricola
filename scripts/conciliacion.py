@@ -18,12 +18,18 @@ Lo que todavía está en camino no cuenta: si la bandeja de salida del servicio 
 publicó hace menos de EN_CAMINO_MINUTOS, se espera. Si un pendiente se atasca, verificar_despliegue.py avisa aparte
 (bandejas(): el pendiente más antiguo de cada una).
 
+Excepciones documentadas (scripts/excepciones_conciliacion.json): un hallazgo que se conserva a propósito (por ejemplo,
+un pedido con un bloque sellado en la cadena, que no se borra ni se le inventa un pago) se lista aparte y no cuenta.
+Cada una dice su regla, el id, el contexto, el motivo y la fecha. Solo valen en docker-desktop: en producción la lista
+debe quedar vacía, y una excepción para otro contexto es un problema de la lista (verificar_despliegue.py da FALLA).
+
 Uso (desde la raíz del repositorio):
     python scripts/conciliacion.py --contexto docker-desktop    # el clúster
     python scripts/conciliacion.py --compose                    # docker compose
-Sale con 1 si encontró inconsistencias.
+Sale con 1 si encontró inconsistencias (o la lista de excepciones tiene problemas).
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -185,8 +191,8 @@ REGLAS = {
     4: "Pedido cancelado con devolución con un envío entregado o en curso",
     5: "Pago aprobado sin envío",
     6: "Envío cumplido sin la entrega anotada en Pagos (el cobro no se desbloqueó)",
-    7: f"Cobro en proceso hace más de {MINUTOS_EN_PROCESO} minutos (buscar la referencia en Culqi)",
-    8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos",
+    7: f"Cobro en proceso hace más de {MINUTOS_EN_PROCESO} minutos (resolverlo en el panel «Cobros por revisar en Culqi»)",
+    8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos (resolverla en el mismo panel)",
     9: "Pedido confirmado o entregado sin el pago aprobado",
 }
 
@@ -198,6 +204,62 @@ def resumen(hallazgos) -> str:
     return "; ".join(f"{REGLAS[regla]}: {cuantos}" for regla, cuantos in sorted(por_regla.items()))
 
 
+# ---- Excepciones documentadas ----
+EXCEPCIONES = os.environ.get("EXCEPCIONES_CONCILIACION") or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                                          "excepciones_conciliacion.json")
+CONTEXTO_DE_EXCEPCIONES = "docker-desktop"  # el único donde puede haberlas (el clúster local)
+CAMPOS_DE_EXCEPCION = ("regla", "id", "contexto", "motivo", "fecha")
+
+
+def cargar_excepciones(ruta=None) -> list:
+    """[{regla, id, contexto, motivo, fecha}] de la lista (vacía si no existe el archivo)."""
+    ruta = ruta or EXCEPCIONES
+    if not os.path.exists(ruta):
+        return []
+    with open(ruta, encoding="utf-8") as archivo:
+        return json.load(archivo).get("excepciones", [])
+
+
+def problemas_de_excepciones(excepciones) -> list:
+    """Lo que está mal en la lista: una excepción incompleta, de una regla que no existe, o para un contexto que no es
+    docker-desktop (en producción la lista debe estar vacía)."""
+    problemas = []
+    for numero, excepcion in enumerate(excepciones, 1):
+        faltan = [campo for campo in CAMPOS_DE_EXCEPCION if not excepcion.get(campo)]
+        if faltan:
+            problemas.append(f"la excepción {numero} no tiene {', '.join(faltan)}")
+        if excepcion.get("regla") not in REGLAS:
+            problemas.append(f"la excepción {numero} es de una regla que no existe ({excepcion.get('regla')})")
+        if excepcion.get("contexto") != CONTEXTO_DE_EXCEPCIONES:
+            problemas.append(f"la excepción {numero} ({excepcion.get('id')}) es para «{excepcion.get('contexto')}»: solo "
+                             f"se aceptan en {CONTEXTO_DE_EXCEPCIONES}; en producción la lista debe estar vacía")
+    return problemas
+
+
+def aplicar_excepciones(hallazgos, excepciones, contexto) -> tuple:
+    """Separa los hallazgos con una excepción documentada para este contexto (la misma regla y su id en la frase).
+    Devuelve (los que quedan, [(excepción, frase)] aplicadas, las excepciones de este contexto que ya no aparecen)."""
+    de_aqui = [e for e in excepciones if e.get("contexto") == contexto]
+    quedan, aplicadas, usadas = [], [], set()
+    for regla, frase in hallazgos:
+        excepcion = next((e for e in de_aqui if e.get("regla") == regla and str(e.get("id")) in frase), None)
+        if excepcion is None:
+            quedan.append((regla, frase))
+        else:
+            aplicadas.append((excepcion, frase))
+            usadas.add(id(excepcion))
+    return quedan, aplicadas, [e for e in de_aqui if id(e) not in usadas]
+
+
+def contexto_actual():
+    """El contexto de kubectl en uso, o None si no se puede saber."""
+    try:
+        r = subprocess.run(["kubectl", "config", "current-context"], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() or None
+
+
 def main():
     for salida in (sys.stdout, sys.stderr):
         if hasattr(salida, "reconfigure"):
@@ -207,7 +269,10 @@ def main():
     ap.add_argument("--compose", action="store_true", help="las bases de docker compose en vez del clúster")
     args = ap.parse_args()
     consultar = consultar_en_compose() if args.compose else consultar_en_k8s(args.contexto)
-    hallazgos = inconsistencias(consultar)
+    contexto = "compose" if args.compose else (args.contexto or contexto_actual())
+    excepciones = cargar_excepciones()
+    problemas = problemas_de_excepciones(excepciones)
+    hallazgos, aplicadas, sin_uso = aplicar_excepciones(inconsistencias(consultar), excepciones, contexto)
     for regla, texto in REGLAS.items():
         de_esta = [frase for numero, frase in hallazgos if numero == regla]
         print(f"{regla}. {texto}: {len(de_esta)}")
@@ -218,8 +283,15 @@ def main():
     for servicio, pendientes, segundos in bandejas(consultar):
         print(f"Bandeja de salida de {servicio}: "
               + ("todavía no existe" if pendientes is None else f"{pendientes} pendiente(s), el más antiguo de hace {segundos} s"))
+    print(f"Excepciones documentadas (no cuentan; scripts/excepciones_conciliacion.json): {len(aplicadas)}")
+    for excepcion, frase in aplicadas:
+        print(f"     - regla {excepcion['regla']}: {frase}. Motivo: {excepcion['motivo']} (documentada el {excepcion['fecha']})")
+    for excepcion in sin_uso:
+        print(f"     - sin uso (ya no aparece: se puede quitar): regla {excepcion.get('regla')}, {excepcion.get('id')}")
+    for problema in problemas:
+        print(f"PROBLEMA en la lista de excepciones: {problema}")
     print(f"\n{len(hallazgos)} inconsistencia(s)")
-    sys.exit(1 if hallazgos else 0)
+    sys.exit(1 if hallazgos or problemas else 0)
 
 
 if __name__ == "__main__":

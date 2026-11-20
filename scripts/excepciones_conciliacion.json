@@ -1,0 +1,12 @@
+{
+  "_que_es": "Excepciones documentadas de scripts/conciliacion.py: un hallazgo que se conserva a propósito porque no se puede corregir sin borrar algo sellado ni inventar datos. Cada una: la regla, el id que aparece en el hallazgo, el contexto de kubectl donde vale, el motivo y la fecha en que se documentó. Solo se aceptan en docker-desktop (el clúster local): en producción esta lista debe quedar vacía y verificar_despliegue.py da FALLA si hay una para otro contexto. verificar_despliegue.py las muestra como dato, no como aviso.",
+  "excepciones": [
+    {
+      "regla": 9,
+      "id": "7676474c-d660-4f43-8cc6-b3165e3f087c",
+      "contexto": "docker-desktop",
+      "motivo": "Compra hecha a mano por la interfaz el 2026-09-30, antes de c1f54ad (entonces el envío nacía con el pedido): se entregó sin que el pago con tarjeta se completara. Tiene un bloque sellado en la cadena (c79c7e24, verificado_punto_venta del producto 816fbee9) y su certificado de pedido: no se borra ni se le inventa un pago.",
+      "fecha": "2026-11-19"
+    }
+  ]
+}

@@ -233,14 +233,28 @@ def comprobar_colas(colas, ligaduras, exchanges):
 LIMITE_PENDIENTE_EN_BANDEJA_S = 300
 
 
-def comprobar_conciliacion(consultar, donde):
+def comprobar_conciliacion(consultar, donde, contexto):
     """Avisos: lo inconsistente entre Pagos, Pedidos, Transporte y Productos (scripts/conciliacion.py) y los eventos
-    que esperan en una bandeja de salida más de LIMITE_PENDIENTE_EN_BANDEJA_S."""
+    que esperan en una bandeja de salida más de LIMITE_PENDIENTE_EN_BANDEJA_S. Las excepciones documentadas de este
+    contexto (scripts/excepciones_conciliacion.json) se muestran como dato y no cuentan; una lista con problemas (una
+    excepción fuera de docker-desktop: en producción debe estar vacía) da FALLA."""
     try:
         hallazgos = conciliacion.inconsistencias(consultar)
         cajas = conciliacion.bandejas(consultar)
     except Exception as error:  # noqa: BLE001 - un aviso, no un fallo del chequeo entero
         return registrar("AVISO", f"{donde}: conciliación entre servicios", f"no se pudo revisar: {error}")
+    try:
+        excepciones = conciliacion.cargar_excepciones()
+    except (OSError, ValueError) as error:
+        return registrar("FALLA", f"{donde}: lista de excepciones de la conciliación", f"no se pudo leer: {error}")
+    problemas = conciliacion.problemas_de_excepciones(excepciones)
+    comprobar(f"{donde}: excepciones de la conciliación solo en {conciliacion.CONTEXTO_DE_EXCEPCIONES} (en producción, "
+              "ninguna)", not problemas, f"{len(excepciones)} en la lista", "; ".join(problemas))
+    hallazgos, aplicadas, sin_uso = conciliacion.aplicar_excepciones(hallazgos, excepciones, contexto)
+    if aplicadas or sin_uso:
+        registrar("INFO", f"{donde}: excepciones documentadas de la conciliación (no cuentan)", "; ".join(
+            [f"regla {e['regla']}, {e['id']}: {e['motivo'][:90]}… ({e['fecha']})" for e, _ in aplicadas]
+            + [f"sin uso, se puede quitar: regla {e.get('regla')}, {e.get('id')}" for e in sin_uso]))
     comprobar(f"{donde}: pagos, pedidos, envíos y recojos coinciden (conciliación)", not hallazgos,
               "sin inconsistencias", f"{conciliacion.resumen(hallazgos)} (detalle: python scripts/conciliacion.py)",
               "AVISO")
@@ -426,7 +440,8 @@ def main():
             registrar("FALLA", "RabbitMQ: leer las colas", error)
         else:
             comprobar_colas(leer_json(salida), leer_json(ligaduras), leer_json(exchanges))
-        comprobar_conciliacion(conciliacion.consultar_en_k8s(contexto_k), "Kubernetes")
+        comprobar_conciliacion(conciliacion.consultar_en_k8s(contexto_k), "Kubernetes",
+                               contexto_k or conciliacion.contexto_actual())
 
     # ---- 7. Compose
     if args.compose:
@@ -450,7 +465,7 @@ def main():
                                        cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
                     salidas.append(leer_json(r.stdout) if r.returncode == 0 else [])
                 comprobar_colas(*salidas)
-                comprobar_conciliacion(conciliacion.consultar_en_compose(), "Compose")
+                comprobar_conciliacion(conciliacion.consultar_en_compose(), "Compose", "compose")
 
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")
