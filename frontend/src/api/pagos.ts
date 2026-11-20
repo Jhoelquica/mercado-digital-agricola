@@ -81,7 +81,22 @@ export interface PagoPorRevisar {
   estado_del_intento: string | null;
   pasadas: number;
   revision_manual: boolean;
+  puede_resolver: boolean;
   mensaje: string | null;
+}
+
+// Cómo resuelve el admin un caso de "Cobros por revisar en Culqi" (POST /pagos/admin/por-revisar/{referencia}/resolver).
+export type ResultadoDelCaso = 'cobrado' | 'no_cobrado' | 'devuelto' | 'no_devuelto';
+export interface ResolucionDelCaso {
+  resultado: ResultadoDelCaso;
+  cargo_id?: string;
+  devolucion_id?: string;
+  motivo: string;
+}
+export interface CasoResuelto {
+  resultado: ResultadoDelCaso;
+  pedido_id: string;
+  estado_del_pago: string;
 }
 
 export const pagos = {
@@ -100,6 +115,8 @@ export const pagos = {
   admin: {
     transferencias: () => request<TransferenciaEnRevision[]>('pagos', '/pagos/admin/transferencias', { auth: true }),
     porRevisar: () => request<PagoPorRevisar[]>('pagos', '/pagos/admin/por-revisar', { auth: true }),
+    resolver: (referencia: string, datos: ResolucionDelCaso) =>
+      request<CasoResuelto>('pagos', `/pagos/admin/por-revisar/${referencia}/resolver`, { method: 'POST', body: datos, auth: true }),
     constancia: (pedidoId: string) => requestBlob('pagos', `/pagos/admin/transferencias/${pedidoId}/constancia`),
     aprobar: (pedidoId: string) => request<TransferenciaEnRevision>('pagos', `/pagos/admin/transferencias/${pedidoId}/aprobar`, { method: 'POST', auth: true }),
     rechazar: (pedidoId: string, motivo: string) => request<TransferenciaEnRevision>('pagos', `/pagos/admin/transferencias/${pedidoId}/rechazar`, { method: 'POST', body: { motivo } satisfies Esquemas['RechazarTransferencia'], auth: true }),

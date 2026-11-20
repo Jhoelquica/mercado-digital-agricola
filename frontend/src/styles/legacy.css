@@ -4998,6 +4998,12 @@ body.asistente-abierto { overflow: hidden; }
 .form-rechazar-transferencia label { display: flex; flex-direction: column; gap: 6px; font-size: 0.88rem; font-weight: 700; color: var(--texto); }
 .form-rechazar-transferencia textarea { padding: 10px 12px; border-radius: 12px; border: 1.5px solid var(--borde); font: inherit; font-weight: 400; resize: vertical; }
 .transferencia-card .tarjeta-acciones .btn { min-height: 44px; }
+/* Resolver a mano un caso de "Cobros por revisar en Culqi": el mismo patrón que rechazar una transferencia, con el id de
+   Culqi (se valida en el servidor) y el motivo obligatorio; el error, junto a su campo. */
+.form-resolver-caso input { padding: 10px 12px; border-radius: 12px; border: 1.5px solid var(--borde); font-size: 0.95rem; font-weight: 400; }
+.form-resolver-caso [aria-invalid="true"] { border-color: #b42318; box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.12); }
+.form-resolver-caso .admin-nota { margin: 0; font-weight: 400; }
+.form-resolver-caso .btn, .pedido-card .btn-resolver-si, .pedido-card .btn-resolver-no { min-height: 44px; }
 
 /* Sugerencia de la fecha de cosecha (IA o tabla de cultivos) en el asistente de siembra. Criterios de ui-ux-pro-max:
    lo hecho por IA se rotula como tal, esqueleto mientras carga (nada congelado), botón grande >= 56px, contraste

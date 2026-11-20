@@ -1,13 +1,13 @@
 // /admin/transferencias: las constancias que subieron los compradores. Al aprobar, el pedido se confirma y sale a reparto; al
 // rechazar, se devuelve el stock y el comprador ve el motivo. Arriba, solo si hay, los cobros y devoluciones de Culqi que no
 // se resolvieron solos (con la referencia para buscarlos en el panel de Culqi).
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { ApiError } from '../../api/errors';
-import { pagos, type PagoPorRevisar, type TransferenciaEnRevision } from '../../api/pagos';
+import { pagos, type PagoPorRevisar, type ResultadoDelCaso, type TransferenciaEnRevision } from '../../api/pagos';
 import { SkeletonFilas } from '../../components/SkeletonFilas';
 import { manejarError, toast } from '../../components/Toast';
 import { formatearFechaServidor, formatearMoneda } from '../../lib/formato';
-import { copiarAlPortapapeles, EncabezadoSeccion, PasosDeRevision, usePagosPorRevisar, useRefrescarAdmin, useTransferencias, Vacio, VisorDocumento } from './comun';
+import { copiarAlPortapapeles, EncabezadoSeccion, MensajeError, PasosDeRevision, usePagosPorRevisar, useRefrescarAdmin, useTransferencias, Vacio, VisorDocumento } from './comun';
 
 function TarjetaTransferencia({ t, indice }: { t: TransferenciaEnRevision; indice: number }) {
   const refrescar = useRefrescarAdmin();
@@ -62,9 +62,140 @@ function TarjetaTransferencia({ t, indice }: { t: TransferenciaEnRevision; indic
 
 const QUE_ES = { cobro: 'Cobro', devolucion: 'Devolución' } as const;
 const DE_LA_PARTE: Record<string, string> = { total: '', adelanto: ' del adelanto', saldo: ' del saldo' };
+const ID_DE_CULQI = /^[A-Za-z0-9_]{6,64}$/;
+
+// Los textos de cada caso: un cobro se resuelve como cobrado o no; una devolución, como devuelta o no.
+function textosDelCaso(p: PagoPorRevisar) {
+  const monto = formatearMoneda(p.monto);
+  return p.tipo === 'cobro'
+    ? {
+        si: 'Sí se cobró', no: 'No se cobró', resultadoSi: 'cobrado' as ResultadoDelCaso, resultadoNo: 'no_cobrado' as ResultadoDelCaso,
+        etiquetaId: 'Id del cargo en Culqi', placeholderId: 'chr_…',
+        ayudaId: `Lo validamos con Culqi: tiene que ser el cargo de este cobro, por ${monto}.`,
+        advertenciaNo: 'Se libera el stock y el comprador podrá volver a pagar. Hazlo solo si el cargo NO aparece en el panel de Culqi.',
+        confirmarSi: 'Confirmar: sí se cobró', confirmarNo: 'Confirmar: no se cobró',
+        listoSi: 'Cobro confirmado: el pago quedó aprobado y el pedido sigue su curso.',
+        listoNo: 'Marcado como no cobrado: se liberó el stock y el comprador puede volver a pagar.',
+      }
+    : {
+        si: 'Sí se devolvió', no: 'No se devolvió', resultadoSi: 'devuelto' as ResultadoDelCaso, resultadoNo: 'no_devuelto' as ResultadoDelCaso,
+        etiquetaId: 'Id de la devolución en Culqi', placeholderId: 'ref_…',
+        ayudaId: `La validamos con Culqi: tiene que ser una devolución completa de este cargo, por ${monto}.`,
+        advertenciaNo: 'La devolución se vuelve a intentar sola. Hazlo solo si el cargo no tiene esa devolución en el panel de Culqi.',
+        confirmarSi: 'Confirmar: sí se devolvió', confirmarNo: 'Confirmar: no se devolvió',
+        listoSi: 'Devolución confirmada y registrada.',
+        listoNo: 'Marcada como no devuelta: la devolución se vuelve a intentar sola.',
+      };
+}
+
+// Resolver a mano un caso que la conciliación no pudo: lo que se ve en el panel de Culqi, con el motivo obligatorio (queda
+// registrado con quién y cuándo). El backend valida el id contra Culqi y explica si no cuadra.
+function ResolverCaso({ p }: { p: PagoPorRevisar }) {
+  const refrescar = useRefrescarAdmin();
+  const t = textosDelCaso(p);
+  const id = useId();
+  const [paso, setPaso] = useState<'acciones' | 'si' | 'no'>('acciones');
+  const [idCulqi, setIdCulqi] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [errores, setErrores] = useState<{ id?: string; motivo?: string; general?: string }>({});
+  const [trabajando, setTrabajando] = useState(false);
+  const campoId = useRef<HTMLInputElement>(null);
+  const campoMotivo = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (paso === 'si') campoId.current?.focus();
+    if (paso === 'no') campoMotivo.current?.focus();
+  }, [paso]);
+
+  function volver() {
+    setPaso('acciones');
+    setErrores({});
+  }
+  async function enviar(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const valorId = idCulqi.trim();
+    const texto = motivo.replace(/\s+/g, ' ').trim();
+    const problemas: typeof errores = {};
+    if (paso === 'si' && !ID_DE_CULQI.test(valorId)) problemas.id = `Pega el ${t.etiquetaId.toLowerCase()} tal como aparece en el panel de Culqi.`;
+    if (texto.length < 10) problemas.motivo = 'Escribe el motivo (al menos 10 caracteres): queda registrado con tu nombre.';
+    setErrores(problemas);
+    if (problemas.id) { campoId.current?.focus(); return; }
+    if (problemas.motivo) { campoMotivo.current?.focus(); return; }
+    setTrabajando(true);
+    try {
+      const si = paso === 'si';
+      await pagos.admin.resolver(p.referencia!, {
+        resultado: si ? t.resultadoSi : t.resultadoNo,
+        motivo: texto,
+        ...(si ? (p.tipo === 'cobro' ? { cargo_id: valorId } : { devolucion_id: valorId }) : {}),
+      });
+      toast(si ? t.listoSi : t.listoNo);
+      await refrescar('por-revisar', 'sin-entregar', 'transferencias');
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 422 || err.status === 409)) {
+        // 422: lo que dijo Culqi no cuadra (junto al campo del id si es eso); 409: el caso cambió o Culqi dice otra cosa.
+        setErrores(paso === 'si' && err.status === 422 ? { id: err.message } : { general: err.message });
+        if (err.status === 409) void refrescar('por-revisar');
+      } else {
+        manejarError(err, 'resolver el caso');
+      }
+    } finally {
+      setTrabajando(false);
+    }
+  }
+
+  if (paso === 'acciones') {
+    return (
+      <div className="tarjeta-acciones transferencia-acciones">
+        <button type="button" className="btn btn-outline btn-resolver-no" onClick={() => setPaso('no')}>
+          <i className="ti ti-circle-x" aria-hidden="true" /> {t.no}
+        </button>
+        <button type="button" className="btn btn-primary btn-resolver-si" onClick={() => setPaso('si')}>
+          <i className="ti ti-circle-check" aria-hidden="true" /> {t.si}
+        </button>
+      </div>
+    );
+  }
+  const errorId = `${id}-error-id`;
+  const errorMotivo = `${id}-error-motivo`;
+  const ayuda = `${id}-ayuda`;
+  return (
+    <form className="form-rechazar-transferencia form-resolver-caso" noValidate onSubmit={enviar} aria-label={paso === 'si' ? t.si : t.no}>
+      {paso === 'si' ? (
+        <label>{t.etiquetaId}
+          <input ref={campoId} name="id_culqi" className="perfil-dato-mono" autoComplete="off" spellCheck={false} maxLength={64}
+            placeholder={t.placeholderId} value={idCulqi} onChange={(e) => setIdCulqi(e.target.value)}
+            aria-invalid={Boolean(errores.id)} aria-describedby={errores.id ? `${ayuda} ${errorId}` : ayuda} />
+          <span id={ayuda} className="muted admin-nota">{t.ayudaId}</span>
+          {errores.id && <span id={errorId} className="form-entrega-mensaje error" role="alert"><i className="ti ti-alert-circle" aria-hidden="true" /> {errores.id}</span>}
+        </label>
+      ) : (
+        <div className="transferencia-confirmar"><p><i className="ti ti-alert-triangle" aria-hidden="true" /> {t.advertenciaNo}</p></div>
+      )}
+      <label>Motivo (queda registrado con tu nombre)
+        <textarea ref={campoMotivo} name="motivo" rows={3} maxLength={500} required
+          placeholder={paso === 'si' ? 'Ej. Lo encontré en el panel de Culqi buscando la referencia.' : 'Ej. No aparece en el panel de Culqi ni en el estado de cuenta.'}
+          value={motivo} onChange={(e) => setMotivo(e.target.value)}
+          aria-invalid={Boolean(errores.motivo)} aria-describedby={errores.motivo ? errorMotivo : undefined} />
+        {errores.motivo && <span id={errorMotivo} className="form-entrega-mensaje error" role="alert"><i className="ti ti-alert-circle" aria-hidden="true" /> {errores.motivo}</span>}
+      </label>
+      <MensajeError texto={errores.general ?? null} />
+      <div className="tarjeta-acciones">
+        <button type="button" className="btn btn-ghost btn-cancelar-revision" disabled={trabajando} onClick={volver}>Cancelar</button>
+        <button type="submit" className={`btn ${paso === 'si' ? 'btn-primary' : 'btn-danger'} btn-confirmar-resolucion`} disabled={trabajando}>
+          {trabajando ? 'Validando con Culqi…' : paso === 'si' ? t.confirmarSi : t.confirmarNo}
+        </button>
+      </div>
+    </form>
+  );
+}
 
 function TarjetaPorRevisar({ p }: { p: PagoPorRevisar }) {
   const corto = String(p.pedido_id).slice(0, 8);
+  // Un cobro se busca en Culqi por la referencia de su metadata; una devolución, por su cargo (Culqi no guarda la
+  // referencia de las devoluciones).
+  const clave = p.tipo === 'cobro'
+    ? { etiqueta: 'Referencia (búscala en el panel de Culqi)', valor: p.referencia, copiar: 'la referencia' }
+    : { etiqueta: 'Cargo a devolver (busca sus devoluciones en el panel de Culqi)', valor: p.cargo_id, copiar: 'el cargo' };
   return (
     <div className="pedido-card" data-pedido-id={p.pedido_id}>
       <div className="pedido-card-header">
@@ -74,20 +205,22 @@ function TarjetaPorRevisar({ p }: { p: PagoPorRevisar }) {
           : <span className="pill pill-estado pill-pendiente"><i className="ti ti-loader" aria-hidden="true" /> Verificando</span>}
       </div>
       <div className="transferencia-card-monto"><span>Monto</span><strong>{formatearMoneda(p.monto)}</strong></div>
-      {p.referencia && (
+      {clave.valor && (
         <div className="pph-medio">
           <i className="ti ti-fingerprint" aria-hidden="true" />
-          <div><span>Referencia (búscala en el panel de Culqi)</span><strong className="perfil-dato-mono">{p.referencia}</strong></div>
-          <button type="button" className="btn btn-ghost btn-sm btn-copiar" aria-label={`Copiar la referencia del pedido ${corto}`}
-            onClick={() => { void copiarAlPortapapeles(p.referencia!); }}><i className="ti ti-copy" aria-hidden="true" /></button>
+          <div><span>{clave.etiqueta}</span><strong className="perfil-dato-mono">{clave.valor}</strong></div>
+          <button type="button" className="btn btn-ghost btn-sm btn-copiar" aria-label={`Copiar ${clave.copiar} del pedido ${corto}`}
+            onClick={() => { void copiarAlPortapapeles(clave.valor!); }}><i className="ti ti-copy" aria-hidden="true" /></button>
         </div>
       )}
       <div className="perfil-datos-grid">
         <div className="perfil-dato"><span className="perfil-dato-label">En proceso desde</span><span className="perfil-dato-valor">{formatearFechaServidor(p.desde)}</span></div>
         <div className="perfil-dato"><span className="perfil-dato-label">Búsquedas en Culqi</span><span className="perfil-dato-valor">{p.pasadas}</span></div>
-        {p.cargo_id && <div className="perfil-dato"><span className="perfil-dato-label">Cargo en Culqi</span><span className="perfil-dato-valor perfil-dato-mono">{p.cargo_id}</span></div>}
+        {p.tipo === 'cobro' && p.cargo_id && <div className="perfil-dato"><span className="perfil-dato-label">Cargo en Culqi</span><span className="perfil-dato-valor perfil-dato-mono">{p.cargo_id}</span></div>}
+        {p.tipo === 'devolucion' && p.referencia && <div className="perfil-dato"><span className="perfil-dato-label">Referencia interna</span><span className="perfil-dato-valor perfil-dato-mono">{p.referencia}</span></div>}
       </div>
       {p.mensaje && <p className="muted admin-nota">{p.mensaje}</p>}
+      {p.puede_resolver && p.referencia && <ResolverCaso p={p} />}
     </div>
   );
 }
@@ -101,7 +234,7 @@ function CobrosPorRevisar() {
     <section aria-labelledby="titulo-por-revisar">
       <EncabezadoSeccion icono="alert-triangle" titulo={<span id="titulo-por-revisar">Cobros por revisar en Culqi ({lista.length})</span>}
         alRefrescar={() => { void refrescar('por-revisar'); }} />
-      <p className="muted admin-nota">Estos cobros o devoluciones no se pudieron confirmar solos con la pasarela. Busca cada referencia en el panel de Culqi: si el cargo (o la devolución) está ahí, ya se hizo; si no está, no se hizo. Mientras tanto, el pedido no se puede volver a cobrar.</p>
+      <p className="muted admin-nota">Estos cobros o devoluciones no se pudieron confirmar solos con la pasarela. Busca cada cobro por su referencia en el panel de Culqi (y cada devolución, por su cargo) y resuélvelo aquí con lo que veas: el id que pegues se valida con Culqi y tu motivo queda registrado. Mientras tanto, el pedido no se puede volver a cobrar.</p>
       <div className="grid-admin">{lista.map((p) => <TarjetaPorRevisar key={`${p.pedido_id}-${p.tipo}`} p={p} />)}</div>
     </section>
   );
