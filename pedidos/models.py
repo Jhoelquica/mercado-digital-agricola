@@ -1,15 +1,23 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from comun.database import Base
 
 # La bandeja de salida (eventos_salientes) es la común: comun/bandeja_salida.py.
 
+# Un solo pedido sin pagar por comprador: con uno "pendiente", el mismo carrito recibe ese mismo pedido y otro carrito un
+# 409 con sus datos (ver crear_pedido en main.py). El turno del comprador evita la carrera entre dos pestañas; este índice
+# es la garantía final. En una base de antes lo crea migraciones.py (create_all no agrega índices a una tabla que ya existe).
+INDICE_UN_PENDIENTE_POR_COMPRADOR = "uq_pedidos_pendiente_por_comprador"
+
 
 class Pedido(Base):
     __tablename__ = "pedidos"
+    __table_args__ = (
+        Index(INDICE_UN_PENDIENTE_POR_COMPRADOR, "usuario_id", unique=True, postgresql_where=text("estado = 'pendiente'")),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     usuario_id = Column(UUID(as_uuid=True), nullable=True)
@@ -58,6 +66,8 @@ class Pedido(Base):
     porcentaje_adelanto = Column(Integer, nullable=True)
     # Un pedido pagado que el admin canceló (con la devolución del dinero; ver cancelar_pedido_pagado en main.py).
     motivo_cancelacion = Column(String, nullable=True)
+    # Cuándo se canceló: el admin (con motivo) o el comprador antes de pagar (sin motivo; ver
+    # cancelar_pedido_sin_pagar en main.py). El que cancela un pago rechazado o vencido no la anota.
     fecha_cancelacion = Column(DateTime, nullable=True)
 
 class PedidoItem(Base):

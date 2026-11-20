@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 
 from sqlalchemy import and_, or_
 
@@ -18,16 +19,22 @@ def _transicion(evento: str):
 
     El orden es pendiente < confirmado < entregado. "cancelado" va aparte:
     - con motivo_cancelacion (lo canceló el admin y devolvió el dinero) es final: nada lo cambia;
-    - sin motivo (el pago se rechazó o venció) lo reabre un pago confirmado (el comprador volvió a pagar) y también la
-      entrega (un envío solo nace con un pago confirmado).
+    - con fecha_cancelacion y sin motivo (lo canceló el comprador antes de pagar) también es final: Pagos ya no lo cobra;
+    - sin ninguna de las dos (el pago se rechazó o venció) lo reabre un pago confirmado (el comprador volvió a pagar) y
+      también la entrega (un envío solo nace con un pago confirmado).
     Lo que no hace avanzar al pedido (un repetido, uno atrasado o uno sobre un final) se ignora con un log; así da igual
     el orden en que lleguen los eventos de pagos y los de envíos, que vienen por colas distintas."""
     Pedido = models.Pedido
-    cancelado_sin_motivo = and_(Pedido.estado == "cancelado", Pedido.motivo_cancelacion.is_(None))
+    cancelado_sin_motivo = and_(Pedido.estado == "cancelado", Pedido.motivo_cancelacion.is_(None),
+                                Pedido.fecha_cancelacion.is_(None))
     if evento == "pago_confirmado":
         return "confirmado", or_(Pedido.estado == "pendiente", cancelado_sin_motivo)
     if evento == "pago_rechazado":
         return "cancelado", Pedido.estado == "pendiente"  # uno tardío no deshace un pago que ya se confirmó
+    if evento == "pedido_cancelado_sin_pagar":
+        # El comprador lo canceló antes de pagar (Pagos ya devolvió el stock). Normalmente Pagos ya lo canceló aquí por
+        # HTTP (/pedidos/interno/{id}/cancelar-sin-pagar): esto es por si esa llamada no llegó.
+        return "cancelado", Pedido.estado == "pendiente"
     if evento == "entregado":
         return "entregado", or_(Pedido.estado.in_(("pendiente", "confirmado")), cancelado_sin_motivo)
     raise ValueError(f"Evento sin transición: {evento}")
@@ -59,9 +66,12 @@ def _aplicar(cola: str, datos: dict, evento: str) -> None:
             logger.info("Pedido %s: el %s %s ya se procesó; no se repite", pedido_id, evento, evento_id)
         else:
             nuevo, desde = _transicion(evento)
+            cambios = {models.Pedido.estado: nuevo}
+            if evento == "pedido_cancelado_sin_pagar":
+                cambios[models.Pedido.fecha_cancelacion] = datetime.utcnow()
             cambiados = (db.query(models.Pedido)
                          .filter(models.Pedido.id == pedido_id, desde)
-                         .update({models.Pedido.estado: nuevo}, synchronize_session=False))
+                         .update(cambios, synchronize_session=False))
             if cambiados:
                 logger.info("Pedido %s: estado actualizado a '%s' (%s)", pedido_id, nuevo, evento)
             else:
@@ -73,7 +83,7 @@ def _aplicar(cola: str, datos: dict, evento: str) -> None:
 
 def _procesar_mensaje_pago(ch, method, properties, body):
     datos = json.loads(body)
-    if datos.get("evento") in ("pago_confirmado", "pago_rechazado"):
+    if datos.get("evento") in ("pago_confirmado", "pago_rechazado", "pedido_cancelado_sin_pagar"):
         _aplicar(COLA_PAGOS, datos, datos["evento"])
     ch.basic_ack(delivery_tag=method.delivery_tag)
 

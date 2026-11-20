@@ -30,16 +30,18 @@ from comun.auth import verificar_token, requiere_rol, security
 from comun.database import Base, engine, SessionLocal, get_db
 from comun import bandeja_salida, inbox
 from comun.migraciones import agregar_columnas_faltantes
+from migraciones import asegurar_un_pendiente_por_comprador
 import models
 import reniec
 import ventas
-from sqlalchemy import func
+from sqlalchemy import func, text
 from fastapi.encoders import jsonable_encoder
 
 logger = logging.getLogger("pedidos")
 
 Base.metadata.create_all(bind=engine)
 agregar_columnas_faltantes(engine, Base)
+asegurar_un_pendiente_por_comprador(engine)  # un solo pedido sin pagar por comprador (el índice, en una base de antes)
 inbox.asegurar_indice_de_fecha(engine)  # el de eventos_procesados, en una tabla de antes
 bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # la bandeja de antes: le faltan secuencia y exchange
 
@@ -655,6 +657,71 @@ def _validar_items(client, items):
     return items_validados
 
 
+# ---- Un solo pedido sin pagar por comprador ----
+# Si el pago no se completa (el comprador cierra la ventana de Culqi, o el token no llega), volver a pedir el mismo
+# carrito retoma ese pedido en vez de crear otro que reserve el stock por segunda vez. Otro carrito recibe 409 con los
+# datos del pendiente: el comprador lo paga o lo reemplaza (POST /pagos/{pedido_id}/cancelar y otra vez POST /pedidos).
+CODIGO_PEDIDO_PENDIENTE = "pedido_pendiente"
+MENSAJE_PEDIDO_PENDIENTE = ("Tienes un pedido sin pagar con otros productos o datos de entrega: págalo o reemplázalo por "
+                            "este carrito.")
+
+
+def _tomar_turno_del_comprador(db: Session, comprador) -> None:
+    """Un candado por comprador hasta que termina la transacción: dos pestañas que piden a la vez se turnan, y la segunda
+    ve el pedido de la primera. La garantía final es el índice uq_pedidos_pendiente_por_comprador."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('pedidos.pendiente'), hashtext(:comprador))"),
+               {"comprador": str(comprador)})
+
+
+def _pedido_pendiente_de(db: Session, comprador):
+    return (db.query(models.Pedido)
+            .filter(models.Pedido.usuario_id == comprador, models.Pedido.estado == "pendiente")
+            .order_by(models.Pedido.fecha_creacion).first())
+
+
+def _lineas(items) -> list:
+    return sorted((str(i.producto_id), i.unidad or None, int(i.cantidad)) for i in items)
+
+
+def _es_el_mismo_pedido(pedido, datos: PedidoCrear) -> bool:
+    """El mismo carrito (productos, unidades y cantidades) con los mismos datos de entrega: el pedido que ya está
+    reservado sirve tal cual. Cualquier diferencia es otro pedido (el envío, por ejemplo, depende del destino)."""
+    modalidad = pedido.modalidad_envio or "local"
+    return (_lineas(pedido.items) == _lineas(datos.items)
+            and math.isclose(pedido.destino_latitud, datos.destino_latitud, abs_tol=1e-7)
+            and math.isclose(pedido.destino_longitud, datos.destino_longitud, abs_tol=1e-7)
+            and modalidad == datos.modalidad_envio
+            and (modalidad == "local" or (pedido.receptor_dni or "") == (datos.receptor_dni or "").strip())
+            and (pedido.comprador_telefono or "") == datos.comprador_telefono)
+
+
+def _resumen_del_pendiente(pedido) -> dict:
+    """Lo que el checkout muestra del pedido sin pagar para que el comprador elija (pagarlo o reemplazarlo)."""
+    subtotal = sum(float(i.precio_unitario) * i.cantidad for i in pedido.items)
+    costo_envio = float(pedido.costo_envio or 0)
+    return {
+        "id": str(pedido.id),
+        "fecha_creacion": jsonable_encoder(pedido.fecha_creacion),
+        "costo_envio": costo_envio,
+        "total": round(subtotal + costo_envio, 2),
+        "monto_adelanto": float(pedido.monto_adelanto) if pedido.monto_adelanto is not None else None,
+        "modalidad_envio": pedido.modalidad_envio or "local",
+        "items": [{"producto_id": str(i.producto_id), "producto_nombre": i.producto_nombre, "cantidad": i.cantidad,
+                   "unidad": i.unidad} for i in pedido.items],
+    }
+
+
+def _responder_con_el_pendiente(usuario: dict, pendiente, datos: PedidoCrear) -> dict:
+    """El mismo carrito: ese pedido (reutilizado, sin reservar stock otra vez). Otro carrito: 409 con sus datos."""
+    if _es_el_mismo_pedido(pendiente, datos):
+        logger.info("Pedido %s: el comprador volvió a pedir el mismo carrito; se retoma ese pedido sin pagar", pendiente.id)
+        respuesta = pedido_para(usuario, pendiente)
+        respuesta["reutilizado"] = True
+        return respuesta
+    raise HTTPException(status_code=409, detail={"codigo": CODIGO_PEDIDO_PENDIENTE, "mensaje": MENSAJE_PEDIDO_PENDIENTE,
+                                                 "pedido_pendiente": _resumen_del_pendiente(pendiente)})
+
+
 @app.post("/pedidos")
 def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dict = Depends(requiere_rol("comprador"))):
     # Validación 1 (fail-fast, antes de tocar la base de datos): el destino es la región de Ayacucho (reparto local) o
@@ -710,9 +777,17 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             lejano.update(modalidad_envio=datos.modalidad_envio, destino_lejano_id=destino.id, destino_ciudad=destino.ciudad,
                           receptor_dni=datos.receptor_dni.strip(), receptor_nombre=receptor_nombre)
 
+        # Un solo pedido sin pagar por comprador: con el turno tomado, el que ya tiene uno pendiente recibe ese mismo pedido
+        # (mismo carrito) o un 409 con sus datos (otro carrito), antes de tocar el stock.
+        comprador = usuario.get("sub")
+        _tomar_turno_del_comprador(db, comprador)
+        pendiente = _pedido_pendiente_de(db, comprador)
+        if pendiente is not None:
+            return _responder_con_el_pendiente(usuario, pendiente, datos)
+
         # Todo validado: ahora sí descontamos stock y creamos el pedido
         nuevo_pedido = models.Pedido(
-            usuario_id=usuario.get("sub"),
+            usuario_id=comprador,
             comprador_nombre=datos.comprador_nombre,
             comprador_telefono=datos.comprador_telefono,
             destino_latitud=datos.destino_latitud,
@@ -724,7 +799,17 @@ def crear_pedido(datos: PedidoCrear, db: Session = Depends(get_db), usuario: dic
             **lejano,
         )
         db.add(nuevo_pedido)
-        db.flush()  # genera el id del pedido sin cerrar la transacción todavía
+        try:
+            db.flush()  # genera el id del pedido sin cerrar la transacción todavía
+        except IntegrityError:
+            # El índice de un pendiente por comprador frenó a uno que no tomó el turno (una réplica de antes, durante un
+            # despliegue): todavía no se descontó nada, así que se responde con el pendiente que ganó.
+            db.rollback()
+            pendiente = _pedido_pendiente_de(db, comprador)
+            if pendiente is None:
+                raise HTTPException(status_code=503, detail="No se pudo registrar tu pedido y no se te cobró nada. "
+                                                            "Intenta de nuevo en unos momentos.")
+            return _responder_con_el_pendiente(usuario, pendiente, datos)
 
         # Todas las líneas se descuentan juntas, en una sola llamada: si una no alcanza (otro comprador se
         # llevó el stock justo antes, dos líneas del mismo producto que juntas superan el stock, un
@@ -1019,6 +1104,30 @@ def pedido_para_cobrar(pedido_id: uuid.UUID, db: Session = Depends(get_db), x_se
         raise HTTPException(status_code=409, detail="Este pedido ya no se puede pagar")
     filas = [(item, item.cantidad_base if item.cantidad_base is not None else item.cantidad) for item in pedido.items]
     return _datos_para_cobrar(pedido, str(pedido.usuario_id), filas)
+
+
+# Pagos, cuando el comprador cancela su pedido sin pagar (POST /pagos/{pedido_id}/cancelar, desde "Mis pedidos" o al
+# reemplazarlo en el checkout): el pedido queda cancelado en el acto, para que pueda armar otro enseguida (un solo
+# pendiente por comprador). Si esta llamada no llega, lo hace el evento pedido_cancelado_sin_pagar. Idempotente. Ruta
+# interna, con el secreto de Pagos; va antes de /pedidos/{pedido_id}.
+@app.post("/pedidos/interno/{pedido_id}/cancelar-sin-pagar")
+def cancelar_pedido_sin_pagar(pedido_id: uuid.UUID, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
+    if not secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PEDIDOS_SECRETO):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    cambiados = (db.query(models.Pedido)
+                 .filter(models.Pedido.id == pedido_id, models.Pedido.estado == "pendiente")
+                 .update({models.Pedido.estado: "cancelado", models.Pedido.fecha_cancelacion: datetime.utcnow()},
+                         synchronize_session=False))
+    db.commit()
+    if cambiados:
+        logger.info("Pedido %s: el comprador lo canceló antes de pagar", pedido_id)
+        return {"pedido_id": str(pedido_id), "estado": "cancelado"}
+    fila = db.query(models.Pedido.estado).filter(models.Pedido.id == pedido_id).first()
+    if fila is None:
+        raise HTTPException(status_code=404, detail="Pedido no encontrado")
+    if fila.estado != "cancelado":
+        raise HTTPException(status_code=409, detail=f"El pedido está '{fila.estado}': ya no se cancela sin pagar.")
+    return {"pedido_id": str(pedido_id), "estado": "cancelado"}  # ya lo estaba (el evento llegó antes)
 
 
 # Lo que un repartidor necesita para decidir si acepta un envío que se le PROPONE: cuánto hay que recorrer, cuánto

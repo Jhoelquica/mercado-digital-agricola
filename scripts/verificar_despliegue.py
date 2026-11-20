@@ -22,6 +22,8 @@ Qué comprueba:
     alternate exchange de fallidos (FALLA); <cola>.fallidos y fallidos.sin_ruta vacías (AVISO si no).
   - Conciliación (scripts/conciliacion.py, en el clúster o en compose): pagos, pedidos, envíos y recojos coinciden entre
     servicios, y ningún evento espera más de 5 minutos en una bandeja de salida (AVISO si no).
+  - Garantías en la base (en el clúster o en compose): existen los índices únicos de un pedido pendiente por comprador,
+    un pago por pedido y un cargo de Culqi por pago (FALLA si falta alguno).
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
@@ -268,6 +270,31 @@ def comprobar_conciliacion(consultar, donde, contexto):
               "; ".join(atascadas), "AVISO")
 
 
+# Garantías en la base: los índices únicos que las migraciones de cada servicio crean al arrancar (pedidos/migraciones.py y
+# pagos/migraciones.py). Si una migración no pudo (datos que ya la violan), el servicio arranca igual y la base deja de
+# impedir lo que garantiza el índice: un segundo pedido sin pagar del mismo comprador, dos pagos de un pedido o un cargo de
+# Culqi asignado a dos pagos. Por eso es FALLA.
+INDICES_DE_GARANTIA = {
+    "pedidos": ("uq_pedidos_pendiente_por_comprador",),
+    "pagos": ("uq_pagos_pedido_id", "uq_pagos_culqi_charge_id", "uq_pagos_culqi_charge_id_saldo",
+              "uq_intentos_pago_cargo_cobro"),
+}
+
+
+def comprobar_indices(consultar, donde):
+    """FALLA si falta alguno de INDICES_DE_GARANTIA (o no se pueden leer)."""
+    faltan = []
+    try:
+        for servicio, indices in INDICES_DE_GARANTIA.items():
+            presentes = {fila[0] for fila in consultar(servicio, "SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")}
+            faltan += [f"{servicio}.{indice}" for indice in indices if indice not in presentes]
+    except Exception as error:  # noqa: BLE001 - se informa como FALLA, no rompe el resto del chequeo
+        return registrar("FALLA", f"{donde}: índices únicos de las garantías", f"no se pudieron leer: {error}")
+    total = sum(len(indices) for indices in INDICES_DE_GARANTIA.values())
+    comprobar(f"{donde}: índices únicos de las garantías (un pendiente por comprador, un pago por pedido, un cargo por pago)",
+              not faltan, f"{total} de {total}", "faltan: " + ", ".join(faltan))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Verifica un despliegue de Chakra Shop (solo lectura).")
     ap.add_argument("--base", default="http://localhost:8000", help="URL del sitio/gateway (por defecto el clúster local)")
@@ -442,6 +469,7 @@ def main():
             comprobar_colas(leer_json(salida), leer_json(ligaduras), leer_json(exchanges))
         comprobar_conciliacion(conciliacion.consultar_en_k8s(contexto_k), "Kubernetes",
                                contexto_k or conciliacion.contexto_actual())
+        comprobar_indices(conciliacion.consultar_en_k8s(contexto_k), "Kubernetes")
 
     # ---- 7. Compose
     if args.compose:
@@ -466,6 +494,7 @@ def main():
                     salidas.append(leer_json(r.stdout) if r.returncode == 0 else [])
                 comprobar_colas(*salidas)
                 comprobar_conciliacion(conciliacion.consultar_en_compose(), "Compose", "compose")
+                comprobar_indices(conciliacion.consultar_en_compose(), "Compose")
 
     # ---- resumen
     fallas = sum(1 for n, *_ in resultados if n == "FALLA")

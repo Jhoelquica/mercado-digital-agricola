@@ -12,7 +12,9 @@ Cruza las bases de Pagos, Pedidos, Transporte y Productos (cada servicio tiene l
      referencia para buscarla en el panel de Culqi;
   8. devoluciones a medias ("reembolso_procesando" hace más de MINUTOS_EN_PROCESO minutos), con sus referencias;
   9. la regla inversa: pedidos confirmados o entregados sin el pago aprobado (un entregado exige el pago aprobado; un
-     confirmado admite el adelanto pagado o un cobro o una devolución en proceso).
+     confirmado admite el adelanto pagado o un cobro o una devolución en proceso);
+ 10. pedidos "pendiente" con el pago rechazado, vencido o cancelado por el comprador (pago_rechazado o
+     pedido_cancelado_sin_pagar no llegó a Pedidos): con un solo pendiente por comprador, ese pedido no le deja armar otro.
 
 Lo que todavía está en camino no cuenta: si la bandeja de salida del servicio que avisa tiene ese evento pendiente, o lo
 publicó hace menos de EN_CAMINO_MINUTOS, se espera. Si un pendiente se atasca, verificar_despliegue.py avisa aparte
@@ -41,6 +43,8 @@ MINUTOS_EN_PROCESO = 10
 PAGO_ESPERADO = {"entregado": ("aprobado",),
                  "confirmado": ("aprobado", "adelanto_pagado", "procesando", "reembolso_procesando")}
 PAGADOS = ("aprobado", "adelanto_pagado")
+# Regla 10: un pago que ya no se va a cobrar (rechazado o vencido, o cancelado por el comprador) con el pedido pendiente.
+SIN_COBRO = ("rechazado", "cancelado")
 CUMPLIDOS = ("entregado", "en_agencia")
 RECOJO_EN_CURSO = ("pendiente_asignacion", "propuesto", "asignado", "recogido", "en_almacen", "en_camino")
 CON_BANDEJA = ("pedidos", "pagos", "transporte", "productos")
@@ -109,6 +113,8 @@ def inconsistencias(consultar) -> list:
         disponibles = {fila[0] for fila in consultar("productos", (
             f"SELECT id FROM productos WHERE estado = 'disponible' AND id IN {_en({r[1] for r in recojos})}"))}
     pago_en_camino = _en_camino(consultar, "pagos", "pago_confirmado", "pedido_id")
+    sin_cobro_en_camino = (_en_camino(consultar, "pagos", "pago_rechazado", "pedido_id")
+                           | _en_camino(consultar, "pagos", "pedido_cancelado_sin_pagar", "pedido_id"))
     envio_en_camino = _en_camino(consultar, "transporte", "envio_actualizado", "pedido_id")
     llegada_en_camino = _en_camino(consultar, "productos", "llegada_almacen", "producto_id")
 
@@ -143,6 +149,9 @@ def inconsistencias(consultar) -> list:
             if pedido_id not in pago_en_camino:
                 hallazgos.append((9, f"pedido {pedido_id} '{estado}' con el pago "
                                      + (f"'{estados_de_pago[pedido_id]}'" if pedido_id in estados_de_pago else "sin registro")))
+        if estado == "pendiente" and estados_de_pago.get(pedido_id) in SIN_COBRO and pedido_id not in sin_cobro_en_camino:
+            hallazgos.append((10, f"pedido {pedido_id} 'pendiente' con el pago '{estados_de_pago[pedido_id]}' (su comprador "
+                                  "no puede armar otro pedido)"))
     return sorted(hallazgos)
 
 
@@ -194,6 +203,7 @@ REGLAS = {
     7: f"Cobro en proceso hace más de {MINUTOS_EN_PROCESO} minutos (resolverlo en el panel «Cobros por revisar en Culqi»)",
     8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos (resolverla en el mismo panel)",
     9: "Pedido confirmado o entregado sin el pago aprobado",
+    10: "Pedido pendiente con el pago rechazado, vencido o cancelado (bloquea al comprador: un pendiente por comprador)",
 }
 
 

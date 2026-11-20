@@ -19,10 +19,13 @@ llama a mano una vez acá abajo para que el almacén exista antes del primer tes
 pasaría en un arranque real.
 """
 import json
+import threading
+import time
 from datetime import timedelta
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 import main
@@ -47,6 +50,14 @@ DESTINO_FUERA_AYACUCHO = {"destino_latitud": -3.7437, "destino_longitud": -73.25
 
 def _como(sub: str, rol: str):
     main.app.dependency_overrides[verificar_token] = lambda: {"sub": sub, "rol": rol}
+
+
+@pytest.fixture(autouse=True)
+def _un_comprador_distinto_por_peticion():
+    """Cada prueba arranca como al principio: un comprador nuevo en cada petición. Sin esto, el _como() de una prueba
+    anterior seguiría puesto y sus pedidos pendientes (uno por comprador) frenarían los de la siguiente."""
+    main.app.dependency_overrides[verificar_token] = lambda: {"sub": str(uuid.uuid4()), "rol": "comprador"}
+    yield
 
 
 # GET /pedidos/{id} además declara Depends(security) para reenviar el token a Transporte: sin un header
@@ -1316,6 +1327,7 @@ def test_la_agencia_de_despacho_la_mueve_el_admin_dentro_de_ayacucho():
 
 
 def test_consultar_el_dni_muestra_el_nombre_enmascarado_y_tiene_tope():
+    _como(str(uuid.uuid4()), "comprador")  # el tope es por comprador: todas las consultas, del mismo
     resp = client.get("/pedidos/dni/45678912")
     assert resp.status_code == 200 and resp.json() == {"dni": "45678912", "nombre_para_confirmar": "ROSA E. Q*** H***"}
     assert client.get("/pedidos/dni/4567").status_code == 422
@@ -1925,3 +1937,286 @@ def test_para_cobrar_de_un_pedido_que_ya_no_se_puede_pagar_da_409_y_de_uno_que_n
     assert client.get(f"/pedidos/interno/{_pedido_en('cancelado', motivo_cancelacion='Sin stock')}/para-cobrar",
                       headers=secreto).status_code == 409
     assert client.get(f"/pedidos/interno/{uuid.uuid4()}/para-cobrar", headers=secreto).status_code == 404
+
+
+# ============ Un solo pedido sin pagar por comprador (el mismo carrito lo retoma; otro carrito, 409) ============
+
+def _pendientes_de(comprador) -> int:
+    db = main.SessionLocal()
+    try:
+        return (db.query(main.models.Pedido)
+                .filter(main.models.Pedido.usuario_id == comprador, main.models.Pedido.estado == "pendiente").count())
+    finally:
+        db.close()
+
+
+def _fila_pedido(pedido_id):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).first()
+    finally:
+        db.close()
+
+
+def _poner_estado(pedido_id, estado):
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Pedido).filter(main.models.Pedido.id == pedido_id).update(
+            {"estado": estado}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _stock_lento(*args, **kwargs):
+    """La reserva de stock en Productos tarda: la segunda pestaña llega mientras la primera la tiene."""
+    time.sleep(0.6)
+    return MagicMock(status_code=200)
+
+
+def test_el_mismo_carrito_retoma_el_pedido_pendiente_y_no_reserva_stock_otra_vez():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=3)
+    cliente_http = _mock_httpx_client(precio=50.0)
+    with patch("main.httpx.Client", return_value=cliente_http), bandeja_como_mock() as publicados:
+        primero = client.post("/pedidos", json=payload)
+        segundo = client.post("/pedidos", json=payload)  # p. ej. el token de Culqi no llegó y vuelve a pagar
+    assert primero.status_code == 200 and segundo.status_code == 200, (primero.text, segundo.text)
+    assert segundo.json()["id"] == primero.json()["id"]
+    assert segundo.json()["reutilizado"] is True and "reutilizado" not in primero.json()
+    assert cliente_http.post.call_count == 1  # el stock se reservó una sola vez
+    assert publicados.call_count == 1  # un solo pedido_creado
+    assert _pendientes_de(comprador) == 1
+
+
+def test_otro_carrito_con_un_pendiente_da_409_con_los_datos_del_pendiente_sin_tocar_el_stock():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    cliente_http = _mock_httpx_client(precio=50.0)
+    with patch("main.httpx.Client", return_value=cliente_http), bandeja_como_mock():
+        primero = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2))
+        otro = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+    assert primero.status_code == 200, primero.text
+    assert otro.status_code == 409, otro.text
+    detalle = otro.json()["detail"]
+    assert detalle["codigo"] == "pedido_pendiente" and "sin pagar" in detalle["mensaje"]
+    pendiente = detalle["pedido_pendiente"]
+    assert pendiente["id"] == primero.json()["id"]
+    assert pendiente["total"] == round(100 + float(primero.json()["costo_envio"]), 2)
+    assert [(i["cantidad"], i["producto_id"]) for i in pendiente["items"]] == [(2, primero.json()["items"][0]["producto_id"])]
+    assert pendiente["fecha_creacion"] and pendiente["modalidad_envio"] == "local"
+    assert cliente_http.post.call_count == 1
+    assert _pendientes_de(comprador) == 1
+
+
+def test_otra_cantidad_otro_telefono_u_otro_destino_son_otro_pedido():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    base = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2)
+    variantes = [
+        {**base, "items": [{**base["items"][0], "cantidad": 3}]},
+        {**base, "comprador_telefono": "912345678"},
+        {**base, "destino_latitud": base["destino_latitud"] + 0.001},
+    ]
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
+        assert client.post("/pedidos", json=base).status_code == 200
+        for variante in variantes:
+            resp = client.post("/pedidos", json=variante)
+            assert resp.status_code == 409, resp.text
+        # el teléfono con espacios es el mismo teléfono: el mismo pedido
+        mismo = client.post("/pedidos", json={**base, "comprador_telefono": "987 654 321"})
+    assert mismo.status_code == 200 and mismo.json()["reutilizado"] is True
+    assert _pendientes_de(comprador) == 1
+
+
+def test_un_pedido_pagado_o_cancelado_no_cuenta_como_pendiente():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
+        pagado = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+        _poner_estado(pagado, "confirmado")
+        cancelado = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+        assert cancelado.status_code == 200 and cancelado.json()["id"] != pagado
+        _poner_estado(cancelado.json()["id"], "cancelado")
+        tercero = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0))
+    assert tercero.status_code == 200 and tercero.json()["id"] not in (pagado, cancelado.json()["id"])
+
+
+def _dos_pestanas(cargas):
+    """Dos POST /pedidos del mismo comprador a la vez (una carga por pestaña). Devuelve las respuestas."""
+    respuestas, barrera = [], threading.Barrier(len(cargas))
+
+    def pestana(carga):
+        barrera.wait()
+        respuestas.append(TestClient(main.app).post("/pedidos", json=carga))
+
+    hilos = [threading.Thread(target=pestana, args=(carga,)) for carga in cargas]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join(timeout=30)
+    return respuestas
+
+
+def test_dos_pestanas_a_la_vez_con_el_mismo_carrito_dejan_un_solo_pedido_pendiente():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    cliente_http = _mock_httpx_client(precio=50.0)
+    cliente_http.post.side_effect = _stock_lento
+    with patch("main.httpx.Client", return_value=cliente_http), bandeja_como_mock():
+        respuestas = _dos_pestanas([payload, payload])
+    assert [r.status_code for r in respuestas] == [200, 200], [r.text for r in respuestas]
+    assert len({r.json()["id"] for r in respuestas}) == 1
+    assert sorted(bool(r.json().get("reutilizado")) for r in respuestas) == [False, True]
+    assert cliente_http.post.call_count == 1
+    assert _pendientes_de(comprador) == 1
+
+
+def test_dos_pestanas_a_la_vez_con_carritos_distintos_dan_un_pedido_y_un_409():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    cliente_http = _mock_httpx_client(precio=50.0)
+    cliente_http.post.side_effect = _stock_lento
+    with patch("main.httpx.Client", return_value=cliente_http), bandeja_como_mock():
+        respuestas = _dos_pestanas([_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0),
+                                    _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)])
+    assert sorted(r.status_code for r in respuestas) == [200, 409], [r.text for r in respuestas]
+    creado = next(r for r in respuestas if r.status_code == 200).json()["id"]
+    frenado = next(r for r in respuestas if r.status_code == 409).json()["detail"]
+    assert frenado["pedido_pendiente"]["id"] == creado
+    assert cliente_http.post.call_count == 1
+    assert _pendientes_de(comprador) == 1
+
+
+def test_sin_el_turno_el_indice_igual_deja_un_solo_pedido_pendiente(monkeypatch):
+    """La garantía final es la base: una réplica de antes (sin el turno) que pide a la vez choca con el índice al
+    insertar, antes de reservar el stock, y responde con el pendiente que ganó."""
+    monkeypatch.setattr(main, "_tomar_turno_del_comprador", lambda db, comprador: None)
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    payload = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)
+    cliente_http = _mock_httpx_client(precio=50.0)
+    cliente_http.post.side_effect = _stock_lento
+    with patch("main.httpx.Client", return_value=cliente_http), bandeja_como_mock():
+        respuestas = _dos_pestanas([payload, payload])
+    assert [r.status_code for r in respuestas] == [200, 200], [r.text for r in respuestas]
+    assert len({r.json()["id"] for r in respuestas}) == 1
+    assert cliente_http.post.call_count == 1  # la que chocó con el índice no llegó a reservar
+    assert _pendientes_de(comprador) == 1
+
+
+def test_la_base_no_admite_dos_pedidos_pendientes_del_mismo_comprador():
+    from sqlalchemy.exc import IntegrityError
+    comprador = uuid.uuid4()
+    db = main.SessionLocal()
+
+    def nuevo(estado, usuario=comprador):
+        return main.models.Pedido(usuario_id=usuario, comprador_nombre="QA", estado=estado,
+                                  destino_latitud=-13.16, destino_longitud=-74.22)
+
+    try:
+        db.add_all([nuevo("cancelado"), nuevo("cancelado"), nuevo("confirmado"), nuevo("pendiente")])
+        db.add_all([nuevo("pendiente", None), nuevo("pendiente", None)])  # sin comprador no choca
+        db.commit()
+        db.add(nuevo("pendiente"))
+        try:
+            db.commit()
+        except IntegrityError as error:
+            assert "uq_pedidos_pendiente_por_comprador" in str(error)
+        else:
+            raise AssertionError("la base aceptó un segundo pedido pendiente del mismo comprador")
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_la_migracion_no_crea_el_indice_si_un_comprador_tiene_dos_pendientes_y_lo_crea_al_resolverlo(caplog):
+    import migraciones
+    from sqlalchemy import text
+    indice = main.models.INDICE_UN_PENDIENTE_POR_COMPRADOR
+    comprador = uuid.uuid4()
+
+    def existe():
+        with main.engine.connect() as conexion:
+            return conexion.execute(text("SELECT to_regclass(:n) IS NOT NULL"), {"n": indice}).scalar()
+
+    with main.engine.begin() as conexion:
+        conexion.execute(text(f"DROP INDEX IF EXISTS {indice}"))
+    try:
+        db = main.SessionLocal()
+        repetidos = [main.models.Pedido(usuario_id=comprador, comprador_nombre="QA", estado="pendiente",
+                                        destino_latitud=-13.16, destino_longitud=-74.22) for _ in range(2)]
+        db.add_all(repetidos)
+        db.commit()
+        ids = [p.id for p in repetidos]
+        db.close()
+        with caplog.at_level("ERROR", logger="pedidos.migraciones"):
+            assert migraciones.asegurar_un_pendiente_por_comprador(main.engine) is False
+        assert str(comprador) in caplog.text and not existe()
+        _poner_estado(ids[1], "cancelado")
+        assert migraciones.asegurar_un_pendiente_por_comprador(main.engine) is True
+        assert existe()
+        assert migraciones.asegurar_un_pendiente_por_comprador(main.engine) is True  # idempotente
+    finally:
+        with main.engine.begin() as conexion:
+            conexion.execute(text("UPDATE pedidos SET estado = 'cancelado' WHERE usuario_id = :c AND estado = 'pendiente'"),
+                             {"c": str(comprador)})
+        migraciones.asegurar_un_pendiente_por_comprador(main.engine)
+    assert existe()
+
+
+# ---- /pedidos/interno/{id}/cancelar-sin-pagar: Pagos, cuando el comprador cancela su pedido sin pagar ----
+
+def _cancelar_sin_pagar(pedido_id, secreto=None):
+    cabeceras = {"X-Servicio-Secreto": secreto} if secreto else {}
+    return client.post(f"/pedidos/interno/{pedido_id}/cancelar-sin-pagar", headers=cabeceras)
+
+
+def test_cancelar_sin_pagar_exige_el_secreto_de_pagos():
+    pedido_id = _pedido_en("pendiente")
+    assert _cancelar_sin_pagar(pedido_id).status_code == 403
+    assert _cancelar_sin_pagar(pedido_id, main.TRANSPORTE_A_PEDIDOS_SECRETO).status_code == 403
+    assert _estado(pedido_id) == "pendiente"
+
+
+def test_cancelar_sin_pagar_cancela_el_pendiente_en_el_acto_y_es_idempotente():
+    pedido_id = _pedido_en("pendiente")
+    resp = _cancelar_sin_pagar(pedido_id, main.PAGOS_A_PEDIDOS_SECRETO)
+    assert resp.status_code == 200 and resp.json()["estado"] == "cancelado", resp.text
+    fila = _fila_pedido(pedido_id)
+    assert fila.estado == "cancelado" and fila.fecha_cancelacion is not None and fila.motivo_cancelacion is None
+    assert _cancelar_sin_pagar(pedido_id, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 200
+
+
+def test_cancelar_sin_pagar_no_toca_un_pedido_pagado_y_uno_que_no_existe_da_404():
+    pagado = _pedido_en("confirmado")
+    assert _cancelar_sin_pagar(pagado, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 409
+    assert _estado(pagado) == "confirmado"
+    assert _cancelar_sin_pagar(uuid.uuid4(), main.PAGOS_A_PEDIDOS_SECRETO).status_code == 404
+
+
+def test_con_el_pendiente_cancelado_el_comprador_puede_armar_otro_enseguida():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
+        primero = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+        otro_carrito = _payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=4)
+        assert client.post("/pedidos", json=otro_carrito).status_code == 409
+        assert _cancelar_sin_pagar(primero, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 200  # "Reemplazar"
+        nuevo = client.post("/pedidos", json=otro_carrito)
+    assert nuevo.status_code == 200 and nuevo.json()["id"] != primero, nuevo.text
+    assert _pendientes_de(comprador) == 1
+
+
+def test_el_evento_pedido_cancelado_sin_pagar_cancela_el_pendiente_y_es_final():
+    pedido_id = _pedido_en("pendiente")
+    _evento_de_pago(pedido_id, "pedido_cancelado_sin_pagar")
+    fila = _fila_pedido(pedido_id)
+    assert fila.estado == "cancelado" and fila.fecha_cancelacion is not None
+    _evento_de_pago(pedido_id, "pago_confirmado")  # nada lo reabre: Pagos ya no lo cobra
+    assert _estado(pedido_id) == "cancelado"
+    confirmado = _pedido_en("confirmado")
+    _evento_de_pago(confirmado, "pedido_cancelado_sin_pagar")  # uno tardío no deshace un pago
+    assert _estado(confirmado) == "confirmado"
