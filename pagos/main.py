@@ -837,6 +837,10 @@ def conciliar_intentos_en_curso(db: Session, ahora=None, buscar=None) -> int:
             db.rollback()
             _anotar_pasada(db, referencia, f"El cargo {objeto.get('id') if objeto else '?'} ya está asignado a otro pago",
                            revision=True)
+        except Exception:  # noqa: BLE001 - un caso que falla no frena a los demás: se reintenta en la pasada siguiente
+            db.rollback()
+            logger.exception("Conciliación: no se pudo resolver el %s %s; se reintenta en la pasada siguiente", tipo,
+                             referencia)
     return resueltos
 
 

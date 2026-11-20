@@ -2256,6 +2256,40 @@ def test_un_cargo_nunca_se_asigna_a_dos_pagos(monkeypatch):
     assert _estado_del_pago(tercero) == "procesando" and _pago_recargado(tercero).culqi_charge_id is None
 
 
+def test_un_caso_que_falla_al_cerrarse_no_frena_a_los_demas(monkeypatch):
+    items = [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]
+    trabado, sano = _crear_pago_directo(items), _crear_pago_directo(items)
+
+    def culqi_caido(**kwargs):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    monkeypatch.setattr(main, "crear_cargo", culqi_caido)
+    assert [_procesar(p).status_code for p in (trabado, sano)] == [502, 502]
+    [intento_trabado], [intento_sano] = _intentos_de(trabado), _intentos_de(sano)
+    cargos = {str(intento_trabado.id): _cargo_nuevo(), str(intento_sano.id): _cargo_nuevo()}
+
+    def buscar(caso):
+        if caso["referencia"] not in cargos:
+            return {"encontrado": None, "completo": False}
+        return {"encontrado": {"id": cargos[caso["referencia"]], "outcome": {"type": "venta_exitosa"}}, "completo": True}
+
+    cerrar_de_verdad = main._cerrar_cobro
+
+    def cerrar(db, referencia, *args, **kwargs):
+        if str(referencia) == str(intento_trabado.id):
+            raise _ErrorDeLaBase("UPDATE", {}, Exception("la base rechazó este cierre"))
+        return cerrar_de_verdad(db, referencia, *args, **kwargs)
+
+    monkeypatch.setattr(main, "_cerrar_cobro", cerrar)
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    _mockear_productos(monkeypatch, {items[0]["producto_id"]: str(uuid.uuid4())})
+    _conciliar(buscar)
+    assert _estado_del_pago(trabado) == "procesando" and _estado_del_pago(sano) == "aprobado"
+    monkeypatch.setattr(main, "_cerrar_cobro", cerrar_de_verdad)
+    _conciliar(buscar)  # en la pasada siguiente, el que falló se resuelve
+    assert _estado_del_pago(trabado) == "aprobado"
+
+
 def test_la_devolucion_anota_lo_que_el_cargo_ya_tenia_devuelto(monkeypatch):
     pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
     _aprobado_con_tarjeta(pago, cargo=cargo)
