@@ -2576,3 +2576,170 @@ def test_una_devolucion_al_tope_tambien_se_resuelve_como_devuelta(monkeypatch):
     assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "reembolsado", resp.text
     hechas = [i for i in _intentos_de(pago, "devolucion") if i.estado == "aprobado"]
     assert len(hechas) == 1 and hechas[0].devolucion_id == "ref_desde_panel" and hechas[0].resuelto_por == ADMIN_QUE_RESUELVE
+
+
+# ============ El comprador cancela su pedido sin pagar (Mis pedidos y "Reemplazar" en el checkout) ============
+
+@pytest.fixture
+def cancelacion(monkeypatch):
+    """El pedido es de quien cancela; el stock (Productos), los eventos y la llamada a Pedidos, anotados."""
+    monkeypatch.setattr(main, "_exigir_dueno_para_cancelar", lambda *args, **kwargs: None)
+    eventos, en_pedidos = [], []
+    anotar_eventos(monkeypatch, main, eventos)
+    stock = _mockear_stock(monkeypatch)
+    monkeypatch.setattr(main, "_cancelar_en_pedidos", lambda pedido_id: en_pedidos.append(str(pedido_id)) or True)
+    return {"eventos": eventos, "stock": stock, "en_pedidos": en_pedidos}
+
+
+def _cancelar(pedido_id):
+    return client.post(f"/pagos/{pedido_id}/cancelar", headers=CON_TOKEN)
+
+
+def _repuesto(llamadas) -> dict:
+    return {url.split("/")[-3]: kwargs["json"]["cantidad"] for url, kwargs in llamadas if "reponer" in url}
+
+
+def test_cancelar_un_pedido_sin_pagar_devuelve_su_stock_en_el_acto_y_lo_cancela_en_pedidos(cancelacion):
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": a, "cantidad": 3, "cantidad_base": 30, "precio_unitario": 20.0},
+                                {"producto_id": b, "cantidad": 2, "precio_unitario": 10.0}])
+    resp = _cancelar(pago.pedido_id)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"pedido_id": str(pago.pedido_id), "estado": "cancelado", "stock": "devuelto",
+                           "pedido_cancelado": True}
+    fila = _fila_pago(pago)
+    assert fila.estado == "cancelado" and fila.cancelado_en is not None
+    assert _repuesto(cancelacion["stock"]) == {a: 30, b: 2}  # dentro de la misma petición: en el acto
+    assert cancelacion["eventos"] == [{"evento": "pedido_cancelado_sin_pagar", "pedido_id": str(pago.pedido_id)}]
+    assert cancelacion["en_pedidos"] == [str(pago.pedido_id)]
+
+    otra_vez = _cancelar(pago.pedido_id)  # idempotente: ni stock ni aviso dos veces
+    assert otra_vez.status_code == 200 and otra_vez.json()["stock"] == "ya_devuelto"
+    assert len(cancelacion["stock"]) == 2 and len(cancelacion["eventos"]) == 1
+
+
+def test_con_un_cobro_en_curso_o_una_transferencia_en_revision_no_se_cancela_nada(cancelacion):
+    for estado in ("procesando", "en_revision"):
+        pago = _crear_pago_con_estado(estado, [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+        resp = _cancelar(pago.pedido_id)
+        assert resp.status_code == 409, resp.text
+        assert resp.json()["detail"] == main.MENSAJE_PAGO_SE_ESTA_VERIFICANDO
+        assert "se está verificando" in resp.json()["detail"]
+        assert _estado_del_pago(pago) == estado
+    assert cancelacion["stock"] == [] and cancelacion["eventos"] == [] and cancelacion["en_pedidos"] == []
+
+
+def test_un_pedido_pagado_o_devuelto_no_se_cancela_desde_aqui(cancelacion):
+    for estado in ("aprobado", "adelanto_pagado", "reembolsado", "reembolso_procesando"):
+        pago = _crear_pago_con_estado(estado, [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+        assert _cancelar(pago.pedido_id).status_code == 409
+        assert _estado_del_pago(pago) == estado
+    assert cancelacion["stock"] == [] and cancelacion["eventos"] == []
+
+
+def test_cancelar_un_pago_rechazado_o_vencido_no_devuelve_el_stock_otra_vez(cancelacion):
+    pago = _crear_pago_con_estado("rechazado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    resp = _cancelar(pago.pedido_id)
+    assert resp.status_code == 200 and resp.json()["stock"] == "ya_devuelto", resp.text
+    assert _estado_del_pago(pago) == "cancelado"
+    assert cancelacion["stock"] == []  # ya volvió al rechazarse
+    assert [e["evento"] for e in cancelacion["eventos"]] == ["pedido_cancelado_sin_pagar"]
+
+
+def test_un_pedido_cancelado_ya_no_se_cobra_ni_acepta_constancia_ni_vence(monkeypatch, transferencia):
+    pago = _crear_pago_con_estado("cancelado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    cobros = []
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": "x"}})
+    cobro = _procesar(pago)
+    assert cobro.status_code == 409 and cobro.json()["detail"] == main.MENSAJE_CANCELADO_POR_EL_COMPRADOR
+    assert cobros == []
+    constancia = _enviar_constancia(pago)
+    assert constancia.status_code == 409 and constancia.json()["detail"] == main.MENSAJE_CANCELADO_POR_EL_COMPRADOR
+    assert transferencia["guardadas"] == {} and not transferencia["reservar"].called
+    db = main.SessionLocal()
+    try:
+        db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).update(
+            {"vence_en": main.datetime.utcnow() - main.timedelta(minutes=5)}, synchronize_session=False)
+        db.commit()
+        main.vencer_pagos_sin_pagar(db)
+    finally:
+        db.close()
+    assert _estado_del_pago(pago) == "cancelado" and not transferencia["compensar"].called
+
+
+def test_si_pedido_creado_no_llego_cancelar_crea_el_pago_y_devuelve_su_stock(monkeypatch, cancelacion):
+    pedido_id, producto = str(uuid.uuid4()), str(uuid.uuid4())
+    del_pedido = {"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": str(uuid.uuid4()), "comprador_nombre": "QA",
+                  "costo_envio": 5.0, "modalidad_envio": "local", "monto_adelanto": None,
+                  "items": [{"producto_id": producto, "cantidad": 2, "unidad": "kg", "cantidad_base": 2, "precio_unitario": 10.0}]}
+    monkeypatch.setattr(main.httpx, "get", lambda url, headers=None, timeout=None: MagicMock(status_code=200, json=lambda: del_pedido))
+    resp = _cancelar(pedido_id)
+    assert resp.status_code == 200 and resp.json()["stock"] == "devuelto", resp.text
+    assert _repuesto(cancelacion["stock"]) == {producto: 2}
+    db = main.SessionLocal()
+    try:
+        assert db.query(main.models.Pago.estado).filter(main.models.Pago.pedido_id == pedido_id).scalar() == "cancelado"
+    finally:
+        db.close()
+
+
+def test_si_productos_no_responde_la_devolucion_queda_anotada_y_el_pedido_igual_se_cancela(monkeypatch, cancelacion):
+    _mockear_stock(monkeypatch, roto=True)  # Productos no contesta: la devolución queda anotada (devoluciones_stock)
+    producto = str(uuid.uuid4())
+    pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 4, "precio_unitario": 10.0}])
+    resp = _cancelar(pago.pedido_id)
+    assert resp.status_code == 200 and resp.json()["stock"] == "por_devolver", resp.text
+    db = main.SessionLocal()
+    try:
+        anotadas = db.query(main.models.DevolucionStock).filter(main.models.DevolucionStock.pedido_id == pago.pedido_id).all()
+    finally:
+        db.close()
+    assert [(d.producto_id, d.cantidad) for d in anotadas] == [(producto, 4)]
+    assert anotadas[0].estado in ("pendiente", "dudosa")
+    assert _estado_del_pago(pago) == "cancelado"
+
+
+def test_solo_el_comprador_dueno_cancela_su_pedido(monkeypatch):
+    pago = _pago_de_prueba()
+    _mockear_pedidos(monkeypatch, usuario_id=str(uuid.uuid4()))  # el pedido es de otro
+    assert _cancelar(pago.pedido_id).status_code == 403
+    _como(uuid.uuid4(), "admin")  # ni el admin: él cancela con devolución, desde su panel
+    try:
+        assert _cancelar(pago.pedido_id).status_code == 403
+    finally:
+        _restaurar_sesion_por_defecto()
+    assert _estado_del_pago(pago) == "pendiente"
+
+
+def test_una_constancia_que_se_sube_a_la_vez_se_turna_con_la_cancelacion(cancelacion):
+    """La transferencia toma la fila con FOR UPDATE mientras sube la constancia: la cancelación espera y, cuando la
+    constancia queda en revisión, responde 409 sin tocar nada."""
+    import threading
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    db = main.SessionLocal()
+    fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).with_for_update().one()
+    respuestas = []
+    hilo = threading.Thread(target=lambda: respuestas.append(TestClient(main.app).post(
+        f"/pagos/{pago.pedido_id}/cancelar", headers=CON_TOKEN)))
+    hilo.start()
+    hilo.join(timeout=1.5)
+    assert hilo.is_alive()  # esperando la fila
+    fila.estado = "en_revision"
+    db.commit()
+    db.close()
+    hilo.join(timeout=30)
+    assert respuestas and respuestas[0].status_code == 409, respuestas and respuestas[0].text
+    assert _estado_del_pago(pago) == "en_revision" and cancelacion["stock"] == []
+
+
+def test_las_condiciones_dicen_el_plazo_para_pagar_y_un_pedido_cancelado_no_tiene_nada_que_pagar(monkeypatch):
+    assert client.get("/pagos/condiciones").json()["plazo_para_pagar_minutos"] == main.PLAZO_PARA_PAGAR_MINUTOS
+    comprador = uuid.uuid4()
+    pago = _crear_pago_con_estado("cancelado", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    _mockear_pedidos(monkeypatch, usuario_id=str(comprador))
+    _como(comprador, "comprador")
+    try:
+        datos = client.get(f"/pagos/{pago.pedido_id}", headers=CON_TOKEN).json()
+    finally:
+        _restaurar_sesion_por_defecto()
+    assert datos["estado"] == "cancelado" and datos["monto_a_pagar"] is None and datos["parte_a_pagar"] is None

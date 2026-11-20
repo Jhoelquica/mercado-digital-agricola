@@ -288,6 +288,8 @@ def condiciones_de_pago():
         "comision_plataforma_porcentaje": float(COMISION_PLATAFORMA_PORCENTAJE * 100),
         "yape_maximo_por_operacion": float(YAPE_MAXIMO_POR_OPERACION),
         "transferencia": _datos_transferencia(),  # null si no hay una cuenta configurada
+        # Cuánto se guarda un pedido sin pagar: el checkout dice hasta qué hora mientras su pago todavía no existe.
+        "plazo_para_pagar_minutos": PLAZO_PARA_PAGAR_MINUTOS,
     }
 
 
@@ -344,8 +346,8 @@ def obtener_pago(
         raise HTTPException(status_code=404, detail="No hay registro de pago para ese pedido")
     datos = jsonable_encoder(pago)
     parte = parte_a_cobrar(pago)
-    # Lo que el comprador tiene que pagar ahora (nada si ya está todo pagado).
-    pagado_o_devuelto = pago.estado in ("aprobado", "reembolsado")
+    # Lo que el comprador tiene que pagar ahora (nada si ya está todo pagado, devuelto o cancelado).
+    pagado_o_devuelto = pago.estado in ("aprobado", "reembolsado", "cancelado")
     datos["parte_a_pagar"] = None if pagado_o_devuelto else parte
     datos["monto_a_pagar"] = None if pagado_o_devuelto else float(monto_de(pago, parte))
     return datos
@@ -534,11 +536,16 @@ MENSAJE_VERIFICANDO = ("No pudimos confirmar el pago con la pasarela y lo estamo
                        "Revisa Mis pedidos en unos minutos.")
 
 
+MENSAJE_CANCELADO_POR_EL_COMPRADOR = "Cancelaste este pedido: ya no se puede pagar. Arma uno nuevo desde el catálogo."
+
+
 def _exigir_que_se_puede_cobrar(pago) -> None:
     if pago.estado == "aprobado":
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
     if pago.estado == "reembolsado":
         raise HTTPException(status_code=409, detail="Este pedido se canceló y se te devolvió el dinero: ya no se puede pagar.")
+    if pago.estado == "cancelado":
+        raise HTTPException(status_code=409, detail=MENSAJE_CANCELADO_POR_EL_COMPRADOR)
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste la constancia de una transferencia para este pedido: está en revisión.")
     if pago.estado == "procesando":
@@ -742,6 +749,81 @@ def procesar_pago(
                         ("El pago del saldo fue rechazado" if parte == "saldo" else "El pago fue rechazado"))
 
 
+# ---- El comprador cancela su pedido sin pagar ("Cancelar pedido" en Mis pedidos, "Reemplazar" en el checkout) ----
+# Pedidos admite un solo pedido sin pagar por comprador: cancelarlo devuelve su stock en el acto (lo mismo que al vencer,
+# sin esperar el plazo) y lo cancela también en Pedidos, para que el comprador pueda armar otro enseguida. Nunca mientras
+# se cobra: con un cobro en curso (o en la conciliación) o una transferencia en revisión, 409 y no se toca nada.
+MENSAJE_PAGO_SE_ESTA_VERIFICANDO = ("Tu pago anterior se está verificando: espera a que se confirme (lo verás en Mis "
+                                    "pedidos) antes de cancelar o reemplazar este pedido.")
+ESTADOS_QUE_SE_VERIFICAN = ("procesando", "en_revision")
+
+
+def _exigir_dueno_para_cancelar(pedido_id, usuario: dict, token: str):
+    _exigir_que_el_pedido_es_del_usuario(pedido_id, usuario, token, accion="cancelar este pedido")
+
+
+def _cancelar_en_pedidos(pedido_id) -> bool:
+    """Que Pedidos lo cancele en el acto. Si no responde, lo hará el evento pedido_cancelado_sin_pagar (ya confirmado
+    en la bandeja de salida): devuelve si quedó hecho ahora."""
+    try:
+        resp = httpx.post(f"{PEDIDOS_URL}/pedidos/interno/{pedido_id}/cancelar-sin-pagar",
+                          headers={"X-Servicio-Secreto": PAGOS_A_PEDIDOS_SECRETO}, timeout=5)
+    except httpx.RequestError as error:
+        logger.warning("Pedido %s: Pedidos no respondió al cancelarlo (%s); lo hará el evento pedido_cancelado_sin_pagar",
+                       pedido_id, type(error).__name__)
+        return False
+    if resp.status_code != 200:
+        logger.warning("Pedido %s: Pedidos respondió %s al cancelarlo; lo hará el evento pedido_cancelado_sin_pagar",
+                       pedido_id, resp.status_code)
+        return False
+    return True
+
+
+@app.post("/pagos/{pedido_id}/cancelar")
+def cancelar_pedido_sin_pagar(
+    pedido_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("comprador")),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """Solo el comprador dueño. La fila del pago se toma con FOR UPDATE: un cobro que empieza a la vez o una constancia
+    que se está subiendo se turnan con esto (el que llega después ve el estado nuevo). Idempotente."""
+    _exigir_dueno_para_cancelar(pedido_id, usuario, credenciales.credentials)
+    try:
+        # Si pedido_creado todavía no llegó, el pago se crea (con sus productos, para poder devolver su stock).
+        pago_id = _pago_o_crearlo(db, pedido_id).id
+    except HTTPException as error:
+        if error.status_code == 409:
+            raise HTTPException(status_code=409, detail="Este pedido ya no está pendiente: revisa Mis pedidos.")
+        raise
+    db.rollback()  # lo leído hasta aquí, fuera: el estado que vale es el de la fila ya bloqueada
+    pago = db.query(models.Pago).filter(models.Pago.id == pago_id).with_for_update().populate_existing().one()
+    if pago.estado in ESTADOS_QUE_SE_VERIFICAN:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=MENSAJE_PAGO_SE_ESTA_VERIFICANDO)
+    if pago.estado in ("aprobado", "adelanto_pagado"):
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Este pedido ya está pagado: si necesitas cancelarlo, escríbenos y lo "
+                                                    "cancelamos con la devolución de tu dinero.")
+    if pago.estado in ("reembolsado", "reembolso_procesando"):
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Este pedido ya se canceló con la devolución de tu dinero.")
+    devolver_stock = pago.estado == "pendiente"  # uno rechazado (o vencido) ya devolvió su stock
+    if pago.estado != "cancelado":
+        pago.estado = "cancelado"
+        pago.cancelado_en = datetime.utcnow()
+        registrar_evento(db, "pedido_cancelado_sin_pagar", {"pedido_id": str(pago.pedido_id)})
+    items = pago.items
+    db.commit()
+    stock = "ya_devuelto"
+    if devolver_stock:
+        resultado = compensar_stock(items, pedido_id=pedido_id) or {}
+        stock = "devuelto" if all(estado == "devuelta" for estado in resultado.values()) else "por_devolver"
+    en_pedidos = _cancelar_en_pedidos(pedido_id)
+    logger.info("Pedido %s: el comprador lo canceló antes de pagar (stock %s)", pedido_id, stock)
+    return {"pedido_id": str(pedido_id), "estado": "cancelado", "stock": stock, "pedido_cancelado": en_pedidos}
+
+
 # ---- Conciliación de lo que quedó en proceso: averigua en Culqi qué pasó con cada referencia ----
 INTERVALO_CONCILIACION_SEGUNDOS = 60
 ESPERA_ANTES_DE_CONCILIAR = timedelta(minutes=2)
@@ -896,6 +978,9 @@ def enviar_constancia_de_transferencia(
         raise HTTPException(status_code=409, detail="Este pedido ya fue pagado")
     if pago.estado == "reembolsado":
         raise HTTPException(status_code=409, detail="Este pedido se canceló y se te devolvió el dinero: ya no se puede pagar.")
+    if pago.estado == "cancelado":
+        # Su stock ya volvió al catálogo: aceptar la constancia dejaría pagado un pedido sin stock reservado.
+        raise HTTPException(status_code=409, detail=MENSAJE_CANCELADO_POR_EL_COMPRADOR)
     if pago.estado == "en_revision":
         raise HTTPException(status_code=409, detail="Ya enviaste una constancia para este pedido: está en revisión.")
     if pago.estado in ("procesando", "reembolso_procesando"):

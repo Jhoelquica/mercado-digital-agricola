@@ -22,7 +22,9 @@ class Pago(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)
     monto = Column(Numeric(10, 2), nullable=False)
-    estado = Column(String, default="pendiente")  # pendiente, en_revision (transferencia), aprobado, rechazado
+    # pendiente, en_revision (transferencia), aprobado, rechazado; cancelado: el comprador lo canceló antes de pagar (ver
+    # cancelar_pedido_sin_pagar en main.py), es final y ya no se cobra.
+    estado = Column(String, default="pendiente")
     metodo = Column(String, default="tarjeta")     # tarjeta, yape, transferencia
     culqi_charge_id = Column(String, nullable=True)  # el id que devuelve Culqi
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
@@ -54,6 +56,8 @@ class Pago(Base):
     # main.py). NULL en los pagos de antes, que no vencen solos.
     vence_en = Column(DateTime, nullable=True)
     vencido_en = Column(DateTime, nullable=True)
+    # Cuándo lo canceló el comprador antes de pagar (estado "cancelado": el stock volvió en el acto).
+    cancelado_en = Column(DateTime, nullable=True)
     # Devolución de un pedido pagado que se canceló (estado "reembolsado"): lo devuelto por Culqi, lo que queda por
     # devolver a mano (lo pagado por transferencia), los id de las devoluciones en Culqi (JSON) y el motivo.
     monto_reembolsado = Column(Numeric(10, 2), nullable=True)
