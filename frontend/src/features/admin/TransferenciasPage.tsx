@@ -220,7 +220,9 @@ function TarjetaPorRevisar({ p }: { p: PagoPorRevisar }) {
         {p.tipo === 'devolucion' && p.referencia && <div className="perfil-dato"><span className="perfil-dato-label">Referencia interna</span><span className="perfil-dato-valor perfil-dato-mono">{p.referencia}</span></div>}
       </div>
       {p.mensaje && <p className="muted admin-nota">{p.mensaje}</p>}
-      {p.puede_resolver && p.referencia && <ResolverCaso p={p} />}
+      {p.puede_resolver && p.referencia
+        ? <ResolverCaso p={p} />
+        : <p className="muted admin-nota" role="status"><i className="ti ti-loader" aria-hidden="true" /> Hay un intento en curso con Culqi: en unos segundos podrás resolverlo aquí.</p>}
     </div>
   );
 }

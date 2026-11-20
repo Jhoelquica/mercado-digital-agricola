@@ -4,7 +4,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ganancias } from '../../api/ganancias';
-import { pagos, type Pago } from '../../api/pagos';
+import { pagos, type Pago, type PagoPorRevisar } from '../../api/pagos';
 import { pedidos, type Pedido } from '../../api/pedidos';
 import { productores } from '../../api/productores';
 import { productos } from '../../api/productos';
@@ -19,7 +19,12 @@ const conAviso = <T,>(cargar: () => Promise<T>, accion: string) => () => cargar(
 
 // ---- datos
 export const useTransferencias = () => useQuery({ queryKey: ['admin', 'transferencias'], queryFn: conAviso(pagos.admin.transferencias, 'cargar las transferencias') });
-export const usePagosPorRevisar = () => useQuery({ queryKey: ['admin', 'por-revisar'], queryFn: conAviso(pagos.admin.porRevisar, 'cargar los cobros por revisar') });
+// Mientras algún caso tenga un intento en curso con Culqi (todavía no se puede resolver a mano), se vuelve a mirar cada 15 s.
+export const usePagosPorRevisar = () => useQuery<PagoPorRevisar[]>({
+  queryKey: ['admin', 'por-revisar'],
+  queryFn: conAviso(pagos.admin.porRevisar, 'cargar los cobros por revisar'),
+  refetchInterval: (consulta) => (consulta.state.data?.some((p) => !p.puede_resolver) ? 15000 : false),
+});
 export const useReclamosRuc = () => useQuery({ queryKey: ['admin', 'reclamos-ruc'], queryFn: conAviso(() => usuarios.admin.reclamosRuc(), 'cargar los reclamos de RUC') });
 export const useTransportistas = (estado: string) => useQuery({
   queryKey: ['admin', 'transportistas', estado],
