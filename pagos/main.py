@@ -1004,6 +1004,15 @@ class ResolucionManual(BaseModel):
         return limpio
 
 
+def _culqi_no_lo_tiene(resultado: dict) -> bool:
+    """Si Culqi dice que ese id no existe. Para un id desconocido NO responde 404 sino 401 authentication_error con «Ruta
+    inválida» (comprobado en el sandbox el 2026-11-19); un 400 también es un id que no reconoce. Otro 401/403 es un
+    problema de nuestra llave, no del id."""
+    datos = resultado["data"] if isinstance(resultado["data"], dict) else {}
+    ruta_invalida = "ruta inv" in str(datos.get("merchant_message") or datos.get("user_message") or "").lower()
+    return resultado["status_code"] in (400, 404) or (resultado["status_code"] == 401 and ruta_invalida)
+
+
 def _cargo_validado(cargo_id: str, referencia: str, pedido_id: str, monto) -> dict:
     """El cargo que el admin dice que cobró este intento, validado contra Culqi: existe, se cobró, por el monto del
     intento, en soles, y su metadata no es de otro intento ni de otro pedido. Si no cuadra, 422 con el porqué."""
@@ -1011,7 +1020,7 @@ def _cargo_validado(cargo_id: str, referencia: str, pedido_id: str, monto) -> di
         resultado = obtener_cargo(cargo_id)
     except (httpx.HTTPError, ValueError):
         raise HTTPException(status_code=503, detail="No se pudo consultar Culqi para validar el cargo: intenta de nuevo en un momento.")
-    if resultado["status_code"] == 404:
+    if _culqi_no_lo_tiene(resultado):
         raise HTTPException(status_code=422, detail="Culqi no tiene un cargo con ese id.")
     if resultado["status_code"] != 200:
         raise HTTPException(status_code=503, detail="Culqi no respondió bien al validar el cargo: intenta de nuevo en un momento.")
@@ -1083,7 +1092,7 @@ def _devolucion_validada(devolucion_id: str, cargo: str, monto) -> None:
         resultado = obtener_devolucion(devolucion_id)
     except (httpx.HTTPError, ValueError):
         raise HTTPException(status_code=503, detail="No se pudo consultar Culqi para validar la devolución: intenta de nuevo en un momento.")
-    if resultado["status_code"] == 404:
+    if _culqi_no_lo_tiene(resultado):
         raise HTTPException(status_code=422, detail="Culqi no tiene una devolución con ese id.")
     if resultado["status_code"] != 200:
         raise HTTPException(status_code=503, detail="Culqi no respondió bien al validar la devolución: intenta de nuevo en un momento.")

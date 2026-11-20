@@ -2434,12 +2434,18 @@ def test_el_cargo_que_da_el_admin_se_valida_contra_culqi(monkeypatch):
         "chr_otroref001": (200, _cargo_de_culqi("chr_otroref001", str(uuid.uuid4()), pago.pedido_id)),
         "chr_otroped001": (200, _cargo_de_culqi("chr_otroped001", referencia, uuid.uuid4())),
         "chr_dolares001": (200, _cargo_de_culqi("chr_dolares001", referencia, pago.pedido_id, currency_code="USD")),
+        # Así responde Culqi de verdad a un id que no existe (sandbox, 2026-11-19): 401 con «Ruta inválida», no 404.
+        "chr_rutainval1": (401, {"object": "error", "type": "authentication_error",
+                                 "merchant_message": "Ruta inválida, entérate de las rutas en https://apidocs.culqi.com."}),
+        "chr_sinllave01": (401, {"object": "error", "type": "authentication_error", "merchant_message": "Llave no válida"}),
         usado: (200, _cargo_de_culqi(usado, referencia, pago.pedido_id, metadata={})),
     }
     monkeypatch.setattr(main, "obtener_cargo", lambda c: {"status_code": respuestas[c][0], "data": respuestas[c][1]})
-    for cargo in list(respuestas)[:-1]:
+    for cargo in list(respuestas)[:-2]:
         resp = _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="Lo vi en el panel de Culqi")
         assert resp.status_code == 422, (cargo, resp.text)
+    resp = _resolver(referencia, resultado="cobrado", cargo_id="chr_sinllave01", motivo="Lo vi en el panel de Culqi")
+    assert resp.status_code == 503  # un 401 que no es «Ruta inválida» es nuestra llave: no se culpa al id
     resp = _resolver(referencia, resultado="cobrado", cargo_id=usado, motivo="Lo vi en el panel de Culqi")
     assert resp.status_code == 409 and "otro pago" in resp.json()["detail"]
     assert _estado_del_pago(pago) == "procesando"
@@ -2503,8 +2509,9 @@ def test_el_admin_resuelve_una_devolucion_como_devuelta_con_su_id_validado(monke
                     "ref_otrocargo": {"charge_id": _cargo_nuevo(), "amount": 4000, "status": "completa"},
                     "ref_otromonto": {"charge_id": cargo, "amount": 1000, "status": "completa"},
                     "ref_fallida01": {"charge_id": cargo, "amount": 4000, "status": "fallida"}}
+    ruta_invalida = {"object": "error", "type": "authentication_error", "merchant_message": "Ruta inválida, entérate de las rutas"}
     monkeypatch.setattr(main, "obtener_devolucion", lambda d: {"status_code": 200, "data": {"id": d, **devoluciones[d]}}
-                        if d in devoluciones else {"status_code": 404, "data": {}})
+                        if d in devoluciones else {"status_code": 401, "data": ruta_invalida})
     for malo in ("ref_noexiste1", "ref_otrocargo", "ref_otromonto", "ref_fallida01"):
         assert _resolver(referencia, resultado="devuelto", devolucion_id=malo, motivo="La vi en el panel").status_code == 422, malo
     assert _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="No es un cobro").status_code == 422

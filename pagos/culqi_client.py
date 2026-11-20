@@ -10,7 +10,8 @@ Lo que se comprobó contra el sandbox (2026-11-19) y en lo que se apoyan las bú
 - la lista de cargos (o devoluciones) NO viene en orden de fecha (va por id) y before/after no la recorren en orden:
   no se pagina;
 - creation_date_from y creation_date_to (en ms) sí filtran; un parámetro que Culqi no conoce se ignora en silencio;
-- el cargo dice cuánto se le devolvió (amount_refunded): 0 si nada.
+- el cargo dice cuánto se le devolvió (amount_refunded): 0 si nada;
+- GET de un id que no existe: NO responde 404 sino 401 authentication_error con «Ruta inválida».
 
 CULQI_API_BASE se cambia solo para las pruebas (un doble de Culqi en Docker); por defecto es la API real.
 """
