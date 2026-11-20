@@ -115,5 +115,37 @@ def test_buscar_devolucion_no_hecha_o_dudosa(culqi, devuelto, esperado):
 
 def test_buscar_devolucion_lanza_si_culqi_no_da_el_cargo(culqi):
     culqi({"charges/chr_a": (502, {})})
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ValueError):
         culqi_client.buscar_devolucion("chr_a", 45.0, DESDE, HASTA)
+
+
+@pytest.mark.parametrize("devuelto, esperado", [
+    (4500, {"encontrado": None, "completo": True}),    # lo mismo que antes: esta devolución no se hizo
+    (9000, "hecha"),                                   # lo de antes + esta
+    (6000, {"encontrado": None, "completo": False}),   # entre medio: no se puede concluir
+])
+def test_buscar_devolucion_compara_lo_acumulado(culqi, devuelto, esperado):
+    # El cargo ya tenía S/ 45 devueltos al empezar: que amount_refunded diga 4500 no prueba esta devolución.
+    culqi({"charges/chr_a": (200, _cargo("chr_a", amount=9000, amount_refunded=devuelto)), "refunds": (200, {"data": []})})
+    hallado = culqi_client.buscar_devolucion("chr_a", 45.0, DESDE, HASTA, devuelto_antes=4500)
+    if esperado == "hecha":
+        assert hallado == {"encontrado": {"id": None, "charge_id": "chr_a"}, "completo": True}
+    else:
+        assert hallado == esperado
+
+
+def test_devuelto_del_cargo(culqi):
+    culqi({"charges/chr_a": (200, _cargo("chr_a", amount_refunded=1500)), "charges/chr_b": (200, _cargo("chr_b")),
+           "charges/chr_c": (404, {"object": "error"})})
+    assert culqi_client.devuelto_del_cargo("chr_a") == 1500
+    for sin_dato in ("chr_b", "chr_c"):  # sin el campo, o Culqi no lo tiene: no se sigue sin ese dato
+        with pytest.raises(ValueError):
+            culqi_client.devuelto_del_cargo(sin_dato)
+
+
+def test_dos_cargos_iguales_en_correo_monto_y_hora_se_distinguen_por_la_referencia(culqi):
+    gemelos = [_cargo(f"chr_{n}", 1, referencia=f"ref-{n}", email="cliente@test.com", amount=4000) for n in (1, 2)]
+    culqi({"charges": (200, {"data": gemelos})})
+    assert culqi_client.buscar_cargo("ref-1", DESDE, HASTA)["encontrado"]["id"] == "chr_1"
+    assert culqi_client.buscar_cargo("ref-2", DESDE, HASTA)["encontrado"]["id"] == "chr_2"
+    assert culqi_client.buscar_cargo("ref-3", DESDE, HASTA) == {"encontrado": None, "completo": True}

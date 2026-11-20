@@ -9,7 +9,15 @@ class Pago(Base):
     # Un pago por pedido: los intentos fallidos (tarjeta rechazada, plazo vencido) reusan esta misma fila, que vuelve a
     # cobrarse. Dos entregas a la vez del mismo pedido_creado no crean dos. En una base de antes lo agrega
     # migraciones.asegurar_indice_unico_de_pagos (create_all no agrega índices a una tabla que ya existe).
-    __table_args__ = (Index("uq_pagos_pedido_id", "pedido_id", unique=True),)
+    # Un cargo de Culqi nunca se asigna a dos pagos: los índices únicos del cargo (aquí y en IntentoPago) los agrega a una
+    # base de antes migraciones.asegurar_indices_de_cargos.
+    __table_args__ = (
+        Index("uq_pagos_pedido_id", "pedido_id", unique=True),
+        Index("uq_pagos_culqi_charge_id", "culqi_charge_id", unique=True,
+              postgresql_where=text("culqi_charge_id IS NOT NULL")),
+        Index("uq_pagos_culqi_charge_id_saldo", "culqi_charge_id_saldo", unique=True,
+              postgresql_where=text("culqi_charge_id_saldo IS NOT NULL")),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)
@@ -75,6 +83,10 @@ class IntentoPago(Base):
         # Un cargo se devuelve una sola vez: mientras su devolución está en curso o ya salió, no se puede empezar otra.
         Index("uq_intentos_pago_devolucion", "cargo_id", unique=True,
               postgresql_where=text("tipo = 'devolucion' AND estado IN ('en_curso', 'aprobado')")),
+        # Un cargo, un solo cobro entre todos los pagos y sus partes (el adelanto de uno no puede ser el saldo de otro):
+        # todo cargo asignado a un pago pasa por su intento.
+        Index("uq_intentos_pago_cargo_cobro", "cargo_id", unique=True,
+              postgresql_where=text("tipo = 'cobro' AND cargo_id IS NOT NULL")),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)  # la referencia propia que ve Culqi
@@ -93,6 +105,13 @@ class IntentoPago(Base):
     fecha_fin = Column(DateTime, nullable=True)
     conciliaciones = Column(Integer, nullable=False, default=0)  # veces que la conciliación lo buscó en Culqi
     revision_manual = Column(Boolean, nullable=False, default=False)  # la conciliación no pudo: lo revisa una persona
+    # Devolución: los céntimos que Culqi ya había devuelto de ese cargo al empezar (amount_refunded): la conciliación
+    # compara lo acumulado (lo de antes + esta devolución), no solo esta.
+    devuelto_antes = Column(Integer, nullable=True)
+    # Lo resolvió a mano un admin desde el panel "Cobros por revisar en Culqi": quién, por qué y cuándo.
+    resuelto_por = Column(UUID(as_uuid=True), nullable=True)
+    motivo_resolucion = Column(String, nullable=True)
+    fecha_resolucion = Column(DateTime, nullable=True)
 
 class Liquidacion(Base):
     """Cuánto le corresponde a un beneficiario (productor hoy, repartidor en la sub-entrega

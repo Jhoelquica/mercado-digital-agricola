@@ -30,14 +30,14 @@ def _cabeceras() -> dict:
     return {"Authorization": f"Bearer {CULQI_SECRET_KEY}", "Content-Type": "application/json"}
 
 
-def _centimos(monto_soles) -> int:
+def centimos(monto_soles) -> int:
     return int(round(float(monto_soles) * 100))
 
 
 def crear_cargo(token: str, monto_soles: float, email: str, descripcion: str, metadata: dict | None = None) -> dict:
     """Envía un cargo a Culqi usando un token generado en el frontend."""
     payload = {
-        "amount": _centimos(monto_soles),
+        "amount": centimos(monto_soles),
         "currency_code": "PEN",
         "email": email,
         "source_id": token,
@@ -53,12 +53,36 @@ def crear_cargo(token: str, monto_soles: float, email: str, descripcion: str, me
 def crear_devolucion(charge_id: str, monto_soles: float, razon: str = "solicitud_comprador",
                      metadata: dict | None = None) -> dict:
     """Devuelve (total o en parte) un cargo de Culqi."""
-    payload = {"amount": _centimos(monto_soles), "charge_id": charge_id, "reason": razon}
+    payload = {"amount": centimos(monto_soles), "charge_id": charge_id, "reason": razon}
     if metadata:
         payload["metadata"] = {clave: str(valor) for clave, valor in metadata.items()}
     with httpx.Client() as client:
         resp = client.post(f"{CULQI_API_BASE}/refunds", json=payload, headers=_cabeceras(), timeout=15)
     return {"status_code": resp.status_code, "data": resp.json()}
+
+
+def obtener_cargo(cargo_id: str) -> dict:
+    """El cargo, tal cual ({"status_code", "data"}): con amount_refunded (lo devuelto) y la metadata."""
+    with httpx.Client() as client:
+        resp = client.get(f"{CULQI_API_BASE}/charges/{cargo_id}", headers=_cabeceras(), timeout=15)
+    return {"status_code": resp.status_code, "data": resp.json()}
+
+
+def obtener_devolucion(devolucion_id: str) -> dict:
+    """La devolución, tal cual ({"status_code", "data"}): charge_id, amount y status."""
+    with httpx.Client() as client:
+        resp = client.get(f"{CULQI_API_BASE}/refunds/{devolucion_id}", headers=_cabeceras(), timeout=15)
+    return {"status_code": resp.status_code, "data": resp.json()}
+
+
+def devuelto_del_cargo(cargo_id: str) -> int:
+    """Los céntimos que Culqi ya devolvió de ese cargo (amount_refunded). Si no se puede saber, lanza (httpx.HTTPError
+    o ValueError): quien llama no sigue sin ese dato."""
+    resultado = obtener_cargo(cargo_id)
+    devuelto = resultado["data"].get("amount_refunded") if resultado["status_code"] == 200 else None
+    if isinstance(devuelto, bool) or not isinstance(devuelto, (int, float)):
+        raise ValueError(f"Culqi no dijo cuánto se devolvió del cargo (HTTP {resultado['status_code']})")
+    return int(devuelto)
 
 
 def _milisegundos(momento: datetime) -> int:
@@ -94,22 +118,25 @@ def buscar_cargo(referencia: str, desde: datetime, hasta: datetime) -> dict:
     return {"encontrado": hallado, "completo": hallado is not None or len(objetos) < POR_PAGINA}
 
 
-def buscar_devolucion(cargo_id: str, monto_soles, desde: datetime, hasta: datetime) -> dict:
-    """Si ya se devolvió el cargo, mirando cuánto dice Culqi que se le devolvió (amount_refunded): cada cargo se devuelve
-    una sola vez y por su monto (lo asegura el índice uq_intentos_pago_devolucion). Devuelve {"encontrado", "completo"}:
-    - amount_refunded >= el monto: se devolvió. La devolución se busca entre las de la ventana (por su charge_id) para
-      tener su id; si no aparece, va {"id": None, "charge_id": ...};
-    - amount_refunded == 0: no se devolvió (completo);
+def buscar_devolucion(cargo_id: str, monto_soles, desde: datetime, hasta: datetime, devuelto_antes=0) -> dict:
+    """Si esta devolución del cargo se hizo, mirando cuánto dice Culqi que lleva devuelto (amount_refunded), ACUMULADO:
+    lo que ya estaba devuelto al empezar (devuelto_antes, en céntimos) más esta devolución. Devuelve
+    {"encontrado", "completo"}:
+    - amount_refunded >= lo de antes + el monto: se hizo. La devolución se busca entre las de la ventana (por su
+      charge_id) para tener su id; si no aparece, va {"id": None, "charge_id": ...};
+    - amount_refunded == lo de antes: no se hizo (completo);
     - otro valor, o sin el campo: no se puede concluir.
-    Si Culqi no responde al pedir el cargo, lanza: quien llama reintenta en la pasada siguiente."""
-    with httpx.Client() as client:
-        resp = client.get(f"{CULQI_API_BASE}/charges/{cargo_id}", headers=_cabeceras(), timeout=15)
-    resp.raise_for_status()
-    devuelto = resp.json().get("amount_refunded")
+    Si Culqi no responde bien al pedir el cargo, lanza (httpx.HTTPError o ValueError): quien llama reintenta en la pasada
+    siguiente."""
+    resultado = obtener_cargo(cargo_id)
+    if resultado["status_code"] != 200:
+        raise ValueError(f"Culqi respondió {resultado['status_code']} al pedir el cargo")
+    devuelto = resultado["data"].get("amount_refunded")
     if isinstance(devuelto, bool) or not isinstance(devuelto, (int, float)):
         return {"encontrado": None, "completo": False}
-    if devuelto < _centimos(monto_soles):
-        return {"encontrado": None, "completo": devuelto == 0}
+    antes = int(devuelto_antes or 0)
+    if devuelto < antes + centimos(monto_soles):
+        return {"encontrado": None, "completo": devuelto == antes}
     try:
         devoluciones = _listar_en_ventana("refunds", desde, hasta) or []
     except httpx.HTTPError:  # ya se sabe que se devolvió: el id es un dato más

@@ -30,7 +30,7 @@ from comun.auth import verificar_token, requiere_rol, security
 from comun.auth import secreto_de_servicio_valido
 from fastapi.security import HTTPAuthorizationCredentials
 import culqi_client
-from culqi_client import crear_cargo, crear_devolucion
+from culqi_client import crear_cargo, crear_devolucion, devuelto_del_cargo, obtener_cargo, obtener_devolucion
 from rabbitmq_consumer import crear_pago_si_falta, lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
 from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
 from comun import bandeja_salida
@@ -39,7 +39,7 @@ from logica_liquidaciones import COMISION_PLATAFORMA_PORCENTAJE
 import logica_cobros
 from reintento_liquidaciones import lanzar_reintento_liquidaciones_en_hilo
 from comun.migraciones import agregar_columnas_faltantes
-from migraciones import asegurar_indice_unico_de_pagos
+from migraciones import asegurar_indice_unico_de_pagos, asegurar_indices_de_cargos
 from comun.imagenes import leer_imagen_validada, LIMITE_CUERPO_BYTES, MENSAJE_MUY_GRANDE
 from minio_client import subir_constancia, leer_constancia
 from fastapi.responses import JSONResponse
@@ -77,6 +77,7 @@ Base.metadata.create_all(bind=engine)
 # create_all() no agrega columnas a una tabla que ya existe (p. ej. la constancia de la transferencia en `pagos`).
 agregar_columnas_faltantes(engine, Base)
 asegurar_indice_unico_de_pagos(engine)
+asegurar_indices_de_cargos(engine)  # un cargo de Culqi nunca se asigna a dos pagos
 bandeja_salida.asegurar_esquema(engine, EXCHANGE_DE_EVENTOS)  # los índices de la bandeja de salida
 
 app = FastAPI()
@@ -600,10 +601,18 @@ def _empezar_cobro(db: Session, pago, parte: str, monto: Decimal, metodo: str) -
             "metodo": metodo, "estado_anterior": anterior, "items": items}
 
 
-def _cerrar_cobro(db: Session, referencia, aprobado: bool, cargo_id=None, mensaje=None):
-    """Fase 3, y también la de la conciliación: un solo commit con el resultado del intento, el estado del pago y su
-    aviso. Solo si el intento sigue en curso: si otro ya lo resolvió no se repite nada (ni el aviso). Devuelve
-    (pago, parte, items) o None."""
+def _anotar_resolucion(intento, resolucion: dict | None) -> None:
+    """La resolución a mano de un admin (panel "Cobros por revisar en Culqi"): quién, por qué y cuándo."""
+    if resolucion:
+        intento.resuelto_por = resolucion["por"]
+        intento.motivo_resolucion = resolucion["motivo"]
+        intento.fecha_resolucion = datetime.utcnow()
+
+
+def _cerrar_cobro(db: Session, referencia, aprobado: bool, cargo_id=None, mensaje=None, resolucion: dict | None = None):
+    """Fase 3, y también la de la conciliación y la del admin: un solo commit con el resultado del intento, el estado del
+    pago y su aviso. Solo si el intento sigue en curso: si otro ya lo resolvió no se repite nada (ni el aviso). Devuelve
+    (pago, parte, items) o None. Si el cargo ya está asignado a otro pago, el commit lanza IntegrityError."""
     intento = (db.query(models.IntentoPago)
                .filter(models.IntentoPago.id == referencia, models.IntentoPago.estado == "en_curso")
                .with_for_update().first())
@@ -618,6 +627,7 @@ def _cerrar_cobro(db: Session, referencia, aprobado: bool, cargo_id=None, mensaj
     intento.cargo_id = cargo_id or intento.cargo_id
     intento.mensaje = mensaje
     intento.fecha_fin = datetime.utcnow()
+    _anotar_resolucion(intento, resolucion)
     parte = intento.parte
     if aprobado:
         _aplicar_parte_pagada(db, pago, parte, intento.metodo, cargo_id)
@@ -736,12 +746,13 @@ def procesar_pago(
 INTERVALO_CONCILIACION_SEGUNDOS = 60
 ESPERA_ANTES_DE_CONCILIAR = timedelta(minutes=2)
 MARGEN_DE_BUSQUEDA = timedelta(minutes=5)  # la ventana alrededor de la hora del intento (reloj de Culqi, demoras)
-PASADAS_SIN_RASTRO = 3  # tantas búsquedas completas sin encontrarlo: Culqi no lo hizo
+PASADAS_SIN_RASTRO = 3  # tantas búsquedas completas sin encontrar el cargo: revisión manual (nunca "no hubo cobro")
 PASADAS_MAXIMAS = 10  # sin poder averiguarlo: revisión manual, con aviso en verificar_despliegue y en el panel
 
 
-def _anotar_pasada(db: Session, referencia, mensaje: str) -> int:
-    """Una búsqueda que no resolvió el intento; con PASADAS_MAXIMAS, pasa a revisión manual. Devuelve las pasadas."""
+def _anotar_pasada(db: Session, referencia, mensaje: str, revision: bool = False) -> int:
+    """Una búsqueda que no resolvió el intento. Con revision=True, o al llegar a PASADAS_MAXIMAS, pasa a revisión manual:
+    la conciliación ya no lo toca y lo resuelve un admin desde el panel. Devuelve las pasadas."""
     intento = (db.query(models.IntentoPago)
                .filter(models.IntentoPago.id == referencia, models.IntentoPago.estado == "en_curso")
                .with_for_update().first())
@@ -751,67 +762,81 @@ def _anotar_pasada(db: Session, referencia, mensaje: str) -> int:
     intento.conciliaciones = (intento.conciliaciones or 0) + 1
     intento.mensaje = mensaje
     pasadas = intento.conciliaciones
-    if pasadas >= PASADAS_MAXIMAS and not intento.revision_manual:
+    if (revision or pasadas >= PASADAS_MAXIMAS) and not intento.revision_manual:
         intento.revision_manual = True
-        logger.error("Pedido %s: el %s con referencia %s no se pudo resolver en %d pasadas (%s). REVISIÓN MANUAL: buscarlo "
-                     "en el panel de Culqi por esa referencia", intento.pedido_id, intento.tipo, referencia, pasadas, mensaje)
+        logger.error("Pedido %s: el %s con referencia %s queda para REVISIÓN MANUAL tras %d pasadas (%s): resolverlo desde "
+                     "el panel del admin", intento.pedido_id, intento.tipo, referencia, pasadas, mensaje)
     db.commit()
     return pasadas
 
 
-def averiguar_en_culqi(tipo: str, referencia: str, inicio: datetime, cargo_id, monto) -> dict:
+def averiguar_en_culqi(caso: dict) -> dict:
     """Qué pasó en Culqi con un intento ({"encontrado", "completo"}, ver culqi_client): el cobro se busca por su
-    referencia entre los cargos de la ventana de su hora; la devolución, en el cargo que se devolvía (amount_refunded),
-    porque Culqi no guarda la metadata de las devoluciones."""
-    desde, hasta = inicio - MARGEN_DE_BUSQUEDA, inicio + MARGEN_DE_BUSQUEDA
-    if tipo == "cobro":
-        return culqi_client.buscar_cargo(referencia, desde, hasta)
-    return culqi_client.buscar_devolucion(cargo_id, monto, desde, hasta)
+    referencia (la de la metadata) entre los cargos de la ventana de su hora; la devolución, en el cargo que se devolvía,
+    comparando lo acumulado (amount_refunded contra lo devuelto antes + esta), porque Culqi no guarda la metadata de las
+    devoluciones."""
+    desde, hasta = caso["inicio"] - MARGEN_DE_BUSQUEDA, caso["inicio"] + MARGEN_DE_BUSQUEDA
+    if caso["tipo"] == "cobro":
+        return culqi_client.buscar_cargo(caso["referencia"], desde, hasta)
+    return culqi_client.buscar_devolucion(caso["cargo_id"], caso["monto"], desde, hasta, caso["devuelto_antes"])
 
 
 def conciliar_intentos_en_curso(db: Session, ahora=None, buscar=None) -> int:
     """Los intentos (cobros y devoluciones) en curso hace más de ESPERA_ANTES_DE_CONCILIAR: se averigua en Culqi qué
     pasó con cada uno (averiguar_en_culqi) y se resuelven, cada uno en su commit (con su aviso, una sola vez). Nunca con
-    una transacción abierta mientras se consulta a Culqi. Devuelve cuántos resolvió."""
+    una transacción abierta mientras se consulta a Culqi. Devuelve cuántos resolvió.
+
+    Un cobro solo se resuelve solo cuando aparece su cargo: si no aparece, nunca se concluye "no hubo cobro" (el
+    comprador podría haber pagado); pasa a revisión manual y lo decide un admin desde el panel. Una devolución sí se
+    da por no hecha cuando el cargo dice que no se devolvió nada más (amount_refunded es del propio cargo, no de una
+    búsqueda): se reintenta con tope y Culqi nunca devuelve más que el cargo."""
     ahora = ahora or datetime.utcnow()
     buscar = buscar or averiguar_en_culqi
-    pendientes = [(fila.id, fila.tipo, fila.fecha_inicio, fila.conciliaciones, fila.cargo_id, fila.monto) for fila in (
+    pendientes = [{"referencia": str(fila.id), "tipo": fila.tipo, "inicio": fila.fecha_inicio, "pasadas": fila.conciliaciones,
+                   "cargo_id": fila.cargo_id, "monto": fila.monto, "devuelto_antes": fila.devuelto_antes or 0} for fila in (
         db.query(models.IntentoPago)
         .filter(models.IntentoPago.estado == "en_curso", models.IntentoPago.revision_manual.is_(False),
                 models.IntentoPago.fecha_inicio < ahora - ESPERA_ANTES_DE_CONCILIAR)
         .order_by(models.IntentoPago.fecha_inicio).all())]
     db.rollback()
     resueltos = 0
-    for referencia, tipo, inicio, pasadas, cargo_id, monto in pendientes:
+    for caso in pendientes:
+        referencia, tipo, pasadas = caso["referencia"], caso["tipo"], caso["pasadas"]
         try:
-            hallado = buscar(tipo, str(referencia), inicio, cargo_id, monto)
+            hallado = buscar(caso)
         except Exception as error:  # noqa: BLE001 - Culqi no contestó: se reintenta en la pasada siguiente
+            logger.warning("La búsqueda en Culqi del %s %s falló; se reintenta en la pasada siguiente", tipo, referencia,
+                           exc_info=True)
             _anotar_pasada(db, referencia, f"Culqi no respondió a la búsqueda: {type(error).__name__}")
             continue
         objeto = hallado["encontrado"]
-        if tipo == "cobro" and objeto is not None:
-            aprobado = culqi_client.cargo_exitoso(objeto)
-            cerrado = _cerrar_cobro(db, referencia, aprobado, cargo_id=objeto.get("id"),
-                                    mensaje="Resuelto por la conciliación: " + ("Culqi lo cobró" if aprobado else
-                                                                               "Culqi no lo cobró"))
-            _despues_del_cobro(db, cerrado, aprobado)
-            resueltos += cerrado is not None
-        elif tipo == "devolucion" and objeto is not None:
-            if _cerrar_devolucion(db, referencia, True, devolucion_id=objeto.get("id"),
-                                  mensaje="Resuelta por la conciliación: Culqi la hizo"):
-                resueltos += 1
-                _terminar_devolucion_si_corresponde(db, _pago_del_intento(db, referencia))
-        elif hallado["completo"] and pasadas + 1 >= PASADAS_SIN_RASTRO:
-            mensaje = "Resuelto por la conciliación: no está en Culqi (no se hizo)"
-            if tipo == "cobro":
-                cerrado = _cerrar_cobro(db, referencia, False, mensaje=mensaje)
-                _despues_del_cobro(db, cerrado, False)
+        try:
+            if tipo == "cobro" and objeto is not None:
+                aprobado = culqi_client.cargo_exitoso(objeto)
+                cerrado = _cerrar_cobro(db, referencia, aprobado, cargo_id=objeto.get("id"),
+                                        mensaje="Resuelto por la conciliación: " + ("Culqi lo cobró" if aprobado else
+                                                                                   "Culqi no lo cobró"))
+                _despues_del_cobro(db, cerrado, aprobado)
                 resueltos += cerrado is not None
-            elif _cerrar_devolucion(db, referencia, False, mensaje=mensaje):
-                resueltos += 1
-        else:
-            _anotar_pasada(db, referencia, "Todavía no aparece en Culqi" if hallado["completo"] else
-                           "Lo que respondió Culqi no alcanza para saberlo")
+            elif tipo == "devolucion" and objeto is not None:
+                if _cerrar_devolucion(db, referencia, True, devolucion_id=objeto.get("id"),
+                                      mensaje="Resuelta por la conciliación: Culqi la hizo"):
+                    resueltos += 1
+                    _terminar_devolucion_si_corresponde(db, _pago_del_intento(db, referencia))
+            elif tipo == "devolucion" and hallado["completo"] and pasadas + 1 >= PASADAS_SIN_RASTRO:
+                if _cerrar_devolucion(db, referencia, False,
+                                      mensaje="Resuelta por la conciliación: el cargo no tiene esta devolución (no se hizo)"):
+                    resueltos += 1
+            elif tipo == "cobro" and hallado["completo"] and pasadas + 1 >= PASADAS_SIN_RASTRO:
+                _anotar_pasada(db, referencia, "No aparece en Culqi: lo decide un admin desde el panel (no se concluye "
+                                               "solo que no hubo cobro)", revision=True)
+            else:
+                _anotar_pasada(db, referencia, "Todavía no aparece en Culqi" if hallado["completo"] else
+                               "Lo que respondió Culqi no alcanza para saberlo")
+        except IntegrityError:  # el cargo ya está asignado a otro pago (índice único): nunca se asigna a dos
+            db.rollback()
+            _anotar_pasada(db, referencia, f"El cargo {objeto.get('id') if objeto else '?'} ya está asignado a otro pago",
+                           revision=True)
     return resueltos
 
 
@@ -935,6 +960,7 @@ def pagos_por_revisar(db: Session = Depends(get_db), usuario: dict = Depends(req
         intentos = (db.query(models.IntentoPago).filter(models.IntentoPago.pago_id == pago.id)
                     .order_by(models.IntentoPago.fecha_inicio.desc()).all())
         actual = next((i for i in intentos if i.estado == "en_curso"), intentos[0] if intentos else None)
+        ultima_decision = max((i.fecha_resolucion for i in intentos if i.fecha_resolucion), default=None)
         salida.append({
             "pedido_id": str(pago.pedido_id),
             "tipo": "devolucion" if pago.estado == "reembolso_procesando" else "cobro",
@@ -945,10 +971,221 @@ def pagos_por_revisar(db: Session = Depends(get_db), usuario: dict = Depends(req
             "cargo_id": actual.cargo_id if actual else None,
             "estado_del_intento": actual.estado if actual else None,
             "pasadas": actual.conciliaciones if actual else 0,
-            "revision_manual": any(i.revision_manual for i in intentos),
+            "revision_manual": any(i.revision_manual for i in intentos
+                                   if ultima_decision is None or i.fecha_inicio > ultima_decision),
+            "puede_resolver": actual is not None and (actual.estado != "en_curso" or
+                                                      actual.fecha_inicio < datetime.utcnow() - ESPERA_ANTES_DE_CONCILIAR),
             "mensaje": actual.mensaje if actual else None,
         })
     return salida
+
+
+# ---- Resolver a mano lo que la conciliación no pudo (panel "Cobros por revisar en Culqi") ----
+ID_DE_CULQI = re.compile(r"^[A-Za-z0-9_]{6,64}$")
+ESTADOS_DE_DEVOLUCION_HECHA = ("completa",)
+
+
+class ResolucionManual(BaseModel):
+    resultado: Literal["cobrado", "no_cobrado", "devuelto", "no_devuelto"]
+    cargo_id: str | None = Field(default=None, max_length=64)  # "cobrado": el id del cargo en Culqi
+    devolucion_id: str | None = Field(default=None, max_length=64)  # "devuelto": el id de la devolución en Culqi
+    motivo: str = Field(max_length=500)
+
+    @field_validator("motivo")
+    @classmethod
+    def _motivo_obligatorio(cls, valor: str) -> str:
+        limpio = " ".join(valor.split())
+        if len(limpio) < 10:
+            raise ValueError("Escribe el motivo (al menos 10 caracteres): queda registrado con tu nombre.")
+        return limpio
+
+
+def _cargo_validado(cargo_id: str, referencia: str, pedido_id: str, monto) -> dict:
+    """El cargo que el admin dice que cobró este intento, validado contra Culqi: existe, se cobró, por el monto del
+    intento, en soles, y su metadata no es de otro intento ni de otro pedido. Si no cuadra, 422 con el porqué."""
+    try:
+        resultado = obtener_cargo(cargo_id)
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(status_code=503, detail="No se pudo consultar Culqi para validar el cargo: intenta de nuevo en un momento.")
+    if resultado["status_code"] == 404:
+        raise HTTPException(status_code=422, detail="Culqi no tiene un cargo con ese id.")
+    if resultado["status_code"] != 200:
+        raise HTTPException(status_code=503, detail="Culqi no respondió bien al validar el cargo: intenta de nuevo en un momento.")
+    cargo = resultado["data"]
+    metadata = cargo.get("metadata") or {}
+    if not culqi_client.cargo_exitoso(cargo):
+        raise HTTPException(status_code=422, detail="Según Culqi, ese cargo no se cobró.")
+    if cargo.get("amount") != culqi_client.centimos(monto):
+        raise HTTPException(status_code=422, detail=f"Ese cargo es por S/ {(cargo.get('amount') or 0) / 100:.2f} y este "
+                                                    f"cobro era por S/ {Decimal(str(monto)):.2f}.")
+    if cargo.get("currency_code") not in (None, "PEN"):
+        raise HTTPException(status_code=422, detail="Ese cargo no es en soles.")
+    if metadata.get("referencia") and str(metadata["referencia"]) != referencia:
+        raise HTTPException(status_code=422, detail="Ese cargo es de otro intento de cobro: su referencia no es esta.")
+    if metadata.get("pedido_id") and str(metadata["pedido_id"]) != pedido_id:
+        raise HTTPException(status_code=422, detail="Ese cargo es de otro pedido.")
+    return cargo
+
+
+def _exigir_que_culqi_no_tenga_el_cargo(referencia: str, inicio: datetime) -> None:
+    """Antes de dar un cobro por no hecho: si Culqi tiene un cargo con esta referencia, 409 (es "cobrado"). Si la búsqueda
+    no se puede hacer, decide el admin (ya lo buscó en el panel de Culqi)."""
+    try:
+        hallado = culqi_client.buscar_cargo(referencia, inicio - MARGEN_DE_BUSQUEDA, inicio + MARGEN_DE_BUSQUEDA)
+    except (httpx.HTTPError, ValueError) as error:
+        logger.warning("No se pudo buscar en Culqi el cobro %s antes de darlo por no hecho (%s): decide el admin",
+                       referencia, error)
+        return
+    if hallado["encontrado"] is not None:
+        raise HTTPException(status_code=409, detail=f"Culqi tiene un cargo con esta referencia "
+                                                    f"({hallado['encontrado'].get('id')}): resuélvelo como cobrado.")
+
+
+def _resolver_cobro(db: Session, intento, datos: ResolucionManual, resolucion: dict) -> dict:
+    if datos.resultado not in ("cobrado", "no_cobrado"):
+        raise HTTPException(status_code=422, detail="Un cobro se resuelve como cobrado o no cobrado.")
+    if intento.estado != "en_curso":
+        raise HTTPException(status_code=409, detail=f"Este cobro ya se resolvió ({intento.estado}).")
+    if intento.fecha_inicio > datetime.utcnow() - ESPERA_ANTES_DE_CONCILIAR:
+        raise HTTPException(status_code=409, detail="Este cobro todavía se está procesando: espera unos minutos.")
+    referencia, pedido_id, monto, inicio = str(intento.id), str(intento.pedido_id), intento.monto, intento.fecha_inicio
+    db.rollback()  # sin transacción abierta mientras se consulta a Culqi
+    if datos.resultado == "cobrado":
+        cargo_id = (datos.cargo_id or "").strip()
+        if not ID_DE_CULQI.match(cargo_id):
+            raise HTTPException(status_code=422, detail="Escribe el id del cargo tal como aparece en el panel de Culqi.")
+        _cargo_validado(cargo_id, referencia, pedido_id, monto)
+        try:
+            cerrado = _cerrar_cobro(db, referencia, True, cargo_id=cargo_id, mensaje="Resuelto a mano: cobrado",
+                                    resolucion=resolucion)
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=409, detail="Ese cargo ya está asignado a otro pago: un cargo nunca se asigna a dos.")
+    else:
+        _exigir_que_culqi_no_tenga_el_cargo(referencia, inicio)
+        cerrado = _cerrar_cobro(db, referencia, False, mensaje="Resuelto a mano: no cobrado", resolucion=resolucion)
+    if cerrado is None:
+        raise HTTPException(status_code=409, detail="Este cobro se resolvió mientras lo revisabas: recarga la lista.")
+    _despues_del_cobro(db, cerrado, datos.resultado == "cobrado")
+    logger.info("Pedido %s: el admin %s resolvió a mano el cobro %s como %s", pedido_id, resolucion["por"], referencia,
+                datos.resultado)
+    return {"resultado": datos.resultado, "pedido_id": pedido_id, "estado_del_pago": cerrado[0].estado}
+
+
+def _devolucion_validada(devolucion_id: str, cargo: str, monto) -> None:
+    """La devolución que el admin dice que se hizo, validada contra Culqi: existe, es de ese cargo, por el monto que había
+    que devolver y está completa. Si no cuadra, 422 con el porqué."""
+    try:
+        resultado = obtener_devolucion(devolucion_id)
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(status_code=503, detail="No se pudo consultar Culqi para validar la devolución: intenta de nuevo en un momento.")
+    if resultado["status_code"] == 404:
+        raise HTTPException(status_code=422, detail="Culqi no tiene una devolución con ese id.")
+    if resultado["status_code"] != 200:
+        raise HTTPException(status_code=503, detail="Culqi no respondió bien al validar la devolución: intenta de nuevo en un momento.")
+    devolucion = resultado["data"]
+    if devolucion.get("charge_id") != cargo:
+        raise HTTPException(status_code=422, detail="Esa devolución es de otro cargo.")
+    if devolucion.get("amount") != culqi_client.centimos(monto):
+        raise HTTPException(status_code=422, detail=f"Esa devolución es por S/ {(devolucion.get('amount') or 0) / 100:.2f} "
+                                                    f"y había que devolver S/ {Decimal(str(monto)):.2f}.")
+    estado = str(devolucion.get("status") or "").lower()
+    if estado and estado not in ESTADOS_DE_DEVOLUCION_HECHA:
+        raise HTTPException(status_code=422, detail=f"Según Culqi esa devolución está «{estado}», no completa.")
+
+
+def _exigir_que_el_cargo_no_figure_devuelto(cargo: str, monto, devuelto_antes: int) -> None:
+    """Antes de dar una devolución por no hecha: si el cargo ya figura devuelto en Culqi (lo acumulado), 409. Si no se
+    puede consultar, decide el admin."""
+    try:
+        devuelto = devuelto_del_cargo(cargo)
+    except (httpx.HTTPError, ValueError) as error:
+        logger.warning("No se pudo consultar en Culqi el cargo %s antes de dar su devolución por no hecha (%s): decide "
+                       "el admin", cargo, error)
+        return
+    if devuelto >= devuelto_antes + culqi_client.centimos(monto):
+        raise HTTPException(status_code=409, detail="Según Culqi ese cargo ya se devolvió: resuélvelo como devuelto, con el "
+                                                    "id de la devolución.")
+
+
+def _resolver_devolucion(db: Session, intento, datos: ResolucionManual, resolucion: dict) -> dict:
+    if datos.resultado not in ("devuelto", "no_devuelto"):
+        raise HTTPException(status_code=422, detail="Una devolución se resuelve como devuelta o no devuelta.")
+    pago = db.query(models.Pago).filter(models.Pago.id == intento.pago_id).first()
+    if pago is None or pago.estado != "reembolso_procesando":
+        raise HTTPException(status_code=409, detail="Esta devolución ya no está pendiente.")
+    cargo, monto, parte, pago_id, pedido_uuid = intento.cargo_id, intento.monto, intento.parte, pago.id, pago.pedido_id
+    pedido_id = str(pedido_uuid)
+    del_cargo = (db.query(models.IntentoPago)
+                 .filter(models.IntentoPago.tipo == "devolucion", models.IntentoPago.cargo_id == cargo)
+                 .order_by(models.IntentoPago.fecha_inicio.desc()).all())
+    if any(i.estado == "aprobado" for i in del_cargo):
+        raise HTTPException(status_code=409, detail="Ese cargo ya figura devuelto.")
+    en_curso = next((i for i in del_cargo if i.estado == "en_curso"), None)
+    if en_curso is not None and en_curso.fecha_inicio > datetime.utcnow() - ESPERA_ANTES_DE_CONCILIAR:
+        raise HTTPException(status_code=409, detail="Esta devolución todavía se está procesando: espera unos minutos.")
+    referencia_en_curso = str(en_curso.id) if en_curso else None
+    ultimo = str(del_cargo[0].id)
+    devuelto_antes = (en_curso or del_cargo[0]).devuelto_antes or 0
+    db.rollback()  # sin transacción abierta mientras se consulta a Culqi
+    if datos.resultado == "devuelto":
+        devolucion_id = (datos.devolucion_id or "").strip()
+        if not ID_DE_CULQI.match(devolucion_id):
+            raise HTTPException(status_code=422, detail="Escribe el id de la devolución tal como aparece en el panel de Culqi.")
+        _devolucion_validada(devolucion_id, cargo, monto)
+        if referencia_en_curso is None:  # la última se rechazó: la devolución hecha queda como un intento más, ya cerrado
+            referencia_en_curso = str(uuid.uuid4())
+            db.add(models.IntentoPago(id=referencia_en_curso, pago_id=pago_id, pedido_id=pedido_uuid,
+                                      tipo="devolucion", parte=parte, monto=monto, estado="en_curso",
+                                      estado_anterior="reembolso_procesando", cargo_id=cargo, fecha_inicio=datetime.utcnow()))
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                raise HTTPException(status_code=409, detail="Otra devolución de ese cargo empezó mientras lo revisabas: recarga la lista.")
+        if not _cerrar_devolucion(db, referencia_en_curso, True, devolucion_id=devolucion_id,
+                                  mensaje="Resuelta a mano: devuelta", resolucion=resolucion):
+            raise HTTPException(status_code=409, detail="Esta devolución se resolvió mientras lo revisabas: recarga la lista.")
+        _terminar_devolucion_si_corresponde(db, pago_id)
+    else:
+        _exigir_que_el_cargo_no_figure_devuelto(cargo, monto, devuelto_antes)
+        if referencia_en_curso is not None:
+            if not _cerrar_devolucion(db, referencia_en_curso, False, mensaje="Resuelta a mano: no devuelta (se reintenta)",
+                                      resolucion=resolucion):
+                raise HTTPException(status_code=409, detail="Esta devolución se resolvió mientras lo revisabas: recarga la lista.")
+        else:  # la decisión queda en el último intento: el tope de reintentos vuelve a contar desde aquí
+            fila = db.query(models.IntentoPago).filter(models.IntentoPago.id == ultimo).with_for_update().first()
+            _anotar_resolucion(fila, resolucion)
+            db.commit()
+    logger.info("Pedido %s: el admin %s resolvió a mano la devolución del cargo %s como %s", pedido_id, resolucion["por"],
+                cargo, datos.resultado)
+    estado = db.query(models.Pago.estado).filter(models.Pago.id == pago_id).scalar()
+    return {"resultado": datos.resultado, "pedido_id": pedido_id, "estado_del_pago": estado}
+
+
+@app.post("/pagos/admin/por-revisar/{referencia}/resolver")
+def resolver_caso_por_revisar(referencia: uuid.UUID, datos: ResolucionManual, db: Session = Depends(get_db),
+                              usuario: dict = Depends(requiere_rol("admin"))):
+    """Un admin resuelve a mano un cobro o una devolución que la conciliación no resolvió sola. El motivo es obligatorio y
+    queda en el intento con quién y cuándo (resuelto_por, motivo_resolucion, fecha_resolucion). Nada se hace con una
+    transacción abierta mientras se consulta a Culqi.
+    - Cobro "cobrado": con el id del cargo, validado contra Culqi (_cargo_validado). El pago queda aprobado con su aviso,
+      una sola vez; un cargo ya asignado a otro pago da 409.
+    - Cobro "no_cobrado": el pago queda rechazado (con su aviso), se libera el stock y el comprador puede volver a pagar.
+      Si Culqi tiene un cargo con esta referencia, 409.
+    - Devolución "devuelto": con el id de la devolución, validado contra Culqi (_devolucion_validada).
+    - Devolución "no_devuelto": se vuelve a intentar sola (el tope vuelve a contar). Si el cargo ya figura devuelto, 409."""
+    intento = db.query(models.IntentoPago).filter(models.IntentoPago.id == referencia).first()
+    if intento is None:
+        raise HTTPException(status_code=404, detail="No hay un cobro ni una devolución con esa referencia.")
+    try:
+        admin = uuid.UUID(str(usuario.get("sub")))
+    except ValueError:
+        raise HTTPException(status_code=403, detail="No se pudo saber qué admin resuelve.")
+    resolucion = {"por": admin, "motivo": datos.motivo}
+    if intento.tipo == "cobro":
+        return _resolver_cobro(db, intento, datos, resolucion)
+    return _resolver_devolucion(db, intento, datos, resolucion)
 
 
 @app.get("/pagos/admin/transferencias")
@@ -1103,7 +1340,8 @@ def _pago_del_intento(db: Session, referencia):
     return pago_id
 
 
-def _cerrar_devolucion(db: Session, referencia, aprobado: bool, devolucion_id=None, mensaje=None) -> bool:
+def _cerrar_devolucion(db: Session, referencia, aprobado: bool, devolucion_id=None, mensaje=None,
+                       resolucion: dict | None = None) -> bool:
     """El resultado de devolver un cargo, en un commit, solo si su intento seguía en curso. Una devolución hecha queda
     también en pago.reembolso_ids (lo que se muestra)."""
     intento = (db.query(models.IntentoPago)
@@ -1114,6 +1352,7 @@ def _cerrar_devolucion(db: Session, referencia, aprobado: bool, devolucion_id=No
         return False
     intento.estado = "aprobado" if aprobado else "rechazado"
     intento.devolucion_id, intento.mensaje, intento.fecha_fin = devolucion_id, mensaje, datetime.utcnow()
+    _anotar_resolucion(intento, resolucion)
     if aprobado:
         pago = db.query(models.Pago).filter(models.Pago.id == intento.pago_id).with_for_update().first()
         hechos = json.loads(pago.reembolso_ids) if pago.reembolso_ids else []
@@ -1125,20 +1364,38 @@ def _cerrar_devolucion(db: Session, referencia, aprobado: bool, devolucion_id=No
 
 def _devolver_cargo(db: Session, pago_id, pedido_id, cargo: str, monto: Decimal, parte: str) -> str:
     """Devuelve un cargo en dos fases. "aprobado" (devuelto ahora o antes), "en_curso" (hay una en curso, o Culqi no
-    contestó: lo resuelve la conciliación), "rechazado" (Culqi la rechazó; se reintenta con tope) o "revision"."""
-    previos = [fila.estado for fila in db.query(models.IntentoPago.estado).filter(
-        models.IntentoPago.tipo == "devolucion", models.IntentoPago.cargo_id == cargo).all()]
+    contestó: lo resuelve la conciliación), "rechazado" (Culqi la rechazó; se reintenta con tope), "pendiente" (no se
+    pudo saber cuánto llevaba devuelto el cargo: no se empezó y se reintenta) o "revision" (al tope de rechazos, o
+    marcada para revisión manual: la decide un admin desde el panel; después de su decisión el tope vuelve a contar).
+
+    Hoy cada cargo se devuelve entero (el monto de su parte) y una sola vez: el índice uq_intentos_pago_devolucion no
+    deja empezar otra mientras una está en curso o ya salió. Puede haber varios intentos rechazados, nunca dos hechos."""
+    filas = db.query(models.IntentoPago.estado, models.IntentoPago.revision_manual, models.IntentoPago.fecha_inicio,
+                     models.IntentoPago.fecha_resolucion).filter(
+        models.IntentoPago.tipo == "devolucion", models.IntentoPago.cargo_id == cargo).all()
     db.rollback()
-    if "aprobado" in previos:
+    estados = [fila.estado for fila in filas]
+    if "aprobado" in estados:
         return "aprobado"
-    if "en_curso" in previos:
+    if "en_curso" in estados:
         return "en_curso"
-    if previos.count("rechazado") >= MAX_INTENTOS_DEVOLUCION:
+    ultima_decision = max((fila.fecha_resolucion for fila in filas if fila.fecha_resolucion), default=None)
+    desde_la_decision = [fila for fila in filas if ultima_decision is None or fila.fecha_inicio > ultima_decision]
+    if (any(fila.revision_manual for fila in desde_la_decision)
+            or sum(fila.estado == "rechazado" for fila in desde_la_decision) >= MAX_INTENTOS_DEVOLUCION):
         return "revision"
+    # Fase 0, sin transacción abierta: cuánto llevaba devuelto el cargo según Culqi. La conciliación compara lo
+    # acumulado (esto + la devolución), así que sin ese dato no se empieza.
+    try:
+        devuelto_antes = devuelto_del_cargo(cargo)
+    except (httpx.HTTPError, ValueError) as error:
+        logger.error("Pedido %s: no se pudo saber cuánto llevaba devuelto el cargo %s (%s); la devolución se reintenta",
+                     pedido_id, cargo, error)
+        return "pendiente"
     referencia = uuid.uuid4()
     db.add(models.IntentoPago(id=referencia, pago_id=pago_id, pedido_id=pedido_id, tipo="devolucion", parte=parte,
                               monto=monto, estado="en_curso", estado_anterior="reembolso_procesando", cargo_id=cargo,
-                              fecha_inicio=datetime.utcnow()))
+                              devuelto_antes=devuelto_antes, fecha_inicio=datetime.utcnow()))
     try:
         db.commit()
     except IntegrityError:  # otra devolución del mismo cargo empezó a la vez (otra réplica, otro pedido de cancelación)

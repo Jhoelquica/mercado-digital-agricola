@@ -51,6 +51,13 @@ def _el_pedido_es_de_quien_paga(monkeypatch):
     monkeypatch.setattr(main, "_exigir_dueno_para_pagar", lambda *args, **kwargs: None)
 
 
+@pytest.fixture(autouse=True)
+def _culqi_sin_devoluciones_previas(monkeypatch):
+    """Antes de devolver, Pagos pregunta a Culqi cuánto llevaba devuelto el cargo: en las pruebas, nada (salvo que la
+    prueba diga otra cosa)."""
+    monkeypatch.setattr(main, "devuelto_del_cargo", lambda cargo_id: 0)
+
+
 class _RespuestaProductoFalsa:
     def __init__(self, productor_id):
         self.status_code = 200
@@ -85,7 +92,7 @@ def _mockear_productos(monkeypatch, mapa_producto_a_productor):
 
 
 def _mockear_cargo_aprobado(monkeypatch):
-    monkeypatch.setattr(main, "crear_cargo", lambda **kwargs: {"status_code": 201, "data": {"id": "chr_test_123"}})
+    monkeypatch.setattr(main, "crear_cargo", lambda **kwargs: {"status_code": 201, "data": {"id": _cargo_nuevo()}})
 
 
 def _crear_pago_directo(items) -> "main.models.Pago":
@@ -300,7 +307,7 @@ def _crear_pago_aprobado_directo(items) -> "main.models.Pago":
             pedido_id=uuid.uuid4(),
             monto=monto,
             estado="aprobado",
-            culqi_charge_id="chr_test_ya_cobrado",
+            culqi_charge_id=_cargo_nuevo(),
             items=json.dumps(items),
         )
         db.add(pago)
@@ -675,7 +682,7 @@ def test_reintentar_un_pago_rechazado_reserva_el_stock_antes_de_cobrar_y_al_apro
     monkeypatch.setattr(main, "reservar_stock", lambda items: orden.append(("reservar", items)))
     compensar = MagicMock()
     monkeypatch.setattr(main, "compensar_stock", compensar)
-    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (orden.append(("cobrar", None)) or {"status_code": 201, "data": {"id": "chr_reintento"}}))
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (orden.append(("cobrar", None)) or {"status_code": 201, "data": {"id": _cargo_nuevo()}}))
     _mockear_productos(monkeypatch, {producto: productor})
 
     resp = _procesar(pago)
@@ -738,7 +745,7 @@ def test_un_segundo_intento_sobre_un_pago_ya_aprobado_falla_409_sin_cobrar_otra_
     producto, productor = str(uuid.uuid4()), str(uuid.uuid4())
     pago = _crear_pago_directo([{"producto_id": producto, "cantidad": 1, "precio_unitario": 50.0}])
     cobros = []
-    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (cobros.append(1) or {"status_code": 201, "data": {"id": "chr_1"}}))
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: (cobros.append(1) or {"status_code": 201, "data": {"id": _cargo_nuevo()}}))
     _mockear_productos(monkeypatch, {producto: productor})
 
     assert _procesar(pago).status_code == 200
@@ -1162,7 +1169,9 @@ def _pago_en_camion(total=1000.0, adelanto=700.0, estado="pendiente"):
 
 def _capturar(monkeypatch):
     cobros, eventos, compensar = [], [], MagicMock()
-    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": f"chr_{len(cobros)}"}})
+    # Un cargo distinto en cada cobro (un cargo nunca se asigna a dos pagos): queda anotado en el cobro.
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append({**kw, "cargo": _cargo_nuevo()}) or
+                        {"status_code": 201, "data": {"id": cobros[-1]["cargo"]}})
     anotar_eventos(monkeypatch, main, eventos)
     monkeypatch.setattr(main, "compensar_stock", compensar)
     return cobros, eventos, compensar
@@ -1192,7 +1201,7 @@ def test_el_primer_cobro_es_el_adelanto_y_el_segundo_el_saldo(monkeypatch):
     assert segundo.status_code == 200 and segundo.json()["parte"] == "saldo"
     assert cobros[1]["monto_soles"] == 300.0
     fila = _fila_pago(pago)
-    assert fila.estado == "aprobado" and fila.culqi_charge_id == "chr_1" and fila.culqi_charge_id_saldo == "chr_2"
+    assert fila.estado == "aprobado" and fila.culqi_charge_id == cobros[0]["cargo"] and fila.culqi_charge_id_saldo == cobros[1]["cargo"]
     assert eventos[-1] == {"evento": "saldo_pagado", "pedido_id": str(pago.pedido_id), "monto": "300.00"}
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
     assert _procesar(pago).status_code == 409  # ya está todo pagado
@@ -1877,10 +1886,10 @@ def _conciliar(buscar, pasadas=1):
 
 def _solo(intento, encontrado=None, completo=True):
     """Un buscador falso de Culqi que solo sabe de este intento (de los de otras pruebas no se sabe nada)."""
-    def buscar(tipo, referencia, inicio, cargo_id, monto):
-        if referencia != str(intento.id):
+    def buscar(caso):
+        if caso["referencia"] != str(intento.id):
             return {"encontrado": None, "completo": False}
-        assert tipo == intento.tipo and cargo_id == intento.cargo_id and float(monto) == float(intento.monto)
+        assert (caso["tipo"], caso["cargo_id"], float(caso["monto"])) == (intento.tipo, intento.cargo_id, float(intento.monto))
         return {"encontrado": encontrado, "completo": completo}
     return buscar
 
@@ -1916,6 +1925,41 @@ def test_ninguna_llamada_a_culqi_ocurre_con_una_transaccion_abierta(monkeypatch)
     assert (intento.estado, intento.cargo_id) == ("aprobado", cargo)
     [intento_devolucion] = _intentos_de(pago, "devolucion")
     assert devolucion["metadata"]["referencia"] == str(intento_devolucion.id)
+
+
+def test_ninguna_consulta_a_culqi_ocurre_con_una_transaccion_abierta(monkeypatch):
+    """Las consultas también: la fase 0 de una devolución, la búsqueda de la conciliación y la validación del admin."""
+    vistas = []
+
+    def mirar(nombre, respuesta):
+        def llamada(*args, **kwargs):
+            vistas.append((nombre, _transacciones_abiertas()))
+            return respuesta(*args, **kwargs) if callable(respuesta) else respuesta
+        return llamada
+
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    monkeypatch.setattr(main, "devuelto_del_cargo", mirar("cuánto llevaba devuelto", 0))
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: {"status_code": 201, "data": {"id": "ref_ok"}})
+    assert _devolver(pago.pedido_id).status_code == 200
+
+    def culqi_caido(**kwargs):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    atascado = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    monkeypatch.setattr(main, "crear_cargo", culqi_caido)
+    assert _procesar(atascado).status_code == 502
+    _conciliar(mirar("búsqueda de la conciliación", {"encontrado": None, "completo": False}))
+
+    _, referencia, _ = _cobro_atascado()
+    monkeypatch.setattr(main, "obtener_cargo", mirar("validar el cargo", {"status_code": 404, "data": {}}))
+    assert _resolver(referencia, resultado="cobrado", cargo_id="chr_noexiste01", motivo="Lo vi en el panel de Culqi").status_code == 422
+    monkeypatch.setattr(main.culqi_client, "buscar_cargo", mirar("buscar antes de no cobrado", {"encontrado": None, "completo": True}))
+    assert _resolver(referencia, resultado="no_cobrado", motivo="No aparece en el panel de Culqi").status_code == 200
+    assert {nombre for nombre, _ in vistas} == {"cuánto llevaba devuelto", "búsqueda de la conciliación", "validar el cargo",
+                                                "buscar antes de no cobrado"}
+    assert all(abiertas == 0 for _, abiertas in vistas), vistas
 
 
 def test_dos_cobros_a_la_vez_del_mismo_pedido_hacen_un_solo_cobro_en_culqi(monkeypatch):
@@ -1965,7 +2009,7 @@ def test_si_culqi_cobra_y_no_se_puede_guardar_queda_procesando_y_la_conciliacion
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
 
 
-def test_un_cobro_que_culqi_no_tiene_la_conciliacion_lo_rechaza_y_devuelve_el_stock(monkeypatch):
+def test_un_cobro_que_culqi_no_tiene_va_a_revision_manual_y_nunca_se_rechaza_solo(monkeypatch):
     pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
     compensar, eventos = MagicMock(), []
 
@@ -1978,11 +2022,16 @@ def test_un_cobro_que_culqi_no_tiene_la_conciliacion_lo_rechaza_y_devuelve_el_st
     assert _procesar(pago).status_code == 502
     [intento] = _intentos_de(pago)
     _conciliar(_solo(intento), pasadas=main.PASADAS_SIN_RASTRO - 1)
-    assert _estado_del_pago(pago) == "procesando"  # todavía no: se busca varias veces antes de concluir
-    _conciliar(_solo(intento))
-    assert _estado_del_pago(pago) == "rechazado"
-    compensar.assert_called_once_with(pago.items, pedido_id=pago.pedido_id)
-    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_rechazado"]
+    [intento] = _intentos_de(pago)
+    assert _estado_del_pago(pago) == "procesando" and not intento.revision_manual  # todavía se busca
+    _conciliar(_solo(intento), pasadas=3)
+    [intento] = _intentos_de(pago)
+    # Sin el cargo no se concluye "no hubo cobro": queda para el admin, con el stock reservado y sin avisos.
+    assert (intento.estado, intento.revision_manual) == ("en_curso", True) and "admin" in intento.mensaje
+    assert intento.conciliaciones == main.PASADAS_SIN_RASTRO  # en revisión, la conciliación ya no lo busca
+    assert _estado_del_pago(pago) == "procesando"
+    compensar.assert_not_called()
+    assert [e for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == []
 
 
 def test_si_no_se_puede_averiguar_en_culqi_queda_para_revision_manual(monkeypatch):
@@ -1995,8 +2044,8 @@ def test_si_no_se_puede_averiguar_en_culqi_queda_para_revision_manual(monkeypatc
     assert _procesar(pago).status_code == 502
     [intento] = _intentos_de(pago)
 
-    def buscar(tipo, referencia, inicio, cargo_id, monto):
-        if referencia == str(intento.id):
+    def buscar(caso):
+        if caso["referencia"] == str(intento.id):
             raise main.httpx.ConnectError("Culqi no contesta")
         return {"encontrado": None, "completo": False}
 
@@ -2095,3 +2144,394 @@ def test_el_admin_ve_los_cobros_atascados_con_la_referencia_para_buscarlos_en_cu
     fila = filas[0]
     assert (fila["tipo"], fila["referencia"], fila["revision_manual"], fila["pasadas"]) == ("cobro", str(referencia), True, 10)
     assert fila["monto"] == 40.0 and fila["mensaje"] == "Culqi no respondió a la búsqueda"
+    assert fila["puede_resolver"] is True
+    _sesion_con_rol("comprador")
+
+
+# ============ Confirmaciones de la conciliación (2026-11-19) ============
+# 1) el cargo se identifica por la referencia de la metadata y nunca se asigna a dos pagos; 2) sin el cargo, revisión
+# manual (nunca "no hubo cobro" solo); 3) las devoluciones comparan lo acumulado; 4) el admin resuelve cada caso.
+
+class _ClienteCulqiYProductos:
+    """httpx.Client falso para la conciliación de punta a punta: lo de Culqi (la lista de cargos, filtrada por la ventana
+    como la real) y lo de Productos (el productor de cada producto, para las liquidaciones)."""
+
+    def __init__(self, cargos, productores):
+        self.cargos, self.productores = cargos, productores
+
+    def __call__(self, *args, **kwargs):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, params=None, headers=None, timeout=None, **kwargs):
+        if url.startswith(main.culqi_client.CULQI_API_BASE):
+            if url.rstrip("/").endswith("/charges") and params:
+                desde, hasta = params["creation_date_from"], params["creation_date_to"]
+                datos = [c for c in self.cargos if desde <= c["creation_date"] <= hasta]
+                return main.httpx.Response(200, json={"data": datos}, request=main.httpx.Request("GET", url))
+            raise main.httpx.ConnectError("solo la lista de cargos")
+        return _RespuestaProductoFalsa(self.productores[url.rstrip("/").split("/")[-1]])
+
+
+def test_dos_pedidos_del_mismo_cliente_por_el_mismo_monto_cada_pago_queda_con_su_propio_cargo(monkeypatch):
+    producto = str(uuid.uuid4())
+    items = [{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}]
+    pagos_del_cliente = [_crear_pago_directo(items), _crear_pago_directo(items)]
+    cargos, eventos = [], []
+
+    def crear_cargo(**kw):  # Culqi cobra los dos: mismo correo, mismo monto, el mismo minuto
+        cargo = {"id": _cargo_nuevo(), "amount": main.culqi_client.centimos(kw["monto_soles"]), "email": kw["email"],
+                 "currency_code": "PEN", "metadata": {k: str(v) for k, v in kw["metadata"].items()},  # Culqi guarda texto
+                 "outcome": {"type": "venta_exitosa"},
+                 "creation_date": main.culqi_client._milisegundos(main.datetime.utcnow())}
+        cargos.append(cargo)
+        return {"status_code": 201, "data": cargo}
+
+    monkeypatch.setattr(main, "crear_cargo", crear_cargo)
+    anotar_eventos(monkeypatch, main, eventos)
+    cerrar_de_verdad = main._cerrar_cobro
+    monkeypatch.setattr(main, "_cerrar_cobro", _base_caida)  # ninguno de los dos se pudo guardar
+    assert [_procesar(p).status_code for p in pagos_del_cliente] == [502, 502]
+    monkeypatch.setattr(main, "_cerrar_cobro", cerrar_de_verdad)
+    assert len({(c["email"], c["amount"]) for c in cargos}) == 1  # indistinguibles por correo y monto
+
+    monkeypatch.setattr(main.httpx, "Client", _ClienteCulqiYProductos(cargos, {producto: str(uuid.uuid4())}))
+    _conciliar(None, pasadas=2)  # la búsqueda real (averiguar_en_culqi) sobre la lista de Culqi
+    asignados = []
+    for pago in pagos_del_cliente:
+        [intento] = _intentos_de(pago)
+        suyo = next(c for c in cargos if c["metadata"]["referencia"] == str(intento.id))
+        fila = _pago_recargado(pago)
+        assert (fila.estado, fila.culqi_charge_id, intento.cargo_id) == ("aprobado", suyo["id"], suyo["id"]), intento.mensaje
+        asignados.append(fila.culqi_charge_id)
+    assert len(set(asignados)) == 2
+    assert sorted(e["pedido_id"] for e in eventos if e["evento"] == "pago_confirmado") == sorted(
+        str(p.pedido_id) for p in pagos_del_cliente)
+
+
+def test_un_cargo_nunca_se_asigna_a_dos_pagos(monkeypatch):
+    items = [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]
+    cargo, primero, segundo = _cargo_nuevo(), _crear_pago_directo(items), _crear_pago_directo(items)
+    db = main.SessionLocal()
+    try:
+        for columna in (main.models.Pago.culqi_charge_id, main.models.Pago.culqi_charge_id_saldo):
+            repetido = _cargo_nuevo()
+            db.query(main.models.Pago).filter(main.models.Pago.id == primero.id).update({columna: repetido})
+            db.commit()
+            with pytest.raises(main.IntegrityError):  # el mismo cargo en otro pago: ni en el total ni en el saldo
+                db.query(main.models.Pago).filter(main.models.Pago.id == segundo.id).update({columna: repetido})
+                db.commit()
+            db.rollback()
+        # Entre pagos y partes (el adelanto de uno no puede ser el saldo de otro): todo cargo asignado pasa por su intento
+        # de cobro, y el índice de los intentos es uno solo para todos.
+        for pago, parte in ((primero, "adelanto"), (segundo, "saldo")):
+            db.add(main.models.IntentoPago(pago_id=pago.id, pedido_id=pago.pedido_id, tipo="cobro", parte=parte, monto=40,
+                                           estado="aprobado", cargo_id=cargo))
+            if parte == "saldo":
+                with pytest.raises(main.IntegrityError):
+                    db.commit()
+                db.rollback()
+            else:
+                db.commit()
+    finally:
+        db.close()
+
+    # Si la búsqueda devolviera para otro intento un cargo ya asignado, no se asigna: ese intento queda para el admin.
+    tercero = _crear_pago_directo(items)
+
+    def culqi_caido(**kwargs):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    monkeypatch.setattr(main, "crear_cargo", culqi_caido)
+    assert _procesar(tercero).status_code == 502
+    [intento] = _intentos_de(tercero)
+    _conciliar(_solo(intento, {"id": cargo, "outcome": {"type": "venta_exitosa"}, "metadata": {"referencia": str(intento.id)}}))
+    [intento] = _intentos_de(tercero)
+    assert (intento.estado, intento.revision_manual) == ("en_curso", True) and "otro pago" in intento.mensaje
+    assert _estado_del_pago(tercero) == "procesando" and _pago_recargado(tercero).culqi_charge_id is None
+
+
+def test_la_devolucion_anota_lo_que_el_cargo_ya_tenia_devuelto(monkeypatch):
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    monkeypatch.setattr(main, "devuelto_del_cargo", lambda c: 1500 if c == cargo else 0)
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: {"status_code": 201, "data": {"id": f"ref_{uuid.uuid4().hex[:8]}"}})
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    assert _devolver(pago.pedido_id).status_code == 200
+    [intento] = _intentos_de(pago, "devolucion")
+    assert intento.devuelto_antes == 1500
+
+
+def test_si_no_se_sabe_cuanto_llevaba_devuelto_el_cargo_no_se_empieza_la_devolucion(monkeypatch):
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+
+    def no_contesta(cargo_id):
+        raise main.httpx.ConnectError("Culqi no contesta")
+
+    llamadas = []
+    monkeypatch.setattr(main, "devuelto_del_cargo", no_contesta)
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: llamadas.append(c) or {"status_code": 201, "data": {"id": "ref_x"}})
+    resp = _devolver(pago.pedido_id)
+    assert resp.status_code == 202 and resp.json()["pendientes"] == [{"cargo": cargo, "estado": "pendiente"}], resp.text
+    assert llamadas == [] and _intentos_de(pago, "devolucion") == []
+
+
+def _devolucion_sin_guardar(monkeypatch, devuelto_antes=0):
+    """Un pago aprobado cuya devolución salió en Culqi (o no) pero no se pudo guardar: el intento queda en curso."""
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    monkeypatch.setattr(main, "devuelto_del_cargo", lambda c: devuelto_antes)
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: {"status_code": 201, "data": {"id": "ref_perdida"}})
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    cerrar_de_verdad = main._cerrar_devolucion
+    monkeypatch.setattr(main, "_cerrar_devolucion", _base_caida)
+    assert _devolver(pago.pedido_id).status_code == 202
+    monkeypatch.setattr(main, "_cerrar_devolucion", cerrar_de_verdad)
+    return pago, cargo
+
+
+def _culqi_dice_que_el_cargo_lleva_devuelto(monkeypatch, cargo, devuelto):
+    """GET /charges/{cargo}: solo sabe de ese cargo (los intentos de otras pruebas no reciben respuesta)."""
+    def obtener(cargo_id):
+        if cargo_id != cargo:
+            raise main.httpx.ConnectError("de ese no sé")
+        return {"status_code": 200, "data": {"id": cargo_id, "amount": 4000, "amount_refunded": devuelto}}
+    monkeypatch.setattr(main.culqi_client, "obtener_cargo", obtener)
+    monkeypatch.setattr(main.culqi_client, "_listar_en_ventana", lambda recurso, desde, hasta: [])
+
+
+def test_la_conciliacion_de_una_devolucion_compara_lo_acumulado(monkeypatch):
+    # El cargo ya tenía S/ 40 devueltos (fuera del sistema) cuando se intentó devolverlo y la respuesta se perdió. Que
+    # amount_refunded diga 4000 no prueba que ESTA devolución salió: lo de antes + esta serían 8000.
+    pago, cargo = _devolucion_sin_guardar(monkeypatch, devuelto_antes=4000)
+    [intento] = _intentos_de(pago, "devolucion")
+    assert intento.devuelto_antes == 4000
+    _culqi_dice_que_el_cargo_lleva_devuelto(monkeypatch, cargo, 4000)
+    _conciliar(None, pasadas=main.PASADAS_SIN_RASTRO)
+    [intento] = _intentos_de(pago, "devolucion")
+    assert intento.estado == "rechazado" and _estado_del_pago(pago) == "reembolso_procesando"
+
+    # Con lo acumulado (antes + esta) sí está hecha.
+    otro, otro_cargo = _devolucion_sin_guardar(monkeypatch, devuelto_antes=4000)
+    _culqi_dice_que_el_cargo_lleva_devuelto(monkeypatch, otro_cargo, 8000)
+    _conciliar(None)
+    [intento] = _intentos_de(otro, "devolucion")
+    assert intento.estado == "aprobado" and _estado_del_pago(otro) == "reembolsado"
+
+
+# ---- 4) Resolver a mano desde el panel ----
+ADMIN_QUE_RESUELVE = uuid.uuid4()
+
+
+def _resolver(referencia, **cuerpo):
+    _como(ADMIN_QUE_RESUELVE, "admin")
+    try:
+        return client.post(f"/pagos/admin/por-revisar/{referencia}/resolver", json=cuerpo)
+    finally:
+        _sesion_con_rol("comprador")
+
+
+def _cobro_atascado(minutos=15):
+    """Un cobro en revisión manual: el pago "procesando" y su intento en curso desde hace `minutos`."""
+    producto = str(uuid.uuid4())
+    pago = _crear_pago_con_estado("procesando", [{"producto_id": producto, "cantidad": 1, "precio_unitario": 40.0}])
+    referencia = uuid.uuid4()
+    db = main.SessionLocal()
+    try:
+        hace = main.datetime.utcnow() - main.timedelta(minutes=minutos)
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.procesando_desde, fila.parte_en_proceso, fila.estado_antes_de_procesar = hace, "total", "pendiente"
+        db.add(main.models.IntentoPago(id=referencia, pago_id=pago.id, pedido_id=pago.pedido_id, tipo="cobro", parte="total",
+                                       monto=40, metodo="tarjeta", estado="en_curso", estado_anterior="pendiente",
+                                       fecha_inicio=hace, conciliaciones=main.PASADAS_SIN_RASTRO, revision_manual=True))
+        db.commit()
+    finally:
+        db.close()
+    return pago, str(referencia), producto
+
+
+def _cargo_de_culqi(cargo_id, referencia, pedido_id, **cambios):
+    cargo = {"id": cargo_id, "amount": 4000, "currency_code": "PEN", "outcome": {"type": "venta_exitosa"},
+             "metadata": {"referencia": referencia, "pedido_id": str(pedido_id), "parte": "total"}}
+    cargo.update(cambios)
+    return cargo
+
+
+def test_el_admin_resuelve_un_cobro_como_cobrado_con_el_cargo_validado_en_culqi(monkeypatch):
+    pago, referencia, producto = _cobro_atascado()
+    cargo, eventos = _cargo_nuevo(), []
+    anotar_eventos(monkeypatch, main, eventos)
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    monkeypatch.setattr(main, "obtener_cargo", lambda c: {"status_code": 200, "data": _cargo_de_culqi(c, referencia, pago.pedido_id)})
+
+    _sesion_con_rol("comprador")
+    assert client.post(f"/pagos/admin/por-revisar/{referencia}/resolver",
+                       json={"resultado": "cobrado", "cargo_id": cargo, "motivo": "Lo encontré en el panel"}).status_code == 403
+    assert _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="corto").status_code == 422  # el motivo es obligatorio
+    assert _resolver(referencia, resultado="devuelto", devolucion_id="ref_123456", motivo="No es una devolución").status_code == 422
+    assert _resolver(referencia, resultado="cobrado", motivo="Sin el id del cargo no se puede").status_code == 422
+
+    resp = _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="Lo encontré en el panel de Culqi por la referencia")
+    assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "aprobado", resp.text
+    fila = _pago_recargado(pago)
+    assert (fila.estado, fila.culqi_charge_id, fila.procesando_desde) == ("aprobado", cargo, None)
+    [intento] = _intentos_de(pago)
+    assert (intento.estado, intento.cargo_id, intento.resuelto_por) == ("aprobado", cargo, ADMIN_QUE_RESUELVE)
+    assert intento.motivo_resolucion == "Lo encontré en el panel de Culqi por la referencia" and intento.fecha_resolucion
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_confirmado"]
+    assert len(_liquidaciones_de(pago.pedido_id)) == 1
+    assert _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="Otra vez, por si acaso").status_code == 409
+
+
+def test_el_cargo_que_da_el_admin_se_valida_contra_culqi(monkeypatch):
+    pago, referencia, _ = _cobro_atascado()
+    usado, ajeno = _cargo_nuevo(), _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    _aprobado_con_tarjeta(ajeno, cargo=usado)
+    respuestas = {
+        "chr_noexiste01": (404, {}),
+        "chr_nocobrado1": (200, _cargo_de_culqi("chr_nocobrado1", referencia, pago.pedido_id, outcome={"type": "venta_rechazada"})),
+        "chr_otromonto1": (200, _cargo_de_culqi("chr_otromonto1", referencia, pago.pedido_id, amount=3999)),
+        "chr_otroref001": (200, _cargo_de_culqi("chr_otroref001", str(uuid.uuid4()), pago.pedido_id)),
+        "chr_otroped001": (200, _cargo_de_culqi("chr_otroped001", referencia, uuid.uuid4())),
+        "chr_dolares001": (200, _cargo_de_culqi("chr_dolares001", referencia, pago.pedido_id, currency_code="USD")),
+        usado: (200, _cargo_de_culqi(usado, referencia, pago.pedido_id, metadata={})),
+    }
+    monkeypatch.setattr(main, "obtener_cargo", lambda c: {"status_code": respuestas[c][0], "data": respuestas[c][1]})
+    for cargo in list(respuestas)[:-1]:
+        resp = _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="Lo vi en el panel de Culqi")
+        assert resp.status_code == 422, (cargo, resp.text)
+    resp = _resolver(referencia, resultado="cobrado", cargo_id=usado, motivo="Lo vi en el panel de Culqi")
+    assert resp.status_code == 409 and "otro pago" in resp.json()["detail"]
+    assert _estado_del_pago(pago) == "procesando"
+    [intento] = _intentos_de(pago)
+    assert intento.estado == "en_curso" and intento.resuelto_por is None
+
+
+def test_el_admin_resuelve_un_cobro_como_no_cobrado_libera_el_stock_y_se_puede_volver_a_pagar(monkeypatch):
+    pago, referencia, producto = _cobro_atascado()
+    compensar, eventos = MagicMock(), []
+    monkeypatch.setattr(main, "compensar_stock", compensar)
+    anotar_eventos(monkeypatch, main, eventos)
+    monkeypatch.setattr(main.culqi_client, "buscar_cargo", lambda ref, d, h: {"encontrado": {"id": "chr_hallado"}, "completo": True})
+    resp = _resolver(referencia, resultado="no_cobrado", motivo="No aparece en el panel de Culqi")
+    assert resp.status_code == 409 and "chr_hallado" in resp.json()["detail"]  # Culqi lo tiene: es "cobrado"
+
+    monkeypatch.setattr(main.culqi_client, "buscar_cargo", lambda ref, d, h: {"encontrado": None, "completo": True})
+    resp = _resolver(referencia, resultado="no_cobrado", motivo="No aparece en el panel de Culqi ni en el banco")
+    assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "rechazado", resp.text
+    compensar.assert_called_once()
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_rechazado"]
+    [intento] = _intentos_de(pago)
+    assert (intento.estado, intento.resuelto_por) == ("rechazado", ADMIN_QUE_RESUELVE)
+
+    # El comprador puede volver a pagar: el reintento vuelve a reservar el stock antes de cobrar.
+    reservas = []
+    monkeypatch.setattr(main, "reservar_stock", lambda items: reservas.append(items))
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: {"status_code": 201, "data": {"id": _cargo_nuevo()}})
+    _mockear_productos(monkeypatch, {producto: str(uuid.uuid4())})
+    assert _procesar(pago).status_code == 200 and _estado_del_pago(pago) == "aprobado" and len(reservas) == 1
+
+
+def test_un_cobro_que_todavia_se_esta_procesando_no_se_resuelve_a_mano():
+    pago, referencia, _ = _cobro_atascado(minutos=0)
+    resp = _resolver(referencia, resultado="no_cobrado", motivo="Todavía no debería poder")
+    assert resp.status_code == 409 and _estado_del_pago(pago) == "procesando"
+
+
+def _devolucion_en_revision(monkeypatch):
+    """Un pago reembolso_procesando cuya devolución quedó en curso hace rato (la respuesta de Culqi se perdió)."""
+    pago, cargo = _devolucion_sin_guardar(monkeypatch)
+    db = main.SessionLocal()
+    try:
+        hace = main.datetime.utcnow() - main.timedelta(minutes=15)
+        intento = db.query(main.models.IntentoPago).filter(main.models.IntentoPago.pago_id == pago.id,
+                                                           main.models.IntentoPago.tipo == "devolucion").one()
+        intento.fecha_inicio, intento.revision_manual = hace, True
+        db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).update({main.models.Pago.procesando_desde: hace})
+        referencia = str(intento.id)
+        db.commit()
+    finally:
+        db.close()
+    return pago, cargo, referencia
+
+
+def test_el_admin_resuelve_una_devolucion_como_devuelta_con_su_id_validado(monkeypatch):
+    pago, cargo, referencia = _devolucion_en_revision(monkeypatch)
+    eventos = []
+    anotar_eventos(monkeypatch, main, eventos)
+    devoluciones = {"ref_panel_ok": {"charge_id": cargo, "amount": 4000, "status": "completa"},
+                    "ref_otrocargo": {"charge_id": _cargo_nuevo(), "amount": 4000, "status": "completa"},
+                    "ref_otromonto": {"charge_id": cargo, "amount": 1000, "status": "completa"},
+                    "ref_fallida01": {"charge_id": cargo, "amount": 4000, "status": "fallida"}}
+    monkeypatch.setattr(main, "obtener_devolucion", lambda d: {"status_code": 200, "data": {"id": d, **devoluciones[d]}}
+                        if d in devoluciones else {"status_code": 404, "data": {}})
+    for malo in ("ref_noexiste1", "ref_otrocargo", "ref_otromonto", "ref_fallida01"):
+        assert _resolver(referencia, resultado="devuelto", devolucion_id=malo, motivo="La vi en el panel").status_code == 422, malo
+    assert _resolver(referencia, resultado="cobrado", cargo_id=cargo, motivo="No es un cobro").status_code == 422
+
+    resp = _resolver(referencia, resultado="devuelto", devolucion_id="ref_panel_ok", motivo="La devolución está en el panel de Culqi")
+    assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "reembolsado", resp.text
+    [intento] = _intentos_de(pago, "devolucion")
+    assert (intento.estado, intento.devolucion_id, intento.resuelto_por) == ("aprobado", "ref_panel_ok", ADMIN_QUE_RESUELVE)
+    assert [e["evento"] for e in eventos if e.get("pedido_id") == str(pago.pedido_id)] == ["pago_reembolsado"]
+
+
+def test_una_devolucion_que_llego_al_tope_se_resuelve_a_mano_y_no_devuelta_vuelve_a_intentarse(monkeypatch):
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    llamadas = []
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: llamadas.append(c) or
+                        {"status_code": 400, "data": {"user_message": "No se pudo devolver"}})
+    for _ in range(main.MAX_INTENTOS_DEVOLUCION + 1):
+        assert _devolver(pago.pedido_id).status_code == 202
+    assert len(llamadas) == main.MAX_INTENTOS_DEVOLUCION  # al tope, ya no llama a Culqi
+    db = main.SessionLocal()
+    try:
+        main._marcar_devolucion_para_revision(db, pago.id, cargo)
+        db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).update(
+            {main.models.Pago.procesando_desde: main.datetime.utcnow() - main.timedelta(minutes=15)})
+        db.commit()
+    finally:
+        db.close()
+    _sesion_con_rol("admin")
+    try:
+        [fila] = [f for f in client.get("/pagos/admin/por-revisar").json() if f["pedido_id"] == str(pago.pedido_id)]
+    finally:
+        _sesion_con_rol("comprador")
+    assert (fila["tipo"], fila["revision_manual"], fila["puede_resolver"]) == ("devolucion", True, True)
+
+    # "No devuelta" pero Culqi dice que sí se devolvió: 409.
+    monkeypatch.setattr(main, "devuelto_del_cargo", lambda c: 4000)
+    assert _resolver(fila["referencia"], resultado="no_devuelto", motivo="No la veo en el panel de Culqi").status_code == 409
+    # "No devuelta": la decisión queda registrada y el tope vuelve a contar; la devolución se reintenta y sale.
+    monkeypatch.setattr(main, "devuelto_del_cargo", lambda c: 0)
+    resp = _resolver(fila["referencia"], resultado="no_devuelto", motivo="No la veo en el panel de Culqi: que se reintente")
+    assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "reembolso_procesando", resp.text
+    decidido = next(i for i in _intentos_de(pago, "devolucion") if str(i.id) == fila["referencia"])
+    assert decidido.resuelto_por == ADMIN_QUE_RESUELVE and decidido.motivo_resolucion.startswith("No la veo")
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: llamadas.append(c) or {"status_code": 201, "data": {"id": "ref_al_fin"}})
+    assert _devolver(pago.pedido_id).status_code == 200 and _estado_del_pago(pago) == "reembolsado"
+    assert len(llamadas) == main.MAX_INTENTOS_DEVOLUCION + 1
+
+
+def test_una_devolucion_al_tope_tambien_se_resuelve_como_devuelta(monkeypatch):
+    pago, cargo = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]), _cargo_nuevo()
+    _aprobado_con_tarjeta(pago, cargo=cargo)
+    monkeypatch.setattr(main, "compensar_stock", MagicMock())
+    monkeypatch.setattr(main, "crear_devolucion", lambda c, m, **kw: {"status_code": 400, "data": {"user_message": "No"}})
+    for _ in range(main.MAX_INTENTOS_DEVOLUCION):
+        _devolver(pago.pedido_id)
+    ultimo = max(_intentos_de(pago, "devolucion"), key=lambda i: i.fecha_inicio)
+    monkeypatch.setattr(main, "obtener_devolucion", lambda d: {"status_code": 200, "data": {
+        "id": d, "charge_id": cargo, "amount": 4000, "status": "completa"}})
+    resp = _resolver(str(ultimo.id), resultado="devuelto", devolucion_id="ref_desde_panel", motivo="La hice desde el panel de Culqi")
+    assert resp.status_code == 200 and resp.json()["estado_del_pago"] == "reembolsado", resp.text
+    hechas = [i for i in _intentos_de(pago, "devolucion") if i.estado == "aprobado"]
+    assert len(hechas) == 1 and hechas[0].devolucion_id == "ref_desde_panel" and hechas[0].resuelto_por == ADMIN_QUE_RESUELVE
