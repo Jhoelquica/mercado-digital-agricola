@@ -6008,7 +6008,7 @@ body.asistente-abierto { overflow: hidden; }
    role="status" sin robar el foco, la consecuencia escrita antes de confirmar, el foco en la opción segura, el error junto a
    las acciones, botones de 44 px o más y los mismos tonos (4.5:1 o más) de los avisos que ya había. */
 .checkout-pedido-guardado {
-  display: flex; align-items: flex-start; gap: 10px; margin: 2px 0 0; padding: 12px 14px; border-radius: 14px;
+  display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 14px; border-radius: 14px;
   background: var(--acento-cosecha-suave); color: var(--acento-cosecha-texto); font-size: 0.9rem; line-height: 1.45;
 }
 .checkout-pedido-guardado i { flex: none; margin-top: 2px; font-size: 1.1rem; }

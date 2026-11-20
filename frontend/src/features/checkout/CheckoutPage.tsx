@@ -526,7 +526,11 @@ export default function CheckoutPage() {
       alCerrar: () => {
         setCobroInterrumpido(true);
         resetearBotonPago();
-        requestAnimationFrame(() => botonPagar.current?.focus());
+        requestAnimationFrame(() => {
+          // El aviso (encima del botón) a la vista y el foco en "Volver a pagar".
+          document.getElementById('checkout-pedido-guardado')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          botonPagar.current?.focus({ preventScroll: true });
+        });
       },
     });
     if (!abierto) {
@@ -902,6 +906,20 @@ export default function CheckoutPage() {
                   <span>{etiquetaTotal}</span>
                   <strong id="checkout-total-paso2">{hayOpcionEnLejano ? formatearMoneda(totalAPagar) : '—'}</strong>
                 </div>
+                {/* El pedido ya existe y sus productos están reservados: si la ventana de Culqi se cerró sin pagar (o el token no
+                    llegó), "Volver a pagar" reabre el cobro de este mismo pedido. Va encima del botón, a la vista: ui-ux-pro-max,
+                    el estado junto a la acción, con role="status" y sin robar el foco (el botón lo cita con aria-describedby). */}
+                {pedidoActivo && !pendiente && (
+                  <p className={`checkout-pedido-guardado${cobroInterrumpido ? ' es-interrumpido' : ''}`} id="checkout-pedido-guardado" role="status">
+                    <i className={`ti ti-${cobroInterrumpido ? 'alert-circle' : 'clock'}`} aria-hidden="true" />
+                    <span>
+                      {cobroInterrumpido && <strong>No se completó el pago. </strong>}
+                      Tu pedido <strong>#{pedidoActivo.id.slice(0, 8)}</strong> está guardado
+                      {vence && <> hasta las <strong>{horaDeLima(vence)}</strong> (hora de Lima)</>}.
+                      {cobroInterrumpido ? ' Toca «Volver a pagar» para intentarlo otra vez.' : ' Si cierras la ventana de pago, puedes volver a pagar aquí o desde Mis pedidos.'}
+                    </span>
+                  </p>
+                )}
                 <div className="checkout-actions">
                   <button
                     ref={botonPagar}
@@ -915,20 +933,6 @@ export default function CheckoutPage() {
                   >{etiquetaDelBoton}</button>
                   <button type="button" className="btn btn-outline" id="btn-checkout-paso2-volver" disabled={enviandoPago} onClick={() => setPaso(1)}>← Volver</button>
                 </div>
-                {/* El pedido ya existe y sus productos están reservados: si la ventana de Culqi se cerró sin pagar (o el token no
-                    llegó), "Volver a pagar" reabre el cobro de este mismo pedido. ui-ux-pro-max: estado con role="status", sin
-                    robar el foco; el botón lo cita con aria-describedby. */}
-                {pedidoActivo && !pendiente && (
-                  <p className={`checkout-pedido-guardado${cobroInterrumpido ? ' es-interrumpido' : ''}`} id="checkout-pedido-guardado" role="status">
-                    <i className={`ti ti-${cobroInterrumpido ? 'alert-circle' : 'clock'}`} aria-hidden="true" />
-                    <span>
-                      {cobroInterrumpido && <strong>No se completó el pago. </strong>}
-                      Tu pedido <strong>#{pedidoActivo.id.slice(0, 8)}</strong> está guardado
-                      {vence && <> hasta las <strong>{horaDeLima(vence)}</strong> (hora de Lima)</>}.
-                      {cobroInterrumpido ? ' Toca «Volver a pagar» para intentarlo otra vez.' : ' Si cierras la ventana de pago, puedes volver a pagar aquí o desde Mis pedidos.'}
-                    </span>
-                  </p>
-                )}
               </aside>
             </div>
           </div>
