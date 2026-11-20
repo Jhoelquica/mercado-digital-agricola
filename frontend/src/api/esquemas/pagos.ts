@@ -110,6 +110,20 @@ export interface components {
             /** Motivo */
             motivo: string;
         };
+        /** ResolucionManual */
+        ResolucionManual: {
+            /**
+             * Resultado
+             * @enum {string}
+             */
+            resultado: "cobrado" | "no_cobrado" | "devuelto" | "no_devuelto";
+            /** Cargo Id */
+            cargo_id?: string | null;
+            /** Devolucion Id */
+            devolucion_id?: string | null;
+            /** Motivo */
+            motivo: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */

@@ -86,13 +86,8 @@ export interface PagoPorRevisar {
 }
 
 // Cómo resuelve el admin un caso de "Cobros por revisar en Culqi" (POST /pagos/admin/por-revisar/{referencia}/resolver).
-export type ResultadoDelCaso = 'cobrado' | 'no_cobrado' | 'devuelto' | 'no_devuelto';
-export interface ResolucionDelCaso {
-  resultado: ResultadoDelCaso;
-  cargo_id?: string;
-  devolucion_id?: string;
-  motivo: string;
-}
+export type ResolucionDelCaso = Esquemas['ResolucionManual'];
+export type ResultadoDelCaso = ResolucionDelCaso['resultado'];
 export interface CasoResuelto {
   resultado: ResultadoDelCaso;
   pedido_id: string;
