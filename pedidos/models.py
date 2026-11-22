@@ -23,6 +23,8 @@ class Pedido(Base):
     usuario_id = Column(UUID(as_uuid=True), nullable=True)
     comprador_nombre = Column(String, nullable=False)
     comprador_telefono = Column(String)
+    # pendiente < en_revision (constancia de transferencia enviada) < confirmado < entregado; cancelado aparte (ver
+    # _transicion en rabbitmq_consumer.py). Solo "pendiente" cuenta como el pedido sin pagar del comprador.
     estado = Column(String, default="pendiente")
     fecha_creacion = Column(DateTime, default=datetime.utcnow)
 

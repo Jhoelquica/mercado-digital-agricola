@@ -24,6 +24,7 @@ Qué comprueba:
     servicios, y ningún evento espera más de 5 minutos en una bandeja de salida (AVISO si no).
   - Garantías en la base (en el clúster o en compose): existen los índices únicos de un pedido pendiente por comprador,
     un pago por pedido y un cargo de Culqi por pago (FALLA si falta alguno).
+  - Transferencias: ninguna lleva más de HORAS_MAX_REVISION (12) horas en revisión esperando al admin (AVISO si no).
   - Opcional: si defines VERIFICAR_EMAIL y VERIFICAR_PASSWORD (variables de entorno, nunca por línea de comandos) prueba el login.
 
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
@@ -260,6 +261,13 @@ def comprobar_conciliacion(consultar, donde, contexto):
     comprobar(f"{donde}: pagos, pedidos, envíos y recojos coinciden (conciliación)", not hallazgos,
               "sin inconsistencias", f"{conciliacion.resumen(hallazgos)} (detalle: python scripts/conciliacion.py)",
               "AVISO")
+    try:
+        esperando = conciliacion.transferencias_en_revision_hace_mucho(consultar)
+    except Exception as error:  # noqa: BLE001 - un aviso, no un fallo del chequeo entero
+        esperando = [("?", f"no se pudo revisar: {error}")]
+    comprobar(f"{donde}: ninguna transferencia espera más de {conciliacion.HORAS_MAX_REVISION} h en revisión (el admin la "
+              "aprueba o la rechaza)", not esperando, "",
+              "; ".join(f"pedido {pedido} hace {horas} h" for pedido, horas in esperando[:6]), "AVISO")
     atascadas = [f"{servicio}: {n} pendiente(s), el más antiguo de hace {segundos} s" for servicio, n, segundos in cajas
                  if n and segundos > LIMITE_PENDIENTE_EN_BANDEJA_S]
     sin_bandeja = [servicio for servicio, n, _ in cajas if n is None]

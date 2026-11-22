@@ -2220,3 +2220,70 @@ def test_el_evento_pedido_cancelado_sin_pagar_cancela_el_pendiente_y_es_final():
     confirmado = _pedido_en("confirmado")
     _evento_de_pago(confirmado, "pedido_cancelado_sin_pagar")  # uno tardío no deshace un pago
     assert _estado(confirmado) == "confirmado"
+
+
+# ============ "en_revision": la constancia de transferencia enviada (no está abandonado y no bloquea al comprador) ============
+
+def test_transferencia_enviada_pasa_un_pendiente_a_en_revision_y_en_cualquier_otro_estado_se_ignora():
+    pedido_id = _pedido_en("pendiente")
+    _evento_de_pago(pedido_id, "transferencia_enviada")
+    assert _estado(pedido_id) == "en_revision"
+    for estado, motivo in (("confirmado", None), ("entregado", None), ("cancelado", None), ("cancelado", "Sin stock")):
+        otro = _pedido_en(estado, motivo)
+        _evento_de_pago(otro, "transferencia_enviada")  # un re-pago tras un rechazo se reabre solo con pago_confirmado
+        assert _estado(otro) == estado, (estado, motivo)
+    cancelado_por_el = _pedido_en("pendiente")
+    assert _cancelar_sin_pagar(cancelado_por_el, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 200
+    _evento_de_pago(cancelado_por_el, "transferencia_enviada")
+    assert _estado(cancelado_por_el) == "cancelado"
+
+
+def test_con_un_pedido_en_revision_el_comprador_puede_armar_y_pagar_otro():
+    comprador = str(uuid.uuid4())
+    _como(comprador, "comprador")
+    with patch("main.httpx.Client", return_value=_mock_httpx_client(precio=50.0)), bandeja_como_mock():
+        primero = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0)).json()["id"]
+        _evento_de_pago(primero, "transferencia_enviada")
+        assert _estado(primero) == "en_revision" and _pendientes_de(comprador) == 0
+        otro = client.post("/pedidos", json=_payload(DESTINO_DENTRO_AYACUCHO, precio_item=50.0, cantidad=2))
+    assert otro.status_code == 200 and otro.json()["id"] != primero, otro.text
+    _evento_de_pago(otro.json()["id"], "pago_confirmado")
+    assert _estado(otro.json()["id"]) == "confirmado" and _estado(primero) == "en_revision"
+
+
+def test_desde_en_revision_el_pago_confirma_el_rechazo_cancela_sin_motivo_la_entrega_entrega_y_no_se_cancela_sin_pagar():
+    confirmado = _pedido_en("en_revision")
+    _evento_de_pago(confirmado, "pago_confirmado")
+    assert _estado(confirmado) == "confirmado"
+    rechazado = _pedido_en("en_revision")
+    _evento_de_pago(rechazado, "pago_rechazado")  # el admin rechazó la transferencia
+    fila = _fila_pedido(rechazado)
+    assert fila.estado == "cancelado" and fila.motivo_cancelacion is None and fila.fecha_cancelacion is None
+    _evento_de_pago(rechazado, "pago_confirmado")  # cancelado sin motivo: un re-pago lo reabre
+    assert _estado(rechazado) == "confirmado"
+    entregado = _pedido_en("en_revision")
+    _evento_de_envio(entregado, "entregado")
+    assert _estado(entregado) == "entregado"
+    en_revision = _pedido_en("en_revision")
+    _evento_de_pago(en_revision, "pedido_cancelado_sin_pagar")
+    assert _estado(en_revision) == "en_revision"
+    assert _cancelar_sin_pagar(en_revision, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 409
+
+
+def test_desorden_transferencia_enviada_despues_de_pago_confirmado_sigue_confirmado():
+    pedido_id = _pedido_en("pendiente")
+    _evento_de_pago(pedido_id, "pago_confirmado")
+    _evento_de_pago(pedido_id, "transferencia_enviada")
+    assert _estado(pedido_id) == "confirmado"
+
+
+def test_dos_intentos_con_la_cola_atrasada_en_cualquier_orden_terminan_confirmados():
+    """Intento 1: transferencia_enviada y pago_rechazado; intento 2: transferencia_enviada y su aprobación
+    (pago_confirmado). Las 24 maneras de llegar (incluidas las que tienen la aprobación al final): siempre confirmado."""
+    import itertools
+    eventos = {"T1": "transferencia_enviada", "R1": "pago_rechazado", "T2": "transferencia_enviada", "C2": "pago_confirmado"}
+    for orden in itertools.permutations(eventos):
+        pedido_id = _pedido_en("pendiente")
+        for clave in orden:
+            _evento_de_pago(pedido_id, eventos[clave])
+        assert _estado(pedido_id) == "confirmado", orden

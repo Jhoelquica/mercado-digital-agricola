@@ -6,6 +6,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, Depends, HTTPException, Header, UploadFile, File, Form, Response
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from decimal import Decimal
@@ -796,6 +797,11 @@ def extender_plazo(
 # se cobra: con un cobro en curso (o en la conciliación) o una transferencia en revisión, 409 y no se toca nada.
 MENSAJE_PAGO_SE_ESTA_VERIFICANDO = ("Tu pago anterior se está verificando: espera a que se confirme (lo verás en Mis "
                                     "pedidos) antes de cancelar o reemplazar este pedido.")
+# Una transferencia en revisión: el dinero puede estar ya en la cuenta de Chakra Shop, así que no se cancela ni se
+# reemplaza (devolverlo sería a mano); si el admin no la aprueba, el pedido se cancela solo y el stock vuelve.
+MENSAJE_TRANSFERENCIA_EN_REVISION = ("Ya enviaste la constancia de tu transferencia y el dinero puede estar ya transferido: "
+                                     "este pedido no se cancela ni se reemplaza mientras la revisamos. Si no la "
+                                     "aprobamos, el pedido se cancela solo y te avisamos.")
 ESTADOS_QUE_SE_VERIFICAN = ("procesando", "en_revision")
 
 
@@ -841,7 +847,8 @@ def cancelar_pedido_sin_pagar(
     pago = db.query(models.Pago).filter(models.Pago.id == pago_id).with_for_update().populate_existing().one()
     if pago.estado in ESTADOS_QUE_SE_VERIFICAN:
         db.rollback()
-        raise HTTPException(status_code=409, detail=MENSAJE_PAGO_SE_ESTA_VERIFICANDO)
+        raise HTTPException(status_code=409, detail=MENSAJE_TRANSFERENCIA_EN_REVISION if pago.estado == "en_revision"
+                            else MENSAJE_PAGO_SE_ESTA_VERIFICANDO)
     if pago.estado in ("aprobado", "adelanto_pagado"):
         db.rollback()
         raise HTTPException(status_code=409, detail="Este pedido ya está pagado: si necesitas cancelarlo, escríbenos y lo "
@@ -990,6 +997,23 @@ def _bucle_conciliacion():
 
 NUMERO_OPERACION = re.compile(r"^[A-Za-z0-9-]{4,30}$")
 MOTIVO_RECHAZO_MAXIMO = 300
+# Tope contra el acaparamiento: un pedido en revisión ya no cuenta como "sin pagar" en Pedidos (el comprador puede armar
+# otro), así que sin tope se podría reservar stock subiendo constancias. Con este número en revisión, la siguiente da 409.
+MAX_TRANSFERENCIAS_EN_REVISION = int(os.getenv("MAX_TRANSFERENCIAS_EN_REVISION", "2"))
+
+
+def _exigir_cupo_de_transferencias(db: Session, pago, comprador) -> None:
+    """409 si el comprador ya tiene MAX_TRANSFERENCIAS_EN_REVISION transferencias en revisión (sin contar este pago). Con
+    un candado por comprador hasta el commit: dos constancias suyas a la vez se turnan y la segunda ve la primera."""
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('pagos.transferencias'), hashtext(:comprador))"),
+               {"comprador": str(comprador)})
+    en_revision = (db.query(func.count(models.Pago.id))
+                   .filter(models.Pago.usuario_id == comprador, models.Pago.estado == "en_revision", models.Pago.id != pago.id)
+                   .scalar())
+    if en_revision >= MAX_TRANSFERENCIAS_EN_REVISION:
+        raise HTTPException(status_code=409, detail=(
+            f"Ya tienes {en_revision} transferencias en revisión. Espera a que revisemos alguna (te avisamos en "
+            "Notificaciones) antes de enviar otra constancia, o paga este pedido con tarjeta o Yape."))
 
 
 @app.post("/pagos/transferencia")
@@ -1027,6 +1051,10 @@ def enviar_constancia_de_transferencia(
     if pago.estado in ("procesando", "reembolso_procesando"):
         raise HTTPException(status_code=409, detail="Hay un pago en proceso para este pedido: espera unos minutos y revisa "
                                                     "Mis pedidos.")
+    comprador = usuario.get("sub")
+    if pago.usuario_id is None:
+        pago.usuario_id = comprador  # un pago de antes: desde ahora cuenta para el tope por comprador
+    _exigir_cupo_de_transferencias(db, pago, comprador)
 
     parte = parte_a_cobrar(pago)
     # Un pago rechazado ya devolvió su stock: se vuelve a reservar antes (mismo criterio que reintentar con tarjeta).
@@ -1054,6 +1082,10 @@ def enviar_constancia_de_transferencia(
     pago.motivo_rechazo = None
     pago.revisado_por = None
     pago.fecha_revision = None
+    # En la misma transacción que el "en_revision": Pedidos pasa el pedido a "en_revision" (ya no es el pedido sin pagar
+    # del comprador, que puede armar otro). Sobre un pedido que no está "pendiente" (un re-pago tras un rechazo, un saldo)
+    # Pedidos lo ignora.
+    registrar_evento(db, "transferencia_enviada", {"pedido_id": str(pago.pedido_id), "parte": parte})
     db.commit()
     return {"estado": "en_revision", "pedido_id": str(pago.pedido_id), "numero_operacion": numero, "parte": parte}
 

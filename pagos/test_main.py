@@ -1031,7 +1031,8 @@ def test_la_transferencia_va_a_revision_y_el_admin_la_aprueba_como_un_pago_de_cu
     fila = _fila_pago(pago)
     assert (fila.estado, fila.metodo, fila.numero_operacion) == ("en_revision", "transferencia", "OP-778899")
     assert transferencia["guardadas"][fila.constancia_objeto] == JPEG_CONSTANCIA
-    assert transferencia["eventos"] == []  # todavía no se confirma nada
+    # A Pedidos solo va que está en revisión (pasa a "en_revision"): todavía no se confirma nada.
+    assert transferencia["eventos"] == [{"evento": "transferencia_enviada", "pedido_id": str(pago.pedido_id), "parte": "total"}]
 
     _sesion_con_rol("admin")
     try:
@@ -1048,7 +1049,7 @@ def test_la_transferencia_va_a_revision_y_el_admin_la_aprueba_como_un_pago_de_cu
     assert constancia.headers["content-type"] == "image/jpeg" and constancia.headers["cache-control"] == "no-store"
     assert aprobada.status_code == 200, aprobada.text
     assert _fila_pago(pago).estado == "aprobado" and _fila_pago(pago).revisado_por is not None
-    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "monto": "800.00"}]
+    assert transferencia["eventos"][1:] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "monto": "800.00"}]
     assert len(_liquidaciones_de(pago.pedido_id)) == 1
     assert otra_vez.status_code == 409  # dos admins a la vez: el segundo ve que ya no está en revisión
     transferencia["compensar"].assert_not_called()
@@ -1071,7 +1072,8 @@ def test_rechazada_devuelve_el_stock_deja_el_motivo_y_el_comprador_puede_volver_
     fila = _fila_pago(pago)
     assert (fila.estado, fila.motivo_rechazo) == ("rechazado", "El monto transferido no coincide con el total")
     transferencia["compensar"].assert_called_once_with(fila.items, pedido_id=pago.pedido_id)
-    assert transferencia["eventos"] == [{"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id),
+    assert transferencia["eventos"] == [{"evento": "transferencia_enviada", "pedido_id": str(pago.pedido_id), "parte": "total"},
+                                        {"evento": "pago_rechazado", "pedido_id": str(pago.pedido_id),
                                          "motivo": "El monto transferido no coincide con el total"}]
 
     # el comprador corrige y vuelve a enviar: se reserva otra vez el stock y vuelve a revisión, sin el motivo viejo
@@ -1245,7 +1247,8 @@ def test_adelanto_y_saldo_tambien_por_transferencia(transferencia, monkeypatch):
     finally:
         _sesion_con_rol("comprador")
     assert _estado_del_pago(pago) == "adelanto_pagado"
-    assert transferencia["eventos"] == [{"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
+    assert transferencia["eventos"] == [{"evento": "transferencia_enviada", "pedido_id": str(pago.pedido_id), "parte": "adelanto"},
+                                        {"evento": "pago_confirmado", "pedido_id": str(pago.pedido_id), "adelanto": True,
                                          "monto": "700.00", "saldo": "300.00"}]
 
     assert _enviar_constancia(pago, numero="OP-SALDO-1").json()["parte"] == "saldo"
@@ -2623,8 +2626,8 @@ def test_con_un_cobro_en_curso_o_una_transferencia_en_revision_no_se_cancela_nad
         pago = _crear_pago_con_estado(estado, [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
         resp = _cancelar(pago.pedido_id)
         assert resp.status_code == 409, resp.text
-        assert resp.json()["detail"] == main.MENSAJE_PAGO_SE_ESTA_VERIFICANDO
-        assert "se está verificando" in resp.json()["detail"]
+        esperado = main.MENSAJE_TRANSFERENCIA_EN_REVISION if estado == "en_revision" else main.MENSAJE_PAGO_SE_ESTA_VERIFICANDO
+        assert resp.json()["detail"] == esperado
         assert _estado_del_pago(pago) == estado
     assert cancelacion["stock"] == [] and cancelacion["eventos"] == [] and cancelacion["en_pedidos"] == []
 
@@ -2894,3 +2897,69 @@ def test_solo_el_comprador_dueno_alarga_el_plazo_y_el_motivo_se_valida(monkeypat
 def test_las_condiciones_dicen_los_dos_plazos():
     condiciones = client.get("/pagos/condiciones").json()
     assert condiciones["plazo_para_pagar_minutos"] == 15 and condiciones["plazo_transferencia_minutos"] == 120
+
+
+# ============ Transferencias en revisión: el aviso a Pedidos, el tope por comprador y no se cancelan ============
+
+def _pago_del_comprador(comprador, estado="pendiente"):
+    db = main.SessionLocal()
+    try:
+        pago = main.models.Pago(pedido_id=uuid.uuid4(), usuario_id=comprador, monto=40, estado=estado,
+                                items=json.dumps([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]))
+        db.add(pago)
+        db.commit()
+        db.refresh(pago)
+        db.expunge(pago)
+        return pago
+    finally:
+        db.close()
+
+
+def test_la_constancia_deja_transferencia_enviada_en_la_bandeja_junto_con_el_en_revision(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 2, "precio_unitario": 30.0}])
+    assert _enviar_constancia(pago).status_code == 200
+    assert {"evento": "transferencia_enviada", "pedido_id": str(pago.pedido_id), "parte": "total"} in transferencia["eventos"]
+    db = main.SessionLocal()
+    try:
+        en_bandeja = db.execute(main.text("SELECT count(*) FROM eventos_salientes WHERE tipo = 'transferencia_enviada' AND "
+                                          "cuerpo::json->>'pedido_id' = :p"), {"p": str(pago.pedido_id)}).scalar()
+    finally:
+        db.close()
+    assert en_bandeja == 1 and _estado_del_pago(pago) == "en_revision"
+
+
+def test_con_dos_transferencias_en_revision_la_tercera_constancia_da_409(transferencia):
+    comprador = uuid.uuid4()
+    _pago_del_comprador(comprador, "en_revision")
+    segunda, tercera = _pago_del_comprador(comprador), _pago_del_comprador(comprador)
+    _pago_del_comprador(uuid.uuid4(), "en_revision")  # las de otro comprador no cuentan
+    _como(comprador, "comprador")
+    try:
+        assert _enviar_constancia(segunda).status_code == 200  # con una en revisión, la segunda entra
+        resp = _enviar_constancia(tercera)
+    finally:
+        _restaurar_sesion_por_defecto()
+    assert resp.status_code == 409, resp.text
+    assert "2 transferencias en revisión" in resp.json()["detail"] and "tarjeta o Yape" in resp.json()["detail"]
+    assert _estado_del_pago(tercera) == "pendiente" and len(transferencia["guardadas"]) == 1
+    assert not any(e["evento"] == "transferencia_enviada" and e["pedido_id"] == str(tercera.pedido_id) for e in transferencia["eventos"])
+
+
+def test_un_pago_de_antes_anota_su_comprador_al_enviar_la_constancia(transferencia):
+    pago = _crear_pago_directo([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    comprador = uuid.uuid4()
+    _como(comprador, "comprador")
+    try:
+        assert _enviar_constancia(pago).status_code == 200
+    finally:
+        _restaurar_sesion_por_defecto()
+    assert _fila_pago(pago).usuario_id == comprador
+
+
+def test_un_pedido_en_revision_no_se_cancela_ni_se_reemplaza_porque_el_dinero_puede_estar_transferido(cancelacion):
+    pago = _crear_pago_con_estado("en_revision", [{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}])
+    resp = _cancelar(pago.pedido_id)
+    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_TRANSFERENCIA_EN_REVISION
+    assert "puede estar ya transferido" in resp.json()["detail"]
+    assert _estado_del_pago(pago) == "en_revision"
+    assert cancelacion["stock"] == [] and cancelacion["eventos"] == [] and cancelacion["en_pedidos"] == []

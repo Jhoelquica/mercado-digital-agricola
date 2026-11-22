@@ -14,7 +14,11 @@ Cruza las bases de Pagos, Pedidos, Transporte y Productos (cada servicio tiene l
   9. la regla inversa: pedidos confirmados o entregados sin el pago aprobado (un entregado exige el pago aprobado; un
      confirmado admite el adelanto pagado o un cobro o una devolución en proceso);
  10. pedidos "pendiente" con el pago rechazado, vencido o cancelado por el comprador (pago_rechazado o
-     pedido_cancelado_sin_pagar no llegó a Pedidos): con un solo pendiente por comprador, ese pedido no le deja armar otro.
+     pedido_cancelado_sin_pagar no llegó a Pedidos): con un solo pendiente por comprador, ese pedido no le deja armar otro;
+     y pedidos "en_revision" con el pago rechazado (el admin rechazó la transferencia y el aviso no llegó).
+
+Aparte (no es una inconsistencia, es trabajo atrasado): transferencias_en_revision_hace_mucho(), las que llevan más de
+HORAS_MAX_REVISION horas esperando al admin; verificar_despliegue.py avisa para que el comprador no quede esperando.
 
 Lo que todavía está en camino no cuenta: si la bandeja de salida del servicio que avisa tiene ese evento pendiente, o lo
 publicó hace menos de EN_CAMINO_MINUTOS, se espera. Si un pendiente se atasca, verificar_despliegue.py avisa aparte
@@ -43,8 +47,11 @@ MINUTOS_EN_PROCESO = 10
 PAGO_ESPERADO = {"entregado": ("aprobado",),
                  "confirmado": ("aprobado", "adelanto_pagado", "procesando", "reembolso_procesando")}
 PAGADOS = ("aprobado", "adelanto_pagado")
-# Regla 10: un pago que ya no se va a cobrar (rechazado o vencido, o cancelado por el comprador) con el pedido pendiente.
-SIN_COBRO = ("rechazado", "cancelado")
+# Regla 10: un pago que ya no se va a cobrar con el pedido "pendiente" (rechazado o vencido, o cancelado por el
+# comprador) o "en_revision" (la transferencia se rechazó).
+SIN_COBRO = {"pendiente": ("rechazado", "cancelado"), "en_revision": ("rechazado",)}
+# Una transferencia que lleva más que esto en revisión deja al comprador esperando (verificar_despliegue.py avisa).
+HORAS_MAX_REVISION = int(os.environ.get("HORAS_MAX_REVISION", "12"))
 CUMPLIDOS = ("entregado", "en_agencia")
 RECOJO_EN_CURSO = ("pendiente_asignacion", "propuesto", "asignado", "recogido", "en_almacen", "en_camino")
 CON_BANDEJA = ("pedidos", "pagos", "transporte", "productos")
@@ -125,7 +132,7 @@ def inconsistencias(consultar) -> list:
         estado, con_motivo = pedidos.get(pedido_id, (None, False))
         if estado is None:
             hallazgos.append((1, f"pago {estado_pago} del pedido {pedido_id}, que no existe en Pedidos"))
-        elif estado in ("pendiente", "cancelado"):
+        elif estado in ("pendiente", "en_revision", "cancelado"):
             hallazgos.append((1, f"pago {estado_pago} con el pedido {pedido_id} en '{estado}'"
                                  + (" (cancelado por el admin: ¿falta la devolución?)" if con_motivo else "")))
         if pedido_id not in envios:
@@ -149,10 +156,18 @@ def inconsistencias(consultar) -> list:
             if pedido_id not in pago_en_camino:
                 hallazgos.append((9, f"pedido {pedido_id} '{estado}' con el pago "
                                      + (f"'{estados_de_pago[pedido_id]}'" if pedido_id in estados_de_pago else "sin registro")))
-        if estado == "pendiente" and estados_de_pago.get(pedido_id) in SIN_COBRO and pedido_id not in sin_cobro_en_camino:
-            hallazgos.append((10, f"pedido {pedido_id} 'pendiente' con el pago '{estados_de_pago[pedido_id]}' (su comprador "
-                                  "no puede armar otro pedido)"))
+        if estados_de_pago.get(pedido_id) in SIN_COBRO.get(estado, ()) and pedido_id not in sin_cobro_en_camino:
+            hallazgos.append((10, f"pedido {pedido_id} '{estado}' con el pago '{estados_de_pago[pedido_id]}'"
+                                  + (" (su comprador no puede armar otro pedido)" if estado == "pendiente" else "")))
     return sorted(hallazgos)
+
+
+def transferencias_en_revision_hace_mucho(consultar, horas=HORAS_MAX_REVISION) -> list:
+    """[(pedido_id, horas en revisión)] de las transferencias que esperan al admin hace más de `horas`."""
+    return [(fila[0], int(float(fila[1]))) for fila in consultar("pagos", (
+        "SELECT pedido_id, EXTRACT(EPOCH FROM timezone('utc', now()) - fecha_constancia) / 3600 FROM pagos "
+        f"WHERE estado = 'en_revision' AND fecha_constancia < timezone('utc', now()) - interval '{int(horas)} hours' "
+        "ORDER BY fecha_constancia"))]
 
 
 def _en_proceso_hace_mucho(consultar) -> list:
@@ -203,7 +218,7 @@ REGLAS = {
     7: f"Cobro en proceso hace más de {MINUTOS_EN_PROCESO} minutos (resolverlo en el panel «Cobros por revisar en Culqi»)",
     8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos (resolverla en el mismo panel)",
     9: "Pedido confirmado o entregado sin el pago aprobado",
-    10: "Pedido pendiente con el pago rechazado, vencido o cancelado (bloquea al comprador: un pendiente por comprador)",
+    10: "Pedido pendiente con el pago rechazado, vencido o cancelado (bloquea al comprador), o en revisión con el pago rechazado",
 }
 
 

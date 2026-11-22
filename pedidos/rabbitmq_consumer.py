@@ -17,26 +17,34 @@ COLA_ENVIOS = "pedidos_envios"
 def _transicion(evento: str):
     """A qué estado lleva el evento y desde cuáles vale (la condición del UPDATE). Solo hacia adelante.
 
-    El orden es pendiente < confirmado < entregado. "cancelado" va aparte:
+    El orden es pendiente < en_revision < confirmado < entregado. "en_revision": el comprador ya envió la constancia de
+    su transferencia (no está abandonado y no cuenta como su pedido sin pagar). "cancelado" va aparte:
     - con motivo_cancelacion (lo canceló el admin y devolvió el dinero) es final: nada lo cambia;
     - con fecha_cancelacion y sin motivo (lo canceló el comprador antes de pagar) también es final: Pagos ya no lo cobra;
-    - sin ninguna de las dos (el pago se rechazó o venció) lo reabre un pago confirmado (el comprador volvió a pagar) y
-      también la entrega (un envío solo nace con un pago confirmado).
+    - sin ninguna de las dos ("cancelado sin motivo": el pago se rechazó o venció) lo reabre un pago confirmado (el
+      comprador volvió a pagar) y también la entrega (un envío solo nace con un pago confirmado).
+    transferencia_enviada solo mueve un pendiente: sobre un cancelado sin motivo (un re-pago por transferencia tras un
+    rechazo) se ignora y el pedido se reabre con pago_confirmado, como siempre; así un aviso de un intento viejo nunca
+    cancela ni adelanta uno nuevo.
     Lo que no hace avanzar al pedido (un repetido, uno atrasado o uno sobre un final) se ignora con un log; así da igual
     el orden en que lleguen los eventos de pagos y los de envíos, que vienen por colas distintas."""
     Pedido = models.Pedido
     cancelado_sin_motivo = and_(Pedido.estado == "cancelado", Pedido.motivo_cancelacion.is_(None),
                                 Pedido.fecha_cancelacion.is_(None))
+    if evento == "transferencia_enviada":
+        return "en_revision", Pedido.estado == "pendiente"
     if evento == "pago_confirmado":
-        return "confirmado", or_(Pedido.estado == "pendiente", cancelado_sin_motivo)
+        return "confirmado", or_(Pedido.estado.in_(("pendiente", "en_revision")), cancelado_sin_motivo)
     if evento == "pago_rechazado":
-        return "cancelado", Pedido.estado == "pendiente"  # uno tardío no deshace un pago que ya se confirmó
+        # El pago se rechazó o venció, o el admin rechazó la transferencia. Uno tardío no deshace un pago confirmado.
+        return "cancelado", Pedido.estado.in_(("pendiente", "en_revision"))
     if evento == "pedido_cancelado_sin_pagar":
         # El comprador lo canceló antes de pagar (Pagos ya devolvió el stock). Normalmente Pagos ya lo canceló aquí por
-        # HTTP (/pedidos/interno/{id}/cancelar-sin-pagar): esto es por si esa llamada no llegó.
+        # HTTP (/pedidos/interno/{id}/cancelar-sin-pagar): esto es por si esa llamada no llegó. Uno en revisión no se
+        # cancela así (el dinero puede estar ya transferido: Pagos lo impide).
         return "cancelado", Pedido.estado == "pendiente"
     if evento == "entregado":
-        return "entregado", or_(Pedido.estado.in_(("pendiente", "confirmado")), cancelado_sin_motivo)
+        return "entregado", or_(Pedido.estado.in_(("pendiente", "en_revision", "confirmado")), cancelado_sin_motivo)
     raise ValueError(f"Evento sin transición: {evento}")
 
 
@@ -83,7 +91,7 @@ def _aplicar(cola: str, datos: dict, evento: str) -> None:
 
 def _procesar_mensaje_pago(ch, method, properties, body):
     datos = json.loads(body)
-    if datos.get("evento") in ("pago_confirmado", "pago_rechazado", "pedido_cancelado_sin_pagar"):
+    if datos.get("evento") in ("transferencia_enviada", "pago_confirmado", "pago_rechazado", "pedido_cancelado_sin_pagar"):
         _aplicar(COLA_PAGOS, datos, datos["evento"])
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
