@@ -1,7 +1,6 @@
-import os
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy.exc import IntegrityError
 
@@ -9,11 +8,11 @@ from comun import rabbitmq
 from comun.database import SessionLocal
 import models
 from logica_cobros import ESTADOS_CUMPLIDOS
+import plazos
+# Cuánto tiempo se guarda el stock de un pedido sin pagar (main.vencer_pagos_sin_pagar lo devuelve al vencer): ver plazos.py.
+from plazos import PLAZO_PARA_PAGAR_MINUTOS  # noqa: F401 - lo importan main y las pruebas desde aquí
 
 logger = logging.getLogger("pagos.rabbitmq_consumer")
-
-# Cuánto tiempo se guarda el stock de un pedido sin pagar (main.vencer_pagos_sin_pagar lo devuelve al vencer).
-PLAZO_PARA_PAGAR_MINUTOS = int(os.getenv("PLAZO_PARA_PAGAR_MINUTOS", "60"))
 
 
 def _calcular_monto(items: list, costo_envio: float = 0) -> float:
@@ -34,14 +33,19 @@ def crear_pago_si_falta(datos: dict) -> bool:
         # costo_envio viaja en el evento desde Pedidos (calculado ahí contra la ubicación del almacén, ver
         # calcular_costo_envio en pedidos/main.py); el 0 por defecto es solo para un evento viejo sin esa clave.
         monto = _calcular_monto(datos.get("items", []), datos.get("costo_envio", 0))
+        creacion = datetime.utcnow()
         db.add(models.Pago(
             pedido_id=datos["pedido_id"],
+            # El comprador (lo trae pedido_creado): para el tope de transferencias en revisión por comprador.
+            usuario_id=datos.get("usuario_id") or None,
             monto=monto,
             estado="pendiente",
             items=json.dumps(datos.get("items", [])),
             # Pedido en camión: primero se cobra el adelanto, el resto al llegar (ver Pago.monto_adelanto).
             monto_adelanto=datos.get("monto_adelanto") if datos.get("modalidad_envio") == "camion" else None,
-            vence_en=datetime.utcnow() + timedelta(minutes=PLAZO_PARA_PAGAR_MINUTOS),
+            # El plazo queda guardado (y desde la misma hora que fecha_creacion): sus extensiones parten de ahí.
+            fecha_creacion=creacion,
+            vence_en=plazos.vence_inicial(creacion),
         ))
         try:
             db.commit()

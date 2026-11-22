@@ -2,14 +2,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../../api/errors';
-import { pagos, type Pago, type ResultadoCobro } from '../../api/pagos';
+import { pagos, type Pago, type PlazoDelPago, type ResultadoCobro } from '../../api/pagos';
 import { pedidoPendienteDe, pedidos, type Cotizacion, type DestinoPublico, type Pedido, type PedidoPendiente } from '../../api/pedidos';
 import { useAuth } from '../../auth/AuthContext';
 import { manejarError, toast } from '../../components/Toast';
 import { atraparFoco } from '../../lib/foco';
 import { obtenerUbicacionActual } from '../../lib/ubicacion';
 import { formatearMoneda } from '../../lib/formato';
-import { horaDeLima, pagoSeEstaVerificando, venceDelPedido, type LineaDePedido } from '../../lib/pedidoPendiente';
+import { horaDeLima, pagoSeEstaVerificando, venceDe, type LineaDePedido } from '../../lib/pedidoPendiente';
 import { unidadCorta, unidadPlural } from '../../lib/productos';
 import { abrirPanelBusqueda } from '../catalogo/menus';
 import { MediaProducto } from '../catalogo/TarjetasProducto';
@@ -259,7 +259,7 @@ export default function CheckoutPage() {
   // dice "Volver a pagar" y reabre el cobro de ESE pedido en vez de crear otro. pedidoActivo es lo mismo para pintar.
   const pedidoPorPagar = useRef<PagoPendiente | null>(reintento);
   const [pedidoActivo, setPedidoActivo] = useState<PagoPendiente | null>(reintento);
-  const [vence, setVence] = useState<Date | null>(() => venceDelPedido(reintento?.venceEn, null, null));
+  const [vence, setVence] = useState<Date | null>(() => venceDe(reintento?.venceEn));
   // El comprador cerró la ventana de Culqi sin pagar (Culqi avisó con closeCheckout).
   const [cobroInterrumpido, setCobroInterrumpido] = useState(false);
   // El pedido sin pagar que frenó a este carrito (409 de Pedidos), para pagarlo o reemplazarlo.
@@ -459,19 +459,26 @@ export default function CheckoutPage() {
   }
 
   // El pedido que se va a pagar (creado, retomado o el pendiente que eligió pagar): desde aquí el botón dice "Volver a
-  // pagar" y el aviso dice hasta qué hora se guarda (en hora de Lima).
-  function activarPedido(p: PagoPendiente, fechaCreacion: string | null = null) {
+  // pagar" y el aviso dice hasta qué hora se guarda (en hora de Lima): el plazo guardado en su pago, nunca uno calculado.
+  function activarPedido(p: PagoPendiente) {
     pedidoPorPagar.current = p;
     setPedidoActivo(p);
     setCobroInterrumpido(false);
-    setVence(venceDelPedido(p.venceEn, fechaCreacion, condicionesPago?.plazo_para_pagar_minutos));
+    setVence(venceDe(p.venceEn));
     if (!p.venceEn) {
-      // El plazo exacto es el del pago, que Pagos crea con el aviso del pedido nuevo (unos instantes después).
+      // Pagos crea el pago con el aviso del pedido nuevo (unos instantes después); abrir Culqi o elegir transferencia
+      // también devuelve su plazo (aplicarPlazo).
       void pagos.obtener(p.id).then((pago) => {
-        const exacto = venceDelPedido(pago.vence_en, null, null);
-        if (exacto && pedidoPorPagar.current?.id === p.id) setVence(exacto);
-      }).catch(() => { /* se queda el calculado */ });
+        if (pedidoPorPagar.current?.id === p.id && pago.estado === 'pendiente') setVence(venceDe(pago.vence_en));
+      }).catch(() => { /* lo trae el plazo al abrir Culqi */ });
     }
+  }
+
+  // El plazo que devuelve Pagos al elegir transferencia o al abrir Culqi (alargado o no): es el que se muestra. Un pago que
+  // ya no está pendiente (vencido, en proceso) no tiene un "guardado hasta" que mostrar.
+  function aplicarPlazo(plazo: PlazoDelPago | null) {
+    if (!plazo || pedidoPorPagar.current?.id !== plazo.pedido_id) return;
+    setVence(plazo.estado === 'pendiente' ? venceDe(plazo.vence_en) : null);
   }
 
   function olvidarPedido() {
@@ -509,11 +516,17 @@ export default function CheckoutPage() {
         toast('El pago por transferencia no está disponible ahora. Paga tu pedido con tarjeta desde Mis Pedidos.', 'error');
         return;
       }
+      // Para transferir y subir la constancia el plazo es mayor (2 h desde que se creó el pedido): Pagos lo guarda y lo
+      // devuelve, y el panel dice hasta qué hora.
+      aplicarPlazo(await pagos.extenderPlazo(pago.id, 'transferencia').catch(() => null));
       setFinal({ tipo: 'transferencia', pedidoId: pago.id, monto: pago.monto });
       setPaso(3);
       return;
     }
     setFase('abriendo');
+    // Que no venza mientras escribe su tarjeta: si le quedaban pocos minutos, Pagos los alarga (con tope) y el aviso los
+    // muestra. Va a la par con abrir la ventana.
+    void pagos.extenderPlazo(pago.id, 'culqi').then(aplicarPlazo).catch(() => { /* el plazo de antes sigue valiendo */ });
     const abierto = await abrirCulqi({
       monto: pago.monto,
       metodo: metodoElegido,
@@ -579,7 +592,7 @@ export default function CheckoutPage() {
     if (!pendiente || pagoEnProceso.current) return;
     const { resumen, pago } = pendiente;
     const monto = pago?.monto_a_pagar != null ? Number(pago.monto_a_pagar) : resumen.monto_adelanto ?? resumen.total;
-    activarPedido({ id: resumen.id, monto, envio: resumen.costo_envio, parte: pago?.parte_a_pagar, items: resumen.items, venceEn: pago?.vence_en }, resumen.fecha_creacion);
+    activarPedido({ id: resumen.id, monto, envio: resumen.costo_envio, parte: pago?.parte_a_pagar, items: resumen.items, venceEn: pago?.vence_en });
     setPagandoOtroPedido(!carritoCoincideCon(resumen.items));
     setPendiente(null);
     setErrorPendiente(null);
@@ -669,7 +682,7 @@ export default function CheckoutPage() {
       }
       // En camión se cobra ahora solo el adelanto (el resto, al llegar).
       const ahora = pedido.monto_adelanto != null ? Number(pedido.monto_adelanto) : totalPedido(pedido);
-      activarPedido({ id: pedido.id, monto: ahora, envio, items: lineasDe(pedido) }, pedido.fecha_creacion);
+      activarPedido({ id: pedido.id, monto: ahora, envio, items: lineasDe(pedido) });
       await cobrar(pedidoPorPagar.current!, metodo);
     } catch (err) {
       resetearBotonPago();
@@ -787,7 +800,7 @@ export default function CheckoutPage() {
                   <PedidoSinPagar
                     resumen={pendiente.resumen}
                     pago={pendiente.pago}
-                    vence={venceDelPedido(pendiente.pago?.vence_en, pendiente.resumen.fecha_creacion, condicionesPago?.plazo_para_pagar_minutos)}
+                    vence={pendiente.pago?.estado === 'pendiente' ? venceDe(pendiente.pago.vence_en) : null}
                     error={errorPendiente}
                     reemplazando={reemplazando}
                     titulo={tituloPendiente}
@@ -945,6 +958,7 @@ export default function CheckoutPage() {
                   pedidoId={final.pedidoId}
                   monto={final.monto}
                   cuenta={condicionesPago.transferencia}
+                  vence={vence}
                   alEnviar={(numeroOperacion) => {
                     // Con la constancia enviada, el comprador ya pagó (falta que se revise): el carrito de ese pedido se vacía.
                     vaciarCarritoSiCoincide(pedidoPorPagar.current?.items);

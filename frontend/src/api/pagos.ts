@@ -8,8 +8,16 @@ export interface CondicionesDePago {
   yape_maximo_por_operacion: number;
   // null si la plataforma no tiene una cuenta configurada para transferir.
   transferencia: { banco: string; titular: string; cuenta: string; cci: string } | null;
-  // Cuánto se guarda un pedido sin pagar (sin este dato en un servidor de antes).
+  // Cuánto se guarda un pedido sin pagar, y si se paga por transferencia (la hora exacta es la de su pago: vence_en).
   plazo_para_pagar_minutos?: number;
+  plazo_transferencia_minutos?: number;
+}
+
+// POST /pagos/{pedido_id}/plazo: al elegir transferencia o al abrir Culqi el plazo puede alargarse; vuelve el que vale.
+export interface PlazoDelPago {
+  pedido_id: string;
+  estado: string;
+  vence_en: string | null;
 }
 
 // POST /pagos/{pedido_id}/cancelar: el comprador cancela su pedido sin pagar ("Cancelar pedido", "Reemplazar").
@@ -110,6 +118,9 @@ export interface CasoResuelto {
 export const pagos = {
   procesar: (datos: Esquemas['ProcesarPago']) => request<ResultadoCobro>('pagos', '/pagos/procesar', { method: 'POST', body: datos, auth: true }),
   obtener: (pedidoId: string) => request<Pago>('pagos', `/pagos/${pedidoId}`, { auth: true }),
+  // Elegir transferencia (2 h desde que se creó el pedido) o abrir Culqi (unos minutos más si quedaban pocos).
+  extenderPlazo: (pedidoId: string, motivo: 'transferencia' | 'culqi') =>
+    request<PlazoDelPago>('pagos', `/pagos/${pedidoId}/plazo`, { method: 'POST', body: { motivo }, auth: true }),
   // El comprador cancela su pedido sin pagar: el stock vuelve en el acto (409 si su pago se está verificando).
   cancelarPedido: (pedidoId: string) => request<PedidoCanceladoSinPagar>('pagos', `/pagos/${pedidoId}/cancelar`, { method: 'POST', auth: true }),
   // Público: la comisión de la plataforma, el límite de Yape y la cuenta para transferir (null si no hay).

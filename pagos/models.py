@@ -21,6 +21,9 @@ class Pago(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     pedido_id = Column(UUID(as_uuid=True), nullable=False)
+    # El comprador del pedido (lo trae pedido_creado; en un pago de antes se anota cuando el comprador lo paga): para el
+    # tope de transferencias en revisión por comprador.
+    usuario_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     monto = Column(Numeric(10, 2), nullable=False)
     # pendiente, en_revision (transferencia), aprobado, rechazado; cancelado: el comprador lo canceló antes de pagar (ver
     # cancelar_pedido_sin_pagar en main.py), es final y ya no se cobra.
@@ -53,7 +56,8 @@ class Pago(Base):
     # Qué parte está esperando la revisión de una transferencia: "total", "adelanto" o "saldo".
     parte_en_revision = Column(String, nullable=True)
     # Plazo para pagar: un pedido que nadie paga ya no retiene el stock para siempre (ver vencer_pagos_sin_pagar en
-    # main.py). NULL en los pagos de antes, que no vencen solos.
+    # main.py). Es el que vale, guardado (no se recalcula): nace con plazos.vence_inicial y solo cambia por una extensión
+    # (ExtensionPlazo). NULL en los pagos de antes, que no vencen solos.
     vence_en = Column(DateTime, nullable=True)
     vencido_en = Column(DateTime, nullable=True)
     # Cuándo lo canceló el comprador antes de pagar (estado "cancelado": el stock volvió en el acto).
@@ -244,3 +248,18 @@ class DevolucionStock(Base):
     ultimo_error = Column(String, nullable=True)
     fecha_creacion = Column(DateTime, nullable=False, default=datetime.utcnow)
     fecha_devuelta = Column(DateTime, nullable=True)
+
+
+class ExtensionPlazo(Base):
+    """Cada vez que se alargó el plazo para pagar un pedido (Pago.vence_en): el comprador eligió transferencia o abrió
+    Culqi con poco tiempo por delante (ver plazos.py y main.extender_plazo). Así una extensión es explícita: qué plazo
+    tenía, cuál quedó, por qué y cuándo."""
+    __tablename__ = "extensiones_plazo"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pago_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    pedido_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    motivo = Column(String, nullable=False)  # transferencia | culqi
+    vence_antes = Column(DateTime, nullable=False)
+    vence_despues = Column(DateTime, nullable=False)
+    fecha = Column(DateTime, nullable=False, default=datetime.utcnow)

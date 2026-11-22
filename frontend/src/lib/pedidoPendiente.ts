@@ -24,15 +24,11 @@ export function horaDeLima(momento: Date): string {
   return momento.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Lima' });
 }
 
-// Hasta cuándo se guarda un pedido sin pagar: el plazo de su pago si ya existe; si todavía no (el aviso del pedido nuevo
-// aún no llegó a Pagos), el plazo que dice Pagos contado desde que se creó el pedido. null si no se puede saber.
-export function venceDelPedido(venceEn: string | null | undefined, fechaCreacion: string | null | undefined,
-  plazoMinutos: number | null | undefined): Date | null {
+// Hasta cuándo se guarda un pedido sin pagar: el plazo GUARDADO en su pago (vence_en), que el servidor alarga al elegir
+// transferencia o al abrir Culqi. Nunca se calcula aquí desde la creación. null si todavía no se sabe.
+export function venceDe(venceEn: string | null | undefined): Date | null {
   const vence = parsearFechaServidor(venceEn);
-  if (!isNaN(vence.getTime())) return vence;
-  const creado = parsearFechaServidor(fechaCreacion);
-  if (isNaN(creado.getTime()) || !plazoMinutos) return null;
-  return new Date(creado.getTime() + plazoMinutos * 60_000);
+  return isNaN(vence.getTime()) ? null : vence;
 }
 
 // Un pago que se está verificando (cobro en curso o transferencia en revisión): ese pedido no se paga ni se cancela

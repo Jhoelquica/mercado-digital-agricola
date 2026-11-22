@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { pagos, type CondicionesDePago } from '../../api/pagos';
 import { toast } from '../../components/Toast';
 import { formatearMoneda } from '../../lib/formato';
+import { horaDeLima } from '../../lib/pedidoPendiente';
 import { FOTO_TAMANO_MAXIMO, FOTO_TIPOS_VALIDOS, formatearTamanoArchivo } from '../../lib/fotos';
 
 
@@ -97,12 +98,14 @@ interface Props {
   pedidoId: string;
   monto: number;
   cuenta: NonNullable<CondicionesDePago['transferencia']>;
+  // Hasta cuándo se guarda el pedido para subir la constancia (el plazo de su pago, ya alargado por elegir transferencia).
+  vence?: Date | null;
   alEnviar: (numeroOperacion: string) => void;
 }
 
 // El comprador transfiere el monto exacto a la cuenta de Chakra Shop y sube la constancia con el número de operación.
 // El pago queda "en revisión" hasta que un admin la confirma; también puede subirla después desde Mis Pedidos.
-export function PanelTransferencia({ pedidoId, monto, cuenta, alEnviar }: Props) {
+export function PanelTransferencia({ pedidoId, monto, cuenta, vence = null, alEnviar }: Props) {
   const [foto, setFoto] = useState<EstadoFoto>({ estado: 'vacia' });
   const [numero, setNumero] = useState('');
   const [mensaje, setMensaje] = useState('');
@@ -167,7 +170,8 @@ export function PanelTransferencia({ pedidoId, monto, cuenta, alEnviar }: Props)
         <button type="submit" className="btn btn-primary btn-block" disabled={enviando}>
           {enviando ? <><i className="ti ti-loader-2 icono-girando" aria-hidden="true" /> Enviando la constancia…</> : 'Enviar constancia'}
         </button>
-        <p className="transferencia-despues"><i className="ti ti-clock" aria-hidden="true" /> ¿La harás después? Tu pedido queda reservado: sube la constancia desde Mis Pedidos.</p>
+        <p className="transferencia-despues" id="transferencia-plazo"><i className="ti ti-clock" aria-hidden="true" /> ¿La harás después? Tu pedido queda reservado
+          {vence ? <> hasta las <strong>{horaDeLima(vence)}</strong> (hora de Lima)</> : ''}: sube la constancia desde Mis Pedidos{vence ? ' antes de esa hora; si no, los productos vuelven al catálogo' : ''}.</p>
       </form>
     </div>
   );

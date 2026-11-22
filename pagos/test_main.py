@@ -2743,3 +2743,154 @@ def test_las_condiciones_dicen_el_plazo_para_pagar_y_un_pedido_cancelado_no_tien
     finally:
         _restaurar_sesion_por_defecto()
     assert datos["estado"] == "cancelado" and datos["monto_a_pagar"] is None and datos["parte_a_pagar"] is None
+
+
+# ============ Plazos para pagar: guardados en el pago, alargados al elegir transferencia o al abrir Culqi ============
+
+def _pago_con_plazo(creado_hace_min, vence_a_los_min, estado="pendiente", usuario_id=None):
+    """Un pago creado hace `creado_hace_min` minutos con su plazo a `vence_a_los_min` minutos de la creación."""
+    db = main.SessionLocal()
+    try:
+        creacion = main.datetime.utcnow() - main.timedelta(minutes=creado_hace_min)
+        pago = main.models.Pago(pedido_id=uuid.uuid4(), monto=40, estado=estado, usuario_id=usuario_id,
+                                items=json.dumps([{"producto_id": str(uuid.uuid4()), "cantidad": 1, "precio_unitario": 40.0}]),
+                                fecha_creacion=creacion, vence_en=creacion + main.timedelta(minutes=vence_a_los_min))
+        db.add(pago)
+        db.commit()
+        db.refresh(pago)
+        db.expunge(pago)
+        return pago
+    finally:
+        db.close()
+
+
+def _plazo(pago, motivo):
+    return client.post(f"/pagos/{pago.pedido_id}/plazo", json={"motivo": motivo}, headers=CON_TOKEN)
+
+
+def _extensiones(pago):
+    db = main.SessionLocal()
+    try:
+        return db.query(main.models.ExtensionPlazo).filter(main.models.ExtensionPlazo.pago_id == pago.id).order_by(
+            main.models.ExtensionPlazo.fecha).all()
+    finally:
+        db.close()
+
+
+def _correr_reloj(pago, minutos):
+    """Como si pasaran `minutos`: la creación y el plazo del pago se corren hacia atrás."""
+    db = main.SessionLocal()
+    try:
+        fila = db.query(main.models.Pago).filter(main.models.Pago.id == pago.id).one()
+        fila.fecha_creacion -= main.timedelta(minutes=minutos)
+        fila.vence_en -= main.timedelta(minutes=minutos)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_un_pago_nuevo_vence_a_los_15_minutos_y_al_vencer_devuelve_su_stock(monkeypatch):
+    pedido_id, comprador = str(uuid.uuid4()), str(uuid.uuid4())
+    rabbitmq_consumer.crear_pago_si_falta({"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": comprador,
+                                           "costo_envio": 5.0, "items": [{"producto_id": str(uuid.uuid4()), "cantidad": 3,
+                                                                          "precio_unitario": 10.0}]})
+    db = main.SessionLocal()
+    try:
+        pago = db.query(main.models.Pago).filter(main.models.Pago.pedido_id == pedido_id).one()
+        assert pago.vence_en - pago.fecha_creacion == main.timedelta(minutes=15)
+        assert str(pago.usuario_id) == comprador
+        compensar = MagicMock(return_value={})
+        monkeypatch.setattr(main, "compensar_stock", compensar)
+        main.vencer_pagos_sin_pagar(db, ahora=pago.fecha_creacion + main.timedelta(minutes=14, seconds=59))
+        db.refresh(pago)
+        # (la base de pruebas guarda pagos de otras pruebas que sí vencen en esa pasada: solo se mira este)
+        assert pago.estado == "pendiente" and all(c.args[0] != pago.items for c in compensar.call_args_list)
+        main.vencer_pagos_sin_pagar(db, ahora=pago.fecha_creacion + main.timedelta(minutes=15, seconds=1))
+        db.refresh(pago)
+        assert pago.estado == "rechazado" and pago.vencido_en is not None
+        assert any(c.args[0] == pago.items for c in compensar.call_args_list)
+    finally:
+        db.close()
+
+
+def test_abrir_culqi_a_los_12_minutos_alarga_el_plazo_y_nunca_pasa_del_tope():
+    pago = _pago_con_plazo(creado_hace_min=12, vence_a_los_min=15)
+    resp = _plazo(pago, "culqi")
+    assert resp.status_code == 200, resp.text
+    fila = _fila_pago(pago)
+    esperado = main.datetime.utcnow() + main.timedelta(minutes=10)
+    assert abs((fila.vence_en - esperado).total_seconds()) < 5
+    assert resp.json()["vence_en"].startswith(fila.vence_en.isoformat()[:16])
+    for minutos in (20, 15, 30):  # pasa el tiempo y vuelve a abrir Culqi
+        _correr_reloj(pago, minutos)
+        assert _plazo(pago, "culqi").status_code == 200
+        fila = _fila_pago(pago)
+        assert fila.vence_en <= fila.fecha_creacion + main.timedelta(minutes=45)
+    assert [e.motivo for e in _extensiones(pago)] == ["culqi", "culqi"]  # pasado el tope ya no se alarga
+    assert all(e.vence_despues > e.vence_antes for e in _extensiones(pago))
+
+
+def test_con_mas_de_10_minutos_por_delante_abrir_culqi_no_cambia_el_plazo():
+    pago = _pago_con_plazo(creado_hace_min=2, vence_a_los_min=15)
+    antes = _fila_pago(pago).vence_en
+    assert _plazo(pago, "culqi").status_code == 200
+    assert _fila_pago(pago).vence_en == antes and _extensiones(pago) == []
+
+
+def test_elegir_transferencia_da_dos_horas_desde_la_creacion_y_cambiar_de_metodo_no_lo_alarga_mas():
+    pago = _pago_con_plazo(creado_hace_min=5, vence_a_los_min=15)
+    assert _plazo(pago, "transferencia").status_code == 200
+    fila = _fila_pago(pago)
+    assert fila.vence_en == fila.fecha_creacion + main.timedelta(minutes=120)
+    for motivo in ("culqi", "transferencia", "culqi", "transferencia"):
+        assert _plazo(pago, motivo).status_code == 200
+        assert _fila_pago(pago).vence_en == fila.vence_en
+    [extension] = _extensiones(pago)
+    assert extension.motivo == "transferencia" and extension.vence_antes == fila.fecha_creacion + main.timedelta(minutes=15)
+
+
+def test_un_pago_de_antes_conserva_sus_60_minutos_y_el_plazo_nunca_se_acorta():
+    pago = _pago_con_plazo(creado_hace_min=55, vence_a_los_min=60)
+    antes = _fila_pago(pago).vence_en
+    assert _plazo(pago, "culqi").status_code == 200  # le quedan 5, pero el tope (45) ya pasó: no lo baja
+    assert _fila_pago(pago).vence_en == antes
+
+
+def test_solo_se_alarga_el_plazo_de_un_pago_pendiente():
+    for estado in ("procesando", "en_revision", "rechazado", "aprobado", "cancelado"):
+        pago = _pago_con_plazo(creado_hace_min=12, vence_a_los_min=15, estado=estado)
+        antes = _fila_pago(pago).vence_en
+        for motivo in ("culqi", "transferencia"):
+            resp = _plazo(pago, motivo)
+            assert resp.status_code == 200 and resp.json()["estado"] == estado
+        assert _fila_pago(pago).vence_en == antes and _extensiones(pago) == []
+
+
+def test_si_pedido_creado_no_llego_pedir_el_plazo_crea_el_pago_con_sus_15_minutos(monkeypatch):
+    pedido_id = str(uuid.uuid4())
+    del_pedido = {"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": str(uuid.uuid4()), "comprador_nombre": "QA",
+                  "costo_envio": 5.0, "modalidad_envio": "local", "monto_adelanto": None,
+                  "items": [{"producto_id": str(uuid.uuid4()), "cantidad": 3, "cantidad_base": 3, "precio_unitario": 10.0}]}
+    monkeypatch.setattr(main.httpx, "get", lambda url, headers=None, timeout=None: MagicMock(status_code=200, json=lambda: del_pedido))
+    resp = client.post(f"/pagos/{pedido_id}/plazo", json={"motivo": "culqi"}, headers=CON_TOKEN)
+    assert resp.status_code == 200 and resp.json()["estado"] == "pendiente", resp.text
+    db = main.SessionLocal()
+    try:
+        pago = db.query(main.models.Pago).filter(main.models.Pago.pedido_id == pedido_id).one()
+        assert pago.vence_en - pago.fecha_creacion == main.timedelta(minutes=15)
+    finally:
+        db.close()
+
+
+def test_solo_el_comprador_dueno_alarga_el_plazo_y_el_motivo_se_valida(monkeypatch):
+    pago = _pago_con_plazo(creado_hace_min=12, vence_a_los_min=15)
+    assert client.post(f"/pagos/{pago.pedido_id}/plazo", json={"motivo": "porque si"}, headers=CON_TOKEN).status_code == 422
+    monkeypatch.setattr(main, "_exigir_dueno_para_pagar", ORIGINAL_EXIGIR_DUENO)
+    _mockear_pedidos(monkeypatch, usuario_id=str(uuid.uuid4()))  # el pedido es de otro
+    assert _plazo(pago, "culqi").status_code == 403
+    assert _extensiones(pago) == []
+
+
+def test_las_condiciones_dicen_los_dos_plazos():
+    condiciones = client.get("/pagos/condiciones").json()
+    assert condiciones["plazo_para_pagar_minutos"] == 15 and condiciones["plazo_transferencia_minutos"] == 120

@@ -32,6 +32,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 import culqi_client
 from culqi_client import crear_cargo, crear_devolucion, devuelto_del_cargo, obtener_cargo, obtener_devolucion
 from rabbitmq_consumer import crear_pago_si_falta, lanzar_consumidor_en_hilo, PLAZO_PARA_PAGAR_MINUTOS
+import plazos
 from eventos import EXCHANGE as EXCHANGE_DE_EVENTOS, registrar_evento
 from comun import bandeja_salida
 from logica_liquidaciones import crear_liquidaciones, crear_liquidacion_repartidor, crear_liquidacion_recojo, pagos_sin_liquidaciones
@@ -288,8 +289,9 @@ def condiciones_de_pago():
         "comision_plataforma_porcentaje": float(COMISION_PLATAFORMA_PORCENTAJE * 100),
         "yape_maximo_por_operacion": float(YAPE_MAXIMO_POR_OPERACION),
         "transferencia": _datos_transferencia(),  # null si no hay una cuenta configurada
-        # Cuánto se guarda un pedido sin pagar: el checkout dice hasta qué hora mientras su pago todavía no existe.
+        # Cuánto se guarda un pedido sin pagar (la hora exacta es la de su pago: vence_en) y cuánto si se paga por transferencia.
         "plazo_para_pagar_minutos": PLAZO_PARA_PAGAR_MINUTOS,
+        "plazo_transferencia_minutos": plazos.PLAZO_TRANSFERENCIA_MINUTOS,
     }
 
 
@@ -418,7 +420,8 @@ def monto_de(pago, parte: str) -> Decimal:
 
 # ---- Pedidos que nadie paga: al vencer el plazo el stock vuelve al catálogo (último paso de la saga del pedido) ----
 INTERVALO_VENCIMIENTOS_SEGUNDOS = 60
-MOTIVO_VENCIDO = f"Pasaron {PLAZO_PARA_PAGAR_MINUTOS} minutos sin pagar y los productos volvieron al catálogo"
+# Sin minutos fijos: el plazo de cada pago depende de cómo se pagaba (ver plazos.py).
+MOTIVO_VENCIDO = "Venció el plazo para pagar y los productos volvieron al catálogo"
 
 
 def vencer_pagos_sin_pagar(db: Session, ahora=None) -> int:
@@ -747,6 +750,44 @@ def procesar_pago(
         return {"estado": "adelanto_pagado" if parte == "adelanto" else "aprobado", "parte": parte, "detalle": cuerpo}
     raise HTTPException(status_code=402, detail=cuerpo.get("user_message") or
                         ("El pago del saldo fue rechazado" if parte == "saldo" else "El pago fue rechazado"))
+
+
+# ---- El plazo para pagar: elegir transferencia o abrir Culqi lo alarga (reglas en plazos.py) ----
+class PlazoPedido(BaseModel):
+    motivo: Literal["transferencia", "culqi"]
+
+
+@app.post("/pagos/{pedido_id}/plazo")
+def extender_plazo(
+    pedido_id: uuid.UUID,
+    datos: PlazoPedido,
+    db: Session = Depends(get_db),
+    usuario: dict = Depends(requiere_rol("comprador")),
+    credenciales: HTTPAuthorizationCredentials = Depends(security),
+):
+    """El checkout lo pide al elegir transferencia y justo antes de abrir Culqi. Solo alarga el plazo de un pago
+    "pendiente" (uno en proceso o en revisión no vence; uno vencido se vuelve a reservar al cobrarlo) y nunca lo acorta.
+    Cada extensión queda anotada (extensiones_plazo). Devuelve el plazo que vale ahora, para mostrarlo."""
+    _exigir_dueno_para_pagar(pedido_id, usuario, credenciales.credentials)
+    pago_id = _pago_o_crearlo(db, pedido_id).id
+    db.rollback()
+    pago = db.query(models.Pago).filter(models.Pago.id == pago_id).with_for_update().populate_existing().one()
+    if pago.usuario_id is None:
+        pago.usuario_id = usuario.get("sub")  # un pago de antes: desde ahora cuenta para el tope por comprador
+    antes = pago.vence_en
+    if pago.estado == "pendiente" and antes is not None:
+        ahora = datetime.utcnow()
+        creacion = pago.fecha_creacion or ahora
+        nuevo = (plazos.vence_con_transferencia(creacion, antes) if datos.motivo == "transferencia"
+                 else plazos.vence_al_abrir_culqi(creacion, antes, ahora))
+        if nuevo > antes:
+            pago.vence_en = nuevo
+            db.add(models.ExtensionPlazo(pago_id=pago.id, pedido_id=pago.pedido_id, motivo=datos.motivo,
+                                         vence_antes=antes, vence_despues=nuevo, fecha=ahora))
+            logger.info("Pedido %s: plazo para pagar alargado (%s) de %s a %s", pedido_id, datos.motivo, antes, nuevo)
+    respuesta = {"pedido_id": str(pedido_id), "estado": pago.estado, "vence_en": jsonable_encoder(pago.vence_en)}
+    db.commit()
+    return respuesta
 
 
 # ---- El comprador cancela su pedido sin pagar ("Cancelar pedido" en Mis pedidos, "Reemplazar" en el checkout) ----

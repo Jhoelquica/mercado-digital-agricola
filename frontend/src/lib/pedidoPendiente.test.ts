@@ -2,7 +2,7 @@
 import { expect, test } from 'vitest';
 import { ApiError, mensajeDeDetalle } from '../api/errors';
 import { pedidoPendienteDe, type PedidoPendiente } from '../api/pedidos';
-import { horaDeLima, mismasLineas, pagoSeEstaVerificando, venceDelPedido } from './pedidoPendiente';
+import { horaDeLima, mismasLineas, pagoSeEstaVerificando, venceDe } from './pedidoPendiente';
 
 const PAPA = '3f1c9a52-0000-4000-8000-000000000001';
 const MAIZ = '3f1c9a52-0000-4000-8000-000000000002';
@@ -27,11 +27,12 @@ test('la hora del aviso es la de Lima, venga como venga la fecha del servidor', 
   expect(horaDeLima(new Date('2026-11-21T04:05:00Z'))).toBe('23:05');
 });
 
-test('el pedido se guarda hasta el plazo de su pago; si el pago aún no existe, desde que se creó el pedido', () => {
-  expect(venceDelPedido('2026-11-20T23:30:00', '2026-11-20T22:00:00', 60)?.toISOString()).toBe('2026-11-20T23:30:00.000Z');
-  expect(venceDelPedido(null, '2026-11-20T22:00:00', 60)?.toISOString()).toBe('2026-11-20T23:00:00.000Z');
-  expect(venceDelPedido(undefined, '2026-11-20T22:00:00', undefined)).toBeNull();
-  expect(venceDelPedido(null, null, 60)).toBeNull();
+test('el pedido se guarda hasta el plazo guardado en su pago; sin ese dato no se inventa uno', () => {
+  expect(venceDe('2026-11-20T23:30:00')?.toISOString()).toBe('2026-11-20T23:30:00.000Z');
+  expect(venceDe('2026-11-20T23:30:00.123456')?.toISOString()).toBe('2026-11-20T23:30:00.123Z');
+  expect(venceDe(null)).toBeNull();
+  expect(venceDe(undefined)).toBeNull();
+  expect(venceDe('no es una fecha')).toBeNull();
 });
 
 test('un cobro en curso o una transferencia en revisión se están verificando; un pago pendiente no', () => {
