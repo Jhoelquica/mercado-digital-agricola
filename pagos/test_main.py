@@ -2670,6 +2670,50 @@ def test_un_pedido_cancelado_ya_no_se_cobra_ni_acepta_constancia_ni_vence(monkey
     assert _estado_del_pago(pago) == "cancelado" and not transferencia["compensar"].called
 
 
+def _culqi_que_anota(monkeypatch) -> list:
+    cobros = []
+    monkeypatch.setattr(main, "crear_cargo", lambda **kw: cobros.append(kw) or {"status_code": 201, "data": {"id": "chr_x"}})
+    return cobros
+
+
+def test_abrir_culqi_cancelar_en_otra_pestana_y_enviar_la_tarjeta_da_409_y_no_llega_a_culqi(monkeypatch, cancelacion):
+    """El comprador abre Culqi en una pestaña (el checkout pide el plazo), cancela el pedido en otra y después envía la
+    tarjeta en la primera. Su pago queda "cancelado", que no está entre los estados desde los que se cobra: 409, sin
+    intento y sin llamar a Culqi."""
+    pago = _pago_con_plazo(creado_hace_min=2, vence_a_los_min=15)
+    cobros = _culqi_que_anota(monkeypatch)
+    assert _plazo(pago, "culqi").status_code == 200  # pestaña 1: se abre Culqi
+    assert _cancelar(pago.pedido_id).status_code == 200  # pestaña 2: "Cancelar pedido"
+    resp = _procesar(pago)  # pestaña 1: llega el token de la tarjeta
+    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_CANCELADO_POR_EL_COMPRADOR, resp.text
+    assert cobros == [] and _intentos_de(pago) == [] and _estado_del_pago(pago) == "cancelado"
+
+
+def test_una_cancelacion_que_entra_justo_antes_del_cobro_gana_y_no_se_llama_a_culqi(monkeypatch):
+    """La carrera fina: el cobro ya leyó el pago "pendiente" cuando la otra pestaña confirma la cancelación. El UPDATE
+    condicional de la fase 1 solo toma el pago desde los estados desde los que se cobra, y "cancelado" no es uno de
+    ellos: no cambia ninguna fila, el cobro responde 409 con el mensaje de la cancelación y Culqi no se entera."""
+    assert all("cancelado" not in desde for desde in main.DESDE_DONDE_SE_COBRA.values())
+    pago = _pago_con_plazo(creado_hace_min=2, vence_a_los_min=15)
+    cobros = _culqi_que_anota(monkeypatch)
+    empezar = main._empezar_cobro
+
+    def con_la_cancelacion_justo_antes(db, *args, **kwargs):
+        otra = main.SessionLocal()  # la otra pestaña, con su propia conexión
+        try:
+            otra.query(main.models.Pago).filter(main.models.Pago.id == pago.id).update(
+                {"estado": "cancelado", "cancelado_en": main.datetime.utcnow()}, synchronize_session=False)
+            otra.commit()
+        finally:
+            otra.close()
+        return empezar(db, *args, **kwargs)
+
+    monkeypatch.setattr(main, "_empezar_cobro", con_la_cancelacion_justo_antes)
+    resp = _procesar(pago)
+    assert resp.status_code == 409 and resp.json()["detail"] == main.MENSAJE_CANCELADO_POR_EL_COMPRADOR, resp.text
+    assert cobros == [] and _intentos_de(pago) == [] and _estado_del_pago(pago) == "cancelado"
+
+
 def test_si_pedido_creado_no_llego_cancelar_crea_el_pago_y_devuelve_su_stock(monkeypatch, cancelacion):
     pedido_id, producto = str(uuid.uuid4()), str(uuid.uuid4())
     del_pedido = {"evento": "pedido_creado", "pedido_id": pedido_id, "usuario_id": str(uuid.uuid4()), "comprador_nombre": "QA",

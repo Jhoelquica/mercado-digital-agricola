@@ -15,7 +15,11 @@ Cruza las bases de Pagos, Pedidos, Transporte y Productos (cada servicio tiene l
      confirmado admite el adelanto pagado o un cobro o una devolución en proceso);
  10. pedidos "pendiente" con el pago rechazado, vencido o cancelado por el comprador (pago_rechazado o
      pedido_cancelado_sin_pagar no llegó a Pedidos): con un solo pendiente por comprador, ese pedido no le deja armar otro;
-     y pedidos "en_revision" con el pago rechazado (el admin rechazó la transferencia y el aviso no llegó).
+     y pedidos "en_revision" con el pago rechazado (el admin rechazó la transferencia y el aviso no llegó);
+ 11. pagos aprobados (o con el adelanto pagado) de un pedido que su comprador canceló sin pagar: ese pedido es final, sus
+     productos ya volvieron al catálogo y no sale, así que hay que devolver el dinero. Se ve en Pedidos (cancelado con
+     fecha y sin motivo) o en Pagos (el pago tiene cancelado_en). No espera a ningún evento: nada lo arregla solo. Un
+     pedido así no cuenta además en las reglas 1 ni 5 (no hay que confirmarlo ni crearle un envío).
 
 Aparte (no es una inconsistencia, es trabajo atrasado): transferencias_en_revision_hace_mucho(), las que llevan más de
 HORAS_MAX_REVISION horas esperando al admin; verificar_despliegue.py avisa para que el comprador no quede esperando.
@@ -107,10 +111,16 @@ def _en_camino(consultar, servicio, tipo, clave) -> set:
 
 def inconsistencias(consultar) -> list:
     """[(número de la regla, frase)] de lo inconsistente ahora mismo; vacío si todo coincide."""
-    pedidos = {fila[0]: (fila[1], fila[2] == "t")
-               for fila in consultar("pedidos", "SELECT id, estado, motivo_cancelacion IS NOT NULL FROM pedidos")}
-    pagados = {fila[0]: fila[1] for fila in consultar(
-        "pagos", f"SELECT pedido_id, estado FROM pagos WHERE estado IN {PAGADOS!r}")}
+    filas_pedidos = consultar("pedidos", (
+        "SELECT id, estado, motivo_cancelacion IS NOT NULL, (estado = 'cancelado' AND motivo_cancelacion IS NULL AND "
+        "fecha_cancelacion IS NOT NULL) FROM pedidos"))
+    pedidos = {fila[0]: (fila[1], fila[2] == "t") for fila in filas_pedidos}
+    # Regla 11: lo canceló su comprador sin pagar (con fecha y sin motivo). Es final: nada lo reabre.
+    cancelados_por_el_comprador = {fila[0] for fila in filas_pedidos if fila[3] == "t"}
+    filas_pagados = consultar("pagos", f"SELECT pedido_id, estado, cancelado_en IS NOT NULL FROM pagos "
+                                       f"WHERE estado IN {PAGADOS!r}")
+    pagados = {fila[0]: fila[1] for fila in filas_pagados}
+    cancelado_en_pagos = {fila[0] for fila in filas_pagados if fila[2] == "t"}
     entregas_en_pagos = {fila[0] for fila in consultar("pagos", "SELECT pedido_id FROM entregas_pedido")}
     envios = {fila[0]: fila[1] for fila in consultar("transporte", "SELECT pedido_id, estado FROM envios")}
     recojos = consultar("transporte",
@@ -127,6 +137,12 @@ def inconsistencias(consultar) -> list:
 
     hallazgos = []
     for pedido_id, estado_pago in sorted(pagados.items()):
+        en_pedidos, en_pagos = pedido_id in cancelados_por_el_comprador, pedido_id in cancelado_en_pagos
+        if en_pedidos or en_pagos:
+            donde = "en Pedidos y en Pagos" if en_pedidos and en_pagos else ("en Pedidos" if en_pedidos else "en Pagos")
+            hallazgos.append((11, f"pago {estado_pago} del pedido {pedido_id}, que su comprador canceló sin pagar (se "
+                                  f"ve {donde}): el pedido ya no sale, hay que devolverle el dinero"))
+            continue
         if pedido_id in pago_en_camino:
             continue
         estado, con_motivo = pedidos.get(pedido_id, (None, False))
@@ -219,6 +235,7 @@ REGLAS = {
     8: f"Devolución a medias hace más de {MINUTOS_EN_PROCESO} minutos (resolverla en el mismo panel)",
     9: "Pedido confirmado o entregado sin el pago aprobado",
     10: "Pedido pendiente con el pago rechazado, vencido o cancelado (bloquea al comprador), o en revisión con el pago rechazado",
+    11: "Pago aprobado con el pedido cancelado por el comprador (no sale: hay que devolver el dinero)",
 }
 
 
