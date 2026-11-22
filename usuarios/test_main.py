@@ -1254,8 +1254,8 @@ def test_una_cuenta_con_rol_retirado_tampoco_entra_con_google(monkeypatch):
 def test_el_gateway_rechaza_el_token_vigente_de_una_cuenta_desactivada():
     """GET /usuarios/validar-token es lo que consulta Traefik (ForwardAuth) antes de dejar pasar una petición."""
     main.app.dependency_overrides.pop(verificar_token, None)
-    vigente = seguridad.crear_token(str(uuid.uuid4()), "verificador")   # recién emitido: no está vencido
-    de_un_comprador = seguridad.crear_token(str(uuid.uuid4()), "comprador")
+    vigente = seguridad.crear_token(str(uuid.uuid4()), "verificador", 1)   # recién emitido: no está vencido
+    de_un_comprador = seguridad.crear_token(_crear_usuario("comprador"), "comprador", 1)
 
     rechazado = client.get("/usuarios/validar-token", headers={"Authorization": f"Bearer {vigente}"})
     aceptado = client.get("/usuarios/validar-token", headers={"Authorization": f"Bearer {de_un_comprador}"})
@@ -1272,15 +1272,15 @@ def test_validar_sesion_deja_pasar_sin_token_y_rechaza_cualquier_token_que_no_va
     assert visitante.status_code == 200 and visitante.json() == {"visitante": True}
     assert "x-usuario-id" not in visitante.headers and "x-usuario-rol" not in visitante.headers
 
-    sub = str(uuid.uuid4())
-    bueno = seguridad.crear_token(sub, "comprador")
+    sub = _crear_usuario("comprador")
+    bueno = seguridad.crear_token(sub, "comprador", 1)
     valido = client.get("/usuarios/validar-sesion", headers={"Authorization": f"Bearer {bueno}"})
     assert valido.status_code == 200, valido.text
     assert valido.headers["x-usuario-id"] == sub and valido.headers["x-usuario-rol"] == "comprador"
 
     vencido = jose_jwt.encode({"sub": sub, "rol": "comprador", "exp": datetime.utcnow() - timedelta(minutes=1)},
                               seguridad.JWT_SECRET, algorithm=seguridad.JWT_ALGORITHM)
-    retirado = seguridad.crear_token(sub, "verificador")
+    retirado = seguridad.crear_token(sub, "verificador", 1)
     for cabecera in ("Bearer no.es.un-token", "Bearer ", "", "Basic dXN1YXJpbzpjbGF2ZQ==", bueno,
                      f"Bearer {vencido}", f"Bearer {retirado}", f"Bearer {bueno[:-3]}abc"):
         respuesta = client.get("/usuarios/validar-sesion", headers={"Authorization": cabecera})
@@ -1292,3 +1292,242 @@ def test_ningun_modelo_mapea_la_tabla_invitaciones():
     """La tabla "invitaciones" (códigos para registrarse con un rol restringido; su único uso era el rol verificador) se
     borró el 2026-11-17, con respaldo. Como ningún modelo la mapea, create_all no la vuelve a crear."""
     assert "invitaciones" not in main.models.Base.metadata.tables
+
+
+# ============ Versión de credencial: cambiar la contraseña y cerrar las sesiones revocan los tokens anteriores ============
+import sesiones
+
+
+class _RedisFalso:
+    """Lo justo de redis-py para sesiones.py: get, set (con ex y nx) y un pipeline de delete + set."""
+
+    def __init__(self, caido=False):
+        self.datos, self.caido = {}, caido
+
+    def _exigir(self):
+        if self.caido:
+            raise sesiones.redis.exceptions.ConnectionError("Redis detenido (prueba)")
+
+    def get(self, clave):
+        self._exigir()
+        return self.datos.get(clave)
+
+    def set(self, clave, valor, ex=None, nx=False):
+        self._exigir()
+        if nx and clave in self.datos:
+            return None
+        self.datos[clave] = valor
+        return True
+
+    def pipeline(self, transaction=True):
+        redis_falso, pendientes = self, []
+
+        class _Pipeline:
+            def delete(self, clave):
+                pendientes.append(("delete", clave))
+                return self
+
+            def set(self, clave, valor, ex=None):
+                pendientes.append(("set", clave, valor))
+                return self
+
+            def execute(self):
+                redis_falso._exigir()
+                for paso in pendientes:
+                    if paso[0] == "delete":
+                        redis_falso.datos.pop(paso[1], None)
+                    else:
+                        redis_falso.datos[paso[1]] = paso[2]
+                return [True] * len(pendientes)
+
+        return _Pipeline()
+
+
+@pytest.fixture
+def redis_falso(monkeypatch):
+    falso = _RedisFalso()
+    monkeypatch.setattr(sesiones, "_cliente", falso)
+    sesiones._circuito.close()
+    yield falso
+    sesiones._circuito.close()
+
+
+@pytest.fixture
+def sin_sesion_simulada():
+    guardado = main.app.dependency_overrides.pop(verificar_token, None)
+    yield
+    if guardado is not None:
+        main.app.dependency_overrides[verificar_token] = guardado
+
+
+def _registrar_y_devolver_email(password):
+    email = _email()
+    assert _registrar(email, password).status_code == 200
+    return email
+
+
+def _cuenta_con_sesiones(password="clave-vieja-123", n=2):
+    """Una cuenta con contraseña y `n` sesiones (cada login, otro dispositivo)."""
+    email = _registrar_y_devolver_email(password)
+    return email, [_login(email, password).json()["access_token"] for _ in range(n)]
+
+
+def _con(token):
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _gateway(token):
+    """Lo que responde el ForwardAuth (las dos variantes) a ese token."""
+    return (client.get("/usuarios/validar-token", headers=_con(token)).status_code,
+            client.get("/usuarios/validar-sesion", headers=_con(token)).status_code)
+
+
+def test_el_token_lleva_la_version_de_credencial_y_el_gateway_rechaza_uno_revocado(redis_falso, sin_sesion_simulada):
+    email, (token,) = _cuenta_con_sesiones(n=1)
+    carga = _decodificar_jwt(token)
+    assert carga["ver"] == 1
+    assert _gateway(token) == (200, 200)
+    db = main.SessionLocal()
+    try:
+        usuario = db.query(main.models.Usuario).filter(main.models.Usuario.email == email).one()
+        assert sesiones.revocar_sesiones(db, usuario) == 2
+    finally:
+        db.close()
+    assert _gateway(token) == (401, 401)
+    detalle = client.get("/usuarios/validar-sesion", headers=_con(token)).json()["detail"]
+    assert detalle == sesiones.MENSAJE_SESION_CERRADA
+    sin_version = seguridad.jwt.encode({"sub": carga["sub"], "rol": "comprador", "exp": carga["exp"]},
+                                       seguridad.JWT_SECRET, algorithm=seguridad.JWT_ALGORITHM)
+    assert _gateway(sin_version) == (401, 401)  # un token de antes (sin "ver") tampoco vale
+    de_otra_cuenta = seguridad.crear_token(str(uuid.uuid4()), "comprador", 1)
+    assert _gateway(de_otra_cuenta) == (401, 401)  # una cuenta que no existe
+
+
+def test_cambiar_la_contrasena_revoca_las_sesiones_anteriores_y_esta_pestana_recibe_un_token_nuevo(redis_falso, sin_sesion_simulada):
+    email, (esta, otro_dispositivo) = _cuenta_con_sesiones()
+    resp = client.post("/usuarios/me/contrasena", headers=_con(esta), json={"actual": "clave-vieja-123", "nueva": "otra-clave-456"})
+    assert resp.status_code == 200, resp.text
+    nuevo = resp.json()["access_token"]
+    assert _decodificar_jwt(nuevo)["ver"] == 2
+    assert _gateway(esta) == (401, 401) and _gateway(otro_dispositivo) == (401, 401)
+    assert _gateway(nuevo) == (200, 200)
+    assert _login(email, "clave-vieja-123").status_code == 401
+    assert _login(email, "otra-clave-456").status_code == 200
+    # Con un token viejo ya no se cambia la contraseña ni se cierran sesiones (se comprueba también en el servicio).
+    otra_vez = client.post("/usuarios/me/contrasena", headers=_con(esta), json={"actual": "otra-clave-456", "nueva": "tercera-789"})
+    assert otra_vez.status_code == 401
+    assert client.post("/usuarios/me/cerrar-sesiones", headers=_con(otro_dispositivo)).status_code == 401
+
+
+def test_la_contrasena_nueva_sigue_las_reglas_del_registro_y_no_puede_ser_la_misma(redis_falso, sin_sesion_simulada):
+    email, (token,) = _cuenta_con_sesiones(n=1)
+    for nueva, motivo in (("corta12", "al menos 8 caracteres"), ("        ", "solo espacios"), ("x" * 73, "demasiado larga"),
+                          ("12345678", "demasiado común"), ("PassWord", "demasiado común"), (email, "igual a tu correo"),
+                          ("clave-vieja-123", "distinta de la actual")):
+        resp = client.post("/usuarios/me/contrasena", headers=_con(token), json={"actual": "clave-vieja-123", "nueva": nueva})
+        assert resp.status_code == 422 and motivo in resp.json()["detail"], (nueva, resp.text)
+    assert _gateway(token) == (200, 200)  # nada cambió: la sesión sigue
+    assert _login(email, "clave-vieja-123").status_code == 200
+
+
+def test_la_contrasena_actual_incorrecta_cuenta_como_un_fallo_del_login(monkeypatch, redis_falso, sin_sesion_simulada):
+    """Una sesión robada no sirve para adivinar la contraseña: cada error suma al mismo contador que el login de ese
+    correo y, con el tope, quedan bloqueados los dos (incluso con la contraseña correcta)."""
+    monkeypatch.setattr(acceso, "MAX_INTENTOS_LOGIN", 4)
+    email, (token,) = _cuenta_con_sesiones(n=1)
+    detalles = []
+    for _ in range(3):
+        resp = client.post("/usuarios/me/contrasena", headers=_con(token), json={"actual": "no-es-esta", "nueva": "otra-clave-456"})
+        assert resp.status_code == 400
+        detalles.append(resp.json()["detail"])
+    assert "Te quedan 3 intentos" in detalles[0] and "Te quedan 1 intento antes" in detalles[2]
+    assert _login(email, "no-es-esta").status_code == 429  # el cuarto fallo, desde el login: se bloquea
+    bloqueado = client.post("/usuarios/me/contrasena", headers=_con(token), json={"actual": "clave-vieja-123", "nueva": "otra-clave-456"})
+    assert bloqueado.status_code == 429
+    assert _login(email, "clave-vieja-123").status_code == 429
+    assert _gateway(token) == (200, 200)  # el bloqueo no cierra la sesión ni cambia la contraseña
+
+
+def test_una_cuenta_de_google_no_tiene_contrasena_que_cambiar(monkeypatch, redis_falso, sin_sesion_simulada):
+    _mockear_google(monkeypatch)
+    token = client.post("/usuarios/oauth/google", json={"id_token": "x", "rol": "comprador"}).json()["access_token"]
+    resp = client.post("/usuarios/me/contrasena", headers=_con(token), json={"actual": "lo-que-sea", "nueva": "otra-clave-456"})
+    assert resp.status_code == 409 and "Google" in resp.json()["detail"]
+    perfil = client.get(f"/usuarios/{_decodificar_jwt(token)['sub']}", headers=_con(token)).json()
+    assert perfil["tiene_contrasena"] is False
+
+
+def test_cerrar_sesion_en_todos_los_dispositivos_deja_solo_el_token_nuevo(redis_falso, sin_sesion_simulada):
+    email, (esta, otra, tercera) = _cuenta_con_sesiones(n=3)
+    resp = client.post("/usuarios/me/cerrar-sesiones", headers=_con(esta))
+    assert resp.status_code == 200, resp.text
+    nuevo = resp.json()["access_token"]
+    assert [_gateway(t) for t in (esta, otra, tercera)] == [(401, 401)] * 3
+    assert _gateway(nuevo) == (200, 200)
+    assert client.get(f"/usuarios/{_decodificar_jwt(nuevo)['sub']}", headers=_con(nuevo)).json()["tiene_contrasena"] is True
+    assert _login(email, "clave-vieja-123").status_code == 200  # la contraseña no cambia
+
+
+def test_con_la_version_en_la_cache_el_gateway_no_consulta_la_base(monkeypatch, redis_falso, sin_sesion_simulada):
+    _, (token,) = _cuenta_con_sesiones(n=1)
+    lecturas = []
+    leer = sesiones._de_la_base
+    monkeypatch.setattr(sesiones, "_de_la_base", lambda usuario_id: lecturas.append(usuario_id) or leer(usuario_id))
+    assert _gateway(token) == (200, 200)
+    assert len(lecturas) == 1  # la primera llena la caché; la segunda ya no va a la base
+    for _ in range(5):
+        assert _gateway(token) == (200, 200)
+    assert len(lecturas) == 1
+
+
+def test_al_subir_la_version_la_cache_queda_con_la_nueva_y_una_lectura_vieja_no_la_pisa(monkeypatch, redis_falso):
+    email, (token,) = _cuenta_con_sesiones(n=1)
+    sub = _decodificar_jwt(token)["sub"]
+    assert sesiones.version_vigente(sub) == 1 and redis_falso.datos[sesiones._clave(sub)] == "1"
+    db = main.SessionLocal()
+    try:
+        usuario = db.query(main.models.Usuario).filter(main.models.Usuario.email == email).one()
+        # Otra petición lee la versión vieja de la base justo antes de que se suba, y llena la caché después.
+        redis_falso.datos.pop(sesiones._clave(sub))
+        leer = sesiones._de_la_base
+
+        def lectura_vieja(usuario_id):
+            vieja = leer(usuario_id)
+            sesiones.revocar_sesiones(db, usuario)  # mientras tanto, se sube la versión
+            return vieja
+
+        monkeypatch.setattr(sesiones, "_de_la_base", lectura_vieja)
+        assert sesiones.version_vigente(sub) == 1  # esa petición decide con lo que leyó
+        monkeypatch.setattr(sesiones, "_de_la_base", leer)
+    finally:
+        db.close()
+    assert redis_falso.datos[sesiones._clave(sub)] == "2"  # su SET NX no pisó la versión nueva
+    assert sesiones.version_vigente(sub) == 2
+
+
+def test_con_redis_detenido_la_revocacion_se_sigue_aplicando_con_la_base(monkeypatch, redis_falso, sin_sesion_simulada):
+    _, (vieja, otra) = _cuenta_con_sesiones()
+    nuevo = client.post("/usuarios/me/cerrar-sesiones", headers=_con(vieja)).json()["access_token"]
+    redis_falso.caido = True  # Redis detenido: ni lee ni escribe
+    lecturas = []
+    leer = sesiones._de_la_base
+    monkeypatch.setattr(sesiones, "_de_la_base", lambda usuario_id: lecturas.append(usuario_id) or leer(usuario_id))
+    assert _gateway(vieja) == (401, 401) and _gateway(otra) == (401, 401)
+    assert _gateway(nuevo) == (200, 200)
+    assert lecturas  # se consultó la base: la comprobación no se saltó
+    otra_vez = client.post("/usuarios/me/cerrar-sesiones", headers=_con(nuevo))  # subir la versión sin Redis, también
+    assert otra_vez.status_code == 200 and _gateway(nuevo) == (401, 401)
+    assert _gateway(otra_vez.json()["access_token"]) == (200, 200)
+
+
+def test_una_base_de_antes_recibe_la_version_de_credencial_con_1_en_cada_cuenta():
+    email = _registrar_y_devolver_email("clave-vieja-123")
+    with main.engine.begin() as conexion:
+        conexion.execute(text("ALTER TABLE usuarios DROP COLUMN version_credencial"))
+    main.asegurar_version_credencial(main.engine)
+    main.asegurar_version_credencial(main.engine)  # idempotente (varias réplicas a la vez)
+    with main.engine.connect() as conexion:
+        version = conexion.execute(text("SELECT version_credencial FROM usuarios WHERE email = :e"), {"e": email}).scalar()
+        nula = conexion.execute(text("SELECT is_nullable FROM information_schema.columns WHERE table_name = 'usuarios' "
+                                     "AND column_name = 'version_credencial'")).scalar()
+    assert version == 1 and nula == "NO"

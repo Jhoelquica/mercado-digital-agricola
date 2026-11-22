@@ -32,6 +32,7 @@ prometheus_client==0.26.0
 psycopg2-binary==2.9.13
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
+pybreaker==1.4.1
 pycparser==3.0
 pycryptodome==3.23.0
 pydantic==2.13.5
@@ -41,6 +42,7 @@ pytest==9.1.1
 python-dotenv==1.2.3
 python-jose==3.5.0
 python-multipart==0.0.32
+redis==8.1.0
 requests==2.34.2
 rsa==4.9.1
 six==1.17.0

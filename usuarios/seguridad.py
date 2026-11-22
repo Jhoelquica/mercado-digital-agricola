@@ -29,7 +29,9 @@ def verificar_password(password: str, password_hash: str | None) -> bool:
     return pwd_context.verify(password, password_hash)
 
 
-def crear_token(usuario_id: str, rol: str) -> str:
+def crear_token(usuario_id: str, rol: str, version_credencial: int) -> str:
+    """El token de la sesión. "ver" es la version_credencial de la cuenta al emitirlo: cuando sube (sesiones.py), el
+    ForwardAuth del gateway rechaza este token en cualquier ruta de la API."""
     expira = datetime.utcnow() + timedelta(minutes=JWT_EXPIRACION_MINUTOS)
-    payload = {"sub": usuario_id, "rol": rol, "exp": expira}
+    payload = {"sub": usuario_id, "rol": rol, "ver": int(version_credencial), "exp": expira}
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)

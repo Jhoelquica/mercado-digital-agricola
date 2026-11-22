@@ -398,6 +398,9 @@ services:
       # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
       MAX_INTENTOS_LOGIN: "8"
       BLOQUEO_LOGIN_MINUTOS: "10"
+      # Caché de la versión de credencial (ver usuarios/sesiones.py); sin Redis se consulta la base.
+      REDIS_HOST: redis
+      REDIS_CACHE_PORT: "6379"
       # Bootstrap del primer admin (ver sembrar_admin_inicial() en usuarios/main.py). Solo corre si la BD todavía no tiene
       # ningún admin. Valores de DESARROLLO.
       ADMIN_BOOTSTRAP_EMAIL: admin@chakrashop.pe
@@ -414,6 +417,8 @@ services:
       db-usuarios:
         condition: service_healthy
       minio:
+        condition: service_started
+      redis:
         condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8006/salud', timeout=3)"]

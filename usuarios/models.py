@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Index, ForeignKey
+from sqlalchemy import Column, String, DateTime, Integer, Index, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID
 from comun.database import Base
 
@@ -36,6 +36,10 @@ class Usuario(Base):
     # Lo que dijo SUNAT del RUC al verificarlo (ver sunat.py): un negocio solo se acepta con su RUC activo y habido.
     razon_social = Column(String, nullable=True)
     ruc_verificado_en = Column(DateTime, nullable=True)
+    # Va en el claim "ver" de cada token. Subirla (sesiones.revocar_sesiones: cambiar la contraseña, "Cerrar sesión en
+    # todos los dispositivos") deja sin valor todos los tokens anteriores de la cuenta: el ForwardAuth del gateway la
+    # compara en cada petición. En una base de antes la agrega migraciones.asegurar_version_credencial (NOT NULL con 1).
+    version_credencial = Column(Integer, nullable=False, default=1, server_default=text("1"))
 
 
 class IntentoLogin(Base):

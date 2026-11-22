@@ -129,6 +129,13 @@ spec:
               value: "8"
             - name: BLOQUEO_LOGIN_MINUTOS
               value: "10"
+            # Caché de la versión de credencial de cada cuenta (30 s; ver usuarios/sesiones.py): con un acierto, el
+            # ForwardAuth no toca la base. Si Redis no responde, se consulta la base: la comprobación no se salta.
+            # REDIS_CACHE_PORT y no REDIS_PORT: Kubernetes inyecta REDIS_PORT=tcp://... (ver k8s/productos.yaml).
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_CACHE_PORT
+              value: "6379"
             # Requerida explícitamente: el código no tiene valor por defecto.
             - name: QA_LIMPIEZA_SECRETO
               valueFrom:

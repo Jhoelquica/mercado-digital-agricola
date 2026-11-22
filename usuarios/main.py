@@ -28,12 +28,13 @@ from comun.auth import secreto_de_servicio_valido
 from comun.database import Base, engine, SessionLocal, get_db
 import models
 from comun.migraciones import agregar_columnas_faltantes
-from migraciones import crear_indices_faltantes
+from migraciones import asegurar_version_credencial, crear_indices_faltantes
 import sunat
 from comun.documentos import leer_documento_validado, limite_del_cuerpo, MENSAJE_MUY_GRANDE
 from minio_client import subir_documento_reclamo, leer_documento_reclamo
 from seguridad import hashear_password, verificar_password, crear_token, HASH_DE_RELLENO
 import acceso
+import sesiones
 
 # No es secreta (el Client ID de Google es público por diseño — viaja en el propio id_token como
 # audience), pero igual se maneja como env var y no hardcodeada, mismo criterio que cualquier
@@ -41,6 +42,7 @@ import acceso
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 Base.metadata.create_all(bind=engine)
+asegurar_version_credencial(engine)  # NOT NULL: antes de la migración común
 agregar_columnas_faltantes(engine, Base)
 crear_indices_faltantes(engine, Base)
 
@@ -242,7 +244,9 @@ def _aplicar_datos_de_comprador(usuario, datos: _DatosDeComprador, en_sunat=None
 
 
 def _perfil(usuario) -> dict:
-    perfil = {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol}
+    # tiene_contrasena: una cuenta creada con Google no tiene una propia (el perfil no le ofrece cambiarla).
+    perfil = {"id": usuario.id, "nombre": usuario.nombre, "email": usuario.email, "rol": usuario.rol,
+              "tiene_contrasena": usuario.password_hash is not None}
     if usuario.rol == "comprador":
         perfil.update(tipo_comprador=usuario.tipo_comprador or "persona", ruc=usuario.ruc,
                       nombre_comercial=usuario.nombre_comercial, razon_social=usuario.razon_social,
@@ -356,7 +360,7 @@ def login(datos: UsuarioLogin, db: Session = Depends(get_db)):
     # recibe token. Con la contraseña incorrecta ya salió arriba, igual que cualquier correo.
     _rechazar_cuenta_desactivada(usuario)
     acceso.limpiar_fallos(db, datos.email)
-    token = crear_token(str(usuario.id), usuario.rol)
+    token = crear_token(str(usuario.id), usuario.rol, usuario.version_credencial)
     return {"access_token": token, "token_type": "bearer"}
 
 @app.post("/usuarios/oauth/google")
@@ -382,7 +386,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
     usuario = db.query(models.Usuario).filter(models.Usuario.google_id == google_id).first()
     if usuario:
         _rechazar_cuenta_desactivada(usuario)
-        return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
+        return {"access_token": crear_token(str(usuario.id), usuario.rol, usuario.version_credencial), "token_type": "bearer"}
 
     # Desde acá el correo decide a quién se vincula esta cuenta de Google (o con qué correo se crea una nueva): solo
     # vale si Google lo tiene VERIFICADO. Sin esto, una cuenta de Google que declare el correo de otra persona sin
@@ -398,7 +402,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
         _rechazar_cuenta_desactivada(usuario)  # antes de vincularla: tampoco se le agrega un acceso por Google
         usuario.google_id = google_id
         db.commit()
-        return {"access_token": crear_token(str(usuario.id), usuario.rol), "token_type": "bearer"}
+        return {"access_token": crear_token(str(usuario.id), usuario.rol, usuario.version_credencial), "token_type": "bearer"}
 
     # Registro nuevo: sin cuenta previa por ninguna vía. Si no viene un rol, es el intento
     # típico desde el tab de Login (sin saber todavía que hace falta elegir un rol) — se le
@@ -425,7 +429,7 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
 
     db.commit()
     db.refresh(nuevo)
-    return {"access_token": crear_token(str(nuevo.id), nuevo.rol), "token_type": "bearer"}
+    return {"access_token": crear_token(str(nuevo.id), nuevo.rol, nuevo.version_credencial), "token_type": "bearer"}
 
 # Los dos endpoints que consulta el ForwardAuth del API Gateway (Traefik; ver k8s/traefik-middlewares.yaml) ANTES de que
 # la petición llegue a cualquier microservicio. Todas las rutas de /api pasan por uno de los dos:
@@ -447,7 +451,9 @@ def _identidad_para_el_gateway(response: Response, usuario: dict) -> dict:
 
 @app.get("/usuarios/validar-token")
 def validar_token(response: Response, usuario: dict = Depends(verificar_token)):
-    # verificar_token ya lanza 401 si el token falta, es inválido o venció: llegar aquí implica que vale.
+    # verificar_token ya lanza 401 si el token falta, es inválido o venció. Además, su versión de credencial tiene que
+    # ser la vigente (una sesión revocada da 401): con Redis, sin tocar la base en un acierto.
+    sesiones.exigir_version_vigente(usuario)
     return _identidad_para_el_gateway(response, usuario)
 
 
@@ -459,6 +465,7 @@ def validar_sesion(response: Response, authorization: str | None = Header(None))
     if esquema.lower() != "bearer" or not token.strip():
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
     usuario = verificar_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token.strip()))
+    sesiones.exigir_version_vigente(usuario)
     return _identidad_para_el_gateway(response, usuario)
 
 @app.get("/usuarios/{usuario_id}")
@@ -492,6 +499,61 @@ def actualizar_perfil_comprador(datos: PerfilCompradorActualizar, db: Session = 
         raise _conflicto_al_guardar(error, datos.ruc, en_registro=False)
     db.refresh(usuario)
     return _perfil(usuario)
+
+
+# ============ Seguridad de la cuenta: cambiar la contraseña y cerrar las sesiones ============
+# Las dos suben la versión de credencial (sesiones.revocar_sesiones): todo token anterior de la cuenta deja de valer en
+# el gateway, en cualquier dispositivo, y la pestaña que lo pidió recibe uno nuevo para seguir. Solo con el token de la
+# propia cuenta (no hay id en la ruta). La versión del token se comprueba también aquí, no solo en el gateway.
+class CambioContrasena(BaseModel):
+    actual: str = Field(max_length=200)
+    nueva: str = Field(max_length=200)
+
+
+def _cuenta_del_token(db: Session, solicitante: dict):
+    sesiones.exigir_version_vigente(solicitante)
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == solicitante.get("sub")).first()
+    if not usuario:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return usuario
+
+
+def _token_nuevo(usuario, version: int) -> dict:
+    return {"access_token": crear_token(str(usuario.id), usuario.rol, version), "token_type": "bearer"}
+
+
+@app.post("/usuarios/me/contrasena")
+def cambiar_contrasena(datos: CambioContrasena, db: Session = Depends(get_db), solicitante: dict = Depends(verificar_token)):
+    """Con las mismas reglas del registro (acceso.validar_password_nueva) y distinta de la actual. Una contraseña actual
+    incorrecta cuenta como un fallo del login de ese correo (acceso.py): con el tope, quedan bloqueados los dos, así que
+    una sesión robada no sirve para adivinarla."""
+    usuario = _cuenta_del_token(db, solicitante)
+    if usuario.password_hash is None:
+        raise HTTPException(status_code=409, detail="Tu cuenta entra con Google y no tiene una contraseña propia que cambiar.")
+    acceso.comprobar_que_no_esta_bloqueado(db, usuario.email)
+    if not verificar_password(datos.actual, usuario.password_hash):
+        restantes = acceso.registrar_fallo(db, usuario.email)  # 429 si este fallo agota el tope
+        detalle = "La contraseña actual no es correcta"
+        if restantes <= acceso.AVISAR_CUANDO_QUEDEN:
+            detalle += f". Te quedan {restantes} intento{'s' if restantes != 1 else ''} antes de un bloqueo temporal."
+        raise HTTPException(status_code=400, detail=detalle)
+    try:
+        acceso.validar_password_nueva(datos.nueva, usuario.email)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+    if datos.nueva == datos.actual:
+        raise HTTPException(status_code=422, detail="La contraseña nueva tiene que ser distinta de la actual")
+    acceso.limpiar_fallos(db, usuario.email)
+    usuario.password_hash = hashear_password(datos.nueva)
+    version = sesiones.revocar_sesiones(db, usuario)  # confirma también la contraseña nueva
+    logger.info("Cuenta %s: cambió su contraseña", usuario.id)
+    return _token_nuevo(usuario, version)
+
+
+@app.post("/usuarios/me/cerrar-sesiones")
+def cerrar_sesiones_en_todos_los_dispositivos(db: Session = Depends(get_db), solicitante: dict = Depends(verificar_token)):
+    usuario = _cuenta_del_token(db, solicitante)
+    return _token_nuevo(usuario, sesiones.revocar_sesiones(db, usuario))
 
 # ============ Reclamar un RUC que ya está en otra cuenta ============
 # Un RUC va en una sola cuenta, así que el primero que lo registra se queda con él: si alguien registró el RUC de un
