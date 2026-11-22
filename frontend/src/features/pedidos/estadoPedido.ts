@@ -58,8 +58,11 @@ export interface EstadoGeneral {
 export function estadoGeneralPedido(d: DatosDeEstado): EstadoGeneral {
   const { pedido, envio } = d;
   if (esPedidoEntregado(d)) return { clave: 'entregado', etiqueta: 'Entregado', icono: 'circle-check', pill: 'entregado' };
-  // Una transferencia en revisión puede ser el reintento de un pago rechazado (pedido "cancelado" hasta que se apruebe).
-  if (d.pago?.estado === 'en_revision') return { clave: 'pendiente', etiqueta: 'Transferencia en revisión', icono: 'building-bank', pill: 'pendiente' };
+  // Lo dice el pago (Pagos): una transferencia en revisión puede ser el reintento de un pago rechazado, con el pedido
+  // "cancelado" hasta que se apruebe. Si el pago no se pudo leer, lo dice el pedido ("en_revision" en Pedidos).
+  if (d.pago?.estado === 'en_revision' || (!d.pago && pedido.estado === 'en_revision')) {
+    return { clave: 'pendiente', etiqueta: 'Pago en revisión', icono: 'building-bank', pill: 'pendiente' };
+  }
   // Pedidos solo cancela un pedido cuando su pago se rechaza, y ese pago se puede reintentar: "Pago rechazado" lo dice mejor.
   if (pagoRechazadoPedido(d)) {
     return d.pago?.vencido_en
@@ -93,7 +96,7 @@ export function pasosPedido(d: DatosDeEstado): PasoPedido[] {
   const entregado = esPedidoEntregado(d);
   const pagoOk = pagoConfirmadoPedido(d);
   // Una transferencia en revisión no es un fallo, aunque sea el reintento de un pedido que quedó cancelado.
-  const enRevision = d.pago?.estado === 'en_revision';
+  const enRevision = d.pago?.estado === 'en_revision' || (!d.pago && pedido.estado === 'en_revision');
   const pagoMal = !pagoOk && !enRevision && (pagoRechazadoPedido(d) || pedido.estado === 'cancelado' || d.pago?.estado === 'cancelado');
   const enCamino = ['en_camino', 'en_agencia', 'en_destino'].includes(envio?.estado || '') || entregado;
   // Pedidos a otra ciudad: el paso "En camino" dice cómo va (agencia o camión) en vez de "Buscando repartidor".

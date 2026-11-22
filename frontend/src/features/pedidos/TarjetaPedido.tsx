@@ -315,10 +315,11 @@ function AlertaPago({ d, total, costoEnvio, alCambiar }: { d: DatosPedido; total
     );
   }
   if (pago?.estado === 'en_revision') {
+    // Ni pagar ni cancelar mientras se revisa: el dinero puede estar ya transferido (Pagos responde 409 a cancelarlo).
     return (
       <div className="mp-alerta mp-alerta-info" role="status">
         <i className="ti ti-building-bank" />
-        <div><strong>Estamos revisando tu transferencia</strong><span>Operación {pago.numero_operacion || '—'}. Cuando confirmemos que llegó el dinero, tu pedido sale a reparto.</span></div>
+        <div><strong>Pago en revisión</strong><span>Operación {pago.numero_operacion || '—'}. Cuando confirmemos que llegó el dinero, tu pedido sale a reparto. Mientras lo revisamos no se puede cancelar, porque el dinero puede estar ya transferido; si no lo aprobamos, se cancela solo y te avisamos.</span></div>
       </div>
     );
   }
