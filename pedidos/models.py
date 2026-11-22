@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text, Index, text
+from sqlalchemy import Column, String, Integer, Numeric, DateTime, ForeignKey, Float, Boolean, Text, Index, and_, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from comun.database import Base
@@ -68,9 +68,17 @@ class Pedido(Base):
     porcentaje_adelanto = Column(Integer, nullable=True)
     # Un pedido pagado que el admin canceló (con la devolución del dinero; ver cancelar_pedido_pagado en main.py).
     motivo_cancelacion = Column(String, nullable=True)
-    # Cuándo se canceló: el admin (con motivo) o el comprador antes de pagar (sin motivo; ver
-    # cancelar_pedido_sin_pagar en main.py). El que cancela un pago rechazado o vencido no la anota.
+    # Cuándo se canceló: el admin (con motivo) o el comprador sin haber pagado (sin motivo; ver
+    # cancelar_pedido_sin_pagar en main.py), también si lo cancela después de un rechazo o de un vencimiento. El
+    # rechazo o el vencimiento en sí (pago_rechazado) no la anotan: ese pedido es un "cancelado sin motivo".
     fecha_cancelacion = Column(DateTime, nullable=True)
+
+
+def cancelado_sin_motivo():
+    """La condición SQL de un pedido cancelado porque su pago se rechazó o venció, sin que nadie lo cancelara (ni el
+    admin, que deja el motivo, ni el comprador, que deja la fecha): un pago confirmado lo reabre (el comprador volvió a
+    pagar) y el comprador todavía puede cancelarlo él, y entonces queda final."""
+    return and_(Pedido.estado == "cancelado", Pedido.motivo_cancelacion.is_(None), Pedido.fecha_cancelacion.is_(None))
 
 class PedidoItem(Base):
     __tablename__ = "pedido_items"

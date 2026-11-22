@@ -18,6 +18,7 @@ import httpx
 from fastapi import FastAPI, Depends, HTTPException, Header, Query
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field, field_validator
@@ -1114,8 +1115,11 @@ def pedido_para_cobrar(pedido_id: uuid.UUID, db: Session = Depends(get_db), x_se
 def cancelar_pedido_sin_pagar(pedido_id: uuid.UUID, db: Session = Depends(get_db), x_servicio_secreto: str = Header(None)):
     if not secreto_de_servicio_valido(x_servicio_secreto, PAGOS_A_PEDIDOS_SECRETO):
         raise HTTPException(status_code=403, detail="No autorizado")
+    # Desde un pendiente, o desde un cancelado sin motivo (lo cancela después de un rechazo o de un vencimiento): con la
+    # fecha queda final, como su pago en Pagos, y un pago_confirmado ya no lo reabre.
     cambiados = (db.query(models.Pedido)
-                 .filter(models.Pedido.id == pedido_id, models.Pedido.estado == "pendiente")
+                 .filter(models.Pedido.id == pedido_id,
+                         or_(models.Pedido.estado == "pendiente", models.cancelado_sin_motivo()))
                  .update({models.Pedido.estado: "cancelado", models.Pedido.fecha_cancelacion: datetime.utcnow()},
                          synchronize_session=False))
     db.commit()

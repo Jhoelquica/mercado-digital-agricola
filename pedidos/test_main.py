@@ -2222,6 +2222,26 @@ def test_el_evento_pedido_cancelado_sin_pagar_cancela_el_pendiente_y_es_final():
     assert _estado(confirmado) == "confirmado"
 
 
+def test_el_comprador_que_cancela_un_pedido_rechazado_o_vencido_lo_deja_final():
+    """Cancelarlo después de un rechazo o de un vencimiento (Pagos lo permite: el pago queda "cancelado", desde donde ya
+    no se cobra) le anota la fecha: queda final también aquí y un pago_confirmado ya no lo reabre. Por HTTP y por el
+    evento. Uno que canceló el admin con devolución no cambia."""
+    por_http = _pedido_en("cancelado")  # cancelado sin motivo: su pago se rechazó o venció
+    assert _cancelar_sin_pagar(por_http, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 200
+    por_evento = _pedido_en("cancelado")
+    _evento_de_pago(por_evento, "pedido_cancelado_sin_pagar")
+    for pedido_id in (por_http, por_evento):
+        fila = _fila_pedido(pedido_id)
+        assert fila.estado == "cancelado" and fila.fecha_cancelacion is not None and fila.motivo_cancelacion is None
+        _evento_de_pago(pedido_id, "pago_confirmado")
+        assert _estado(pedido_id) == "cancelado", pedido_id
+    del_admin = _pedido_en("cancelado", "Sin stock")
+    assert _cancelar_sin_pagar(del_admin, main.PAGOS_A_PEDIDOS_SECRETO).status_code == 200  # ya lo estaba
+    _evento_de_pago(del_admin, "pedido_cancelado_sin_pagar")
+    fila = _fila_pedido(del_admin)
+    assert fila.motivo_cancelacion == "Sin stock" and fila.fecha_cancelacion is None
+
+
 # ============ "en_revision": la constancia de transferencia enviada (no está abandonado y no bloquea al comprador) ============
 
 def test_transferencia_enviada_pasa_un_pendiente_a_en_revision_y_en_cualquier_otro_estado_se_ignora():
