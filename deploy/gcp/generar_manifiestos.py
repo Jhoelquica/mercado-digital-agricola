@@ -9,7 +9,8 @@ Qué cambia respecto al clúster local:
   - Solo Traefik (el gateway) tiene IP pública: los microservicios y MinIO pasan a ClusterIP (sin esto cada puerto
     quedaría abierto a Internet saltándose el JWT, el rate-limit y el CORS del gateway).
   - HTTPS con Let's Encrypt (Traefik, 1 réplica y un volumen para el certificado) y redirección de http a https.
-  - Una réplica por servicio y límites de memoria/CPU (para caber en un nodo pequeño).
+  - Una réplica por servicio y límites de memoria/CPU (para caber en un nodo pequeño). Salvo Usuarios, con 3: está en
+    el camino de todas las peticiones (ForwardAuth) y su PodDisruptionBudget pide 2 disponibles.
   - FRONTEND_URL (a dónde apunta el QR) y MINIO_PUBLIC_URL (las fotos) con tu dominio.
   - RENIEC de verdad (RENIEC_MODO=real): en local se simula con DNIs de prueba.
   - CORS del gateway restringido a tu dominio (la app y la API comparten origen, así que basta).
@@ -34,6 +35,7 @@ SERVICIOS = ["usuarios", "productores", "productos", "pedidos", "transporte", "n
 # Lo de k8s/ que NO se despliega: el Secret de desarrollo (los reales los crea crear_secretos.py) y el monitoreo.
 EXCLUIDOS = {"secret.yaml", "grafana.yaml", "grafana-provisioning.yaml", "prometheus.yaml", "prometheus-config.yaml", "kustomization.yaml"}
 ACME_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
+REPLICAS_USUARIOS = 3
 
 
 def sangrar(texto, n):
@@ -61,7 +63,10 @@ def construir(args):
         f"  - name: localhost:5000/{s}\n    newName: {args.registro}/{s}\n    newTag: {args.etiqueta}"
         for s in SERVICIOS + ["frontend"]
     )
-    replicas = "\n".join(f"  - name: {s}\n    count: {args.replicas}" for s in SERVICIOS) + "\n  - name: traefik-gateway\n    count: 1"
+    # Usuarios va siempre con al menos 3: está en el camino de todas las peticiones (el ForwardAuth del gateway le
+    # pregunta por cada una) y su PodDisruptionBudget (k8s/usuarios.yaml) pide 2 disponibles.
+    replicas = "\n".join(f"  - name: {s}\n    count: {max(args.replicas, REPLICAS_USUARIOS) if s == 'usuarios' else args.replicas}"
+                         for s in SERVICIOS) + "\n  - name: traefik-gateway\n    count: 1"
 
     servicios_re = "|".join(SERVICIOS)
     partes = []

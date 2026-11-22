@@ -1264,6 +1264,30 @@ def test_el_gateway_rechaza_el_token_vigente_de_una_cuenta_desactivada():
     assert aceptado.status_code == 200
 
 
+def test_validar_sesion_deja_pasar_sin_token_y_rechaza_cualquier_token_que_no_valga():
+    """GET /usuarios/validar-sesion es lo que consulta Traefik (middleware auth-sesion) en las rutas generales de cada
+    servicio: sin la cabecera Authorization deja pasar como visitante y sin cabeceras de identidad (así Traefik borra las
+    que mande el cliente); con la cabecera, el token tiene que valer o es 401, aunque la ruta sea pública."""
+    visitante = client.get("/usuarios/validar-sesion")
+    assert visitante.status_code == 200 and visitante.json() == {"visitante": True}
+    assert "x-usuario-id" not in visitante.headers and "x-usuario-rol" not in visitante.headers
+
+    sub = str(uuid.uuid4())
+    bueno = seguridad.crear_token(sub, "comprador")
+    valido = client.get("/usuarios/validar-sesion", headers={"Authorization": f"Bearer {bueno}"})
+    assert valido.status_code == 200, valido.text
+    assert valido.headers["x-usuario-id"] == sub and valido.headers["x-usuario-rol"] == "comprador"
+
+    vencido = jose_jwt.encode({"sub": sub, "rol": "comprador", "exp": datetime.utcnow() - timedelta(minutes=1)},
+                              seguridad.JWT_SECRET, algorithm=seguridad.JWT_ALGORITHM)
+    retirado = seguridad.crear_token(sub, "verificador")
+    for cabecera in ("Bearer no.es.un-token", "Bearer ", "", "Basic dXN1YXJpbzpjbGF2ZQ==", bueno,
+                     f"Bearer {vencido}", f"Bearer {retirado}", f"Bearer {bueno[:-3]}abc"):
+        respuesta = client.get("/usuarios/validar-sesion", headers={"Authorization": cabecera})
+        assert respuesta.status_code == 401, (cabecera[:24], respuesta.status_code)
+        assert "x-usuario-id" not in respuesta.headers
+
+
 def test_ningun_modelo_mapea_la_tabla_invitaciones():
     """La tabla "invitaciones" (códigos para registrarse con un rol restringido; su único uso era el rol verificador) se
     borró el 2026-11-17, con respaldo. Como ningún modelo la mapea, create_all no la vuelve a crear."""

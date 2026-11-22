@@ -1,30 +1,23 @@
 # IngressRoutes del API Gateway: uno por microservicio, prefijo público /api/<servicio>.
 #
-# Cómo está armado cada IngressRoute (mismo patrón en los 8):
+# Cómo está armado cada IngressRoute (mismo patrón en los 8). TODA ruta de /api pasa por el ForwardAuth, con una de sus
+# dos variantes (ver k8s/traefik-middlewares.yaml; scripts/verificar_despliegue.py da FALLA si alguna no lleva ninguna):
 #   - Una ruta "catch-all" (PathPrefix del namespace completo, priority: 1) con la cadena
-#     [rate-limit-global, cors-global, strip-api-prefix]. Cubre TODOS los endpoints públicos
-#     de ese servicio (revisados uno por uno en el código real antes de escribir esto — no se
-#     asumió cuáles son públicas) y sirve de red de seguridad para cualquier endpoint nuevo que
-#     se agregue al backend más adelante y no tenga todavía una regla específica aquí: sin esa
-#     red, quedaría inalcanzable (404 del propio Gateway) hasta actualizar este archivo.
+#     [rate-limit-global, cors-global, auth-sesion, strip-api-prefix]. Cubre todos los endpoints de ese servicio que no
+#     tienen regla propia, públicos o con sesión, y cualquier endpoint nuevo: sin esa red quedaría inalcanzable (404 del
+#     propio Gateway) hasta actualizar este archivo. auth-sesion deja pasar sin token (el servicio decide si la ruta pide
+#     sesión) y rechaza con 401 un token inválido, vencido o revocado: así la revocación de sesiones vale en todas.
 #   - Una o más rutas específicas (Method + Path/PathRegexp exactos, priority: 100 — le gana al
-#     catch-all) para cada endpoint que YA exige JWT en el backend (Depends(verificar_token) o
-#     Depends(requiere_rol(...))), con auth-jwt agregado a la cadena.
+#     catch-all) para endpoints que exigen JWT en el backend (Depends(verificar_token) o
+#     Depends(requiere_rol(...))), con auth-jwt, que además rechaza en el gateway la petición sin token.
 #
-# Los endpoints protegidos solo por header interno (X-Servicio-Secreto: llamadas servicio-a-
-# servicio, ej. los DELETE de limpieza QA, /stock/reponer, /eventos-internos) NO tienen regla
-# propia — caen en el catch-all sin auth-jwt, igual que antes de este Gateway: siguen exigiendo
-# ese header en el propio código del microservicio. Quedan técnicamente alcanzables desde fuera
-# del clúster a través del Gateway (protegidos únicamente por ese secreto compartido, no por JWT
-# de usuario) — ver el punto sobre esto en el resumen de la tarea; no se resolvió aquí porque
-# requeriría conocer el CIDR real de red interna del clúster para un IPWhiteList seguro, y
-# adivinarlo podría bloquear tráfico legítimo o no proteger nada.
+# Los endpoints protegidos solo por header interno (X-Servicio-Secreto: llamadas servicio-a-servicio) no llevan
+# Authorization: el catch-all los deja pasar y el propio microservicio exige el secreto. Los que no tienen por qué
+# alcanzarse desde afuera (las rutas .../interno/..., el stock, los DELETE de limpieza QA) los bloquea la ruta
+# `bloqueados` del final.
 #
-# IMPORTANTE sobre las rutas específicas: si en el futuro se agrega un nuevo endpoint protegido
-# con JWT a algún microservicio, hay que añadir aquí su propia regla (Method+Path, priority 100)
-# para que el Gateway lo rechace temprano — si no se hace, el endpoint sigue funcionando (el
-# catch-all lo deja pasar y el propio backend lo protege igual, defensa en profundidad), solo se
-# pierde el rechazo temprano en el Gateway para ese endpoint puntual.
+# Un endpoint nuevo con sesión no necesita regla propia: el catch-all ya le aplica auth-sesion (el token que traiga se
+# valida y su revocación se respeta); una regla propia con auth-jwt solo agrega el rechazo en el gateway sin token.
 
 # ================= USUARIOS (puerto 8006) =================
 apiVersion: traefik.io/v1alpha1
@@ -41,6 +34,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: usuarios
@@ -89,6 +83,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: productores
@@ -147,6 +142,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: productos
@@ -228,6 +224,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: pedidos
@@ -264,6 +261,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: transporte
@@ -381,6 +379,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: notificaciones
@@ -415,6 +414,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: pagos
@@ -462,6 +462,7 @@ spec:
       middlewares:
         - name: rate-limit-global
         - name: cors-global
+        - name: auth-sesion
         - name: strip-api-prefix
       services:
         - name: certificacion

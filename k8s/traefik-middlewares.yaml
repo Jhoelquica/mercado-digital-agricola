@@ -1,7 +1,7 @@
 # Middlewares reutilizables del API Gateway. Referenciados desde k8s/traefik-routes.yaml.
 #
 # Orden en el que se encadenan en cada ruta (importa, ver comentario en cada IngressRoute):
-#   rate-limit-global -> cors-global -> auth-jwt (solo rutas protegidas) -> strip-api-prefix
+#   rate-limit-global -> cors-global -> auth-jwt (rutas que exigen sesión) o auth-sesion (las demás) -> strip-api-prefix
 #
 # cors-global va ANTES que auth-jwt a propósito: un preflight CORS (OPTIONS) del navegador nunca
 # trae header Authorization, así que si auth-jwt corriera primero, todo preflight a una ruta
@@ -49,17 +49,22 @@ spec:
         depth: 0
 
 ---
-# ============ AUTENTICACIÓN CENTRALIZADA (ForwardAuth real, no placeholder) ============
-# Antes de que la petición llegue al microservicio destino, Traefik llama a este endpoint con
-# (por defecto) todos los headers de la petición original, incluido Authorization. Usuarios
-# decodifica el JWT con la misma lógica que ya usan los demás servicios (auth.verificar_token)
-# y responde 200 (válido) o 401 (inválido/expirado/ausente) — Traefik reenvía ese mismo status
-# al cliente si no es 2xx, cortando la petición ahí mismo.
+# ============ AUTENTICACIÓN CENTRALIZADA (ForwardAuth en TODAS las rutas de /api) ============
+# Antes de que la petición llegue al microservicio destino, Traefik le pregunta a Usuarios con la cabecera
+# Authorization de la petición original (authRequestHeaders: solo esa). Si Usuarios no responde 2xx, Traefik devuelve
+# ese mismo status al cliente y la petición no sigue. Hay dos variantes, y cada ruta de /api lleva una de las dos
+# (scripts/verificar_despliegue.py da FALLA si alguna no lleva ninguna):
+#   - auth-jwt: las rutas que siempre exigen sesión (las específicas de traefik-routes.yaml). Sin token, 401.
+#   - auth-sesion: la ruta general de cada servicio. Sin token deja pasar como visitante (el servicio decide si la ruta
+#     pide sesión: el catálogo, el login y las llamadas con X-Servicio-Secreto siguen igual); con un token, tiene que
+#     valer: uno inválido, vencido o revocado recibe 401 aquí mismo, en cualquier ruta.
+# Así Usuarios queda en el camino de todas las peticiones de la API: va con 3 réplicas y un PodDisruptionBudget (ver
+# k8s/usuarios.yaml).
 #
-# DEFENSA EN PROFUNDIDAD: cada microservicio protegido SIGUE validando el JWT con su propio
-# Depends(verificar_token)/requiere_rol() — no se ha tocado ese código. Este middleware es una
-# capa adicional de rechazo temprano (evita que un token inválido/expirado genere carga en el
-# resto del sistema), nunca el único punto de validación.
+# authResponseHeaders: Traefik copia X-Usuario-Id y X-Usuario-Rol de la respuesta de Usuarios a la petición, y antes
+# BORRA las que haya mandado el cliente (también cuando Usuarios no las devuelve, como con un visitante): un cliente no
+# puede hacerlas pasar falsificadas. Aun así son solo una conveniencia (logs): ningún microservicio las usa para
+# autenticar, cada uno sigue validando el JWT del Authorization, que Traefik reenvía intacto (defensa en profundidad).
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -67,10 +72,22 @@ metadata:
 spec:
   forwardAuth:
     address: http://usuarios:8006/usuarios/validar-token
-    # Reenvía la identidad ya decodificada al microservicio de destino como conveniencia
-    # (ej. logging, evitar re-parsear el JWT para casos no críticos). NINGÚN microservicio debe
-    # tratar estos headers como autenticación válida por sí solos — siguen exigiendo y validando
-    # el JWT en su propio Authorization header, que Traefik reenvía intacto igual.
+    authRequestHeaders:
+      - Authorization
+    authResponseHeaders:
+      - X-Usuario-Id
+      - X-Usuario-Rol
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: auth-sesion
+spec:
+  forwardAuth:
+    address: http://usuarios:8006/usuarios/validar-sesion
+    authRequestHeaders:
+      - Authorization
     authResponseHeaders:
       - X-Usuario-Id
       - X-Usuario-Rol

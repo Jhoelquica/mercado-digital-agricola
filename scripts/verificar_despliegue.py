@@ -11,7 +11,9 @@ Casos de uso:
 Qué comprueba:
   - El frontend responde (/ y /healthz) y los 8 servicios contestan GET /salud.
   - Datos y rutas públicas: catálogo, condiciones de compra, una foto de producto y el QR (cadena íntegra).
-  - Seguridad (gateway): una ruta protegida sin sesión da 401; /docs, /openapi.json y /metrics dan 403.
+  - Seguridad (gateway): una ruta protegida sin sesión da 401; una ruta pública con un token inválido da 401 (el
+    ForwardAuth corre también en las rutas generales); /docs, /openapi.json y /metrics dan 403. Con --contexto, toda
+    ruta de /api de los IngressRoute pasa por el ForwardAuth, auth-jwt o auth-sesion (FALLA si alguna no).
   - HTTPS (si --base es https): certificado válido (avisa si es el de PRUEBA o vence pronto), http redirige a https, y los
     puertos internos (9000, 8006, 8080, 5432) NO responden desde fuera.
   - Kubernetes (con --contexto): todos los pods listos y ninguno en CrashLoopBackOff (FALLA), ningún contenedor que se
@@ -79,13 +81,13 @@ def contexto_tls(verificar):
     return contexto
 
 
-def pedir(url, timeout, verificar_tls=True, seguir_redirecciones=False):
+def pedir(url, timeout, verificar_tls=True, seguir_redirecciones=False, cabeceras=None):
     """(estado, cabeceras, cuerpo) — el estado es None si no se pudo conectar (con el motivo en cuerpo)."""
     manejadores = [urllib.request.HTTPSHandler(context=contexto_tls(verificar_tls))]
     if not seguir_redirecciones:
         manejadores.append(SinRedireccion())
     abrir = urllib.request.build_opener(*manejadores).open
-    peticion = urllib.request.Request(url, headers={"User-Agent": "verificar-despliegue/1.0"})
+    peticion = urllib.request.Request(url, headers={"User-Agent": "verificar-despliegue/1.0", **(cabeceras or {})})
     try:
         with abrir(peticion, timeout=timeout) as r:
             return r.status, r.headers, r.read()
@@ -194,6 +196,26 @@ def leer_json(salida):
     except ValueError:
         return []
     return datos if isinstance(datos, list) else []
+
+
+MIDDLEWARES_DEL_FORWARDAUTH = {"auth-jwt", "auth-sesion"}
+
+
+def rutas_de_api_sin_forwardauth(ingressroutes) -> list:
+    """Las rutas del gateway que llegan a /api sin pasar por el ForwardAuth (k8s/traefik-middlewares.yaml): sin él, un
+    token revocado seguiría valiendo ahí. No cuentan las que lo bloquean todo (denegar-todo) ni la del frontend, que es
+    justamente la que no va a /api."""
+    sin = []
+    for ruta_ir in ingressroutes:
+        for ruta in ruta_ir.get("spec", {}).get("routes", []):
+            regla = " ".join(str(ruta.get("match", "")).split())
+            if "/api" not in regla or regla.startswith("!PathPrefix"):
+                continue
+            nombres = {m.get("name") for m in ruta.get("middlewares") or []}
+            if "denegar-todo" in nombres or nombres & MIDDLEWARES_DEL_FORWARDAUTH:
+                continue
+            sin.append(f"{ruta_ir['metadata']['name']}: {regla[:80]}")
+    return sin
 
 
 def comprobar_colas(colas, ligaduras, exchanges):
@@ -386,6 +408,12 @@ def main():
         comprobar("Ruta protegida sin sesión se rechaza", estado in (401, 403), f"HTTP {estado}", f"HTTP {estado} (se esperaba 401/403)")
     else:
         comprobar("Ruta protegida sin sesión se rechaza (401)", estado == 401, "HTTP 401", f"HTTP {estado} (se esperaba 401)")
+        # El ForwardAuth corre también en las rutas generales (auth-sesion): el catálogo es público, pero con un token que
+        # no vale el gateway responde 401 antes de llegar a Productos (sin el middleware, Productos lo ignoraría: 200).
+        estado, _, _ = pedir(url_servicio("productos") + "/productos", args.timeout, tls,
+                             cabeceras={"Authorization": "Bearer token.que-no.vale"})
+        comprobar("Ruta pública con un token inválido se rechaza en el gateway (401)", estado == 401, "HTTP 401",
+                  f"HTTP {estado} (se esperaba 401: ¿la ruta general sin auth-sesion?)")
         for ruta in ("/api/usuarios/docs", "/api/productos/openapi.json", "/api/productos/metrics"):
             estado, _, _ = pedir(base + ruta, args.timeout, tls)
             comprobar(f"Gateway bloquea {ruta}", estado == 403, "HTTP 403", f"HTTP {estado} (se esperaba 403)")
@@ -468,6 +496,13 @@ def main():
             malos = [f"{d['metadata']['name']} {d['status'].get('readyReplicas', 0)}/{d['spec']['replicas']}"
                      for d in json.loads(salida)["items"] if d["status"].get("readyReplicas", 0) != d["spec"]["replicas"]]
             comprobar("Kubernetes: réplicas listas = réplicas deseadas en todos los Deployment", not malos, "", ", ".join(malos))
+        salida, error = kubectl(["get", "ingressroutes.traefik.io", "-o", "json"], contexto_k)
+        if salida is None:
+            registrar("FALLA", "Gateway: leer las rutas (IngressRoute)", error)
+        else:
+            sin_forwardauth = rutas_de_api_sin_forwardauth(json.loads(salida)["items"])
+            comprobar("Gateway: toda ruta de /api pasa por el ForwardAuth (auth-jwt o auth-sesion)", not sin_forwardauth,
+                      "", "sin ForwardAuth: " + "; ".join(sin_forwardauth[:4]))
         salida, error = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_COLAS, contexto_k)
         ligaduras, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_LIGADURAS, contexto_k)
         exchanges, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_EXCHANGES, contexto_k)

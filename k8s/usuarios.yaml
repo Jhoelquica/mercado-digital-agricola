@@ -14,6 +14,7 @@ kind: Deployment
 metadata:
   name: usuarios
 spec:
+  # 3 réplicas: Usuarios está en el camino de todas las peticiones de la API (ver el PodDisruptionBudget más abajo).
   replicas: 3
   selector:
     matchLabels:
@@ -173,6 +174,20 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: MINIO_ROOT_PASSWORD
+---
+# Usuarios está en el camino de TODAS las peticiones de la API: el ForwardAuth del gateway le pregunta por cada una (ver
+# k8s/traefik-middlewares.yaml). Si no queda ninguna réplica lista, cae toda la API, incluido el catálogo público. Con
+# 3 réplicas y minAvailable 2, un drenado del nodo o una actualización del clúster saca una sola a la vez (no frena los
+# rollouts del Deployment, que ya reemplazan de a una).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: usuarios
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: usuarios
 ---
 apiVersion: v1
 kind: Service

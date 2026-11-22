@@ -12,6 +12,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi import FastAPI, Depends, HTTPException, Header, Response, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from typing import Literal
@@ -426,21 +427,39 @@ def login_o_registro_google(datos: UsuarioOAuthGoogle, db: Session = Depends(get
     db.refresh(nuevo)
     return {"access_token": crear_token(str(nuevo.id), nuevo.rol), "token_type": "bearer"}
 
-# Usado por el Middleware ForwardAuth del API Gateway (Traefik) para validar el JWT
-# ANTES de que la petición llegue a cualquier microservicio (ver k8s/traefik-middlewares.yaml).
-# IMPORTANTE: esto es una capa adicional de rechazo temprano, no un reemplazo de la validación
-# que cada microservicio sigue haciendo con su propio Depends(verificar_token)/requiere_rol().
-# Debe registrarse ANTES de "/usuarios/{usuario_id}" para que FastAPI no confunda
-# "validar-token" con un usuario_id.
-@app.get("/usuarios/validar-token")
-def validar_token(response: Response, usuario: dict = Depends(verificar_token)):
-    # verificar_token ya lanza 401 si el token es inválido/expirado, así que llegar aquí implica válido.
-    # Se exponen sub/rol como headers de respuesta: Traefik puede reenviarlos al microservicio de
-    # destino (authResponseHeaders) como conveniencia, pero ningún microservicio debe confiar en ellos
-    # como fuente de autenticación — siguen validando el JWT por su cuenta.
+# Los dos endpoints que consulta el ForwardAuth del API Gateway (Traefik; ver k8s/traefik-middlewares.yaml) ANTES de que
+# la petición llegue a cualquier microservicio. Todas las rutas de /api pasan por uno de los dos:
+#   - validar-token (middleware auth-jwt): las rutas que siempre exigen sesión; sin token, 401.
+#   - validar-sesion (middleware auth-sesion): las rutas generales de cada servicio, públicas o no. Sin la cabecera
+#     Authorization deja pasar (el servicio decide si esa ruta pide sesión: el catálogo, el login o las llamadas internas
+#     con X-Servicio-Secreto siguen igual); con ella, el token tiene que valer, si no 401.
+# Por eso Usuarios queda en el camino de TODAS las peticiones de la API (3 réplicas y un PodDisruptionBudget en
+# k8s/usuarios.yaml). Cada microservicio sigue validando el JWT con su propio Depends(verificar_token)/requiere_rol().
+# Se registran ANTES de "/usuarios/{usuario_id}" para que FastAPI no los confunda con un usuario_id.
+def _identidad_para_el_gateway(response: Response, usuario: dict) -> dict:
+    # sub y rol como cabeceras de respuesta: Traefik las copia a la petición (authResponseHeaders) y antes BORRA las que
+    # hubiera mandado el cliente, así que no se pueden falsificar. Aun así ningún microservicio las usa para autenticar:
+    # validan el JWT por su cuenta.
     response.headers["X-Usuario-Id"] = str(usuario.get("sub", ""))
     response.headers["X-Usuario-Rol"] = str(usuario.get("rol", ""))
     return {"valido": True}
+
+
+@app.get("/usuarios/validar-token")
+def validar_token(response: Response, usuario: dict = Depends(verificar_token)):
+    # verificar_token ya lanza 401 si el token falta, es inválido o venció: llegar aquí implica que vale.
+    return _identidad_para_el_gateway(response, usuario)
+
+
+@app.get("/usuarios/validar-sesion")
+def validar_sesion(response: Response, authorization: str | None = Header(None)):
+    if authorization is None:
+        return {"visitante": True}  # sin cabeceras X-Usuario-*: Traefik borra las que mandó el cliente
+    esquema, _, token = authorization.strip().partition(" ")
+    if esquema.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    usuario = verificar_token(HTTPAuthorizationCredentials(scheme="Bearer", credentials=token.strip()))
+    return _identidad_para_el_gateway(response, usuario)
 
 @app.get("/usuarios/{usuario_id}")
 def obtener_usuario(usuario_id: uuid.UUID, db: Session = Depends(get_db), solicitante: dict = Depends(verificar_token)):
