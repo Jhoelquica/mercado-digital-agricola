@@ -13,12 +13,14 @@ interface OpcionesPeticion {
 
 interface PuenteDeSesion {
   token: () => string | null;
+  // El token solo si todavía no venció (por su exp): el único que se manda a una ruta pública.
+  tokenVigente: () => string | null;
   // Un servicio respondió 401 a una petición hecha CON sesión: el token venció (duran 60 minutos) o ya no vale.
   // Recibe el token con el que se hizo la petición, para que la respuesta tardía de una sesión anterior no cierre la nueva.
   alExpirar: (tokenUsado: string) => void;
 }
 
-let sesion: PuenteDeSesion = { token: () => null, alExpirar: () => {} };
+let sesion: PuenteDeSesion = { token: () => null, tokenVigente: () => null, alExpirar: () => {} };
 
 // La sesión vive en auth/sesion.ts, que se conecta aquí al cargarse: así este módulo no depende de React ni de auth.
 export function conectarSesion(puente: PuenteDeSesion): void {
@@ -55,10 +57,12 @@ function detalleDe(data: unknown): unknown {
 export async function request<T>(servicio: Servicio, ruta: string, { method = 'GET', body, auth = false }: OpcionesPeticion = {}): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   let tokenUsado: string | null = null;
+  let tokenOpcional: string | null = null;
   if (auth === 'opcional') {
-    // Un token vencido no cierra la sesión aquí (el servidor lo trata como visitante, sin 401).
-    const token = sesion.token();
-    if (token) headers.Authorization = `Bearer ${token}`;
+    // Una ruta pública que muestra más a su dueño: va con el token solo si no venció. El gateway rechaza con 401 cualquier
+    // token que no vale, también en las rutas públicas, así que uno vencido no se manda: se pide como visitante.
+    tokenOpcional = sesion.tokenVigente();
+    if (tokenOpcional) headers.Authorization = `Bearer ${tokenOpcional}`;
   } else if (auth) {
     tokenUsado = exigirToken();
     headers.Authorization = `Bearer ${tokenUsado}`;
@@ -81,6 +85,12 @@ export async function request<T>(servicio: Servicio, ruta: string, { method = 'G
     if (resp.status === 401 && tokenUsado) {
       sesion.alExpirar(tokenUsado);
       throw new ApiError(MENSAJE_SESION_EXPIRADA, 401);
+    }
+    if (resp.status === 401 && tokenOpcional) {
+      // El token no había vencido pero ya no vale (se cerró la sesión en todos los dispositivos o cambió la contraseña):
+      // se cierra la sesión aquí también, con su aviso, y la ruta pública se pide como visitante, sin error en pantalla.
+      sesion.alExpirar(tokenOpcional);
+      return request<T>(servicio, ruta, { method, body, auth: false });
     }
     if (resp.status === 403) throw new ApiError('No tienes permiso para esta acción.', 403);
     throw new ApiError(mensajeDeDetalle(detalleDe(data) || `Error ${resp.status} en ${servicio}`), resp.status, detalleDe(data));

@@ -21,6 +21,14 @@ export interface Perfil {
   nombre_comercial?: string | null;
   razon_social?: string | null;
   ruc_verificado_en?: string | null;
+  // Una cuenta creada con Google no tiene una contraseña propia: el perfil no le ofrece cambiarla.
+  tiene_contrasena?: boolean;
+}
+
+// Lo que se manda al cambiar la contraseña (POST /usuarios/me/contrasena; las reglas, en lib/contrasena.ts).
+export interface CambioContrasena {
+  actual: string;
+  nueva: string;
 }
 
 export interface ReclamoRuc {
@@ -85,6 +93,9 @@ export const usuarios = {
     return requestFormData<ReclamoRuc>('usuarios', '/usuarios/me/reclamos-ruc', formData);
   },
   misReclamosRuc: () => request<MisReclamosRuc>('usuarios', '/usuarios/me/reclamos-ruc', { auth: true }),
+  // Las dos suben la versión de credencial: toda otra sesión de la cuenta deja de valer y esta recibe un token nuevo.
+  cambiarContrasena: (datos: CambioContrasena) => request<Token>('usuarios', '/usuarios/me/contrasena', { method: 'POST', body: datos, auth: true }),
+  cerrarSesionesEnTodosLosDispositivos: () => request<Token>('usuarios', '/usuarios/me/cerrar-sesiones', { method: 'POST', auth: true }),
   admin: {
     reclamosRuc: (estado = 'pendiente') => request<ReclamoRucAdmin[]>('usuarios', `/usuarios/admin/reclamos-ruc?estado=${encodeURIComponent(estado)}`, { auth: true }),
     documentoReclamo: (id: string, cual: 'ficha' | 'dni') => requestBlob('usuarios', `/usuarios/admin/reclamos-ruc/${id}/documento/${cual}`),

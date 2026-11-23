@@ -145,6 +145,31 @@ export async function iniciarSesionConToken(token: string): Promise<void> {
   void sincronizarAvisosCelular();
 }
 
+// Cambiar la contraseña o cerrar la sesión en todos los dispositivos sube la versión de credencial de la cuenta: el
+// servidor responde con un token nuevo y esta pestaña sigue con él (todos los anteriores dejan de valer). Si la sesión ya
+// se había cerrado mientras tanto (una respuesta 401 de un token anterior que llegó antes), se vuelve a abrir con este.
+export async function adoptarTokenNuevo(token: string): Promise<void> {
+  const payload = decodeJwt(token);
+  if (!payload) throw new Error('Token inválido recibido del servidor.');
+  if (sesion.token && sesion.usuarioId === payload.sub) {
+    actualizarSesion({ token, rol: payload.rol });
+    return;
+  }
+  await iniciarSesionConToken(token);
+}
+
+// Otra pestaña de este navegador cambió la contraseña o cerró las demás sesiones y guardó su token nuevo: esta lo toma
+// en vez de quedarse con el anterior (que ya no vale). Solo si es la misma cuenta y el token nuevo no venció.
+function tomarElTokenDeOtraPestana(evento: StorageEvent): void {
+  if (evento.key !== SESSION_KEY || !evento.newValue || !sesion.token) return;
+  try {
+    const datos = JSON.parse(evento.newValue) as Partial<Sesion>;
+    if (datos.token && datos.token !== sesion.token && datos.usuarioId === sesion.usuarioId && tokenVigente(datos.token)) {
+      publicar({ ...sesion, token: datos.token });
+    }
+  } catch { /* lo guardado no es una sesión: se ignora */ }
+}
+
 export async function iniciarSesionConCorreo(email: string, password: string): Promise<void> {
   const respuesta = await usuarios.login({ email, password });
   await iniciarSesionConToken(respuesta.access_token);
@@ -153,5 +178,7 @@ export async function iniciarSesionConCorreo(email: string, password: string): P
 cargarSesionGuardada();
 conectarSesion({
   token: () => sesion.token,
+  tokenVigente: () => (sesion.token && tokenVigente(sesion.token) ? sesion.token : null),
   alExpirar: (tokenUsado) => cerrarSesion('expirada', tokenUsado),
 });
+if (typeof window !== 'undefined') window.addEventListener('storage', tomarElTokenDeOtraPestana);

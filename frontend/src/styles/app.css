@@ -242,3 +242,33 @@ a.perfil-acceso { text-decoration: none; }
 }
 .alm-admin-geocerca i { flex: none; margin-top: 2px; font-size: 1.05rem; }
 .alm-admin-geocerca.es-advertencia { background: #fff3cd; color: #6b5212; }
+
+/* Mi perfil: Seguridad de la cuenta (cambiar la contraseña y cerrar las sesiones). Dos bloques lado a lado; en el celular,
+   uno debajo del otro. Los campos de contraseña llevan el botón de mostrar/ocultar del login (.auth-ojo). */
+.perfil-seguridad-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.perfil-seguridad-bloque { display: grid; gap: 14px; min-width: 0; }
+.perfil-seguridad-bloque > h4 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 1.05rem; }
+.perfil-seguridad-bloque > h4 i { color: var(--acento-cosecha); font-size: 1.2rem; }
+.perfil-seguridad-texto { margin: 0; color: var(--texto-suave); font-size: 0.92rem; line-height: 1.5; }
+.perfil-seguridad-google { display: flex; gap: 10px; align-items: flex-start; }
+.perfil-seguridad-google i { flex: none; margin-top: 2px; font-size: 1.15rem; color: var(--color-primario); }
+.perfil-sesiones { padding-left: 28px; border-left: 1px solid var(--borde); }
+.perfil-clave { position: relative; display: flex; align-items: center; }
+.perfil-campo .perfil-clave input { min-height: 48px; padding-right: 56px; }
+.perfil-campo input[aria-invalid="true"] { border-color: #c0492a; }
+.perfil-campo-ayuda { font-weight: 500; font-size: 0.84rem; line-height: 1.4; color: var(--texto-suave); }
+.perfil-campo-error { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; font-size: 0.86rem; line-height: 1.4; color: #9b1c1c; }
+.perfil-campo-error i { flex: none; margin-top: 2px; }
+.perfil-seguridad-enviar, .perfil-sesiones-abrir { justify-self: start; display: inline-flex; align-items: center; gap: 8px; min-height: 46px; }
+.perfil-sesiones-confirmar { display: grid; gap: 12px; padding: 14px 16px; border-radius: 14px; background: #fdecec; color: #9b1c1c; }
+.perfil-sesiones-confirmar > p { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 0.92rem; font-weight: 600; line-height: 1.45; }
+.perfil-sesiones-confirmar > p i { flex: none; margin-top: 1px; font-size: 1.15rem; }
+.perfil-sesiones-acciones { display: flex; flex-wrap: wrap; gap: 10px; }
+.perfil-sesiones-acciones .btn { min-height: 44px; }
+.perfil-sesiones-confirmar .btn-danger { background: #b42318; color: #fff; }
+.perfil-sesiones-confirmar .btn-danger:hover { background: #912018; }
+@media (max-width: 860px) {
+  .perfil-seguridad-grid { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .perfil-sesiones { padding-left: 0; padding-top: 22px; border-left: none; border-top: 1px solid var(--borde); }
+  .perfil-seguridad-enviar, .perfil-sesiones-abrir { justify-self: stretch; justify-content: center; }
+}

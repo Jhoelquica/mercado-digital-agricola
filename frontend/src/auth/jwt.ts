@@ -21,9 +21,9 @@ export function decodeJwt(token: string): PayloadToken | null {
 
 // ¿El token sigue vigente por su fecha de vencimiento (exp)? Es solo una comprobación local para no
 // restaurar una sesión que ya venció: quien decide de verdad es el servidor.
-export function tokenVigente(token: string): boolean {
+export function tokenVigente(token: string, ahora: number = Date.now()): boolean {
   const payload = decodeJwt(token);
   if (!payload) return false;
   if (typeof payload.exp !== 'number') return true;
-  return payload.exp * 1000 > Date.now();
+  return payload.exp * 1000 > ahora;
 }

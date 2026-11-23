@@ -11,6 +11,7 @@ import { manejarError } from '../../components/Toast';
 import { abrirPanelBusqueda } from '../catalogo/menus';
 import { PerfilComoCompras } from './PerfilComprador';
 import { PerfilProductor, SiembrasYChacrasDelPerfil } from './PerfilProductor';
+import { SeguridadDeLaCuenta } from './SeguridadDeLaCuenta';
 
 const ROL_INFO: Record<string, { icono: string; texto: string; descripcion: string }> = {
   comprador: { icono: 'shopping-cart', texto: 'Comprador', descripcion: 'Explora el catálogo y haz seguimiento de tus compras.' },
@@ -200,7 +201,10 @@ export default function PerfilPage() {
           <button type="button" className="btn btn-outline" id="btn-perfil-logout" onClick={() => cerrarSesion()}><i className="ti ti-logout" /> Cerrar sesión</button>
         </header>
         <div className="perfil-layout">
-          <div className="perfil-principal">{principal}</div>
+          <div className="perfil-principal">
+            {principal}
+            <SeguridadDeLaCuenta email={usuario.email} tieneContrasena={usuario.tiene_contrasena !== false} />
+          </div>
           <aside className="perfil-lateral"><Accesos rol={usuario.rol} /></aside>
         </div>
         {data.rol === 'productor' && data.perfil && <SiembrasYChacrasDelPerfil registros={data.registros} chacras={data.chacras} />}
