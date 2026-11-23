@@ -11,13 +11,16 @@ validar-sesion en main.py), que corre en todas las rutas de /api. Los demás ser
 Caché en Redis: la versión de cada cuenta, CACHE_SEGUNDOS (30) como máximo. Con un acierto no se consulta la base.
 - Al subir la versión se borra la clave y se escribe la nueva en la misma operación. La caché se llena solo si la
   clave no existe (SET NX): una petición que leyó la versión vieja de la base justo antes de subirla no puede volver a
-  dejarla. Si Redis fallara justo en ese momento, la clave vieja vence sola en CACHE_SEGUNDOS como mucho.
+  dejarla. Si Redis no responde en ese momento, un hilo reintenta borrar la clave hasta que responda (Redis guarda su
+  contenido en un volumen: al reiniciarse podría devolver la versión vieja antes de que venza).
 - Si Redis no responde (o tarda más de LIMITE_ESPERA_SEGUNDOS), se consulta la base: la comprobación nunca se salta.
   Tras 3 fallos seguidos, el circuito deja de intentar con Redis durante 30 s y se va directo a la base (el mismo
   patrón que productos/cache.py, con el mismo hallazgo: los timeouts de redis-py no acotan un DNS que no resuelve).
 """
 import logging
 import os
+import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturoExpirado
 
@@ -37,6 +40,7 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_CACHE_PORT = int(os.getenv("REDIS_CACHE_PORT", "6379"))
 CACHE_SEGUNDOS = 30
 LIMITE_ESPERA_SEGUNDOS = 0.3
+REINTENTO_SEGUNDOS = 0.5
 MENSAJE_SESION_CERRADA = "Tu sesión se cerró (cambiaste la contraseña o cerraste la sesión en todos tus dispositivos): vuelve a iniciar sesión."
 
 _cliente = redis.Redis(host=REDIS_HOST, port=REDIS_CACHE_PORT, db=0, decode_responses=True,
@@ -119,7 +123,27 @@ def revocar_sesiones(db: Session, usuario) -> int:
     ok, _ = _proteger(lambda: _cliente.pipeline(transaction=True).delete(clave)
                       .set(clave, str(nueva), ex=CACHE_SEGUNDOS).execute())
     if not ok:
-        logger.warning("Cuenta %s: no se pudo poner la versión %s en Redis; la clave vieja vence en %s s como mucho",
-                       usuario.id, nueva, CACHE_SEGUNDOS)
+        logger.warning("Cuenta %s: Redis no respondió al subir la versión a %s; se reintenta borrar la clave vieja",
+                       usuario.id, nueva)
+        _borrar_cuando_responda(clave)
     logger.info("Cuenta %s: sesiones anteriores revocadas (versión de credencial %s)", usuario.id, nueva)
     return nueva
+
+
+def _borrar_cuando_responda(clave) -> None:
+    """Si Redis no respondió al subir la versión, la versión vieja puede seguir en la caché: Redis solo no se alcanzaba,
+    o se reinició y la recuperó de su volumen antes de que venciera. Un hilo reintenta BORRAR la clave (sin pasar por el
+    circuito, que estaría abierto) hasta lograrlo o hasta que ya habría vencido sola. Borrar nunca deja un valor viejo: la
+    siguiente petición la vuelve a leer de la base."""
+    def reintentar():
+        fin = time.monotonic() + CACHE_SEGUNDOS + 1
+        while time.monotonic() < fin:
+            try:
+                _llamar_con_limite(_cliente.delete, clave)
+                logger.info("Clave %s borrada de Redis al reintentar", clave)
+                return
+            except redis.RedisError:
+                time.sleep(REINTENTO_SEGUNDOS)
+            except RuntimeError:
+                return  # el proceso se está apagando (el ejecutor ya no acepta tareas)
+    threading.Thread(target=reintentar, daemon=True, name="sesiones-borrar").start()

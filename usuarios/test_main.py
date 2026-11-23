@@ -1321,6 +1321,10 @@ class _RedisFalso:
         self.datos[clave] = valor
         return True
 
+    def delete(self, clave):
+        self._exigir()
+        return 1 if self.datos.pop(clave, None) is not None else 0
+
     def pipeline(self, transaction=True):
         redis_falso, pendientes = self, []
 
@@ -1520,6 +1524,31 @@ def test_con_redis_detenido_la_revocacion_se_sigue_aplicando_con_la_base(monkeyp
     otra_vez = client.post("/usuarios/me/cerrar-sesiones", headers=_con(nuevo))  # subir la versión sin Redis, también
     assert otra_vez.status_code == 200 and _gateway(nuevo) == (401, 401)
     assert _gateway(otra_vez.json()["access_token"]) == (200, 200)
+
+
+def test_si_redis_no_responde_al_subir_la_version_la_clave_vieja_se_borra_cuando_vuelve(monkeypatch, redis_falso):
+    """Redis no se alcanza (o se reinicia y recupera de su volumen la versión vieja) justo cuando se sube la versión: un
+    hilo reintenta borrar la clave hasta que responde, así la versión vieja no vale ni los 30 s de la caché."""
+    email, (token,) = _cuenta_con_sesiones(n=1)
+    sub = _decodificar_jwt(token)["sub"]
+    assert sesiones.version_vigente(sub) == 1 and redis_falso.datos[sesiones._clave(sub)] == "1"
+    monkeypatch.setattr(sesiones, "REINTENTO_SEGUNDOS", 0.05)
+    redis_falso.caido = True
+    db = main.SessionLocal()
+    try:
+        usuario = db.query(main.models.Usuario).filter(main.models.Usuario.email == email).one()
+        assert sesiones.revocar_sesiones(db, usuario) == 2
+    finally:
+        db.close()
+    assert redis_falso.datos[sesiones._clave(sub)] == "1"  # quedó la vieja (como si Redis volviera con ella)
+    redis_falso.caido = False
+    for _ in range(100):
+        if sesiones._clave(sub) not in redis_falso.datos:
+            break
+        time.sleep(0.05)
+    assert sesiones._clave(sub) not in redis_falso.datos  # el hilo la borró apenas Redis respondió
+    sesiones._circuito.close()
+    assert sesiones.version_vigente(sub) == 2  # y se vuelve a leer de la base
 
 
 def test_una_base_de_antes_recibe_la_version_de_credencial_con_1_en_cada_cuenta():
