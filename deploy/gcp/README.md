@@ -96,7 +96,9 @@ DOMINIO=34-72-10-5.sslip.io   # el tuyo
 kubectl apply -f https://raw.githubusercontent.com/traefik/traefik/v3.7/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
 python deploy/gcp/crear_secretos.py --email-admin tu@correo.com          # + --culqi-public/--culqi-secret si tienes las reales
 ```
-Crea el Secret con valores aleatorios y **no imprime ninguno**. El correo y la contraseña del primer admin quedan en
+Crea el Secret con valores aleatorios y **no imprime ninguno**. También crea las claves que firman los tokens (RS256,
+3072 bits): el Secret `jwt-firma` (la privada, solo para Usuarios) y la ConfigMap `jwt-claves-publicas`. Para rotarlas,
+ver el README principal, "Sesiones y claves de firma de los tokens". El correo y la contraseña del primer admin quedan en
 `deploy/gcp/salida/credenciales-generadas.txt`: guárdalos y borra el archivo. El script se niega a correr contra el
 clúster local y a reemplazar un Secret que ya existe.
 
