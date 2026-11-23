@@ -66,6 +66,11 @@ spec:
                   key: DB_PASSWORD_PEDIDOS
             - name: PGCONNECT_TIMEOUT
               value: "3"
+      volumes:
+        # Sin subPath: si la ConfigMap cambia (una rotación de claves), Kubernetes actualiza los archivos solo.
+        - name: jwt-claves-publicas
+          configMap:
+            name: jwt-claves-publicas
       containers:
         - name: pedidos
           image: localhost:5000/pedidos:latest
@@ -102,6 +107,10 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
+          volumeMounts:
+            - name: jwt-claves-publicas
+              mountPath: /etc/chakrashop/jwt/publicas
+              readOnly: true
           envFrom:
             - configMapRef:
                 name: base-pedidos  # DB_HOST, DB_PORT y DB_NAME
@@ -139,11 +148,10 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_PEDIDOS
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: credenciales-app
-                  key: JWT_SECRET
+            # Las claves PÚBLICAS que verifican los tokens (RS256, ver comun/auth.py): la ConfigMap jwt-claves-publicas,
+            # montada aquí abajo. La genera scripts/claves_jwt.py (en Google Cloud, deploy/gcp/crear_secretos.py).
+            - name: JWT_CLAVES_PUBLICAS
+              value: /etc/chakrashop/jwt/publicas
             # Requeridas explícitamente: el código no tiene valor por defecto.
             - name: PEDIDOS_A_PRODUCTOS_SECRETO
               valueFrom:

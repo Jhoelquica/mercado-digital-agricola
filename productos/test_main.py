@@ -1428,9 +1428,8 @@ def _token_real(sub, rol, segundos=3600):
     firman uno de verdad con el mismo secreto del servicio."""
     import time
 
-    from comun import auth
-    from jose import jwt
-    return jwt.encode({"sub": str(sub), "rol": rol, "exp": int(time.time()) + segundos}, auth.JWT_SECRET, algorithm="HS256")
+    from comun.conftest import token_de_prueba
+    return token_de_prueba(sub=str(sub), rol=rol, exp=int(time.time()) + segundos)
 
 
 def _con_sesion(sub, rol, **kwargs):
@@ -1985,11 +1984,10 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
-    from jose import jwt
+    from comun.conftest import token_de_prueba
 
     def credenciales(rol):
-        token = jwt.encode({"sub": "11111111-1111-1111-1111-111111111111", "rol": rol}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
-        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token_de_prueba(rol=rol))
 
     assert auth.verificar_token(credenciales("comprador"))["rol"] == "comprador"
     try:

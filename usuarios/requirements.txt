@@ -13,7 +13,6 @@ charset-normalizer==3.5.2
 click==8.5.0
 cryptography==50.0.1
 dnspython==2.8.0
-ecdsa==0.19.2
 email-validator==2.3.0
 fastapi==0.141.1
 google-auth==2.59.1
@@ -30,7 +29,7 @@ pluggy==1.6.0
 prometheus-fastapi-instrumentator==8.1.0
 prometheus_client==0.26.0
 psycopg2-binary==2.9.13
-pyasn1==0.6.4
+pyasn1==0.6.5
 pyasn1_modules==0.4.2
 pybreaker==1.4.1
 pycparser==3.0
@@ -38,13 +37,12 @@ pycryptodome==3.23.0
 pydantic==2.13.5
 pydantic_core==2.46.5
 Pygments==2.21.0
+PyJWT==2.15.1
 pytest==9.1.1
 python-dotenv==1.2.3
-python-jose==3.5.0
 python-multipart==0.0.32
 redis==8.1.0
 requests==2.34.2
-rsa==4.9.1
 six==1.17.0
 SQLAlchemy==2.0.54
 starlette==1.6.0

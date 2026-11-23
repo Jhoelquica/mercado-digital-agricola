@@ -5,6 +5,9 @@
 *.pyc
 .idea/
 k8s/secret.yaml
+# Las claves de los tokens (scripts/claves_jwt.py): la privada y las públicas, para compose y el clúster local
+.claves/
+k8s/jwt-claves-publicas.yaml
 backups/
 
 # Despliegue en Google Cloud: lo que genera deploy/gcp (manifiestos con tu dominio y credenciales del admin)

@@ -66,6 +66,11 @@ spec:
                   key: DB_PASSWORD_PAGOS
             - name: PGCONNECT_TIMEOUT
               value: "3"
+      volumes:
+        # Sin subPath: si la ConfigMap cambia (una rotación de claves), Kubernetes actualiza los archivos solo.
+        - name: jwt-claves-publicas
+          configMap:
+            name: jwt-claves-publicas
       containers:
         - name: pagos
           image: localhost:5000/pagos:latest
@@ -102,6 +107,10 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
+          volumeMounts:
+            - name: jwt-claves-publicas
+              mountPath: /etc/chakrashop/jwt/publicas
+              readOnly: true
           envFrom:
             - configMapRef:
                 name: base-pagos  # DB_HOST, DB_PORT y DB_NAME
@@ -128,11 +137,10 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_PAGOS
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: credenciales-app
-                  key: JWT_SECRET
+            # Las claves PÚBLICAS que verifican los tokens (RS256, ver comun/auth.py): la ConfigMap jwt-claves-publicas,
+            # montada aquí abajo. La genera scripts/claves_jwt.py (en Google Cloud, deploy/gcp/crear_secretos.py).
+            - name: JWT_CLAVES_PUBLICAS
+              value: /etc/chakrashop/jwt/publicas
             - name: CULQI_SECRET_KEY
               valueFrom:
                 secretKeyRef:

@@ -67,6 +67,18 @@ spec:
                   key: DB_PASSWORD_USUARIOS
             - name: PGCONNECT_TIMEOUT
               value: "3"
+      # fsGroup: el grupo del usuario del contenedor (10001, ver usuarios/Dockerfile), dueño de los archivos del Secret.
+      securityContext:
+        fsGroup: 10001
+      volumes:
+        # Sin subPath: si la ConfigMap cambia (una rotación de claves), Kubernetes actualiza los archivos solo.
+        - name: jwt-claves-publicas
+          configMap:
+            name: jwt-claves-publicas
+        - name: jwt-firma
+          secret:
+            secretName: jwt-firma
+            defaultMode: 0440  # solo lectura y solo para el grupo del proceso (fsGroup, arriba)
       containers:
         - name: usuarios
           image: localhost:5000/usuarios:latest
@@ -103,6 +115,13 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
+          volumeMounts:
+            - name: jwt-claves-publicas
+              mountPath: /etc/chakrashop/jwt/publicas
+              readOnly: true
+            - name: jwt-firma
+              mountPath: /etc/chakrashop/jwt/firma
+              readOnly: true
           envFrom:
             - configMapRef:
                 name: base-usuarios  # DB_HOST, DB_PORT y DB_NAME
@@ -117,11 +136,14 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_USUARIOS
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: credenciales-app
-                  key: JWT_SECRET
+            # Las claves PÚBLICAS que verifican los tokens (RS256, ver comun/auth.py): la ConfigMap jwt-claves-publicas,
+            # montada aquí abajo. La genera scripts/claves_jwt.py (en Google Cloud, deploy/gcp/crear_secretos.py).
+            - name: JWT_CLAVES_PUBLICAS
+              value: /etc/chakrashop/jwt/publicas
+            # La clave PRIVADA que firma los tokens: el Secret jwt-firma, montado SOLO en este Deployment (ningún otro
+            # servicio puede firmar; verificar_despliegue.py comprueba que no esté en ningún otro pod).
+            - name: JWT_CLAVE_PRIVADA
+              value: /etc/chakrashop/jwt/firma/privada.pem
             # Bloqueo del login: tras MAX_INTENTOS_LOGIN contraseñas incorrectas seguidas para un mismo correo
             # (exista o no) ese correo no puede iniciar sesión durante BLOQUEO_LOGIN_MINUTOS. Ajustables sin
             # tocar código (ver usuarios/acceso.py).

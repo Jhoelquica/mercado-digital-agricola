@@ -12,6 +12,7 @@ Requiere Postgres real según comun/database.py (UUID de postgresql + create_all
 salvo google_id_token.verify_oauth2_token (única llamada saliente real de este servicio) — nunca se golpea la red de
 Google de verdad. Los usuarios de un rol que no se registra (admin) se insertan directo por SessionLocal.
 """
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -22,7 +23,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from jose import jwt as jose_jwt
+import jwt as pyjwt
 
 import main
 import seguridad
@@ -32,7 +33,9 @@ client = TestClient(main.app)
 
 
 def _decodificar_jwt(token: str) -> dict:
-    return jose_jwt.decode(token, seguridad.JWT_SECRET, algorithms=[seguridad.JWT_ALGORITHM])
+    from comun import auth
+    clave = auth.claves_publicas()[pyjwt.get_unverified_header(token)["kid"]]
+    return pyjwt.decode(token, key=clave, algorithms=[auth.ALGORITMO], issuer=auth.EMISOR, audience=auth.AUDIENCIA)
 
 
 def _mockear_google(monkeypatch, *, sub=None, email=None, nombre="Usuario Google", verificado=True):
@@ -1180,11 +1183,10 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
-    from jose import jwt
+    from comun.conftest import token_de_prueba
 
     def credenciales(rol):
-        token = jwt.encode({"sub": "11111111-1111-1111-1111-111111111111", "rol": rol}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
-        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token_de_prueba(rol=rol))
 
     assert auth.verificar_token(credenciales("comprador"))["rol"] == "comprador"
     try:
@@ -1278,8 +1280,8 @@ def test_validar_sesion_deja_pasar_sin_token_y_rechaza_cualquier_token_que_no_va
     assert valido.status_code == 200, valido.text
     assert valido.headers["x-usuario-id"] == sub and valido.headers["x-usuario-rol"] == "comprador"
 
-    vencido = jose_jwt.encode({"sub": sub, "rol": "comprador", "exp": datetime.utcnow() - timedelta(minutes=1)},
-                              seguridad.JWT_SECRET, algorithm=seguridad.JWT_ALGORITHM)
+    from comun.conftest import token_de_prueba
+    vencido = token_de_prueba(sub=sub, exp=int(time.time()) - 60)
     retirado = seguridad.crear_token(sub, "verificador", 1)
     for cabecera in ("Bearer no.es.un-token", "Bearer ", "", "Basic dXN1YXJpbzpjbGF2ZQ==", bueno,
                      f"Bearer {vencido}", f"Bearer {retirado}", f"Bearer {bueno[:-3]}abc"):
@@ -1396,8 +1398,8 @@ def test_el_token_lleva_la_version_de_credencial_y_el_gateway_rechaza_uno_revoca
     assert _gateway(token) == (401, 401)
     detalle = client.get("/usuarios/validar-sesion", headers=_con(token)).json()["detail"]
     assert detalle == sesiones.MENSAJE_SESION_CERRADA
-    sin_version = seguridad.jwt.encode({"sub": carga["sub"], "rol": "comprador", "exp": carga["exp"]},
-                                       seguridad.JWT_SECRET, algorithm=seguridad.JWT_ALGORITHM)
+    from comun.conftest import token_de_prueba
+    sin_version = token_de_prueba(sub=carga["sub"], ver=None)
     assert _gateway(sin_version) == (401, 401)  # un token de antes (sin "ver") tampoco vale
     de_otra_cuenta = seguridad.crear_token(str(uuid.uuid4()), "comprador", 1)
     assert _gateway(de_otra_cuenta) == (401, 401)  # una cuenta que no existe

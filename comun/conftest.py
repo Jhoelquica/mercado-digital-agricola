@@ -11,6 +11,25 @@ import pytest
 CARPETA_DEL_SERVICIO = Path(__file__).resolve().parents[1]
 
 
+def token_de_prueba(**claims) -> str:
+    """Un token firmado como lo firma Usuarios (RS256, con el kid de la clave), con la clave privada de PRUEBA que genera
+    scripts/correr_pruebas.sh (JWT_CLAVE_PRIVADA; su clave pública es la única de JWT_CLAVES_PUBLICAS). Lo que no se
+    pase va con valores válidos; un claim con None no va (para probar uno que falta)."""
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+
+    from comun import auth
+
+    clave = serialization.load_pem_private_key(Path(os.environ["JWT_CLAVE_PRIVADA"]).read_bytes(), password=None)
+    ahora = int(time.time())
+    carga = {"sub": "11111111-1111-1111-1111-111111111111", "rol": "comprador", "ver": 1, "iss": auth.EMISOR,
+             "aud": auth.AUDIENCIA, "iat": ahora, "exp": ahora + 900, **claims}
+    return jwt.encode({k: v for k, v in carga.items() if v is not None}, clave, algorithm=auth.ALGORITMO,
+                      headers={"kid": auth.kid_de(clave.public_key())})
+
+
 @pytest.fixture
 def correr_python():
     """Corre código en un Python nuevo, desde la carpeta del servicio y con las variables de entorno cambiadas (None la

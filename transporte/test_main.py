@@ -1994,11 +1994,10 @@ def test_un_token_con_un_rol_retirado_no_vale_aunque_no_haya_vencido():
     from comun import auth
     from fastapi import HTTPException
     from fastapi.security import HTTPAuthorizationCredentials
-    from jose import jwt
+    from comun.conftest import token_de_prueba
 
     def credenciales(rol):
-        token = jwt.encode({"sub": "11111111-1111-1111-1111-111111111111", "rol": rol}, auth.JWT_SECRET, algorithm=auth.JWT_ALGORITHM)
-        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token_de_prueba(rol=rol))
 
     assert auth.verificar_token(credenciales("comprador"))["rol"] == "comprador"
     try:

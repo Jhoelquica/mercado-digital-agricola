@@ -5,13 +5,18 @@ Las claves salen de k8s/secret.yaml (el de desarrollo, ignorado por git) para qu
   - DB_USER y DB_PASSWORD_<SERVICIO>: el usuario de Postgres y una contraseña distinta para cada una de las 8 bases.
   - RABBITMQ_USER / RABBITMQ_PASSWORD y MINIO_ROOT_USER / MINIO_ROOT_PASSWORD: cada uno con su propia contraseña.
   - GRAFANA_*: no se crean (Grafana no se despliega en Google Cloud).
-  - JWT_SECRET y todas las *_SECRETO (las que se mandan los servicios entre sí): 64 caracteres al azar.
+  - Todas las *_SECRETO (las que se mandan los servicios entre sí): 64 caracteres al azar.
   - QA_LIMPIEZA_SECRETO: también al azar y nadie lo conoce, así que los DELETE de limpieza de pruebas quedan cerrados.
   - CULQI_*: las que pases con --culqi-public/--culqi-secret; si no, se copian las de PRUEBA del Secret de desarrollo.
   - ADMIN_BOOTSTRAP_EMAIL / _PASSWORD: el primer admin (lo crea Usuarios al arrancar si todavía no hay ninguno).
   - GEMINI_API_KEY (opcional): la IA que sugiere la fecha de cosecha (plan gratuito de Gemini).
   - SUNAT_RUC_TOKEN (opcional): clave del servicio que consulta el RUC en SUNAT, si un día la pide. Se copia la del Secret de desarrollo si la
     tiene; si no, Productores usa la tabla de ciclos típicos.
+
+Además, las claves de los tokens (RS256): un par nuevo de 3072 bits. La privada va en el Secret jwt-firma (solo lo
+monta Usuarios) y la pública en la ConfigMap jwt-claves-publicas (la montan los 8). Ninguna se imprime ni se guarda en
+disco: si se pierde la privada, se genera otra (todos vuelven a iniciar sesión). Para rotarlas sin cortar sesiones,
+ver README, "Claves de firma de los tokens".
 
 Ningún valor se imprime. Lo único que necesitas saber (el correo y la contraseña del admin) se guarda en
 deploy/gcp/salida/credenciales-generadas.txt (ignorado por git): guárdalo en tu gestor de contraseñas y bórralo.
@@ -22,6 +27,7 @@ las DB_PASSWORD_* con las bases ya creadas las dejaría inaccesibles.
 Uso:  python deploy/gcp/crear_secretos.py --email-admin tu@correo.com [--culqi-public pk_... --culqi-secret sk_...]
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -47,6 +53,41 @@ def claves_y_valores_locales():
         sys.exit(f"No encuentro {LOCAL}: hace falta para saber qué claves lleva el Secret.")
     texto = LOCAL.read_text(encoding="utf-8").replace("\r\n", "\n")
     return {m.group(1): m.group(2).strip().strip('"') for m in re.finditer(r"^  ([A-Z][A-Z0-9_]*):\s*(.*)$", texto, re.M)}
+
+
+def crear_claves_jwt():
+    """El Secret jwt-firma (la clave privada, solo para Usuarios) y la ConfigMap jwt-claves-publicas (la pública, con su
+    kid: los primeros 16 caracteres del SHA-256 de su forma DER, como comun/auth.kid_de), por archivo temporal."""
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+    except ImportError:
+        sys.exit("Para las claves de los tokens hace falta la librería cryptography: pip install cryptography")
+    if kubectl("get", "secret", "jwt-firma").returncode == 0:
+        print("El Secret jwt-firma ya existe: no se toca (para rotar la clave, ver README).")
+        return
+    clave = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    publica = clave.public_key()
+    kid = hashlib.sha256(publica.public_bytes(serialization.Encoding.DER,
+                                              serialization.PublicFormat.SubjectPublicKeyInfo)).hexdigest()[:16]
+    privada_pem = clave.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                      serialization.NoEncryption()).decode()
+    publica_pem = publica.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+    for manifiesto in ({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "jwt-claves-publicas"},
+                        "data": {f"{kid}.pem": publica_pem}},
+                       {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "jwt-firma"}, "type": "Opaque",
+                        "stringData": {"privada.pem": privada_pem}}):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            json.dump(manifiesto, f)
+            ruta = f.name
+        try:
+            r = kubectl("apply", "-f", ruta)
+        finally:
+            os.remove(ruta)
+        if r.returncode != 0:
+            sys.exit(f"kubectl apply de {manifiesto['kind']} {manifiesto['metadata']['name']} falló: {r.stderr.strip()}")
+        print(r.stdout.strip())
+    print(f"Claves de los tokens: kid {kid} (3072 bits).")
 
 
 def main():
@@ -78,7 +119,9 @@ def main():
             valores[clave] = secrets.token_urlsafe(24)  # solo A-Za-z0-9-_: sirve tal cual dentro de una URL de conexión
         elif clave.startswith("GRAFANA_"):
             continue  # Grafana no se despliega en Google Cloud (ver EXCLUIDOS en generar_manifiestos.py)
-        elif clave == "JWT_SECRET" or clave.endswith("_SECRETO"):
+        elif clave == "JWT_SECRET":
+            continue  # de antes de RS256: ya no se usa (las claves de los tokens van aparte, ver crear_claves_jwt)
+        elif clave.endswith("_SECRETO"):
             valores[clave] = secrets.token_hex(32)
         elif clave == "CULQI_PUBLIC_KEY":
             valores[clave] = args.culqi_public or locales[clave]
@@ -118,6 +161,7 @@ def main():
     if r.returncode != 0:
         sys.exit(f"kubectl apply falló:\n{r.stderr}")
     print(r.stdout.strip())
+    crear_claves_jwt()
 
     SALIDA.mkdir(exist_ok=True)
     destino = SALIDA / "credenciales-generadas.txt"

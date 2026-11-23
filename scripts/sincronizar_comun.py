@@ -11,6 +11,8 @@ ConfigMap rabbitmq-definiciones de k8s/rabbitmq.yaml: compose monta el archivo y
 Y comprueba, sin arreglarlo (se corrige a mano):
 - que cada dependencia que está en el requirements.txt de dos o más servicios tenga en todos la misma versión: el código
   común corre igual en todos solo si sus librerías son las mismas;
+- que cada servicio fije PyJWT en PYJWT_MINIMO (2.14) o más y no lleve python-jose: comun/auth.py verifica los tokens
+  con PyJWT, y la 2.13 y la 2.14 corrigieron fallos de la misma familia que el de python-jose;
 - que ningún servicio publique directo en RabbitMQ: todo evento pasa por la bandeja de salida (comun/bandeja_salida.py)
   y solo su relevo publica;
 - que definiciones.json declare las colas de todos los consumidores (y sus .fallidos), durables y con sus enlaces: así
@@ -56,6 +58,7 @@ DESTINOS = {
     "logging.py": TODOS,
     "migraciones.py": CON_MIGRACION_DE_COLUMNAS,
     "rabbitmq.py": CON_RABBITMQ,
+    "test_auth.py": TODOS,
     "test_bandeja_salida.py": CON_BANDEJA_DE_SALIDA,
     "test_database.py": TODOS,
     "test_documentos.py": CON_DOCUMENTOS,
@@ -258,6 +261,32 @@ def topologia_sin_declarar() -> list:
     return encontrados
 
 
+# La librería del JWT de comun/auth.py. La defensa de verdad es su configuración (algorithms=["RS256"] y las claves como
+# objetos de cryptography), pero tampoco se acepta una PyJWT anterior a los arreglos de la 2.13 y la 2.14.
+PYJWT_MINIMO = (2, 14)
+LIBRERIAS_DE_JWT_RETIRADAS = ("python-jose",)
+
+
+def _version(texto: str) -> tuple:
+    return tuple(int(parte) for parte in re.findall(r"\d+", texto)[:3])
+
+
+def libreria_del_jwt() -> list:
+    """Los servicios que usan comun/auth.py sin PyJWT fijada en PYJWT_MINIMO o más, o con python-jose, en frases."""
+    versiones, minima = versiones_de_las_dependencias(), ".".join(map(str, PYJWT_MINIMO))
+    encontrados = []
+    for servicio in DESTINOS["auth.py"]:
+        fijada = versiones.get("pyjwt", {}).get(servicio)
+        if fijada is None:
+            encontrados.append(f"{servicio}/requirements.txt: falta PyJWT==<versión> (comun/auth.py la usa; {minima} o más)")
+        elif _version(fijada) < PYJWT_MINIMO:
+            encontrados.append(f"{servicio}/requirements.txt: PyJWT {fijada} es anterior a la mínima, {minima}")
+        for retirada in LIBRERIAS_DE_JWT_RETIRADAS:
+            if servicio in versiones.get(retirada, {}):
+                encontrados.append(f"{servicio}/requirements.txt: {retirada} ya no se usa (el JWT va con PyJWT): sácala")
+    return encontrados
+
+
 def problemas() -> list:
     """Todo lo que no coincide, en frases. Vacío si las copias están al día."""
     encontrados = []
@@ -291,6 +320,7 @@ def problemas() -> list:
     elif manifiesto[bloque[0]:bloque[1]] != _definiciones_esperadas():
         encontrados.append("k8s/rabbitmq.yaml: su definiciones.json no coincide con deploy/rabbitmq/definiciones.json")
     encontrados.extend(dependencias_con_versiones_distintas())
+    encontrados.extend(libreria_del_jwt())
     encontrados.extend(publicaciones_directas())
     encontrados.extend(topologia_sin_declarar())
     return encontrados
@@ -347,8 +377,8 @@ def main():
     compartidas = sum(1 for v in versiones_de_las_dependencias().values() if len(v) > 1)
     print(f"comun/: las {copias} copias coinciden ({len(DESTINOS)} archivos en {len(TODOS)} servicios), las "
           f"definiciones de RabbitMQ en k8s/rabbitmq.yaml (con las {len(suscripciones_de_los_consumidores())} colas de "
-          f"los consumidores), las {compartidas} dependencias compartidas tienen la misma versión en todos, y solo el "
-          "relevo de la bandeja de salida publica.")
+          f"los consumidores), las {compartidas} dependencias compartidas tienen la misma versión en todos (PyJWT "
+          f"{'.'.join(map(str, PYJWT_MINIMO))} o más, sin python-jose), y solo el relevo de la bandeja de salida publica.")
 
 
 if __name__ == "__main__":

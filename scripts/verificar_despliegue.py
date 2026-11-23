@@ -14,6 +14,9 @@ Qué comprueba:
   - Seguridad (gateway): una ruta protegida sin sesión da 401; una ruta pública con un token inválido da 401 (el
     ForwardAuth corre también en las rutas generales); /docs, /openapi.json y /metrics dan 403. Con --contexto, toda
     ruta de /api de los IngressRoute pasa por el ForwardAuth, auth-jwt o auth-sesion (FALLA si alguna no).
+  - Tokens RS256 (con --contexto): la clave privada (Secret jwt-firma) solo la monta Usuarios y su archivo solo está en
+    sus pods, ningún Deployment ni el Secret credenciales-app usan ya JWT_SECRET, la ConfigMap jwt-claves-publicas
+    tiene al menos una clave, y el gateway rechaza un token HS256 forjado con esa clave pública, en PEM y en DER.
   - HTTPS (si --base es https): certificado válido (avisa si es el de PRUEBA o vence pronto), http redirige a https, y los
     puertos internos (9000, 8006, 8080, 5432) NO responden desde fuera.
   - Kubernetes (con --contexto): todos los pods listos y ninguno en CrashLoopBackOff (FALLA), ningún contenedor que se
@@ -32,6 +35,9 @@ Qué comprueba:
 Código de salida: 0 = todo bien (los AVISO no cuentan), 1 = hay al menos un FALLA.
 """
 import argparse
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -40,6 +46,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -199,6 +206,91 @@ def leer_json(salida):
 
 
 MIDDLEWARES_DEL_FORWARDAUTH = {"auth-jwt", "auth-sesion"}
+ARCHIVO_DE_LA_CLAVE_PRIVADA = "/etc/chakrashop/jwt/firma/privada.pem"
+
+
+def _b64url(datos: bytes) -> str:
+    return base64.urlsafe_b64encode(datos).rstrip(b"=").decode()
+
+
+def token_hs256_forjado(secreto: bytes, kid: str) -> str:
+    """Lo que intentaría un atacante con la clave pública (que es pública): un token "HS256" con ella como secreto
+    HMAC y con todos los claims de uno bueno. Solo sirve para ver que el gateway lo rechaza."""
+    ahora = int(time.time())
+    inicio = (_b64url(json.dumps({"alg": "HS256", "typ": "JWT", "kid": kid}).encode()) + "." + _b64url(json.dumps(
+        {"sub": "00000000-0000-0000-0000-000000000000", "rol": "admin", "ver": 1, "iss": "chakrashop-usuarios",
+         "aud": "chakrashop-api", "iat": ahora, "exp": ahora + 300}).encode()))
+    return f"{inicio}.{_b64url(hmac.new(secreto, inicio.encode(), hashlib.sha256).digest())}"
+
+
+def der_de_pem(pem: str) -> bytes:
+    return base64.b64decode("".join(l for l in pem.strip().splitlines() if not l.startswith("-----")))
+
+
+def comprobar_claves_de_firma(contexto_k):
+    """RS256: la clave privada (Secret jwt-firma) solo la monta Usuarios y está solo en sus pods; nadie usa ya
+    JWT_SECRET (ni el Secret credenciales-app lo tiene)."""
+    salida, error = kubectl(["get", "deploy", "-o", "json"], contexto_k)
+    if salida is None:
+        registrar("FALLA", "Claves de firma: leer los Deployment", error)
+        return
+    con_la_privada, con_jwt_secret = [], []
+    for deploy in json.loads(salida)["items"]:
+        nombre, plantilla = deploy["metadata"]["name"], deploy["spec"]["template"]["spec"]
+        usa = {v.get("secret", {}).get("secretName") for v in plantilla.get("volumes") or []}
+        for contenedor in plantilla.get("containers", []) + plantilla.get("initContainers", []):
+            for variable in contenedor.get("env") or []:
+                referencia = (variable.get("valueFrom") or {}).get("secretKeyRef") or {}
+                usa.add(referencia.get("name"))
+                if variable.get("name") == "JWT_SECRET" or referencia.get("key") == "JWT_SECRET":
+                    con_jwt_secret.append(nombre)
+            usa.update((origen.get("secretRef") or {}).get("name") for origen in contenedor.get("envFrom") or [])
+        if "jwt-firma" in usa:
+            con_la_privada.append(nombre)
+    comprobar("Clave privada de firma (Secret jwt-firma): solo la monta Usuarios", con_la_privada == ["usuarios"],
+              "solo usuarios", f"la montan: {', '.join(con_la_privada) or 'ninguno'}")
+    comprobar("Ningún Deployment usa JWT_SECRET (los tokens van con RS256)", not con_jwt_secret, "",
+              ", ".join(sorted(set(con_jwt_secret))))
+    salida, error = kubectl(["get", "secret", "credenciales-app", "-o", "jsonpath={.data}"], contexto_k)
+    if salida is not None:
+        comprobar("El Secret credenciales-app ya no tiene JWT_SECRET", "JWT_SECRET" not in json.loads(salida or "{}"),
+                  "", "todavía la tiene: kubectl patch secret credenciales-app --type=json "
+                      "-p='[{\"op\":\"remove\",\"path\":\"/data/JWT_SECRET\"}]'")
+    mirar = ("import os; print(int(os.path.exists(%r)), int(any('PRIVATE KEY' in v for v in os.environ.values())))"
+             % ARCHIVO_DE_LA_CLAVE_PRIVADA)
+    en_pods = {}
+    for servicio in SERVICIOS:
+        salida, error = kubectl(["exec", f"deploy/{servicio}", "-c", servicio, "--", "python", "-c", mirar], contexto_k)
+        en_pods[servicio] = (salida or "").split()[:2] if salida is not None else ["?", "?"]
+    con_el_archivo = [s for s, (archivo, _) in en_pods.items() if archivo != "0"]
+    en_el_entorno = [s for s, (_, entorno) in en_pods.items() if entorno != "0"]
+    comprobar("Clave privada de firma: el archivo solo existe en los pods de Usuarios, y en ningún entorno",
+              con_el_archivo == ["usuarios"] and not en_el_entorno, "solo en usuarios",
+              f"archivo en: {', '.join(con_el_archivo) or 'ninguno'}; en variables de entorno: {', '.join(en_el_entorno) or 'ninguno'}")
+
+
+def comprobar_tokens_forjados(base, contexto_k, timeout, tls):
+    """El gateway rechaza (401) un token HS256 firmado con la clave pública publicada, en PEM y en DER, en una ruta
+    general y en una que exige sesión."""
+    salida, error = kubectl(["get", "configmap", "jwt-claves-publicas", "-o", "json"], contexto_k)
+    if salida is None:
+        registrar("FALLA", "Claves públicas del JWT (ConfigMap jwt-claves-publicas)", error)
+        return
+    datos = json.loads(salida).get("data") or {}
+    comprobar("Claves públicas del JWT publicadas (ConfigMap jwt-claves-publicas)", bool(datos),
+              f"{len(datos)} clave(s): {', '.join(k.removesuffix('.pem') for k in sorted(datos))}", "vacía")
+    if not datos:
+        return
+    nombre, pem = sorted(datos.items())[0]
+    aceptados = []
+    for forma, secreto in (("PEM", pem.encode()), ("DER", der_de_pem(pem))):
+        token = token_hs256_forjado(secreto, nombre.removesuffix(".pem"))
+        for ruta in ("/api/productos/productos", "/api/usuarios/usuarios/00000000-0000-0000-0000-000000000000"):
+            estado, _, _ = pedir(base + ruta, timeout, tls, cabeceras={"Authorization": f"Bearer {token}"})
+            if estado != 401:
+                aceptados.append(f"{forma} en {ruta}: HTTP {estado}")
+    comprobar("Gateway: un token HS256 forjado con la clave pública (PEM y DER) se rechaza (401)", not aceptados,
+              "4 de 4 rechazados", "; ".join(aceptados))
 
 
 def rutas_de_api_sin_forwardauth(ingressroutes) -> list:
@@ -503,6 +595,9 @@ def main():
             sin_forwardauth = rutas_de_api_sin_forwardauth(json.loads(salida)["items"])
             comprobar("Gateway: toda ruta de /api pasa por el ForwardAuth (auth-jwt o auth-sesion)", not sin_forwardauth,
                       "", "sin ForwardAuth: " + "; ".join(sin_forwardauth[:4]))
+        comprobar_claves_de_firma(contexto_k)
+        if not args.directo:
+            comprobar_tokens_forjados(base, contexto_k, args.timeout, tls)
         salida, error = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_COLAS, contexto_k)
         ligaduras, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_LIGADURAS, contexto_k)
         exchanges, _ = kubectl(["exec", "deploy/rabbitmq", "--"] + LISTAR_EXCHANGES, contexto_k)

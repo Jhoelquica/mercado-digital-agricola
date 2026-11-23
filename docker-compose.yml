@@ -5,15 +5,18 @@
 #        Comprobación: python scripts/verificar_despliegue.py --directo --compose
 #
 # .env (no se sube a git; cópialo de .env.example y cambia TODOS los valores) define todas las credenciales: DB_USER y
-# DB_PASSWORD (mínimo 8 caracteres: también son las de MinIO), JWT_SECRET, CULQI_SECRET_KEY (la de PRUEBA, sk_test_...),
+# DB_PASSWORD (mínimo 8 caracteres: también son las de MinIO), CULQI_SECRET_KEY (la de PRUEBA, sk_test_...),
 # RABBITMQ_USER/RABBITMQ_PASSWORD, ADMIN_BOOTSTRAP_PASSWORD, QA_LIMPIEZA_SECRETO y las 7 claves entre servicios
 # (*_A_*_SECRETO). Si falta una, docker compose se niega a arrancar y dice cuál.
+# Las claves que firman y verifican los tokens (RS256) no van en .env: las genera python scripts/claves_jwt.py nueva
+# en .claves/jwt (ignorada por git), y se montan: la privada solo en Usuarios, las públicas en los 8.
 #
 # Qué es igual que en Kubernetes (k8s/): las mismas imágenes, variables de entorno, URLs entre servicios y bases.
 # Qué cambia a propósito:
 #   - NO hay Traefik, Prometheus ni Grafana: existen solo en Kubernetes. En su lugar, el nginx del frontend reparte /api/<servicio>
 #     y /media con las mismas rutas (deploy/compose/frontend-gateway.conf), sin validación de JWT previa, límite de peticiones ni
-#     rutas bloqueadas. Los puertos 8001..8008 siguen publicados para probar cada API directo.
+#     rutas bloqueadas. Los puertos 8001..8008 siguen publicados para probar cada API directo. Sin el ForwardAuth tampoco
+#     se compara la versión de credencial: aquí una sesión revocada sigue valiendo en los servicios hasta que vence.
 #   - Todos los puertos publicados escuchan solo en 127.0.0.1: no se ven desde otras máquinas de la red.
 #   - Una sola instancia de cada cosa (en k8s/ los microservicios van con 3 réplicas).
 #   - Ninguna credencial va escrita aquí: salen de .env. En Kubernetes salen del Secret credenciales-app y, en Google
@@ -112,7 +115,9 @@ services:
     environment:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       DB_HOST: db-productores
       DB_PORT: "5432"
       DB_NAME: *base-productores
@@ -128,6 +133,8 @@ services:
       MINIO_PUBLIC_URL: http://localhost:9000
       # Opcional (en .env): sin ella, la sugerencia de la fecha de cosecha sale de la tabla de ciclos típicos.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-productores:
         condition: service_healthy
@@ -163,7 +170,9 @@ services:
     environment:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       DB_HOST: db-productos
       DB_PORT: "5432"
       DB_NAME: *base-productos
@@ -185,6 +194,8 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-productos:
         condition: service_healthy
@@ -226,7 +237,9 @@ services:
     environment:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       DB_HOST: db-pedidos
       DB_PORT: "5432"
       DB_NAME: *base-pedidos
@@ -243,6 +256,8 @@ services:
       QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # RENIEC simulado con los DNIs de prueba de pedidos/reniec.py (solo para desarrollo local).
       RENIEC_MODO: simulado
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-pedidos:
         condition: service_healthy
@@ -280,7 +295,9 @@ services:
     environment:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       DB_HOST: db-transporte
       DB_PORT: "5432"
       DB_NAME: *base-transporte
@@ -300,6 +317,8 @@ services:
       MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
       MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
       MINIO_PUBLIC_URL: http://localhost:9000
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-transporte:
         condition: service_healthy
@@ -337,7 +356,9 @@ services:
     environment:
       DB_USER: ${DB_USER:?falta DB_USER en .env}
       DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       DB_HOST: db-notificaciones
       DB_PORT: "5432"
       DB_NAME: *base-notificaciones
@@ -355,6 +376,8 @@ services:
       SMTP_USUARIO: ${SMTP_USUARIO:-}
       SMTP_CLAVE: ${SMTP_CLAVE:-}
       SMTP_REMITENTE: ${SMTP_REMITENTE:-}
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-notificaciones:
         condition: service_healthy
@@ -393,7 +416,11 @@ services:
       DB_HOST: db-usuarios
       DB_PORT: "5432"
       DB_NAME: *base-usuarios
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
+      # Solo Usuarios firma: la clave privada se monta solo aquí.
+      JWT_CLAVE_PRIVADA: /etc/chakrashop/jwt/firma/privada.pem
       QA_LIMPIEZA_SECRETO: "${QA_LIMPIEZA_SECRETO:?falta QA_LIMPIEZA_SECRETO en .env}"
       # Bloqueo del login por correo (ver usuarios/acceso.py): mismos valores que k8s/usuarios.yaml.
       MAX_INTENTOS_LOGIN: "8"
@@ -413,6 +440,9 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${DB_USER:?falta DB_USER en .env}
       MINIO_SECRET_KEY: ${DB_PASSWORD:?falta DB_PASSWORD en .env}
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
+      - ./.claves/jwt/firma:/etc/chakrashop/jwt/firma:ro
     depends_on:
       db-usuarios:
         condition: service_healthy
@@ -456,7 +486,9 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_USER: "${RABBITMQ_USER:?falta RABBITMQ_USER en .env}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:?falta RABBITMQ_PASSWORD en .env}"
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       CULQI_SECRET_KEY: ${CULQI_SECRET_KEY:?falta CULQI_SECRET_KEY en .env}
       PAGOS_A_PRODUCTOS_SECRETO: "${PAGOS_A_PRODUCTOS_SECRETO:?falta PAGOS_A_PRODUCTOS_SECRETO en .env}"
       TRANSPORTE_A_PAGOS_SECRETO: "${TRANSPORTE_A_PAGOS_SECRETO:?falta TRANSPORTE_A_PAGOS_SECRETO en .env}"
@@ -474,6 +506,8 @@ services:
       TRANSFERENCIA_TITULAR: "Chakra Shop S.A.C."
       TRANSFERENCIA_CUENTA: "191-00000000-0-00"
       TRANSFERENCIA_CCI: "002-191-000000000000-00"
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-pagos:
         condition: service_healthy
@@ -514,12 +548,16 @@ services:
       DB_HOST: db-certificacion
       DB_PORT: "5432"
       DB_NAME: *base-certificacion
-      JWT_SECRET: ${JWT_SECRET:?falta JWT_SECRET en .env}
+      # RS256 (ver comun/auth.py): las claves públicas que verifican los tokens, de .claves/jwt (las crea
+      # python scripts/claves_jwt.py nueva).
+      JWT_CLAVES_PUBLICAS: /etc/chakrashop/jwt/publicas
       # A dónde apunta el QR de cada producto (/verificar lo sirve el contenedor frontend de abajo).
       FRONTEND_URL: http://localhost:8090
       TRANSPORTE_A_CERTIFICACION_SECRETO: "${TRANSPORTE_A_CERTIFICACION_SECRETO:?falta TRANSPORTE_A_CERTIFICACION_SECRETO en .env}"
       PRODUCTORES_A_CERTIFICACION_SECRETO: "${PRODUCTORES_A_CERTIFICACION_SECRETO:?falta PRODUCTORES_A_CERTIFICACION_SECRETO en .env}"
       PRODUCTOS_A_CERTIFICACION_SECRETO: "${PRODUCTOS_A_CERTIFICACION_SECRETO:?falta PRODUCTOS_A_CERTIFICACION_SECRETO en .env}"
+    volumes:
+      - ./.claves/jwt/publicas:/etc/chakrashop/jwt/publicas:ro
     depends_on:
       db-certificacion:
         condition: service_healthy

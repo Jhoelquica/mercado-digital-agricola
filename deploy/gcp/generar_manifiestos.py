@@ -32,8 +32,9 @@ K8S = RAIZ / "k8s"
 SALIDA = AQUI / "salida"
 
 SERVICIOS = ["usuarios", "productores", "productos", "pedidos", "transporte", "notificaciones", "pagos", "certificacion"]
-# Lo de k8s/ que NO se despliega: el Secret de desarrollo (los reales los crea crear_secretos.py) y el monitoreo.
-EXCLUIDOS = {"secret.yaml", "grafana.yaml", "grafana-provisioning.yaml", "prometheus.yaml", "prometheus-config.yaml", "kustomization.yaml"}
+# Lo de k8s/ que NO se despliega: el Secret y las claves públicas del JWT de desarrollo (los de Google Cloud los crea
+# crear_secretos.py) y el monitoreo.
+EXCLUIDOS = {"secret.yaml", "jwt-claves-publicas.yaml", "grafana.yaml", "grafana-provisioning.yaml", "prometheus.yaml", "prometheus-config.yaml", "kustomization.yaml"}
 ACME_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 REPLICAS_USUARIOS = 3
 

@@ -66,6 +66,11 @@ spec:
                   key: DB_PASSWORD_CERTIFICACION
             - name: PGCONNECT_TIMEOUT
               value: "3"
+      volumes:
+        # Sin subPath: si la ConfigMap cambia (una rotación de claves), Kubernetes actualiza los archivos solo.
+        - name: jwt-claves-publicas
+          configMap:
+            name: jwt-claves-publicas
       containers:
         - name: certificacion
           image: localhost:5000/certificacion:latest
@@ -102,6 +107,10 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 5
+          volumeMounts:
+            - name: jwt-claves-publicas
+              mountPath: /etc/chakrashop/jwt/publicas
+              readOnly: true
           envFrom:
             - configMapRef:
                 name: base-certificacion  # DB_HOST, DB_PORT y DB_NAME
@@ -116,11 +125,10 @@ spec:
                 secretKeyRef:
                   name: credenciales-app
                   key: DB_PASSWORD_CERTIFICACION
-            - name: JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: credenciales-app
-                  key: JWT_SECRET
+            # Las claves PÚBLICAS que verifican los tokens (RS256, ver comun/auth.py): la ConfigMap jwt-claves-publicas,
+            # montada aquí abajo. La genera scripts/claves_jwt.py (en Google Cloud, deploy/gcp/crear_secretos.py).
+            - name: JWT_CLAVES_PUBLICAS
+              value: /etc/chakrashop/jwt/publicas
             # A dónde lleva el QR (la página /verificar del frontend), por el gateway Traefik. En Google Cloud,
             # deploy/gcp/generar_manifiestos.py la cambia por https://<dominio>.
             - name: FRONTEND_URL
